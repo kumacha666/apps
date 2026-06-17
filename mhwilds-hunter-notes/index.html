@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>MHWilds ハンターノート</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#1a1a2e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- セレクター画面 -->
+    <div id="selector-screen" class="screen active">
+      <header>
+        <h1>ハンターノート</h1>
+        <p class="subtitle">MHWilds 非公式ファンツール</p>
+      </header>
+
+      <div class="selector-group">
+        <label for="weapon-select">武器種</label>
+        <select id="weapon-select">
+          <option value="">— 選択 —</option>
+        </select>
+      </div>
+
+      <div class="selector-group">
+        <label for="monster-select">モンスター</label>
+        <select id="monster-select">
+          <option value="">— 選択 —</option>
+        </select>
+      </div>
+
+      <div class="mode-buttons">
+        <button id="btn-quest" class="btn btn-primary" disabled>クエスト中モード</button>
+        <button id="btn-prep" class="btn btn-secondary" disabled>出発前モード</button>
+      </div>
+    </div>
+
+    <!-- クエスト中モード -->
+    <div id="quest-screen" class="screen">
+      <header class="compact-header">
+        <button class="btn-back" id="btn-back-quest">←</button>
+        <div class="header-info">
+          <span id="quest-weapon-name" class="header-weapon"></span>
+          <span class="header-sep">vs</span>
+          <span id="quest-monster-name" class="header-monster"></span>
+        </div>
+        <button class="btn-switch" id="btn-to-prep">出発前</button>
+      </header>
+
+      <div id="quest-content" class="content">
+        <!-- 肉質テーブル -->
+        <section class="card" id="hitzone-section">
+          <h2>肉質（<span id="hitzone-type-label"></span>）</h2>
+          <table id="hitzone-table">
+            <thead><tr><th>部位</th><th>値</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </section>
+
+        <!-- コンボ -->
+        <section class="card" id="combo-section">
+          <h2>主要コンボ</h2>
+          <div id="combo-list"></div>
+        </section>
+
+        <!-- カウンター -->
+        <section class="card" id="counter-section">
+          <h2>カウンター / 回避</h2>
+          <div id="counter-info"></div>
+        </section>
+
+        <!-- リソース管理 -->
+        <section class="card" id="resource-section">
+          <h2>リソース管理</h2>
+          <div id="resource-info"></div>
+        </section>
+
+        <!-- 集中モード -->
+        <section class="card" id="focus-section">
+          <h2>集中モード</h2>
+          <div id="focus-info"></div>
+        </section>
+
+        <!-- モンスター注意点 -->
+        <section class="card" id="monster-notes-section">
+          <h2>モンスターメモ</h2>
+          <p id="monster-notes-text"></p>
+        </section>
+      </div>
+    </div>
+
+    <!-- 出発前モード -->
+    <div id="prep-screen" class="screen">
+      <header class="compact-header">
+        <button class="btn-back" id="btn-back-prep">←</button>
+        <div class="header-info">
+          <span id="prep-monster-name" class="header-monster"></span>
+          <span class="header-sep">×</span>
+          <span id="prep-weapon-name" class="header-weapon"></span>
+        </div>
+        <button class="btn-switch" id="btn-to-quest">クエスト中</button>
+      </header>
+
+      <div id="prep-content" class="content">
+        <!-- 属性弱点 -->
+        <section class="card" id="element-section">
+          <h2>属性弱点</h2>
+          <div id="element-weakness"></div>
+        </section>
+
+        <!-- 必須スキル -->
+        <section class="card" id="required-skills-section">
+          <h2>必須スキル（モンスター対策）</h2>
+          <div id="required-skills"></div>
+        </section>
+
+        <!-- 罠・アイテム情報 -->
+        <section class="card" id="trap-section">
+          <h2>罠・アイテム情報</h2>
+          <div id="trap-info"></div>
+        </section>
+
+        <!-- モンスター注意点 -->
+        <section class="card" id="prep-notes-section">
+          <h2>メモ</h2>
+          <p id="prep-notes-text"></p>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js");
+    }
+  </script>
+</body>
+</html>

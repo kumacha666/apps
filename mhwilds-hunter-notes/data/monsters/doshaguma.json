@@ -1,0 +1,44 @@
+{
+  "id": "doshaguma",
+  "name": "ドシャグマ",
+  "category": "通常",
+  "hitzone": {
+    "slash": [
+      { "part": "頭", "value": 65 },
+      { "part": "首", "value": 45 },
+      { "part": "胴", "value": 30 },
+      { "part": "前脚", "value": 50 },
+      { "part": "後脚", "value": 40 },
+      { "part": "尻尾", "value": 35 }
+    ],
+    "blunt": [
+      { "part": "頭", "value": 70 },
+      { "part": "首", "value": 45 },
+      { "part": "胴", "value": 30 },
+      { "part": "前脚", "value": 45 },
+      { "part": "後脚", "value": 35 },
+      { "part": "尻尾", "value": 30 }
+    ],
+    "shot": [
+      { "part": "頭", "value": 55 },
+      { "part": "首", "value": 35 },
+      { "part": "胴", "value": 20 },
+      { "part": "前脚", "value": 40 },
+      { "part": "後脚", "value": 30 },
+      { "part": "尻尾", "value": 25 }
+    ]
+  },
+  "element_weakness": {
+    "fire": 20,
+    "water": 5,
+    "thunder": 15,
+    "ice": 25,
+    "dragon": 5
+  },
+  "weakness_rank": ["氷", "火", "雷"],
+  "capturable": true,
+  "pitfall_trap": true,
+  "shock_trap": true,
+  "flash_effective": true,
+  "notes": "怒り時は攻撃が激しくなる。前脚と頭が弱点"
+}

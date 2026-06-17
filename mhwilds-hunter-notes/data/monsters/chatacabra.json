@@ -1,0 +1,41 @@
+{
+  "id": "chatacabra",
+  "name": "チャタカブラ",
+  "category": "通常",
+  "hitzone": {
+    "slash": [
+      { "part": "頭", "value": 80 },
+      { "part": "背中", "value": 30 },
+      { "part": "前脚", "value": 45 },
+      { "part": "後脚", "value": 40 },
+      { "part": "尻尾", "value": 55 }
+    ],
+    "blunt": [
+      { "part": "頭", "value": 85 },
+      { "part": "背中", "value": 30 },
+      { "part": "前脚", "value": 45 },
+      { "part": "後脚", "value": 40 },
+      { "part": "尻尾", "value": 50 }
+    ],
+    "shot": [
+      { "part": "頭", "value": 65 },
+      { "part": "背中", "value": 15 },
+      { "part": "前脚", "value": 35 },
+      { "part": "後脚", "value": 30 },
+      { "part": "尻尾", "value": 40 }
+    ]
+  },
+  "element_weakness": {
+    "fire": 0,
+    "water": 25,
+    "thunder": 10,
+    "ice": 20,
+    "dragon": 5
+  },
+  "weakness_rank": ["水", "氷", "雷"],
+  "capturable": true,
+  "pitfall_trap": true,
+  "shock_trap": true,
+  "flash_effective": true,
+  "notes": "序盤モンスター。岩を纏うと肉質が硬化するので、頭を狙って岩を破壊する"
+}
