@@ -1,0 +1,45 @@
+{
+  "id": "rathalos",
+  "name": "リオレウス",
+  "category": "強敵",
+  "hitzone": {
+    "slash": [
+      { "part": "頭", "value": 65 },
+      { "part": "首", "value": 35 },
+      { "part": "胴", "value": 25 },
+      { "part": "翼", "value": 50 },
+      { "part": "脚", "value": 35 },
+      { "part": "尻尾", "value": 40 }
+    ],
+    "blunt": [
+      { "part": "頭", "value": 70 },
+      { "part": "首", "value": 35 },
+      { "part": "胴", "value": 25 },
+      { "part": "翼", "value": 45 },
+      { "part": "脚", "value": 35 },
+      { "part": "尻尾", "value": 35 }
+    ],
+    "shot": [
+      { "part": "頭", "value": 55 },
+      { "part": "首", "value": 30 },
+      { "part": "胴", "value": 20 },
+      { "part": "翼", "value": 40 },
+      { "part": "脚", "value": 30 },
+      { "part": "尻尾", "value": 35 }
+    ]
+  },
+  "element_weakness": {
+    "fire": 0,
+    "water": 15,
+    "thunder": 20,
+    "ice": 15,
+    "dragon": 30
+  },
+  "weakness_rank": ["龍", "雷", "水/氷"],
+  "capturable": true,
+  "pitfall_trap": true,
+  "shock_trap": true,
+  "flash_effective": true,
+  "required_skills": ["毒耐性", "火耐性"],
+  "notes": "空中からの攻撃が厄介。閃光で落とせる。毒ブレスに注意"
+}
