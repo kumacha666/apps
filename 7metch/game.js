@@ -494,7 +494,7 @@
       }
     }
 
-    const fallingCols = new Set(fallMap.map((f) => f.c));
+    const fallingCells = new Set(fallMap.map((f) => f.toR * COLS + f.c));
 
     for (let frame = 0; frame <= totalFrames; frame++) {
       const t = Math.min(frame / totalFrames, 1);
@@ -504,7 +504,7 @@
 
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
-          if (fallingCols.has(c)) continue;
+          if (fallingCells.has(r * COLS + c)) continue;
           if (frozen[r][c]) {
             drawPieceAt(frozen[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
           }
