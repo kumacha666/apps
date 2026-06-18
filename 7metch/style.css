@@ -1,0 +1,266 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #1a1a2e;
+  --bg-light: #16213e;
+  --accent: #e94560;
+  --accent2: #0f3460;
+  --text: #eee;
+  --text-dim: #aaa;
+  --gold: #ffd700;
+  --cell-size: 48px;
+  --grid-gap: 2px;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  touch-action: none;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#app {
+  width: 100%;
+  max-width: 420px;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+.screen {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 20px;
+  gap: 16px;
+}
+
+.screen.active {
+  display: flex;
+}
+
+/* Title */
+.title-logo {
+  font-size: 3rem;
+  font-weight: 900;
+  background: linear-gradient(135deg, #e94560, #ffd700, #e94560);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 3s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+.title-sub {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  margin-bottom: 24px;
+}
+
+/* Buttons */
+.btn-primary, .btn-secondary {
+  border: none;
+  border-radius: 12px;
+  padding: 14px 32px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.1s, opacity 0.1s;
+  min-width: 180px;
+  text-align: center;
+}
+
+.btn-primary:active, .btn-secondary:active {
+  transform: scale(0.95);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn-secondary {
+  background: var(--accent2);
+  color: var(--text);
+}
+
+/* Stage Select */
+#screen-stage-select h2 {
+  font-size: 1.4rem;
+  margin-bottom: 8px;
+}
+
+#stage-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.stage-btn {
+  width: 56px;
+  height: 56px;
+  border: 2px solid var(--accent2);
+  border-radius: 10px;
+  background: var(--bg-light);
+  color: var(--text);
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  transition: transform 0.1s;
+}
+
+.stage-btn:active {
+  transform: scale(0.93);
+}
+
+.stage-btn.locked {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.stage-btn .stage-stars {
+  font-size: 0.5rem;
+  color: var(--gold);
+  height: 10px;
+}
+
+/* Game HUD */
+#screen-game {
+  padding: 8px;
+  gap: 8px;
+}
+
+#game-hud {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 8px 4px;
+  font-size: 0.85rem;
+  gap: 8px;
+}
+
+#hud-stage {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+#hud-moves {
+  background: var(--accent2);
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+#hud-mission {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-align: right;
+  line-height: 1.3;
+}
+
+#game-canvas {
+  border-radius: 12px;
+  background: var(--bg-light);
+  touch-action: none;
+}
+
+#game-buttons {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+#game-buttons .btn-secondary {
+  flex: 1;
+  padding: 10px;
+  font-size: 0.9rem;
+  min-width: auto;
+}
+
+/* Result */
+#screen-result {
+  background: rgba(0, 0, 0, 0.7);
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+}
+
+#result-content {
+  background: var(--bg-light);
+  border-radius: 16px;
+  padding: 32px 24px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  min-width: 280px;
+}
+
+#result-title {
+  font-size: 1.6rem;
+}
+
+#result-stars {
+  font-size: 2rem;
+  letter-spacing: 8px;
+}
+
+#result-details {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+#result-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+#result-buttons .btn-primary,
+#result-buttons .btn-secondary {
+  width: 100%;
+  min-width: auto;
+}
+
+@media (max-height: 700px) {
+  :root { --cell-size: 40px; }
+  .title-logo { font-size: 2.4rem; }
+}
+
+@media (max-height: 600px) {
+  :root { --cell-size: 36px; }
+}
