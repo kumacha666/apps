@@ -146,8 +146,6 @@
     const directions = [
       [0, 1],
       [1, 0],
-      [1, 1],
-      [1, -1],
     ];
 
     for (let r = 0; r < ROWS; r++) {
@@ -179,8 +177,6 @@
     const directions = [
       [0, 1],
       [1, 0],
-      [1, 1],
-      [1, -1],
     ];
 
     for (let r = 0; r < ROWS; r++) {
