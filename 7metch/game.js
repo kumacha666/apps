@@ -3,8 +3,8 @@
 
   const COLS = 7;
   const ROWS = 8;
-  const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#a8e6cf"];
-  const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex"];
+  const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#a8e6cf", "#ff6bb3"];
+  const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross"];
   const MATCH_MIN = 3;
 
   const ANIM = {
@@ -65,7 +65,7 @@
     for (let i = 0; i < 50; i++) {
       const tier = Math.floor(i / 10);
       const moves = Math.max(10, 20 - tier * 2);
-      const colors = Math.min(6, 4 + Math.floor(i / 12));
+      const colors = Math.min(7, 5 + Math.floor(i / 10));
 
       if (i % 5 === 0 && i > 0) {
         const targetColor = i % colors;
@@ -696,6 +696,25 @@
           if (i === 0) ctx.moveTo(px, py);
           else ctx.lineTo(px, py);
         }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        break;
+      }
+      case "cross": {
+        const w = r * 0.38;
+        ctx.moveTo(cx - w, cy - r);
+        ctx.lineTo(cx + w, cy - r);
+        ctx.lineTo(cx + w, cy - w);
+        ctx.lineTo(cx + r, cy - w);
+        ctx.lineTo(cx + r, cy + w);
+        ctx.lineTo(cx + w, cy + w);
+        ctx.lineTo(cx + w, cy + r);
+        ctx.lineTo(cx - w, cy + r);
+        ctx.lineTo(cx - w, cy + w);
+        ctx.lineTo(cx - r, cy + w);
+        ctx.lineTo(cx - r, cy - w);
+        ctx.lineTo(cx - w, cy - w);
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
