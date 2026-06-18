@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>ナナメッチ — 斜めマッチパズル</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <h1>ナナメッチ</h1>
+      <div id="stage-info"></div>
+    </header>
+
+    <div id="screen-title" class="screen active">
+      <div class="title-logo">ナナメッチ</div>
+      <p class="title-sub">斜めに動かせる、じっくりマッチパズル</p>
+      <button id="btn-start" class="btn-primary">はじめる</button>
+      <button id="btn-stage-select" class="btn-secondary">ステージ選択</button>
+    </div>
+
+    <div id="screen-stage-select" class="screen">
+      <h2>ステージ選択</h2>
+      <div id="stage-grid"></div>
+      <button id="btn-back-title" class="btn-secondary">もどる</button>
+    </div>
+
+    <div id="screen-game" class="screen">
+      <div id="game-hud">
+        <div id="hud-stage"></div>
+        <div id="hud-moves"></div>
+        <div id="hud-mission"></div>
+      </div>
+      <canvas id="game-canvas"></canvas>
+      <div id="game-buttons">
+        <button id="btn-retry" class="btn-secondary">リトライ</button>
+        <button id="btn-quit" class="btn-secondary">やめる</button>
+      </div>
+    </div>
+
+    <div id="screen-result" class="screen">
+      <div id="result-content">
+        <h2 id="result-title"></h2>
+        <div id="result-stars"></div>
+        <div id="result-details"></div>
+        <div id="result-buttons">
+          <button id="btn-next" class="btn-primary">次のステージ</button>
+          <button id="btn-result-retry" class="btn-secondary">リトライ</button>
+          <button id="btn-result-stages" class="btn-secondary">ステージ選択</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js");
+    }
+  </script>
+</body>
+</html>
