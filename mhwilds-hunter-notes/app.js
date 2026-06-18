@@ -54,6 +54,20 @@ async function loadData() {
   if (mId) monsterData = await loadJSON(`data/monsters/${mId}.json`);
 }
 
+function getTopElements(monsterData, n) {
+  const el = monsterData.hitzone.element;
+  if (!el || el.length === 0) return [];
+  const avgByElement = {};
+  ELEMENT_ORDER.forEach((key) => {
+    const sum = el.reduce((acc, row) => acc + (row[key] || 0), 0);
+    avgByElement[key] = Math.round(sum / el.length);
+  });
+  return ELEMENT_ORDER
+    .filter((k) => avgByElement[k] > 0)
+    .sort((a, b) => avgByElement[b] - avgByElement[a])
+    .slice(0, n);
+}
+
 // === クエスト中モード ===
 function renderTactics() {
   const ol = $("#tactics-list");
@@ -82,8 +96,8 @@ function renderCautions() {
   });
 }
 
-function renderHitzoneTop3() {
-  const container = $("#hitzone-top3");
+function renderHitzoneSummary() {
+  const container = $("#hitzone-summary");
   container.innerHTML = "";
   if (!monsterData || !weaponData) return;
 
@@ -94,46 +108,65 @@ function renderHitzoneTop3() {
   const sorted = [...zones].sort((a, b) => b.value - a.value);
   const top3 = sorted.slice(0, 3);
 
-  const label = document.createElement("div");
-  label.style.cssText = "font-size:0.75rem;color:var(--text-muted);margin-bottom:0.2rem;";
-  label.textContent = `物理肉質（${TYPE_LABEL[type]}）TOP3`;
-  container.appendChild(label);
-
+  // 物理肉質TOP3
+  let html = `<div class="hitzone-label">${TYPE_LABEL[type]}肉質 TOP3</div>`;
   top3.forEach((z, i) => {
-    const row = document.createElement("div");
-    row.className = `hitzone-row rank-${i + 1}`;
-    row.innerHTML = `<span class="hitzone-part">${z.part}</span><span class="hitzone-value">${z.value}</span>`;
-    container.appendChild(row);
+    html += `<div class="hitzone-row rank-${i + 1}"><span class="hitzone-part">${z.part}</span><span class="hitzone-value">${z.value}</span></div>`;
   });
 
-  const btnShowAll = document.createElement("button");
-  btnShowAll.className = "show-all-btn";
-  btnShowAll.textContent = "全部位を表示";
-  container.appendChild(btnShowAll);
+  // 属性肉質TOP2
+  const topElements = getTopElements(monsterData, 2);
+  const elData = monsterData.hitzone.element;
 
-  const fullDiv = document.createElement("div");
-  fullDiv.className = "hitzone-full";
-  fullDiv.innerHTML = renderFullHitzoneTable();
-  container.appendChild(fullDiv);
-
-  btnShowAll.addEventListener("click", () => {
-    const isOpen = fullDiv.classList.toggle("open");
-    btnShowAll.textContent = isOpen ? "閉じる" : "全部位を表示";
+  topElements.forEach((elKey) => {
+    const elSorted = [...elData].sort((a, b) => (b[elKey] || 0) - (a[elKey] || 0));
+    const elTop3 = elSorted.slice(0, 3);
+    html += `<div class="hitzone-label element-${elKey}">${ELEMENT_LABEL[elKey]}属性 TOP3</div>`;
+    elTop3.forEach((z, i) => {
+      html += `<div class="hitzone-row rank-${i + 1}"><span class="hitzone-part">${z.part}</span><span class="hitzone-value">${z[elKey]}</span></div>`;
+    });
   });
+
+  container.innerHTML = html;
 }
 
 function renderFullHitzoneTable() {
-  const hz = monsterData.hitzone;
-  const parts = hz.slash.map((z) => z.part);
-  let html = "<table><thead><tr><th>部位</th><th>斬</th><th>打</th><th>弾</th></tr></thead><tbody>";
+  const wrapper = $("#hitzone-full-wrapper");
+  wrapper.innerHTML = "";
+  if (!monsterData || !weaponData) return;
+
+  const type = weaponData.type;
+  const topElements = getTopElements(monsterData, 2);
+  const parts = monsterData.hitzone[type].map((z) => z.part);
+
+  const btn = document.createElement("button");
+  btn.className = "show-all-btn";
+  btn.textContent = "全部位を表示";
+  wrapper.appendChild(btn);
+
+  const fullDiv = document.createElement("div");
+  fullDiv.className = "hitzone-full";
+
+  const cols = [TYPE_LABEL[type], ...topElements.map((k) => ELEMENT_LABEL[k])];
+  let tableHtml = `<table><thead><tr><th>部位</th>${cols.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>`;
+
   parts.forEach((p) => {
-    const s = hz.slash.find((z) => z.part === p)?.value ?? "-";
-    const b = hz.blunt.find((z) => z.part === p)?.value ?? "-";
-    const sh = hz.shot.find((z) => z.part === p)?.value ?? "-";
-    html += `<tr><td>${p}</td><td>${s}</td><td>${b}</td><td>${sh}</td></tr>`;
+    const phys = monsterData.hitzone[type].find((z) => z.part === p)?.value ?? "-";
+    const elCells = topElements.map((k) => {
+      const row = monsterData.hitzone.element.find((z) => z.part === p);
+      return row ? (row[k] ?? "-") : "-";
+    });
+    tableHtml += `<tr><td>${p}</td><td>${phys}</td>${elCells.map((v) => `<td>${v}</td>`).join("")}</tr>`;
   });
-  html += "</tbody></table>";
-  return html;
+
+  tableHtml += "</tbody></table>";
+  fullDiv.innerHTML = tableHtml;
+  wrapper.appendChild(fullDiv);
+
+  btn.addEventListener("click", () => {
+    const isOpen = fullDiv.classList.toggle("open");
+    btn.textContent = isOpen ? "閉じる" : "全部位を表示";
+  });
 }
 
 function renderWeaponExtra() {
@@ -149,10 +182,9 @@ function renderQuestScreen() {
   $("#quest-monster-name").textContent = monsterData?.name ?? "";
   renderTactics();
   renderCautions();
-  renderHitzoneTop3();
+  renderHitzoneSummary();
   renderWeaponExtra();
-  $("#extra-body").classList.remove("open");
-  $("#extra-toggle").textContent = "補足情報 ▼";
+  renderFullHitzoneTable();
 }
 
 // === 出発前モード ===
@@ -239,11 +271,5 @@ $("#btn-back-quest").addEventListener("click", () => showScreen("selector-screen
 $("#btn-back-prep").addEventListener("click", () => showScreen("selector-screen"));
 $("#btn-to-prep").addEventListener("click", async () => { await loadData(); renderPrepScreen(); showScreen("prep-screen"); });
 $("#btn-to-quest").addEventListener("click", async () => { await loadData(); renderQuestScreen(); showScreen("quest-screen"); });
-
-$("#extra-toggle").addEventListener("click", () => {
-  const body = $("#extra-body");
-  const isOpen = body.classList.toggle("open");
-  $("#extra-toggle").textContent = isOpen ? "補足情報 ▲" : "補足情報 ▼";
-});
 
 populateSelectors();

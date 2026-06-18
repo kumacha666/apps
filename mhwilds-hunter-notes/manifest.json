@@ -1,11 +1,11 @@
 {
-  "name": "MHWilds ハンターノート",
-  "short_name": "ハンターノート",
+  "name": "狩りカンペ - MHWilds",
+  "short_name": "狩りカンペ",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#1a1a2e",
   "theme_color": "#1a1a2e",
-  "description": "モンハンワイルズ 武器操作＆モンスター情報クイックリファレンス（非公式）",
+  "description": "モンハンワイルズ 武器カンペ＆モンスター情報（非公式）",
   "icons": [
     {
       "src": "icon-192.png",

@@ -116,14 +116,16 @@ html, body {
   content: "⚠"; position: absolute; left: 0; font-size: 0.7rem;
 }
 
-/* 補足（折りたたみ） */
-.collapsible-toggle {
-  cursor: pointer; user-select: none;
+/* 補足 */
+.hitzone-label {
+  font-size: 0.72rem; color: var(--text-muted); margin-top: 0.4rem; margin-bottom: 0.1rem; font-weight: 600;
 }
-.collapsible-body {
-  display: none; padding-top: 0.4rem;
-}
-.collapsible-body.open { display: block; }
+.hitzone-label:first-child { margin-top: 0; }
+.hitzone-label.element-fire { color: #e74c3c; }
+.hitzone-label.element-water { color: #3498db; }
+.hitzone-label.element-thunder { color: #f1c40f; }
+.hitzone-label.element-ice { color: #74b9ff; }
+.hitzone-label.element-dragon { color: #9b59b6; }
 
 .hitzone-row {
   display: flex; justify-content: space-between; align-items: center;

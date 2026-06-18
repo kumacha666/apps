@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>MHWilds ハンターノート</title>
+  <title>狩りカンペ - MHWilds</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#1a1a2e">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -16,8 +16,8 @@
     <!-- セレクター画面 -->
     <div id="selector-screen" class="screen active">
       <header>
-        <h1>ハンターノート</h1>
-        <p class="subtitle">MHWilds 非公式ファンツール</p>
+        <h1>狩りカンペ</h1>
+        <p class="subtitle">MHWilds 武器カンペ｜非公式ファンツール</p>
       </header>
       <div class="selector-group">
         <label for="weapon-select">武器種</label>
@@ -45,9 +45,9 @@
         <button class="btn-switch" id="btn-to-prep">出発前</button>
       </header>
       <div class="content">
-        <!-- 1. 戦略・戦術 -->
+        <!-- 1. 基本戦法 -->
         <section class="card" id="tactics-section">
-          <h2>戦略・戦術</h2>
+          <h2>基本戦法</h2>
           <ol id="tactics-list"></ol>
         </section>
         <!-- 2. 注意点 -->
@@ -55,13 +55,12 @@
           <h2>注意点</h2>
           <ul id="cautions-list"></ul>
         </section>
-        <!-- 3. 補足情報（タップ展開） -->
-        <section class="card collapsible" id="extra-section">
-          <h2 class="collapsible-toggle" id="extra-toggle">補足情報 ▼</h2>
-          <div class="collapsible-body" id="extra-body">
-            <div id="hitzone-top3"></div>
-            <div id="weapon-extra"></div>
-          </div>
+        <!-- 3. 補足情報 -->
+        <section class="card" id="extra-section">
+          <h2>補足情報</h2>
+          <div id="hitzone-summary"></div>
+          <div id="weapon-extra"></div>
+          <div id="hitzone-full-wrapper"></div>
         </section>
       </div>
     </div>
