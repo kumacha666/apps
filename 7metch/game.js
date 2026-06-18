@@ -766,19 +766,34 @@
     document.getElementById("hud-moves").textContent = `のこり ${movesLeft} 手`;
 
     const m = STAGES[currentStage].mission;
-    let progress = "";
+    document.getElementById("hud-mission-label").textContent = getMissionText(m);
+
+    let current = 0;
+    let target = 0;
     switch (m.type) {
       case "score":
-        progress = `${score} / ${m.target} 点`;
+        current = score;
+        target = m.target;
+        document.getElementById("hud-mission-progress").textContent = `${current} / ${target} 点`;
         break;
       case "clear":
-        progress = `${totalCleared} / ${m.count} 個`;
+        current = totalCleared;
+        target = m.count;
+        document.getElementById("hud-mission-progress").textContent = `${current} / ${target} 個`;
         break;
       case "color":
-        progress = `${colorCleared[m.colorIndex] || 0} / ${m.count} 個`;
+        current = colorCleared[m.colorIndex] || 0;
+        target = m.count;
+        document.getElementById("hud-mission-progress").textContent = `${current} / ${target} 個`;
         break;
     }
-    document.getElementById("hud-mission").textContent = `${getMissionText(m)}\n${progress}`;
+
+    const progressEl = document.getElementById("hud-mission-progress");
+    if (current >= target) {
+      progressEl.style.color = "#4ecdc4";
+    } else {
+      progressEl.style.color = "";
+    }
   }
 
   // --- Win/Lose ---
