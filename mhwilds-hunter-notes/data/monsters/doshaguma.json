@@ -1,7 +1,17 @@
 {
   "id": "doshaguma",
   "name": "ドシャグマ",
-  "category": "通常",
+  "cautions": [
+    {
+      "text": "怒り時は攻撃が激しくなる。無理に攻めず回避優先。"
+    },
+    {
+      "text": "突進は横回避。追撃が来ることがあるので1回で安心しない。"
+    },
+    {
+      "text": "叩きつけ後の隙が大きい。攻撃チャンス。"
+    }
+  ],
   "hitzone": {
     "slash": [
       { "part": "頭", "value": 65 },
@@ -26,19 +36,23 @@
       { "part": "前脚", "value": 40 },
       { "part": "後脚", "value": 30 },
       { "part": "尻尾", "value": 25 }
+    ],
+    "element": [
+      { "part": "頭", "fire": 20, "water": 5, "thunder": 15, "ice": 25, "dragon": 5 },
+      { "part": "首", "fire": 15, "water": 5, "thunder": 10, "ice": 20, "dragon": 5 },
+      { "part": "胴", "fire": 10, "water": 0, "thunder": 5, "ice": 15, "dragon": 0 },
+      { "part": "前脚", "fire": 15, "water": 5, "thunder": 10, "ice": 20, "dragon": 5 },
+      { "part": "後脚", "fire": 10, "water": 0, "thunder": 5, "ice": 15, "dragon": 0 },
+      { "part": "尻尾", "fire": 10, "water": 0, "thunder": 5, "ice": 15, "dragon": 0 }
     ]
   },
-  "element_weakness": {
-    "fire": 20,
-    "water": 5,
-    "thunder": 15,
-    "ice": 25,
-    "dragon": 5
-  },
-  "weakness_rank": ["氷", "火", "雷"],
-  "capturable": true,
-  "pitfall_trap": true,
-  "shock_trap": true,
-  "flash_effective": true,
-  "notes": "怒り時は攻撃が激しくなる。前脚と頭が弱点"
+  "element_weakness": ["氷", "火", "雷"],
+  "prep": {
+    "required_skills": [],
+    "capturable": true,
+    "pitfall_trap": true,
+    "shock_trap": true,
+    "flash_effective": true,
+    "notes": "怒り時の突進に注意。それ以外は攻撃チャンスが多い。"
+  }
 }

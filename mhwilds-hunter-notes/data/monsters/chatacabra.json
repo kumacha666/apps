@@ -1,7 +1,17 @@
 {
   "id": "chatacabra",
   "name": "チャタカブラ",
-  "category": "通常",
+  "cautions": [
+    {
+      "text": "岩を纏うと肉質が硬化する。頭を集中攻撃して岩を破壊する。"
+    },
+    {
+      "text": "転がり攻撃は横に回避する。"
+    },
+    {
+      "text": "ボディプレス後に隙があるので攻撃チャンス。"
+    }
+  ],
   "hitzone": {
     "slash": [
       { "part": "頭", "value": 80 },
@@ -23,19 +33,22 @@
       { "part": "前脚", "value": 35 },
       { "part": "後脚", "value": 30 },
       { "part": "尻尾", "value": 40 }
+    ],
+    "element": [
+      { "part": "頭", "fire": 0, "water": 30, "thunder": 10, "ice": 20, "dragon": 5 },
+      { "part": "背中", "fire": 0, "water": 15, "thunder": 5, "ice": 10, "dragon": 0 },
+      { "part": "前脚", "fire": 0, "water": 20, "thunder": 10, "ice": 15, "dragon": 5 },
+      { "part": "後脚", "fire": 0, "water": 20, "thunder": 10, "ice": 15, "dragon": 5 },
+      { "part": "尻尾", "fire": 0, "water": 25, "thunder": 10, "ice": 15, "dragon": 5 }
     ]
   },
-  "element_weakness": {
-    "fire": 0,
-    "water": 25,
-    "thunder": 10,
-    "ice": 20,
-    "dragon": 5
-  },
-  "weakness_rank": ["水", "氷", "雷"],
-  "capturable": true,
-  "pitfall_trap": true,
-  "shock_trap": true,
-  "flash_effective": true,
-  "notes": "序盤モンスター。岩を纏うと肉質が硬化するので、頭を狙って岩を破壊する"
+  "element_weakness": ["水", "氷", "雷"],
+  "prep": {
+    "required_skills": [],
+    "capturable": true,
+    "pitfall_trap": true,
+    "shock_trap": true,
+    "flash_effective": true,
+    "notes": "序盤モンスター。特別な対策は不要。"
+  }
 }

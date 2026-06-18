@@ -19,21 +19,14 @@
         <h1>ハンターノート</h1>
         <p class="subtitle">MHWilds 非公式ファンツール</p>
       </header>
-
       <div class="selector-group">
         <label for="weapon-select">武器種</label>
-        <select id="weapon-select">
-          <option value="">— 選択 —</option>
-        </select>
+        <select id="weapon-select"><option value="">— 選択 —</option></select>
       </div>
-
       <div class="selector-group">
         <label for="monster-select">モンスター</label>
-        <select id="monster-select">
-          <option value="">— 選択 —</option>
-        </select>
+        <select id="monster-select"><option value="">— 選択 —</option></select>
       </div>
-
       <div class="mode-buttons">
         <button id="btn-quest" class="btn btn-primary" disabled>クエスト中モード</button>
         <button id="btn-prep" class="btn btn-secondary" disabled>出発前モード</button>
@@ -51,45 +44,24 @@
         </div>
         <button class="btn-switch" id="btn-to-prep">出発前</button>
       </header>
-
-      <div id="quest-content" class="content">
-        <!-- 肉質テーブル -->
-        <section class="card" id="hitzone-section">
-          <h2>肉質（<span id="hitzone-type-label"></span>）</h2>
-          <table id="hitzone-table">
-            <thead><tr><th>部位</th><th>値</th></tr></thead>
-            <tbody></tbody>
-          </table>
+      <div class="content">
+        <!-- 1. 戦略・戦術 -->
+        <section class="card" id="tactics-section">
+          <h2>戦略・戦術</h2>
+          <ol id="tactics-list"></ol>
         </section>
-
-        <!-- コンボ -->
-        <section class="card" id="combo-section">
-          <h2>主要コンボ</h2>
-          <div id="combo-list"></div>
+        <!-- 2. 注意点 -->
+        <section class="card" id="cautions-section">
+          <h2>注意点</h2>
+          <ul id="cautions-list"></ul>
         </section>
-
-        <!-- カウンター -->
-        <section class="card" id="counter-section">
-          <h2>カウンター / 回避</h2>
-          <div id="counter-info"></div>
-        </section>
-
-        <!-- リソース管理 -->
-        <section class="card" id="resource-section">
-          <h2>リソース管理</h2>
-          <div id="resource-info"></div>
-        </section>
-
-        <!-- 集中モード -->
-        <section class="card" id="focus-section">
-          <h2>集中モード</h2>
-          <div id="focus-info"></div>
-        </section>
-
-        <!-- モンスター注意点 -->
-        <section class="card" id="monster-notes-section">
-          <h2>モンスターメモ</h2>
-          <p id="monster-notes-text"></p>
+        <!-- 3. 補足情報（タップ展開） -->
+        <section class="card collapsible" id="extra-section">
+          <h2 class="collapsible-toggle" id="extra-toggle">補足情報 ▼</h2>
+          <div class="collapsible-body" id="extra-body">
+            <div id="hitzone-top3"></div>
+            <div id="weapon-extra"></div>
+          </div>
         </section>
       </div>
     </div>
@@ -105,30 +77,22 @@
         </div>
         <button class="btn-switch" id="btn-to-quest">クエスト中</button>
       </header>
-
-      <div id="prep-content" class="content">
-        <!-- 属性弱点 -->
-        <section class="card" id="element-section">
+      <div class="content">
+        <section class="card">
           <h2>属性弱点</h2>
           <div id="element-weakness"></div>
         </section>
-
-        <!-- 必須スキル -->
-        <section class="card" id="required-skills-section">
-          <h2>必須スキル（モンスター対策）</h2>
+        <section class="card">
+          <h2>必須スキル</h2>
           <div id="required-skills"></div>
         </section>
-
-        <!-- 罠・アイテム情報 -->
-        <section class="card" id="trap-section">
+        <section class="card">
           <h2>罠・アイテム情報</h2>
           <div id="trap-info"></div>
         </section>
-
-        <!-- モンスター注意点 -->
-        <section class="card" id="prep-notes-section">
+        <section class="card">
           <h2>メモ</h2>
-          <p id="prep-notes-text"></p>
+          <p id="prep-notes"></p>
         </section>
       </div>
     </div>
