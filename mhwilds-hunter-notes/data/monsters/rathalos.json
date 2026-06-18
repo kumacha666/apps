@@ -1,7 +1,17 @@
 {
   "id": "rathalos",
   "name": "リオレウス",
-  "category": "強敵",
+  "cautions": [
+    {
+      "text": "空中に居ると手に負えないのでスリンガー閃光弾で落とす。"
+    },
+    {
+      "text": "火やられ対策はしておく。"
+    },
+    {
+      "text": "尻尾回転の2回や炎ブレスの3回などわかりやすい決まった攻撃パターンにはうまく反撃を入れる。"
+    }
+  ],
   "hitzone": {
     "slash": [
       { "part": "頭", "value": 65 },
@@ -26,20 +36,23 @@
       { "part": "翼", "value": 40 },
       { "part": "脚", "value": 30 },
       { "part": "尻尾", "value": 35 }
+    ],
+    "element": [
+      { "part": "頭", "fire": 0, "water": 15, "thunder": 25, "ice": 15, "dragon": 30 },
+      { "part": "首", "fire": 0, "water": 10, "thunder": 15, "ice": 10, "dragon": 20 },
+      { "part": "胴", "fire": 0, "water": 5, "thunder": 10, "ice": 5, "dragon": 15 },
+      { "part": "翼", "fire": 0, "water": 15, "thunder": 20, "ice": 15, "dragon": 25 },
+      { "part": "脚", "fire": 0, "water": 10, "thunder": 15, "ice": 10, "dragon": 20 },
+      { "part": "尻尾", "fire": 0, "water": 10, "thunder": 15, "ice": 10, "dragon": 20 }
     ]
   },
-  "element_weakness": {
-    "fire": 0,
-    "water": 15,
-    "thunder": 20,
-    "ice": 15,
-    "dragon": 30
-  },
-  "weakness_rank": ["龍", "雷", "水/氷"],
-  "capturable": true,
-  "pitfall_trap": true,
-  "shock_trap": true,
-  "flash_effective": true,
-  "required_skills": ["毒耐性", "火耐性"],
-  "notes": "空中からの攻撃が厄介。閃光で落とせる。毒ブレスに注意"
+  "element_weakness": ["龍", "雷", "水"],
+  "prep": {
+    "required_skills": ["火耐性", "毒耐性"],
+    "capturable": true,
+    "pitfall_trap": true,
+    "shock_trap": true,
+    "flash_effective": true,
+    "notes": "閃光弾は必須。空中からの毒爪攻撃に注意。"
+  }
 }
