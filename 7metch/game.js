@@ -7,11 +7,15 @@
   const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex"];
   const MATCH_MIN = 3;
 
-  const DIR8 = [
-    [-1, -1], [-1, 0], [-1, 1],
-    [0, -1],           [0, 1],
-    [1, -1],  [1, 0],  [1, 1],
-  ];
+  const ANIM = {
+    CLEAR_FRAMES: 14,
+    CLEAR_FRAME_MS: 35,
+    DROP_SPEED: 0.12,
+    DROP_FRAME_MS: 16,
+    CHAIN_PAUSE_MS: 300,
+    SWAP_FRAMES: 8,
+    SWAP_FRAME_MS: 20,
+  };
 
   const STAGES = buildStages();
 
@@ -60,8 +64,8 @@
     const stages = [];
     for (let i = 0; i < 50; i++) {
       const tier = Math.floor(i / 10);
-      const moves = Math.max(15, 30 - tier * 3);
-      const colors = Math.min(6, 4 + Math.floor(i / 15));
+      const moves = Math.max(10, 20 - tier * 2);
+      const colors = Math.min(6, 4 + Math.floor(i / 12));
 
       if (i % 5 === 0 && i > 0) {
         const targetColor = i % colors;
@@ -69,27 +73,27 @@
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "color", colorIndex: targetColor, count: 20 + tier * 8 },
-          star2moves: Math.floor(moves * 0.7),
-          star3moves: Math.floor(moves * 0.45),
+          mission: { type: "color", colorIndex: targetColor, count: 25 + tier * 10 },
+          star2moves: Math.floor(moves * 0.6),
+          star3moves: Math.floor(moves * 0.35),
         });
       } else if (i % 3 === 0) {
         stages.push({
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "score", target: 800 + i * 120 },
-          star2moves: Math.floor(moves * 0.7),
-          star3moves: Math.floor(moves * 0.45),
+          mission: { type: "score", target: 1200 + i * 200 },
+          star2moves: Math.floor(moves * 0.6),
+          star3moves: Math.floor(moves * 0.35),
         });
       } else {
         stages.push({
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "clear", count: 30 + i * 3 },
-          star2moves: Math.floor(moves * 0.7),
-          star3moves: Math.floor(moves * 0.45),
+          mission: { type: "clear", count: 40 + i * 4 },
+          star2moves: Math.floor(moves * 0.6),
+          star3moves: Math.floor(moves * 0.35),
         });
       }
     }
@@ -110,13 +114,13 @@
     for (let r = 0; r < ROWS; r++) {
       board[r] = [];
       for (let c = 0; c < COLS; c++) {
-        board[r][c] = randomPiece(numColors, r, c);
+        board[r][c] = randomPiece(numColors);
       }
     }
     while (findAllMatches().length > 0) {
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
-          board[r][c] = randomPiece(numColors, r, c);
+          board[r][c] = randomPiece(numColors);
         }
       }
     }
@@ -254,10 +258,11 @@
     return extra;
   }
 
-  // --- Gravity & Fill ---
-  function applyGravity() {
+  // --- Gravity & Fill (data only, no animation) ---
+  function applyGravityData() {
     const numColors = STAGES[currentStage].colors;
-    let fell = false;
+    const fallMap = [];
+
     for (let c = 0; c < COLS; c++) {
       let writeRow = ROWS - 1;
       for (let r = ROWS - 1; r >= 0; r--) {
@@ -265,17 +270,19 @@
           if (r !== writeRow) {
             board[writeRow][c] = board[r][c];
             board[r][c] = null;
-            fell = true;
+            fallMap.push({ c, fromR: r, toR: writeRow, piece: board[writeRow][c] });
           }
           writeRow--;
         }
       }
+      let newPieceOffset = 0;
       for (let r = writeRow; r >= 0; r--) {
         board[r][c] = randomPiece(numColors);
-        fell = true;
+        newPieceOffset++;
+        fallMap.push({ c, fromR: -newPieceOffset, toR: r, piece: board[r][c], isNew: true });
       }
     }
-    return fell;
+    return fallMap;
   }
 
   // --- Swap ---
@@ -295,18 +302,21 @@
     if (animating) return;
     animating = true;
 
+    await animateSwap(r1, c1, r2, c2);
     swapPieces(r1, c1, r2, c2);
 
     const matches = findAllMatches();
     if (matches.length === 0) {
+      await animateSwap(r2, c2, r1, c1);
       swapPieces(r1, c1, r2, c2);
-      await flashInvalid(r1, c1, r2, c2);
       animating = false;
+      drawBoard();
       return;
     }
 
     movesLeft--;
     chainCount = 0;
+    updateHUD();
 
     await resolveBoard();
 
@@ -350,7 +360,15 @@
       const points = clearList.length * 10 * chainCount;
       score += points;
 
+      if (chainCount > 1) {
+        await showChainLabel(chainCount);
+      }
+
       await animateClear(clearList);
+
+      clearList.forEach(([r, c]) => {
+        board[r][c] = null;
+      });
 
       specials.forEach((sp) => {
         if (board[sp.r] && board[sp.r][sp.c] === null) {
@@ -360,41 +378,191 @@
         }
       });
 
-      applyGravity();
-      await animateDrop();
+      const fallMap = applyGravityData();
+      await animateDrop(fallMap);
+
+      updateHUD();
+
+      await sleep(ANIM.CHAIN_PAUSE_MS);
 
       matches = findAllMatches();
     }
   }
 
   // --- Animations ---
+  async function animateSwap(r1, c1, r2, c2) {
+    const frames = ANIM.SWAP_FRAMES;
+    const p1 = board[r1][c1];
+    const p2 = board[r2][c2];
+
+    for (let f = 1; f <= frames; f++) {
+      const t = f / frames;
+      const ease = t * t * (3 - 2 * t);
+
+      drawBoardBase();
+
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if ((r === r1 && c === c1) || (r === r2 && c === c2)) continue;
+          if (board[r][c]) {
+            drawPieceAt(board[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
+          }
+        }
+      }
+
+      if (p1) {
+        const x = (c1 + (c2 - c1) * ease) * cellSize + cellSize / 2;
+        const y = (r1 + (r2 - r1) * ease) * cellSize + cellSize / 2;
+        drawPieceAt(p1, x, y);
+      }
+      if (p2) {
+        const x = (c2 + (c1 - c2) * ease) * cellSize + cellSize / 2;
+        const y = (r2 + (r1 - r2) * ease) * cellSize + cellSize / 2;
+        drawPieceAt(p2, x, y);
+      }
+
+      await sleep(ANIM.SWAP_FRAME_MS);
+    }
+  }
+
   async function animateClear(cells) {
-    for (let frame = 0; frame < 6; frame++) {
+    const cellColors = cells.map(([r, c]) => board[r][c] ? PIECE_COLORS[board[r][c].color] : "#fff");
+    const totalFrames = ANIM.CLEAR_FRAMES;
+
+    for (let frame = 0; frame < totalFrames; frame++) {
+      const t = frame / totalFrames;
       drawBoard();
       ctx.save();
-      const alpha = 1 - frame / 6;
-      const scale = 1 + frame * 0.1;
-      cells.forEach(([r, c]) => {
+
+      cells.forEach(([r, c], idx) => {
         const x = c * cellSize + cellSize / 2;
         const y = r * cellSize + cellSize / 2;
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = "#fff";
-        ctx.beginPath();
-        ctx.arc(x, y, (cellSize / 2 - 2) * scale, 0, Math.PI * 2);
-        ctx.fill();
+        const baseR = cellSize / 2 - 2;
+
+        if (t < 0.4) {
+          const flashT = t / 0.4;
+          ctx.globalAlpha = 0.7 * (1 - flashT) + 0.3;
+          ctx.fillStyle = "#fff";
+          ctx.beginPath();
+          ctx.arc(x, y, baseR * (1 + flashT * 0.15), 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        if (t >= 0.3) {
+          const shrinkT = (t - 0.3) / 0.7;
+          const ease = 1 - (1 - shrinkT) * (1 - shrinkT);
+          const scale = 1 - ease;
+          const alpha = 1 - ease;
+
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = cellColors[idx];
+          ctx.beginPath();
+          ctx.arc(x, y, baseR * scale, 0, Math.PI * 2);
+          ctx.fill();
+
+          const numParticles = 4;
+          for (let p = 0; p < numParticles; p++) {
+            const angle = (p / numParticles) * Math.PI * 2 + idx * 0.5;
+            const dist = baseR * 0.5 + ease * cellSize * 0.6;
+            const px = x + Math.cos(angle) * dist;
+            const py = y + Math.sin(angle) * dist;
+            const pSize = baseR * 0.2 * (1 - ease);
+            ctx.globalAlpha = alpha * 0.8;
+            ctx.fillStyle = cellColors[idx];
+            ctx.beginPath();
+            ctx.arc(px, py, pSize, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
       });
+
       ctx.restore();
-      await sleep(30);
+      await sleep(ANIM.CLEAR_FRAME_MS);
     }
-    cells.forEach(([r, c]) => {
-      board[r][c] = null;
-    });
+  }
+
+  async function animateDrop(fallMap) {
+    if (fallMap.length === 0) {
+      drawBoard();
+      return;
+    }
+
+    const maxDist = Math.max(...fallMap.map((f) => f.toR - f.fromR));
+    const totalFrames = Math.ceil(maxDist / ANIM.DROP_SPEED);
+
+    const frozen = [];
+    for (let r = 0; r < ROWS; r++) {
+      frozen[r] = [];
+      for (let c = 0; c < COLS; c++) {
+        frozen[r][c] = board[r][c];
+      }
+    }
+
+    const fallingCols = new Set(fallMap.map((f) => f.c));
+
+    for (let frame = 0; frame <= totalFrames; frame++) {
+      const t = Math.min(frame / totalFrames, 1);
+      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+      drawBoardBase();
+
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (fallingCols.has(c)) continue;
+          if (frozen[r][c]) {
+            drawPieceAt(frozen[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
+          }
+        }
+      }
+
+      for (const fall of fallMap) {
+        const currentR = fall.fromR + (fall.toR - fall.fromR) * ease;
+        const x = fall.c * cellSize + cellSize / 2;
+        const y = currentR * cellSize + cellSize / 2;
+
+        if (y + cellSize / 2 > 0) {
+          drawPieceAt(fall.piece, x, y);
+        }
+      }
+
+      if (frame < totalFrames) {
+        await sleep(ANIM.DROP_FRAME_MS);
+      }
+    }
+
     drawBoard();
   }
 
-  async function animateDrop() {
-    drawBoard();
-    await sleep(80);
+  async function showChainLabel(chain) {
+    const label = `${chain} Chain!`;
+    const totalFrames = 20;
+
+    for (let f = 0; f < totalFrames; f++) {
+      drawBoard();
+      ctx.save();
+
+      const t = f / totalFrames;
+      const yOffset = -t * cellSize * 0.5;
+      const alpha = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
+      const scale = t < 0.2 ? 0.5 + (t / 0.2) * 0.5 : 1;
+
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = "#ffd700";
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 3;
+      ctx.font = `bold ${cellSize * 0.7 * scale}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      const x = boardPixelW / 2;
+      const y = boardPixelH / 2 + yOffset;
+
+      ctx.strokeText(label, x, y);
+      ctx.fillText(label, x, y);
+
+      ctx.restore();
+      await sleep(25);
+    }
   }
 
   async function flashInvalid(r1, c1, r2, c2) {
@@ -418,9 +586,8 @@
   }
 
   // --- Drawing ---
-  function drawBoard(overlay) {
+  function drawBoardBase() {
     ctx.clearRect(0, 0, boardPixelW, boardPixelH);
-
     ctx.fillStyle = "#16213e";
     ctx.fillRect(0, 0, boardPixelW, boardPixelH);
 
@@ -428,32 +595,45 @@
       for (let c = 0; c < COLS; c++) {
         const x = c * cellSize;
         const y = r * cellSize;
-
         ctx.fillStyle = (r + c) % 2 === 0 ? "#1a2744" : "#1e2d50";
         ctx.fillRect(x, y, cellSize, cellSize);
+      }
+    }
+  }
 
+  function drawPieceAt(piece, cx, cy) {
+    if (!piece) return;
+    const radius = cellSize / 2 - 4;
+
+    ctx.fillStyle = PIECE_COLORS[piece.color];
+    ctx.strokeStyle = "rgba(255,255,255,0.15)";
+    ctx.lineWidth = 1;
+
+    drawShape(ctx, PIECE_SHAPES[piece.color], cx, cy, radius);
+
+    if (piece.special) {
+      drawSpecialIndicator(ctx, piece.special, cx, cy, radius);
+    }
+  }
+
+  function drawBoard(overlay) {
+    drawBoardBase();
+
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
         const piece = board[r][c];
         if (!piece) continue;
 
-        const cx = x + cellSize / 2;
-        const cy = y + cellSize / 2;
-        const radius = cellSize / 2 - 4;
+        const cx = c * cellSize + cellSize / 2;
+        const cy = r * cellSize + cellSize / 2;
 
-        ctx.fillStyle = PIECE_COLORS[piece.color];
-        ctx.strokeStyle = "rgba(255,255,255,0.15)";
-        ctx.lineWidth = 1;
-
-        drawShape(ctx, PIECE_SHAPES[piece.color], cx, cy, radius);
-
-        if (piece.special) {
-          drawSpecialIndicator(ctx, piece.special, cx, cy, radius);
-        }
+        drawPieceAt(piece, cx, cy);
 
         if (selected && selected.r === r && selected.c === c) {
           ctx.save();
           ctx.strokeStyle = "#fff";
           ctx.lineWidth = 3;
-          ctx.strokeRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
+          ctx.strokeRect(c * cellSize + 2, r * cellSize + 2, cellSize - 4, cellSize - 4);
           ctx.restore();
         }
       }
