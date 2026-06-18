@@ -114,11 +114,14 @@ function renderHitzoneTable() {
     elMax[k] = { first: vals[0] || 0, second: vals[1] || 0 };
   });
 
-  // ヘッダー: 物理 + 属性（属性名に色付き）
+  const showExtract = weaponData.id === "insect-glaive" && monsterData.insect_extract;
+
+  // ヘッダー: 物理 + 属性（属性名に色付き） + エキス
   const elHeaders = topElements.map((k) =>
     `<th style="color:${ELEMENT_COLOR[k]}">${ELEMENT_LABEL[k]}</th>`
   ).join("");
-  let html = `<table class="hitzone-table"><thead><tr><th>部位</th><th>${TYPE_LABEL[type]}</th>${elHeaders}</tr></thead><tbody>`;
+  const extractHeader = showExtract ? '<th class="extract-header">エキス</th>' : "";
+  let html = `<table class="hitzone-table"><thead><tr><th>部位</th><th>${TYPE_LABEL[type]}</th>${elHeaders}${extractHeader}</tr></thead><tbody>`;
 
   parts.forEach((p) => {
     const physVal = monsterData.hitzone[type].find((z) => z.part === p)?.value ?? 0;
@@ -133,7 +136,11 @@ function renderHitzoneTable() {
       return `<td${cls ? ` class="${cls}"` : ""}>${val}</td>`;
     }).join("");
 
-    html += `<tr><td>${p}</td><td${physClass}>${physVal}</td>${elCells}</tr>`;
+    const extractCell = showExtract
+      ? `<td class="extract-${monsterData.insect_extract[p] || ""}">${monsterData.insect_extract[p] || "-"}</td>`
+      : "";
+
+    html += `<tr><td>${p}</td><td${physClass}>${physVal}</td>${elCells}${extractCell}</tr>`;
   });
 
   html += "</tbody></table>";
@@ -144,6 +151,7 @@ function renderWeaponExtra() {
   const container = $("#weapon-extra");
   container.innerHTML = "";
   if (!weaponData || !weaponData.extra) return;
+  if (weaponData.id === "insect-glaive" && monsterData?.insect_extract) return;
   const e = weaponData.extra;
   container.innerHTML = `<div class="extra-note"><span class="extra-label">${e.label}：</span>${e.note}</div>`;
 }
