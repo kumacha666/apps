@@ -232,6 +232,19 @@ function renderUtilitySkills() {
   renderSkillList($("#utility-skills"), weaponData?.skills?.utility);
 }
 
+function renderMantle() {
+  const section = $("#mantle-section");
+  const container = $("#mantle-info");
+  if (!weaponData?.mantle) {
+    section.style.display = "none";
+    return;
+  }
+  section.style.display = "";
+  $("#mantle-title").innerHTML = `<span class="header-weapon">${weaponData.name}</span>のおすすめ装衣`;
+  const m = weaponData.mantle;
+  container.innerHTML = `<div class="skill-item"><span class="skill-name">${m.name}</span>${m.note ? `<span class="skill-note">${m.note}</span>` : ""}</div>`;
+}
+
 function renderTrapInfo() {
   if (!monsterData?.prep) return;
   const p = monsterData.prep;
@@ -253,6 +266,7 @@ function renderPrepScreen() {
   renderCountermeasures();
   renderAttackSkills();
   renderUtilitySkills();
+  renderMantle();
   renderTrapInfo();
   $("#prep-notes").textContent = monsterData?.prep?.notes ?? "";
 }
