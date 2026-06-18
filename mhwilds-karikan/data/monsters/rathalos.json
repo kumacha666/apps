@@ -17,40 +17,32 @@
       { "part": "頭", "value": 65 },
       { "part": "首", "value": 35 },
       { "part": "胴", "value": 25 },
-      { "part": "左翼", "value": 55 },
-      { "part": "右翼", "value": 55 },
-      { "part": "左脚", "value": 45 },
-      { "part": "右脚", "value": 45 },
+      { "part": "翼", "value": 55 },
+      { "part": "脚", "value": 45 },
       { "part": "尻尾", "value": 45 }
     ],
     "blunt": [
       { "part": "頭", "value": 70 },
       { "part": "首", "value": 40 },
       { "part": "胴", "value": 25 },
-      { "part": "左翼", "value": 50 },
-      { "part": "右翼", "value": 50 },
-      { "part": "左脚", "value": 45 },
-      { "part": "右脚", "value": 45 },
+      { "part": "翼", "value": 50 },
+      { "part": "脚", "value": 45 },
       { "part": "尻尾", "value": 40 }
     ],
     "shot": [
       { "part": "頭", "value": 60 },
       { "part": "首", "value": 30 },
       { "part": "胴", "value": 20 },
-      { "part": "左翼", "value": 40 },
-      { "part": "右翼", "value": 40 },
-      { "part": "左脚", "value": 30 },
-      { "part": "右脚", "value": 30 },
+      { "part": "翼", "value": 40 },
+      { "part": "脚", "value": 30 },
       { "part": "尻尾", "value": 35 }
     ],
     "element": [
       { "part": "頭", "fire": 0, "water": 15, "thunder": 20, "ice": 15, "dragon": 30 },
       { "part": "首", "fire": 0, "water": 5, "thunder": 10, "ice": 5, "dragon": 20 },
       { "part": "胴", "fire": 0, "water": 5, "thunder": 10, "ice": 5, "dragon": 20 },
-      { "part": "左翼", "fire": 0, "water": 10, "thunder": 15, "ice": 10, "dragon": 25 },
-      { "part": "右翼", "fire": 0, "water": 10, "thunder": 15, "ice": 10, "dragon": 25 },
-      { "part": "左脚", "fire": 0, "water": 0, "thunder": 5, "ice": 0, "dragon": 15 },
-      { "part": "右脚", "fire": 0, "water": 0, "thunder": 5, "ice": 0, "dragon": 15 },
+      { "part": "翼", "fire": 0, "water": 10, "thunder": 15, "ice": 10, "dragon": 25 },
+      { "part": "脚", "fire": 0, "water": 0, "thunder": 5, "ice": 0, "dragon": 15 },
       { "part": "尻尾", "fire": 0, "water": 5, "thunder": 10, "ice": 5, "dragon": 20 }
     ]
   },
@@ -59,10 +51,8 @@
     "頭": "赤",
     "首": "赤",
     "胴": "橙",
-    "左翼": "白",
-    "右翼": "白",
-    "左脚": "橙",
-    "右脚": "橙",
+    "翼": "白",
+    "脚": "橙",
     "尻尾": "緑"
   },
   "prep": {
