@@ -21,6 +21,12 @@
       <p class="title-sub">斜めに動かせる、じっくりマッチパズル</p>
       <button id="btn-start" class="btn-primary">はじめる</button>
       <button id="btn-stage-select" class="btn-secondary">ステージ選択</button>
+      <div id="version-info">v0.4.0</div>
+    </div>
+
+    <div id="update-toast" class="hidden">
+      新しいバージョンがあります
+      <button id="btn-update">更新する</button>
     </div>
 
     <div id="screen-stage-select" class="screen">
@@ -59,7 +65,20 @@
   <script src="game.js"></script>
   <script>
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("sw.js");
+      navigator.serviceWorker.register("sw.js").then((reg) => {
+        reg.addEventListener("updatefound", () => {
+          const newSW = reg.installing;
+          newSW.addEventListener("statechange", () => {
+            if (newSW.state === "activated" && navigator.serviceWorker.controller) {
+              const toast = document.getElementById("update-toast");
+              toast.classList.remove("hidden");
+              document.getElementById("btn-update").addEventListener("click", () => {
+                location.reload();
+              });
+            }
+          });
+        });
+      });
     }
   </script>
 </body>
