@@ -125,6 +125,8 @@ html, body {
 .hitzone-table .phys-weak { color: var(--accent); font-weight: 700; }
 .hitzone-table .el-rank1 { color: var(--highlight); font-weight: 700; }
 .hitzone-table .el-rank2 { color: var(--green); font-weight: 600; }
+.hitzone-hint { font-size: 0.7rem; color: var(--text-muted); margin-top: 0.3rem; }
+.hitzone-hint .phys-weak { color: var(--accent); font-weight: 700; }
 .extract-header { color: var(--green) !important; }
 .extract-赤 { color: #e74c3c; font-weight: 700; }
 .extract-白 { color: #ffffff; font-weight: 700; }
