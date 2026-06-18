@@ -60,7 +60,11 @@
     "capturable": true,
     "pitfall_trap": true,
     "shock_trap": true,
+    "countermeasures": [
+      { "name": "火耐性", "note": "食事込みで20確保が目安" },
+      { "name": "耳栓2", "note": "操虫棍はエキス三色で1相当のため耳栓1でも可" }
+    ],
     "flash_effective": true,
-    "notes": "閃光弾は必須。空中からの毒爪攻撃に注意。"
+    "notes": "閃光弾は必須。毒爪は空中時のみなので毒対策は優先度低め。"
   }
 }

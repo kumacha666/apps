@@ -152,6 +152,11 @@ html, body {
 .element-bar-fill.dragon { background: #9b59b6; }
 .element-value { width: 1.8rem; font-size: 0.8rem; font-weight: 600; text-align: right; flex-shrink: 0; }
 
+.skill-list { display: flex; flex-direction: column; gap: 0.25rem; }
+.skill-item { display: flex; align-items: baseline; gap: 0.4rem; font-size: 0.82rem; }
+.skill-name { font-weight: 600; white-space: nowrap; }
+.skill-note { color: var(--text-muted); font-size: 0.72rem; }
+
 .skill-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .skill-tag {
   background: var(--accent); color: white;

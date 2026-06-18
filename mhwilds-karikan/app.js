@@ -207,14 +207,29 @@ function renderElementWeakness() {
   }
 }
 
-function renderRequiredSkills() {
-  const container = $("#required-skills");
-  const skills = monsterData?.prep?.required_skills;
+function renderSkillList(container, skills) {
   if (!skills || skills.length === 0) {
     container.innerHTML = '<span class="no-data">特になし</span>';
     return;
   }
-  container.innerHTML = `<div class="skill-tags">${skills.map((s) => `<span class="skill-tag">${s}</span>`).join("")}</div>`;
+  container.innerHTML = `<div class="skill-list">${skills.map((s) =>
+    `<div class="skill-item"><span class="skill-name">${s.name}</span>${s.note ? `<span class="skill-note">${s.note}</span>` : ""}</div>`
+  ).join("")}</div>`;
+}
+
+function renderCountermeasures() {
+  $("#countermeasure-title").innerHTML = `<span class="header-monster">${monsterData.name}</span>の対策スキル`;
+  renderSkillList($("#countermeasure-skills"), monsterData?.prep?.countermeasures);
+}
+
+function renderAttackSkills() {
+  $("#attack-skills-title").innerHTML = `<span class="header-weapon">${weaponData.name}</span>の汎用攻撃スキル`;
+  renderSkillList($("#attack-skills"), weaponData?.skills?.attack);
+}
+
+function renderUtilitySkills() {
+  $("#utility-skills-title").innerHTML = `<span class="header-weapon">${weaponData.name}</span>のあると便利なスキル`;
+  renderSkillList($("#utility-skills"), weaponData?.skills?.utility);
 }
 
 function renderTrapInfo() {
@@ -235,7 +250,9 @@ function renderPrepScreen() {
   $("#prep-weapon-name").textContent = weaponData?.name ?? "";
   $("#prep-monster-name").textContent = monsterData?.name ?? "";
   renderElementWeakness();
-  renderRequiredSkills();
+  renderCountermeasures();
+  renderAttackSkills();
+  renderUtilitySkills();
   renderTrapInfo();
   $("#prep-notes").textContent = monsterData?.prep?.notes ?? "";
 }
