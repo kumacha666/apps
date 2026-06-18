@@ -144,6 +144,7 @@ function renderHitzoneTable() {
   });
 
   html += "</tbody></table>";
+  html += '<div class="hitzone-hint"><span class="phys-weak">赤字</span>の部位は弱点特効が発動します（肉質45以上）</div>';
   wrapper.innerHTML = html;
 }
 
