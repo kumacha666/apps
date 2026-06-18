@@ -29,6 +29,36 @@ html, body {
 #selector-screen header { text-align: center; margin-bottom: 2rem; }
 #selector-screen h1 { font-size: 1.6rem; color: var(--highlight); margin-bottom: 0.3rem; }
 .subtitle { font-size: 0.75rem; color: var(--text-muted); }
+.app-desc { font-size: 0.82rem; color: var(--text); margin-top: 0.6rem; line-height: 1.5; }
+
+.history-section { margin-top: 1.5rem; }
+.history-label { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.4rem; }
+.history-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.history-item {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.6rem 0.8rem; cursor: pointer; transition: border-color 0.2s;
+}
+.history-item:active { border-color: var(--highlight); }
+.history-combo { font-size: 0.82rem; }
+.history-combo .header-weapon { color: var(--green); font-weight: 600; }
+.history-combo .header-monster { color: var(--accent); font-weight: 600; }
+.history-combo .header-sep { color: var(--text-muted); margin: 0 0.3rem; }
+.history-mode { font-size: 0.65rem; color: var(--text-muted); white-space: nowrap; }
+
+.guide-section { margin-top: 1.5rem; }
+.guide-section details { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; }
+.guide-section summary {
+  padding: 0.6rem 0.8rem; font-size: 0.82rem; color: var(--text-muted);
+  cursor: pointer; list-style: none;
+}
+.guide-section summary::-webkit-details-marker { display: none; }
+.guide-section summary::before { content: "▶ "; font-size: 0.65rem; }
+.guide-section details[open] summary::before { content: "▼ "; }
+.guide-content { padding: 0 0.8rem 0.6rem; }
+.guide-item { display: flex; gap: 0.5rem; font-size: 0.78rem; line-height: 1.5; margin-bottom: 0.4rem; }
+.guide-item:last-child { margin-bottom: 0; }
+.guide-icon { flex-shrink: 0; }
 
 .selector-group { margin-bottom: 1.2rem; }
 .selector-group label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem; }

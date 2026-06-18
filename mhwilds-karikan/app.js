@@ -277,9 +277,73 @@ $("#monster-select").addEventListener("change", updateButtons);
 
 $("#btn-quest").addEventListener("click", async () => { await loadData(); renderQuestScreen(); showScreen("quest-screen"); });
 $("#btn-prep").addEventListener("click", async () => { await loadData(); renderPrepScreen(); showScreen("prep-screen"); });
-$("#btn-back-quest").addEventListener("click", () => showScreen("selector-screen"));
-$("#btn-back-prep").addEventListener("click", () => showScreen("selector-screen"));
+$("#btn-back-quest").addEventListener("click", () => { showScreen("selector-screen"); renderHistory(); });
+$("#btn-back-prep").addEventListener("click", () => { showScreen("selector-screen"); renderHistory(); });
 $("#btn-to-prep").addEventListener("click", async () => { await loadData(); renderPrepScreen(); showScreen("prep-screen"); });
 $("#btn-to-quest").addEventListener("click", async () => { await loadData(); renderQuestScreen(); showScreen("quest-screen"); });
 
+// === 履歴 ===
+const HISTORY_KEY = "karikan-history";
+const MAX_HISTORY = 5;
+
+function getHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch { return []; }
+}
+
+function saveHistory(weaponId, monsterId, mode) {
+  const history = getHistory();
+  const entry = { weaponId, monsterId, mode, ts: Date.now() };
+  const filtered = history.filter((h) => !(h.weaponId === weaponId && h.monsterId === monsterId && h.mode === mode));
+  filtered.unshift(entry);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(filtered.slice(0, MAX_HISTORY)));
+}
+
+function renderHistory() {
+  const history = getHistory();
+  const section = $("#history-section");
+  const list = $("#history-list");
+  if (history.length === 0) { section.style.display = "none"; return; }
+  section.style.display = "";
+  list.innerHTML = "";
+  history.forEach((h) => {
+    const w = WEAPONS.find((w) => w.id === h.weaponId);
+    const m = MONSTERS.find((m) => m.id === h.monsterId);
+    if (!w || !m) return;
+    const modeLabel = h.mode === "quest" ? "クエスト中" : "出発前";
+    const item = document.createElement("div");
+    item.className = "history-item";
+    item.innerHTML = `<span class="history-combo"><span class="header-weapon">${w.name}</span><span class="header-sep">×</span><span class="header-monster">${m.name}</span></span><span class="history-mode">${modeLabel}</span>`;
+    item.addEventListener("click", async () => {
+      $("#weapon-select").value = h.weaponId;
+      $("#monster-select").value = h.monsterId;
+      updateButtons();
+      await loadData();
+      if (h.mode === "quest") { renderQuestScreen(); showScreen("quest-screen"); }
+      else { renderPrepScreen(); showScreen("prep-screen"); }
+    });
+    list.appendChild(item);
+  });
+}
+
+// 既存ボタンに履歴保存を追加
+const origQuest = $("#btn-quest").onclick;
+const origPrep = $("#btn-prep").onclick;
+
+$("#btn-quest").removeEventListener("click", () => {});
+$("#btn-prep").removeEventListener("click", () => {});
+
+$("#btn-quest").addEventListener("click", () => {
+  saveHistory($("#weapon-select").value, $("#monster-select").value, "quest");
+});
+$("#btn-prep").addEventListener("click", () => {
+  saveHistory($("#weapon-select").value, $("#monster-select").value, "prep");
+});
+$("#btn-to-prep").addEventListener("click", () => {
+  saveHistory($("#weapon-select").value, $("#monster-select").value, "prep");
+});
+$("#btn-to-quest").addEventListener("click", () => {
+  saveHistory($("#weapon-select").value, $("#monster-select").value, "quest");
+});
+
 populateSelectors();
+renderHistory();
