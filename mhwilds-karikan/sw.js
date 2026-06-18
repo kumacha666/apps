@@ -1,4 +1,4 @@
-const CACHE_NAME = "karikan-v4";
+const CACHE_NAME = "karikan-v5";
 const ASSETS = [
   ".", "index.html", "style.css", "app.js", "manifest.json",
   "data/weapons/insect-glaive.json", "data/weapons/sword-and-shield.json",

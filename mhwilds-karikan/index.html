@@ -18,6 +18,7 @@
       <header>
         <h1>狩りカンペ</h1>
         <p class="subtitle">MHWilds 武器カンペ｜非公式ファンツール</p>
+        <p class="app-desc">武器の基本戦法やモンスターの弱点を<br>狩り中にサッと確認できるカンペアプリ</p>
       </header>
       <div class="selector-group">
         <label for="weapon-select">武器種</label>
@@ -30,6 +31,20 @@
       <div class="mode-buttons">
         <button id="btn-quest" class="btn btn-primary" disabled>クエスト中モード</button>
         <button id="btn-prep" class="btn btn-secondary" disabled>出発前モード</button>
+      </div>
+      <div id="history-section" class="history-section" style="display:none;">
+        <p class="history-label">最近の組み合わせ</p>
+        <div id="history-list"></div>
+      </div>
+      <div class="guide-section">
+        <details>
+          <summary>使い方</summary>
+          <div class="guide-content">
+            <div class="guide-item"><span class="guide-icon">⚔️</span><span><strong>クエスト中モード</strong>：武器の基本戦法・モンスターの注意点・肉質データを確認</span></div>
+            <div class="guide-item"><span class="guide-icon">🛡️</span><span><strong>出発前モード</strong>：属性弱点・おすすめスキル・罠情報でクエスト準備</span></div>
+            <div class="guide-item"><span class="guide-icon">📱</span><span>ホーム画面に追加するとオフラインでも使えます</span></div>
+          </div>
+        </details>
       </div>
     </div>
 
