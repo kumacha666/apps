@@ -65,8 +65,8 @@ body {
   color: var(--accent);
 }
 
-.title-logo .t-base {
-  color: var(--text);
+.title-logo .t-accent2 {
+  color: var(--gold);
 }
 
 .title-sub {
