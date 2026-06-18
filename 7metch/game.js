@@ -422,36 +422,53 @@
   }
 
   async function animateClear(cells) {
-    const cellColors = cells.map(([r, c]) => board[r][c] ? PIECE_COLORS[board[r][c].color] : "#fff");
+    const clearSet = new Set(cells.map(([r, c]) => r * COLS + c));
+    const pieceSnapshots = cells.map(([r, c]) => ({
+      r, c,
+      color: board[r][c] ? PIECE_COLORS[board[r][c].color] : "#fff",
+      piece: board[r][c],
+    }));
     const totalFrames = ANIM.CLEAR_FRAMES;
 
     for (let frame = 0; frame < totalFrames; frame++) {
       const t = frame / totalFrames;
-      drawBoard();
+
+      drawBoardBase();
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (clearSet.has(r * COLS + c)) continue;
+          if (board[r][c]) {
+            drawPieceAt(board[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
+          }
+        }
+      }
+
       ctx.save();
 
-      cells.forEach(([r, c], idx) => {
-        const x = c * cellSize + cellSize / 2;
-        const y = r * cellSize + cellSize / 2;
+      pieceSnapshots.forEach((snap, idx) => {
+        const x = snap.c * cellSize + cellSize / 2;
+        const y = snap.r * cellSize + cellSize / 2;
         const baseR = cellSize / 2 - 2;
 
-        if (t < 0.4) {
-          const flashT = t / 0.4;
-          ctx.globalAlpha = 0.7 * (1 - flashT) + 0.3;
+        if (t < 0.3) {
+          const fadeT = t / 0.3;
+          ctx.globalAlpha = 1 - fadeT * 0.3;
+          if (snap.piece) drawPieceAt(snap.piece, x, y);
+          ctx.globalAlpha = 0.8 * (1 - fadeT);
           ctx.fillStyle = "#fff";
           ctx.beginPath();
-          ctx.arc(x, y, baseR * (1 + flashT * 0.15), 0, Math.PI * 2);
+          ctx.arc(x, y, baseR * (1 + fadeT * 0.15), 0, Math.PI * 2);
           ctx.fill();
         }
 
-        if (t >= 0.3) {
-          const shrinkT = (t - 0.3) / 0.7;
+        if (t >= 0.2) {
+          const shrinkT = Math.min((t - 0.2) / 0.8, 1);
           const ease = 1 - (1 - shrinkT) * (1 - shrinkT);
           const scale = 1 - ease;
           const alpha = 1 - ease;
 
           ctx.globalAlpha = alpha;
-          ctx.fillStyle = cellColors[idx];
+          ctx.fillStyle = snap.color;
           ctx.beginPath();
           ctx.arc(x, y, baseR * scale, 0, Math.PI * 2);
           ctx.fill();
@@ -464,7 +481,7 @@
             const py = y + Math.sin(angle) * dist;
             const pSize = baseR * 0.2 * (1 - ease);
             ctx.globalAlpha = alpha * 0.8;
-            ctx.fillStyle = cellColors[idx];
+            ctx.fillStyle = snap.color;
             ctx.beginPath();
             ctx.arc(px, py, pSize, 0, Math.PI * 2);
             ctx.fill();
