@@ -116,38 +116,15 @@ html, body {
   content: "⚠"; position: absolute; left: 0; font-size: 0.7rem;
 }
 
-/* 補足 */
-.hitzone-label {
-  font-size: 0.72rem; color: var(--text-muted); margin-top: 0.4rem; margin-bottom: 0.1rem; font-weight: 600;
-}
-.hitzone-label:first-child { margin-top: 0; }
-.hitzone-label.element-fire { color: #e74c3c; }
-.hitzone-label.element-water { color: #3498db; }
-.hitzone-label.element-thunder { color: #f1c40f; }
-.hitzone-label.element-ice { color: #74b9ff; }
-.hitzone-label.element-dragon { color: #9b59b6; }
-
-.hitzone-row {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 0.15rem 0; font-size: 0.82rem;
-}
-.hitzone-part { flex: 1; }
-.hitzone-value { width: 2.5rem; text-align: right; font-weight: 600; }
-.hitzone-row.rank-1 .hitzone-value { color: var(--highlight); }
-.hitzone-row.rank-2 .hitzone-value { color: var(--green); }
-.hitzone-row.rank-3 .hitzone-value { color: var(--text); }
-
-.hitzone-full { display: none; margin-top: 0.3rem; }
-.hitzone-full.open { display: block; }
-.hitzone-full table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
-.hitzone-full th, .hitzone-full td { padding: 0.2rem 0.3rem; text-align: left; }
-.hitzone-full th { color: var(--text-muted); font-weight: normal; }
-
-.show-all-btn {
-  background: none; border: 1px solid var(--border); color: var(--text-muted);
-  padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.72rem;
-  cursor: pointer; margin-top: 0.3rem; display: block; width: 100%;
-}
+/* 肉質テーブル */
+.hitzone-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.hitzone-table th, .hitzone-table td { padding: 0.25rem 0.4rem; text-align: center; }
+.hitzone-table th:first-child, .hitzone-table td:first-child { text-align: left; }
+.hitzone-table th { color: var(--text-muted); font-weight: 600; font-size: 0.75rem; border-bottom: 1px solid var(--border); }
+.hitzone-table td { border-bottom: 1px solid rgba(255,255,255,0.03); }
+.hitzone-table .phys-weak { color: var(--accent); font-weight: 700; }
+.hitzone-table .el-rank1 { color: var(--highlight); font-weight: 700; }
+.hitzone-table .el-rank2 { color: var(--green); font-weight: 600; }
 
 .extra-note {
   font-size: 0.78rem; color: var(--text-muted); margin-top: 0.4rem;
