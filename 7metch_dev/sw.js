@@ -1,5 +1,5 @@
-const CACHE_NAME = "7metch-dev-v2";
-const ASSETS = ["./", "./index.html", "./style.css", "./game.js", "./manifest.json"];
+const CACHE_NAME = "7metch-dev-v3";
+const ASSETS = ["./", "./index.html", "./style.css", "./game.js", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {
   const requests = ASSETS.map((url) => new Request(url, { cache: "no-cache" }));

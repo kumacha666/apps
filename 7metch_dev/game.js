@@ -3,9 +3,9 @@
 
   let cols = 7;
   let rows = 8;
-  const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#3a86ff", "#ff6bb3"];
-  const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross"];
-  const PIECE_NAMES_JA = ["まる", "ダイヤ", "しかく", "さんかく", "ほし", "ヘキサ", "クロス"];
+  const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#3a86ff", "#ff6bb3", "#88cc44"];
+  const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross", "octagon"];
+  const PIECE_NAMES_JA = ["まる", "ダイヤ", "しかく", "さんかく", "ほし", "ヘキサ", "クロス", "オクタ"];
   const MATCH_MIN = 3;
 
   const ANIM = {
@@ -136,6 +136,14 @@
     drop() {
       playTone(300, 0.06, "sine", 0.05);
     },
+    countdown() {
+      playTone(880, 0.05, "square", 0.08);
+      playTone(660, 0.08, "square", 0.06, 0.05);
+    },
+    iceCrack() {
+      playTone(1200, 0.04, "square", 0.06);
+      playTone(900, 0.06, "square", 0.05, 0.03);
+    },
   };
 
   const canvas = document.getElementById("game-canvas");
@@ -144,6 +152,7 @@
   let cellSize = 48;
   let boardPixelW, boardPixelH;
   let board = [];
+  let cellState = [];
   let selected = null;
   let animating = false;
   let currentStage = 0;
@@ -201,41 +210,137 @@
     { cols: 11, rows: 12, label: "11×12" },
   ];
 
+  // Feature flags per size group:
+  // Group 0 (6×7): basic, no features
+  // Group 1 (7×8): diagonal line piece
+  // Group 2 (8×9): ice obstacles
+  // Group 3 (9×10): 8th color + rocks
+  // Group 4 (10×11): holes (non-rectangular)
+  // Group 5 (11×12): countdown bombs + all features combined
+
   function buildStages() {
     const stages = [];
     for (let si = 0; si < BOARD_SIZES.length; si++) {
       const size = BOARD_SIZES[si];
-      const colors = Math.min(7, 5 + si);
+      const baseColors = Math.min(7, 5 + si);
       for (let j = 0; j < 5; j++) {
         const idx = si * 5 + j;
         const moves = 20;
         const area = size.cols * size.rows;
         const areaFactor = area / 56;
-        let mission;
+        let missionDef;
         if (j === 0) {
-          mission = { type: "score", target: Math.floor(moves * 60 * areaFactor) };
+          missionDef = { type: "score", target: Math.floor(moves * 60 * areaFactor) };
         } else if (j === 1) {
-          mission = { type: "clear", count: Math.floor(moves * 4 * areaFactor) };
+          missionDef = { type: "clear", count: Math.floor(moves * 4 * areaFactor) };
         } else if (j === 2) {
-          mission = { type: "color", colorIndex: 0, count: Math.floor(moves * 0.6 * areaFactor) };
+          missionDef = { type: "color", colorIndex: 0, count: Math.floor(moves * 0.6 * areaFactor) };
         } else if (j === 3) {
-          mission = { type: "score", target: Math.floor(moves * 100 * areaFactor) };
+          missionDef = { type: "score", target: Math.floor(moves * 100 * areaFactor) };
         } else {
-          mission = { type: "clear", count: Math.floor(moves * 6 * areaFactor) };
+          missionDef = { type: "clear", count: Math.floor(moves * 6 * areaFactor) };
         }
+
+        const features = {};
+        let colors = baseColors;
+
+        // Feature assignments per group
+        if (si >= 1) features.diagonalLine = true;
+        if (si >= 2) features.ice = true;
+        if (si >= 3) {
+          features.rock = true;
+          colors = 8;
+        }
+        if (si >= 4) features.holes = true;
+        if (si >= 5) features.countdownBomb = true;
+
+        // Ice cell count scales with stage
+        let iceCells = 0;
+        if (features.ice) {
+          iceCells = 2 + j;
+        }
+
+        // Rock cell count
+        let rockCells = 0;
+        if (features.rock) {
+          rockCells = 1 + Math.floor(j / 2);
+        }
+
+        // Hole pattern
+        let holePattern = null;
+        if (features.holes) {
+          holePattern = generateHolePattern(size.cols, size.rows, j);
+        }
+
+        // Countdown bomb count
+        let countdownBombs = 0;
+        if (features.countdownBomb) {
+          countdownBombs = 1 + Math.floor(j / 2);
+        }
+
         stages.push({
           name: `${size.label}-${j + 1}`,
           moves,
           colors,
           boardCols: size.cols,
           boardRows: size.rows,
-          mission,
+          mission: missionDef,
           star2moves: Math.floor(moves * 0.6),
           star3moves: Math.floor(moves * 0.35),
+          features,
+          iceCells,
+          rockCells,
+          holePattern,
+          countdownBombs,
         });
       }
     }
     return stages;
+  }
+
+  function generateHolePattern(c, r, variant) {
+    const holes = [];
+    switch (variant) {
+      case 0:
+        // Corner holes
+        holes.push([0,0],[0,1],[1,0]);
+        holes.push([0,c-1],[0,c-2],[1,c-1]);
+        holes.push([r-1,0],[r-1,1],[r-2,0]);
+        holes.push([r-1,c-1],[r-1,c-2],[r-2,c-1]);
+        break;
+      case 1:
+        // Diamond cutout center
+        for (let rr = 0; rr < r; rr++) {
+          for (let cc = 0; cc < c; cc++) {
+            const dr = Math.abs(rr - Math.floor(r/2));
+            const dc = Math.abs(cc - Math.floor(c/2));
+            if (dr + dc <= 1 && !(dr === 0 && dc === 0)) holes.push([rr, cc]);
+          }
+        }
+        break;
+      case 2:
+        // Checkerboard corners
+        holes.push([0,0],[0,c-1],[r-1,0],[r-1,c-1]);
+        holes.push([0, Math.floor(c/2)]);
+        holes.push([r-1, Math.floor(c/2)]);
+        break;
+      case 3:
+        // L-shape cutout (top-right)
+        for (let rr = 0; rr < 3; rr++) {
+          for (let cc = c-3; cc < c; cc++) {
+            if (rr === 0 || cc === c-1) continue;
+            holes.push([rr, cc]);
+          }
+        }
+        break;
+      case 4:
+        // Border scatter
+        holes.push([0,0],[0,c-1],[r-1,0],[r-1,c-1]);
+        holes.push([0,Math.floor(c/2)],[r-1,Math.floor(c/2)]);
+        holes.push([Math.floor(r/2),0],[Math.floor(r/2),c-1]);
+        break;
+    }
+    return holes;
   }
 
   function getMissionText(m, html) {
@@ -250,20 +355,125 @@
     }
   }
 
+  // --- Cell State ---
+  // cellState[r][c]: null = normal, "hole" = permanently empty, "rock" = immovable blocker,
+  //                  "ice1" = ice (1 hit left), "ice2" = ice (2 hits left)
+
+  function initCellState(stg) {
+    cellState = [];
+    for (let r = 0; r < rows; r++) {
+      cellState[r] = [];
+      for (let c = 0; c < cols; c++) {
+        cellState[r][c] = null;
+      }
+    }
+
+    // Place holes
+    if (stg.holePattern) {
+      for (const [hr, hc] of stg.holePattern) {
+        if (hr >= 0 && hr < rows && hc >= 0 && hc < cols) {
+          cellState[hr][hc] = "hole";
+        }
+      }
+    }
+
+    // Place rocks (random positions, avoiding holes and edges for playability)
+    if (stg.rockCells > 0) {
+      let placed = 0;
+      let attempts = 0;
+      while (placed < stg.rockCells && attempts < 200) {
+        const rr = 1 + Math.floor(Math.random() * (rows - 2));
+        const rc = 1 + Math.floor(Math.random() * (cols - 2));
+        if (cellState[rr][rc] === null) {
+          cellState[rr][rc] = "rock";
+          placed++;
+        }
+        attempts++;
+      }
+    }
+
+    // Place ice (random positions on normal cells)
+    if (stg.iceCells > 0) {
+      let placed = 0;
+      let attempts = 0;
+      while (placed < stg.iceCells && attempts < 200) {
+        const ir = Math.floor(Math.random() * rows);
+        const ic = Math.floor(Math.random() * cols);
+        if (cellState[ir][ic] === null) {
+          cellState[ir][ic] = "ice2";
+          placed++;
+        }
+        attempts++;
+      }
+    }
+  }
+
+  function isPlayable(r, c) {
+    return cellState[r][c] !== "hole" && cellState[r][c] !== "rock";
+  }
+
+  function isHole(r, c) {
+    return cellState[r][c] === "hole";
+  }
+
+  function isRock(r, c) {
+    return cellState[r][c] === "rock";
+  }
+
+  function isIce(r, c) {
+    return cellState[r][c] === "ice1" || cellState[r][c] === "ice2";
+  }
+
+  function damageIce(r, c) {
+    if (cellState[r][c] === "ice2") {
+      cellState[r][c] = "ice1";
+      SFX.iceCrack();
+      return false;
+    }
+    if (cellState[r][c] === "ice1") {
+      cellState[r][c] = null;
+      SFX.iceCrack();
+      return true;
+    }
+    return true;
+  }
+
   // --- Board ---
   function createBoard(numColors) {
     board = [];
     for (let r = 0; r < rows; r++) {
       board[r] = [];
       for (let c = 0; c < cols; c++) {
-        board[r][c] = randomPiece(numColors);
+        if (isHole(r, c) || isRock(r, c)) {
+          board[r][c] = null;
+        } else {
+          board[r][c] = randomPiece(numColors);
+        }
       }
     }
     while (findAllMatches().length > 0) {
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
+          if (isHole(r, c) || isRock(r, c)) continue;
           board[r][c] = randomPiece(numColors);
         }
+      }
+    }
+
+    // Place countdown bombs after initial board is match-free
+    const stg = STAGES[currentStage];
+    if (stg.countdownBombs > 0) {
+      let placed = 0;
+      let attempts = 0;
+      while (placed < stg.countdownBombs && attempts < 200) {
+        const br = Math.floor(Math.random() * rows);
+        const bc = Math.floor(Math.random() * cols);
+        if (board[br][bc] && !board[br][bc].special) {
+          board[br][bc].special = "countdown";
+          board[br][bc].countdown = 8 + Math.floor(Math.random() * 5);
+          placed++;
+        }
+        attempts++;
       }
     }
   }
@@ -293,13 +503,14 @@
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (!board[r][c]) continue;
+        if (isHole(r, c) || isRock(r, c)) continue;
         const color = board[r][c].color;
 
         for (const [dr, dc] of directions) {
           const line = [[r, c]];
           let nr = r + dr;
           let nc = c + dc;
-          while (inBounds(nr, nc) && board[nr][nc] && board[nr][nc].color === color) {
+          while (inBounds(nr, nc) && board[nr][nc] && !isHole(nr, nc) && !isRock(nr, nc) && board[nr][nc].color === color) {
             line.push([nr, nc]);
             nr += dr;
             nc += dc;
@@ -317,6 +528,7 @@
   function findSpecialCreations(matches) {
     const specials = [];
     const matchSet = new Set(matches.map(([r, c]) => r * cols + c));
+    const stg = STAGES[currentStage];
 
     const hLines = [];
     const vLines = [];
@@ -324,13 +536,14 @@
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (!board[r][c]) continue;
+        if (isHole(r, c) || isRock(r, c)) continue;
         const color = board[r][c].color;
 
         // horizontal
         {
           const line = [[r, c]];
           let nc = c + 1;
-          while (inBounds(r, nc) && board[r][nc] && board[r][nc].color === color) {
+          while (inBounds(r, nc) && board[r][nc] && !isHole(r, nc) && !isRock(r, nc) && board[r][nc].color === color) {
             line.push([r, nc]);
             nc++;
           }
@@ -343,7 +556,7 @@
         {
           const line = [[r, c]];
           let nr = r + 1;
-          while (inBounds(nr, c) && board[nr][c] && board[nr][c].color === color) {
+          while (inBounds(nr, c) && board[nr][c] && !isHole(nr, c) && !isRock(nr, c) && board[nr][c].color === color) {
             line.push([nr, c]);
             nr++;
           }
@@ -376,7 +589,7 @@
       }
     }
 
-    // 5+ line → rainbow, 4 line → line clear
+    // 5+ line → rainbow, 4 line → line clear (with diagonal variant)
     const allLines = [
       ...hLines.map((h) => ({ ...h, dir: "h" })),
       ...vLines.map((v) => ({ ...v, dir: "v" })),
@@ -392,7 +605,12 @@
         usedCells.add(midKey);
       } else if (line.length === 4) {
         const pos = line[1];
-        const type = dir === "h" ? "line_v" : "line_h";
+        let type;
+        if (stg.features && stg.features.diagonalLine && Math.random() < 0.3) {
+          type = "line_d";
+        } else {
+          type = dir === "h" ? "line_v" : "line_h";
+        }
         const posKey = pos[0] * cols + pos[1];
         if (!usedCells.has(posKey)) {
           specials.push({ r: pos[0], c: pos[1], type, color });
@@ -413,14 +631,28 @@
 
     if (piece.special === "line_h") {
       for (let cc = 0; cc < cols; cc++) {
-        if (!alreadyCleared.has(key(r, cc)) && board[r][cc]) {
+        if (!alreadyCleared.has(key(r, cc)) && board[r][cc] && isPlayable(r, cc)) {
           extra.push([r, cc]);
         }
       }
     } else if (piece.special === "line_v") {
       for (let rr = 0; rr < rows; rr++) {
-        if (!alreadyCleared.has(key(rr, c)) && board[rr][c]) {
+        if (!alreadyCleared.has(key(rr, c)) && board[rr][c] && isPlayable(rr, c)) {
           extra.push([rr, c]);
+        }
+      }
+    } else if (piece.special === "line_d") {
+      // Diagonal line: clears both diagonals through this cell
+      for (let d = -Math.max(rows, cols); d <= Math.max(rows, cols); d++) {
+        // top-left to bottom-right
+        const r1 = r + d, c1 = c + d;
+        if (inBounds(r1, c1) && !alreadyCleared.has(key(r1, c1)) && board[r1][c1] && isPlayable(r1, c1)) {
+          extra.push([r1, c1]);
+        }
+        // top-right to bottom-left
+        const r2 = r + d, c2 = c - d;
+        if (inBounds(r2, c2) && !alreadyCleared.has(key(r2, c2)) && board[r2][c2] && isPlayable(r2, c2)) {
+          extra.push([r2, c2]);
         }
       }
     } else if (piece.special === "bomb") {
@@ -428,7 +660,7 @@
         for (let dc = -2; dc <= 2; dc++) {
           const nr = r + dr;
           const nc = c + dc;
-          if (inBounds(nr, nc) && !alreadyCleared.has(key(nr, nc)) && board[nr][nc]) {
+          if (inBounds(nr, nc) && !alreadyCleared.has(key(nr, nc)) && board[nr][nc] && isPlayable(nr, nc)) {
             extra.push([nr, nc]);
           }
         }
@@ -437,8 +669,19 @@
       const targetColor = piece.color;
       for (let rr = 0; rr < rows; rr++) {
         for (let cc = 0; cc < cols; cc++) {
-          if (board[rr][cc] && board[rr][cc].color === targetColor && !alreadyCleared.has(key(rr, cc))) {
+          if (board[rr][cc] && board[rr][cc].color === targetColor && !alreadyCleared.has(key(rr, cc)) && isPlayable(rr, cc)) {
             extra.push([rr, cc]);
+          }
+        }
+      }
+    } else if (piece.special === "countdown") {
+      // Countdown bomb explodes like a regular bomb
+      for (let dr = -2; dr <= 2; dr++) {
+        for (let dc = -2; dc <= 2; dc++) {
+          const nr = r + dr;
+          const nc = c + dc;
+          if (inBounds(nr, nc) && !alreadyCleared.has(key(nr, nc)) && board[nr][nc] && isPlayable(nr, nc)) {
+            extra.push([nr, nc]);
           }
         }
       }
@@ -446,25 +689,86 @@
     return extra;
   }
 
-  // --- Gravity & Fill (data only, no animation) ---
+  // --- Countdown Bomb Logic ---
+  function tickCountdowns() {
+    const exploded = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] && board[r][c].special === "countdown") {
+          board[r][c].countdown--;
+          if (board[r][c].countdown <= 0) {
+            exploded.push([r, c]);
+          }
+        }
+      }
+    }
+    return exploded;
+  }
+
+  async function handleCountdownExplosions(exploded) {
+    if (exploded.length === 0) return;
+
+    SFX.bomb();
+
+    const cleared = new Set();
+    for (const [r, c] of exploded) {
+      const extra = activateSpecial(r, c, cleared);
+      cleared.add(r * cols + c);
+      extra.forEach(([er, ec]) => cleared.add(er * cols + ec));
+    }
+
+    const clearList = [...cleared].map((v) => [Math.floor(v / cols), v % cols]);
+    clearList.forEach(([r, c]) => {
+      if (board[r][c]) {
+        const ci = board[r][c].color;
+        colorCleared[ci] = (colorCleared[ci] || 0) + 1;
+        totalCleared++;
+      }
+    });
+    score += clearList.length * 10;
+
+    await animateClear(clearList);
+    clearList.forEach(([r, c]) => { board[r][c] = null; });
+
+    const fallMap = applyGravityData();
+    await animateDrop(fallMap);
+    await sleep(ANIM.CHAIN_PAUSE_MS);
+
+    await resolveBoard();
+  }
+
+  // --- Gravity & Fill ---
   function applyGravityData() {
     const numColors = STAGES[currentStage].colors;
     const fallMap = [];
 
     for (let c = 0; c < cols; c++) {
       let writeRow = rows - 1;
-      for (let r = rows - 1; r >= 0; r--) {
+      // Skip holes/rocks from bottom
+      while (writeRow >= 0 && (isHole(writeRow, c) || isRock(writeRow, c))) {
+        writeRow--;
+      }
+
+      for (let r = writeRow; r >= 0; r--) {
+        if (isHole(r, c) || isRock(r, c)) continue;
         if (board[r][c]) {
           if (r !== writeRow) {
             board[writeRow][c] = board[r][c];
             board[r][c] = null;
             fallMap.push({ c, fromR: r, toR: writeRow, piece: board[writeRow][c] });
           }
+          // Find next writable row
           writeRow--;
+          while (writeRow >= 0 && (isHole(writeRow, c) || isRock(writeRow, c))) {
+            writeRow--;
+          }
         }
       }
+
+      // Fill empty cells from top
       let newPieceOffset = 0;
       for (let r = writeRow; r >= 0; r--) {
+        if (isHole(r, c) || isRock(r, c)) continue;
         board[r][c] = randomPiece(numColors);
         newPieceOffset++;
         fallMap.push({ c, fromR: -newPieceOffset, toR: r, piece: board[r][c], isNew: true });
@@ -487,16 +791,22 @@
   let chainCount = 0;
 
   function getComboType(s1, s2) {
-    const pair = [s1, s2].sort().join("+");
+    const normalize = (s) => s === "countdown" ? "bomb" : s;
+    const pair = [normalize(s1), normalize(s2)].sort().join("+");
     const combos = {
       "line_h+line_h": "cross",
       "line_h+line_v": "cross",
       "line_v+line_v": "cross",
+      "line_d+line_h": "star_cross",
+      "line_d+line_v": "star_cross",
+      "line_d+line_d": "star_cross",
       "bomb+line_h": "triple_line",
       "bomb+line_v": "triple_line",
+      "bomb+line_d": "triple_line",
       "bomb+bomb": "big_bomb",
       "line_h+rainbow": "rainbow_line",
       "line_v+rainbow": "rainbow_line",
+      "line_d+rainbow": "rainbow_line",
       "bomb+rainbow": "rainbow_bomb",
       "rainbow+rainbow": "board_clear",
     };
@@ -511,19 +821,34 @@
     switch (comboType) {
       case "cross":
         for (let cc = 0; cc < cols; cc++) {
-          if (board[r][cc]) extra.push([r, cc]);
+          if (board[r][cc] && isPlayable(r, cc)) extra.push([r, cc]);
         }
         for (let rr = 0; rr < rows; rr++) {
-          if (board[rr][c]) extra.push([rr, c]);
+          if (board[rr][c] && isPlayable(rr, c)) extra.push([rr, c]);
+        }
+        break;
+      case "star_cross":
+        // Cross + both diagonals
+        for (let cc = 0; cc < cols; cc++) {
+          if (board[r][cc] && isPlayable(r, cc)) extra.push([r, cc]);
+        }
+        for (let rr = 0; rr < rows; rr++) {
+          if (board[rr][c] && isPlayable(rr, c)) extra.push([rr, c]);
+        }
+        for (let d = -Math.max(rows, cols); d <= Math.max(rows, cols); d++) {
+          const r1 = r + d, c1 = c + d;
+          if (inBounds(r1, c1) && board[r1][c1] && isPlayable(r1, c1)) extra.push([r1, c1]);
+          const r2 = r + d, c2 = c - d;
+          if (inBounds(r2, c2) && board[r2][c2] && isPlayable(r2, c2)) extra.push([r2, c2]);
         }
         break;
       case "triple_line": {
         for (let d = -1; d <= 1; d++) {
           for (let cc = 0; cc < cols; cc++) {
-            if (inBounds(r + d, cc) && board[r + d][cc]) extra.push([r + d, cc]);
+            if (inBounds(r + d, cc) && board[r + d][cc] && isPlayable(r + d, cc)) extra.push([r + d, cc]);
           }
           for (let rr = 0; rr < rows; rr++) {
-            if (inBounds(rr, c + d) && board[rr][c + d]) extra.push([rr, c + d]);
+            if (inBounds(rr, c + d) && board[rr][c + d] && isPlayable(rr, c + d)) extra.push([rr, c + d]);
           }
         }
         break;
@@ -531,7 +856,7 @@
       case "big_bomb":
         for (let dr = -3; dr <= 3; dr++) {
           for (let dc = -3; dc <= 3; dc++) {
-            if (inBounds(r + dr, c + dc) && board[r + dr][c + dc]) {
+            if (inBounds(r + dr, c + dc) && board[r + dr][c + dc] && isPlayable(r + dr, c + dc)) {
               extra.push([r + dr, c + dc]);
             }
           }
@@ -545,7 +870,7 @@
         const spType = comboType === "rainbow_line" ? "line_h" : "bomb";
         for (let rr = 0; rr < rows; rr++) {
           for (let cc = 0; cc < cols; cc++) {
-            if (board[rr][cc] && board[rr][cc].color === targetColor) {
+            if (board[rr][cc] && board[rr][cc].color === targetColor && isPlayable(rr, cc)) {
               board[rr][cc].special = spType;
               extra.push([rr, cc]);
             }
@@ -556,7 +881,7 @@
       case "board_clear":
         for (let rr = 0; rr < rows; rr++) {
           for (let cc = 0; cc < cols; cc++) {
-            if (board[rr][cc]) extra.push([rr, cc]);
+            if (board[rr][cc] && isPlayable(rr, cc)) extra.push([rr, cc]);
           }
         }
         break;
@@ -569,6 +894,8 @@
 
   async function doMove(r1, c1, r2, c2) {
     if (animating) return;
+    if (!isPlayable(r1, c1) || !isPlayable(r2, c2)) return;
+    if (!board[r1][c1] || !board[r2][c2]) return;
     animating = true;
 
     const p1 = board[r1][c1];
@@ -590,7 +917,6 @@
 
         const comboCells = activateCombo(comboType, r2, c2, p1, p2);
 
-        // Activate specials on combo-cleared cells (chain reaction)
         const cleared = new Set(comboCells.map(([r, c]) => r * cols + c));
         comboCells.forEach(([cr, cc]) => {
           if (board[cr][cc] && board[cr][cc].special && !(cr === r1 && cc === c1) && !(cr === r2 && cc === c2)) {
@@ -605,6 +931,9 @@
         });
 
         const clearList = [...cleared].map((v) => [Math.floor(v / cols), v % cols]);
+        // Damage ice on adjacent cells
+        damageAdjacentIce(clearList);
+
         clearList.forEach(([r, c]) => {
           if (board[r][c]) {
             const ci = board[r][c].color;
@@ -622,6 +951,13 @@
         await sleep(ANIM.CHAIN_PAUSE_MS);
 
         await resolveBoard();
+
+        // Tick countdowns after move
+        const exploded = tickCountdowns();
+        if (exploded.length > 0) {
+          SFX.countdown();
+          await handleCountdownExplosions(exploded);
+        }
 
         updateHUD();
         checkWinLose();
@@ -646,9 +982,36 @@
 
     await resolveBoard();
 
+    // Tick countdowns after move
+    const exploded = tickCountdowns();
+    if (exploded.length > 0) {
+      SFX.countdown();
+      await handleCountdownExplosions(exploded);
+    }
+
     updateHUD();
     checkWinLose();
     animating = false;
+  }
+
+  function damageAdjacentIce(clearList) {
+    const iceSet = new Set();
+    for (const [r, c] of clearList) {
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          const nr = r + dr, nc = c + dc;
+          if (inBounds(nr, nc) && isIce(nr, nc)) {
+            iceSet.add(nr * cols + nc);
+          }
+        }
+      }
+    }
+    for (const key of iceSet) {
+      const ir = Math.floor(key / cols);
+      const ic = key % cols;
+      damageIce(ir, ic);
+    }
   }
 
   async function resolveBoard() {
@@ -665,8 +1028,8 @@
         if (board[r][c] && board[r][c].special) {
           hasSpecialActivation = true;
           const sp = board[r][c].special;
-          if (sp === "bomb") SFX.bomb();
-          else if (sp === "line_h" || sp === "line_v") SFX.line();
+          if (sp === "bomb" || sp === "countdown") SFX.bomb();
+          else if (sp === "line_h" || sp === "line_v" || sp === "line_d") SFX.line();
           else if (sp === "rainbow") SFX.rainbow();
           const extra = activateSpecial(r, c, cleared);
           extra.forEach(([er, ec]) => {
@@ -680,6 +1043,9 @@
       });
 
       const clearList = [...cleared].map((v) => [Math.floor(v / cols), v % cols]);
+
+      // Damage ice adjacent to cleared cells
+      damageAdjacentIce(clearList);
 
       clearList.forEach(([r, c]) => {
         if (board[r][c]) {
@@ -739,7 +1105,7 @@
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           if ((r === r1 && c === c1) || (r === r2 && c === c2)) continue;
-          if (board[r][c]) {
+          if (board[r][c] && isPlayable(r, c)) {
             drawPieceAt(board[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
           }
         }
@@ -776,7 +1142,7 @@
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           if (clearSet.has(r * cols + c)) continue;
-          if (board[r][c]) {
+          if (board[r][c] && isPlayable(r, c)) {
             drawPieceAt(board[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
           }
         }
@@ -861,7 +1227,7 @@
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           if (fallingCells.has(r * cols + c)) continue;
-          if (frozen[r][c]) {
+          if (frozen[r][c] && isPlayable(r, c)) {
             drawPieceAt(frozen[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
           }
         }
@@ -947,8 +1313,69 @@
       for (let c = 0; c < cols; c++) {
         const x = c * cellSize;
         const y = r * cellSize;
+
+        if (isHole(r, c)) {
+          ctx.fillStyle = "#0d1117";
+          ctx.fillRect(x, y, cellSize, cellSize);
+          continue;
+        }
+
+        if (isRock(r, c)) {
+          ctx.fillStyle = "#2a2a3a";
+          ctx.fillRect(x, y, cellSize, cellSize);
+          // Draw rock texture
+          ctx.save();
+          ctx.fillStyle = "#3a3a4a";
+          const cx = x + cellSize / 2;
+          const cy = y + cellSize / 2;
+          const rr = cellSize / 2 - 4;
+          ctx.beginPath();
+          ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#555";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          // X mark
+          ctx.strokeStyle = "#666";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(cx - rr * 0.4, cy - rr * 0.4);
+          ctx.lineTo(cx + rr * 0.4, cy + rr * 0.4);
+          ctx.moveTo(cx + rr * 0.4, cy - rr * 0.4);
+          ctx.lineTo(cx - rr * 0.4, cy + rr * 0.4);
+          ctx.stroke();
+          ctx.restore();
+          continue;
+        }
+
         ctx.fillStyle = (r + c) % 2 === 0 ? "#1a2744" : "#1e2d50";
         ctx.fillRect(x, y, cellSize, cellSize);
+
+        // Ice overlay
+        if (isIce(r, c)) {
+          ctx.save();
+          const iceAlpha = cellState[r][c] === "ice2" ? 0.35 : 0.2;
+          ctx.fillStyle = `rgba(100, 200, 255, ${iceAlpha})`;
+          ctx.fillRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+          ctx.strokeStyle = `rgba(150, 220, 255, ${iceAlpha + 0.15})`;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
+          // Ice crystal lines
+          ctx.strokeStyle = `rgba(200, 240, 255, ${iceAlpha})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x + cellSize * 0.2, y + cellSize * 0.3);
+          ctx.lineTo(x + cellSize * 0.5, y + cellSize * 0.15);
+          ctx.lineTo(x + cellSize * 0.8, y + cellSize * 0.3);
+          ctx.stroke();
+          if (cellState[r][c] === "ice2") {
+            ctx.beginPath();
+            ctx.moveTo(x + cellSize * 0.3, y + cellSize * 0.7);
+            ctx.lineTo(x + cellSize * 0.6, y + cellSize * 0.85);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
       }
     }
   }
@@ -964,7 +1391,7 @@
     drawShape(ctx, PIECE_SHAPES[piece.color], cx, cy, radius);
 
     if (piece.special) {
-      drawSpecialIndicator(ctx, piece.special, cx, cy, radius);
+      drawSpecialIndicator(ctx, piece.special, cx, cy, radius, piece);
     }
   }
 
@@ -973,6 +1400,7 @@
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
+        if (!isPlayable(r, c)) continue;
         const piece = board[r][c];
         if (!piece) continue;
 
@@ -1072,15 +1500,31 @@
         ctx.stroke();
         break;
       }
+      case "octagon": {
+        const s = r * 0.92;
+        const cut = s * 0.38;
+        ctx.moveTo(cx - cut, cy - s);
+        ctx.lineTo(cx + cut, cy - s);
+        ctx.lineTo(cx + s, cy - cut);
+        ctx.lineTo(cx + s, cy + cut);
+        ctx.lineTo(cx + cut, cy + s);
+        ctx.lineTo(cx - cut, cy + s);
+        ctx.lineTo(cx - s, cy + cut);
+        ctx.lineTo(cx - s, cy - cut);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        break;
+      }
     }
   }
 
-  function drawSpecialIndicator(ctx, type, cx, cy, r) {
+  function drawSpecialIndicator(ctx, type, cx, cy, r, piece) {
     ctx.save();
     const s = r * 0.55;
     ctx.lineCap = "round";
 
-    // dark backdrop for contrast on any piece color
+    // dark backdrop for contrast
     ctx.beginPath();
     ctx.arc(cx, cy, s + 2, 0, Math.PI * 2);
     ctx.fillStyle = "rgba(0,0,0,0.45)";
@@ -1127,6 +1571,36 @@
         ctx.stroke();
         break;
       }
+      case "line_d": {
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#ffd700";
+        const ds = s * 0.75;
+        // Draw X-shaped diagonal lines
+        ctx.beginPath();
+        ctx.moveTo(cx - ds, cy - ds);
+        ctx.lineTo(cx + ds, cy + ds);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cx + ds, cy - ds);
+        ctx.lineTo(cx - ds, cy + ds);
+        ctx.stroke();
+        // Small arrows at ends
+        const a = s * 0.25;
+        ctx.lineWidth = 2;
+        // top-left arrow
+        ctx.beginPath();
+        ctx.moveTo(cx - ds + a, cy - ds);
+        ctx.lineTo(cx - ds, cy - ds);
+        ctx.lineTo(cx - ds, cy - ds + a);
+        ctx.stroke();
+        // bottom-right arrow
+        ctx.beginPath();
+        ctx.moveTo(cx + ds - a, cy + ds);
+        ctx.lineTo(cx + ds, cy + ds);
+        ctx.lineTo(cx + ds, cy + ds - a);
+        ctx.stroke();
+        break;
+      }
       case "bomb": {
         ctx.strokeStyle = "#fff";
         ctx.lineWidth = 2;
@@ -1164,16 +1638,46 @@
         ctx.fill();
         break;
       }
+      case "countdown": {
+        // Draw countdown number with warning color
+        const count = piece ? piece.countdown : 0;
+        const urgency = count <= 3;
+        ctx.fillStyle = urgency ? "#ff4444" : "#ffd700";
+        ctx.font = `bold ${s * 1.3}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(count.toString(), cx, cy);
+        // Pulsing ring for urgency
+        if (urgency) {
+          ctx.strokeStyle = "#ff4444";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(cx, cy, s * 0.8, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        break;
+      }
     }
     ctx.restore();
   }
 
   // --- HUD ---
   function updateHUD() {
-    document.getElementById("hud-stage").textContent = `Stage ${STAGES[currentStage].name}`;
+    const stg = STAGES[currentStage];
+    document.getElementById("hud-stage").textContent = `Stage ${stg.name}`;
     document.getElementById("hud-moves").textContent = `のこり ${movesLeft} 手`;
 
-    const m = STAGES[currentStage].mission;
+    // Show active features
+    const featureTags = [];
+    if (stg.features.diagonalLine) featureTags.push("斜");
+    if (stg.features.ice) featureTags.push("氷");
+    if (stg.features.rock) featureTags.push("岩");
+    if (stg.features.holes) featureTags.push("穴");
+    if (stg.features.countdownBomb) featureTags.push("💣");
+    const featureStr = featureTags.length > 0 ? ` [${featureTags.join("")}]` : "";
+    document.getElementById("hud-stage").textContent = `Stage ${stg.name}${featureStr}`;
+
+    const m = stg.mission;
     document.getElementById("hud-mission-label").innerHTML = getMissionText(m, true);
 
     let current = 0;
@@ -1203,7 +1707,6 @@
       progressEl.style.color = "";
     }
 
-    const stg = STAGES[currentStage];
     const usedMoves = stg.moves - movesLeft;
     let currentStars = 3;
     if (usedMoves > stg.star3moves) currentStars = 2;
@@ -1279,7 +1782,7 @@
     const y = py - rect.top;
     const c = Math.floor(x / cellSize);
     const r = Math.floor(y / cellSize);
-    if (inBounds(r, c)) return { r, c };
+    if (inBounds(r, c) && isPlayable(r, c)) return { r, c };
     return null;
   }
 
@@ -1339,7 +1842,7 @@
 
     const targetR = dragStart.r + dir.dr;
     const targetC = dragStart.c + dir.dc;
-    if (!inBounds(targetR, targetC)) return;
+    if (!inBounds(targetR, targetC) || !isPlayable(targetR, targetC)) return;
 
     selected = null;
     doMove(dragStart.r, dragStart.c, targetR, targetC);
@@ -1498,13 +2001,24 @@
     for (let i = 0; i < STAGES.length; i++) {
       const stg = STAGES[i];
       const sizeLabel = `${stg.boardCols}×${stg.boardRows}`;
+
       if (sizeLabel !== prevSize) {
         const header = document.createElement("div");
         header.className = "stage-gate";
-        header.textContent = sizeLabel;
+        // Show features for this group
+        const featureLabels = [];
+        if (stg.features.diagonalLine) featureLabels.push("ナナメライン");
+        if (stg.features.ice) featureLabels.push("氷");
+        if (stg.features.rock) featureLabels.push("岩");
+        if (stg.features.holes) featureLabels.push("穴あき");
+        if (stg.features.countdownBomb) featureLabels.push("カウントダウン💣");
+        if (stg.colors >= 8) featureLabels.push("8色");
+        const featureStr = featureLabels.length > 0 ? ` — ${featureLabels.join("・")}` : "";
+        header.textContent = `${sizeLabel}${featureStr}`;
         grid.appendChild(header);
         prevSize = sizeLabel;
       }
+
       const btn = document.createElement("button");
       btn.className = "stage-btn";
       const unlocked = isStageUnlocked(i);
@@ -1536,6 +2050,7 @@
     selected = null;
     animating = false;
 
+    initCellState(stg);
     resizeCanvas();
     createBoard(stg.colors);
     updateHUD();
