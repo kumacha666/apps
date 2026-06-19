@@ -28,6 +28,39 @@
 
   const STAGES = buildStages();
 
+  // --- Tracking ---
+  const GA_MEASUREMENT_ID = "";  // G-XXXXXXXXXX を設定
+  const GAS_ENDPOINT = "";       // GAS デプロイ URL を設定
+  const FEEDBACK_URL = "";       // Google フォーム URL を設定
+
+  function getAnonId() {
+    let id = localStorage.getItem("7metch_uid");
+    if (!id) {
+      id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem("7metch_uid", id);
+    }
+    return id;
+  }
+
+  function trackGA(event, params) {
+    if (!GA_MEASUREMENT_ID || typeof gtag !== "function") return;
+    gtag("event", event, params);
+  }
+
+  function trackGAS(data) {
+    if (!GAS_ENDPOINT) return;
+    data.user_id = getAnonId();
+    fetch(GAS_ENDPOINT, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }).catch(() => {});
+  }
+
+  function track(event, params) {
+    trackGA(event, params || {});
+    trackGAS({ event, ...params });
+  }
+
   // --- Sound ---
   let audioCtx = null;
   let soundEnabled = true;
@@ -547,6 +580,7 @@
       const comboType = getComboType(p1.special, p2.special);
       if (comboType) {
         SFX.combo();
+        track("special_combo", { combo_type: comboType, stage: STAGES[currentStage].name });
         movesLeft--;
         chainCount = 1;
         updateHUD();
@@ -1212,9 +1246,12 @@
       writeSave();
 
       SFX.stageClear();
+      track("stage_clear", { stage: stg.name, stars, moves_used: usedMoves, moves_total: stg.moves, mission_type: stg.mission.type });
       showResult(true, stars);
     } else if (movesLeft <= 0) {
+      const stg = STAGES[currentStage];
       SFX.stageFail();
+      track("stage_fail", { stage: stg.name, moves_total: stg.moves, mission_type: stg.mission.type });
       showResult(false, 0);
     }
   }
@@ -1356,7 +1393,14 @@
     showScreen("title");
   });
 
+  document.getElementById("btn-feedback").addEventListener("click", () => {
+    if (FEEDBACK_URL) {
+      window.open(FEEDBACK_URL, "_blank");
+    }
+  });
+
   document.getElementById("btn-retry").addEventListener("click", () => {
+    track("stage_retry", { stage: STAGES[currentStage].name });
     startStage(currentStage);
   });
 
@@ -1376,6 +1420,7 @@
   });
 
   document.getElementById("btn-result-retry").addEventListener("click", () => {
+    track("stage_retry", { stage: STAGES[currentStage].name });
     startStage(currentStage);
   });
 
@@ -1448,6 +1493,7 @@
     updateHUD();
     drawBoard();
     showScreen("game");
+    track("stage_start", { stage: stg.name, mission_type: stg.mission.type });
   }
 
   function resizeCanvas() {
