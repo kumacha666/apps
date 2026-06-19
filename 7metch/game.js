@@ -18,6 +18,12 @@
     SWAP_FRAME_MS: 20,
   };
 
+  const STAR_GATES = [
+    { stage: 25, stars: 30 },
+    { stage: 50, stars: 80 },
+    { stage: 75, stars: 150 },
+  ];
+
   const STAGES = buildStages();
 
   const canvas = document.getElementById("game-canvas");
@@ -58,6 +64,22 @@
 
   function writeSave() {
     localStorage.setItem("7metch_save", JSON.stringify(saveData));
+  }
+
+  function getTotalStars() {
+    return Object.values(saveData.bestStars).reduce((sum, s) => sum + s, 0);
+  }
+
+  function isStageUnlocked(i) {
+    if (i === 0) return true;
+    if (!saveData.cleared[i - 1]) return false;
+    const gate = STAR_GATES.find((g) => g.stage === i);
+    if (gate && getTotalStars() < gate.stars) return false;
+    return true;
+  }
+
+  function getGateFor(i) {
+    return STAR_GATES.find((g) => g.stage === i) || null;
   }
 
   // --- Stages ---
@@ -954,7 +976,13 @@
     const lastCleared = Object.keys(saveData.cleared)
       .map(Number)
       .sort((a, b) => a - b);
-    currentStage = lastCleared.length > 0 ? Math.min(lastCleared[lastCleared.length - 1] + 1, STAGES.length - 1) : 0;
+    let next = lastCleared.length > 0 ? Math.min(lastCleared[lastCleared.length - 1] + 1, STAGES.length - 1) : 0;
+    if (!isStageUnlocked(next)) {
+      buildStageSelect();
+      showScreen("stageSelect");
+      return;
+    }
+    currentStage = next;
     startStage(currentStage);
   });
 
@@ -976,7 +1004,13 @@
   });
 
   document.getElementById("btn-next").addEventListener("click", () => {
-    currentStage++;
+    const next = currentStage + 1;
+    if (next >= STAGES.length || !isStageUnlocked(next)) {
+      buildStageSelect();
+      showScreen("stageSelect");
+      return;
+    }
+    currentStage = next;
     startStage(currentStage);
   });
 
@@ -992,10 +1026,22 @@
   function buildStageSelect() {
     const grid = document.getElementById("stage-grid");
     grid.innerHTML = "";
+    const total = getTotalStars();
+
+    document.getElementById("total-stars-display").textContent = `★ ${total}`;
+
     STAGES.forEach((stg, i) => {
+      const gate = getGateFor(i);
+      if (gate && gate.stars > total) {
+        const gateEl = document.createElement("div");
+        gateEl.className = "stage-gate";
+        gateEl.innerHTML = `★${gate.stars} ひつよう（あと${gate.stars - total}）`;
+        grid.appendChild(gateEl);
+      }
+
       const btn = document.createElement("button");
       btn.className = "stage-btn";
-      const unlocked = i === 0 || saveData.cleared[i - 1];
+      const unlocked = isStageUnlocked(i);
       if (!unlocked) btn.classList.add("locked");
 
       const stars = saveData.bestStars[i] || 0;

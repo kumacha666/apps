@@ -110,6 +110,13 @@ body {
 /* Stage Select */
 #screen-stage-select h2 {
   font-size: 1.4rem;
+  margin-bottom: 4px;
+}
+
+#total-stars-display {
+  color: var(--gold);
+  font-size: 1.2rem;
+  font-weight: 900;
   margin-bottom: 8px;
 }
 
@@ -117,9 +124,20 @@ body {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 8px;
-  max-height: 60vh;
+  max-height: 55vh;
   overflow-y: auto;
   padding: 8px;
+}
+
+.stage-gate {
+  grid-column: 1 / -1;
+  background: var(--accent2);
+  color: var(--gold);
+  text-align: center;
+  padding: 8px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
 }
 
 .stage-btn {
