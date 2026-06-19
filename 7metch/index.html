@@ -30,9 +30,26 @@
       <button id="btn-start" class="btn-primary">はじめる</button>
       <button id="btn-stage-select" class="btn-secondary">ステージ選択</button>
       <button id="btn-help" class="btn-secondary">あそびかた</button>
+      <div id="data-buttons">
+        <button id="btn-backup" class="btn-link">バックアップ</button>
+        <span class="btn-link-sep">|</span>
+        <button id="btn-restore" class="btn-link">復元</button>
+      </div>
       <button id="btn-feedback" class="btn-link">ご意見・フィードバック</button>
       <button id="btn-sound-toggle" class="btn-sound">🔊</button>
-      <div id="version-info">v2.0.1</div>
+      <div id="version-info">v2.1.0</div>
+    </div>
+
+    <div id="restore-modal" class="hidden">
+      <div id="restore-content">
+        <h3>データ復元</h3>
+        <p>バックアップコードを貼り付けてください</p>
+        <textarea id="restore-input" rows="4" placeholder="バックアップコードをここに貼り付け"></textarea>
+        <div class="restore-buttons">
+          <button id="btn-restore-exec" class="btn-primary">復元する</button>
+          <button id="btn-restore-cancel" class="btn-secondary">キャンセル</button>
+        </div>
+      </div>
     </div>
 
     <div id="debug-badge" class="hidden">DEBUG</div>

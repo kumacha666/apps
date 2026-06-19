@@ -1411,6 +1411,40 @@
     showScreen("title");
   });
 
+  document.getElementById("btn-backup").addEventListener("click", async () => {
+    const data = btoa(unescape(encodeURIComponent(JSON.stringify(saveData))));
+    try {
+      await navigator.clipboard.writeText(data);
+      alert("バックアップコードをコピーしました！\n安全な場所に保存してください。");
+    } catch {
+      prompt("下のコードをコピーして保存してください：", data);
+    }
+  });
+
+  document.getElementById("btn-restore").addEventListener("click", () => {
+    document.getElementById("restore-input").value = "";
+    document.getElementById("restore-modal").classList.remove("hidden");
+  });
+
+  document.getElementById("btn-restore-cancel").addEventListener("click", () => {
+    document.getElementById("restore-modal").classList.add("hidden");
+  });
+
+  document.getElementById("btn-restore-exec").addEventListener("click", () => {
+    const input = document.getElementById("restore-input").value.trim();
+    if (!input) return;
+    try {
+      const parsed = JSON.parse(decodeURIComponent(escape(atob(input))));
+      if (!parsed.cleared || !parsed.bestStars) throw new Error();
+      saveData = parsed;
+      writeSave();
+      document.getElementById("restore-modal").classList.add("hidden");
+      alert("データを復元しました！");
+    } catch {
+      alert("バックアップコードが正しくありません。");
+    }
+  });
+
   document.getElementById("btn-feedback").addEventListener("click", () => {
     if (FEEDBACK_URL) {
       window.open(FEEDBACK_URL, "_blank");
