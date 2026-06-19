@@ -21,7 +21,27 @@
       <p class="title-sub"><span class="t-accent">ナナメ</span>に動かせる3<span class="t-accent">マッチ</span>パズル</p>
       <button id="btn-start" class="btn-primary">はじめる</button>
       <button id="btn-stage-select" class="btn-secondary">ステージ選択</button>
-      <div id="version-info">v0.7.0</div>
+      <div id="version-info">v0.8.0</div>
+    </div>
+
+    <div id="debug-panel" class="hidden">
+      <div id="debug-content">
+        <h3>🔧 デバッグモード</h3>
+        <div class="debug-section">
+          <label>ステージジャンプ</label>
+          <div class="debug-row">
+            <input type="number" id="debug-stage-num" min="1" max="50" value="1" />
+            <button id="btn-debug-jump" class="btn-debug">GO</button>
+          </div>
+        </div>
+        <div class="debug-section">
+          <button id="btn-debug-unlock-all" class="btn-debug wide">全ステージ解放</button>
+        </div>
+        <div class="debug-section">
+          <button id="btn-debug-reset" class="btn-debug wide danger">セーブデータリセット</button>
+        </div>
+        <button id="btn-debug-close" class="btn-secondary wide">とじる</button>
+      </div>
     </div>
 
     <div id="update-toast" class="hidden">
