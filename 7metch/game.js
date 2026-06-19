@@ -10,9 +10,9 @@
   const ANIM = {
     CLEAR_FRAMES: 14,
     CLEAR_FRAME_MS: 35,
-    DROP_SPEED: 0.12,
+    DROP_SPEED: 0.22,
     DROP_FRAME_MS: 16,
-    CHAIN_PAUSE_MS: 300,
+    CHAIN_PAUSE_MS: 180,
     SWAP_FRAMES: 8,
     SWAP_FRAME_MS: 20,
   };
