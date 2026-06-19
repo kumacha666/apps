@@ -303,6 +303,87 @@ body {
   font-size: 0.7rem;
   margin-top: 12px;
   opacity: 0.6;
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Debug Panel */
+#debug-panel {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+#debug-panel.hidden {
+  display: none;
+}
+
+#debug-content {
+  background: var(--bg-light);
+  border: 2px solid #e94560;
+  border-radius: 16px;
+  padding: 24px;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#debug-content h3 {
+  text-align: center;
+  font-size: 1.1rem;
+}
+
+.debug-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.debug-section label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.debug-row {
+  display: flex;
+  gap: 8px;
+}
+
+.debug-row input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--accent2);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 1rem;
+  text-align: center;
+}
+
+.btn-debug {
+  background: var(--accent2);
+  color: var(--text);
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-debug.wide, .btn-secondary.wide {
+  width: 100%;
+}
+
+.btn-debug.danger {
+  background: #8b0000;
+  color: #faa;
 }
 
 /* Update Toast */

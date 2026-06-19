@@ -1050,5 +1050,51 @@
     }
   });
 
+  // --- Debug Mode ---
+  let debugTapCount = 0;
+  let debugTapTimer = null;
+  let debugMode = false;
+
+  document.getElementById("version-info").addEventListener("click", () => {
+    debugTapCount++;
+    clearTimeout(debugTapTimer);
+    debugTapTimer = setTimeout(() => { debugTapCount = 0; }, 1500);
+    if (debugTapCount >= 7) {
+      debugTapCount = 0;
+      debugMode = true;
+      document.getElementById("debug-panel").classList.remove("hidden");
+    }
+  });
+
+  document.getElementById("btn-debug-jump").addEventListener("click", () => {
+    const num = parseInt(document.getElementById("debug-stage-num").value, 10);
+    if (num >= 1 && num <= STAGES.length) {
+      currentStage = num - 1;
+      document.getElementById("debug-panel").classList.add("hidden");
+      startStage(currentStage);
+    }
+  });
+
+  document.getElementById("btn-debug-unlock-all").addEventListener("click", () => {
+    for (let i = 0; i < STAGES.length; i++) {
+      saveData.cleared[i] = true;
+      if (!saveData.bestStars[i]) saveData.bestStars[i] = 1;
+    }
+    writeSave();
+    alert("全ステージを解放しました");
+  });
+
+  document.getElementById("btn-debug-reset").addEventListener("click", () => {
+    if (confirm("セーブデータをリセットしますか？")) {
+      saveData = { cleared: {}, bestStars: {} };
+      writeSave();
+      alert("リセットしました");
+    }
+  });
+
+  document.getElementById("btn-debug-close").addEventListener("click", () => {
+    document.getElementById("debug-panel").classList.add("hidden");
+  });
+
   showScreen("title");
 })();
