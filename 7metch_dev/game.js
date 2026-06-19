@@ -628,9 +628,12 @@
           if (!allMatch) continue;
           const allFree = cells.every(([cr, cc]) => !usedCells.has(cr * cols + cc));
           if (!allFree) continue;
-          // Place diagonal line at top-left of the 2×2
-          const key = r * cols + c;
-          specials.push({ r, c, type: "line_d", color });
+          let sr = r, sc = c;
+          if (lastSwapTarget && cells.some(([cr,cc]) => cr === lastSwapTarget.r && cc === lastSwapTarget.c)) {
+            sr = lastSwapTarget.r;
+            sc = lastSwapTarget.c;
+          }
+          specials.push({ r: sr, c: sc, type: "line_d", color });
           cells.forEach(([cr, cc]) => usedCells.add(cr * cols + cc));
         }
       }
@@ -832,6 +835,7 @@
   let totalCleared = 0;
   let colorCleared = [];
   let chainCount = 0;
+  let lastSwapTarget = null;
 
   function getComboType(s1, s2) {
     const normalize = (s) => s === "countdown" ? "bomb" : s;
@@ -944,6 +948,8 @@
     const p1 = board[r1][c1];
     const p2 = board[r2][c2];
 
+    lastSwapTarget = { r: r2, c: c2 };
+
     SFX.swap();
     await animateSwap(r1, c1, r2, c2);
     swapPieces(r1, c1, r2, c2);
@@ -1025,6 +1031,7 @@
     updateHUD();
 
     await resolveBoard();
+    lastSwapTarget = null;
 
     // Tick countdowns after move
     const exploded = tickCountdowns();
@@ -1063,6 +1070,7 @@
     while (matches.length > 0) {
       chainCount++;
       const specials = findSpecialCreations(matches);
+      lastSwapTarget = null;
 
       const cleared = new Set();
       matches.forEach(([r, c]) => cleared.add(r * cols + c));
