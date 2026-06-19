@@ -1,8 +1,13 @@
-const CACHE_NAME = "7metch-v17";
+const CACHE_NAME = "7metch-v18";
 const ASSETS = ["./", "./index.html", "./style.css", "./game.js", "./manifest.json"];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
+  const requests = ASSETS.map((url) => new Request(url, { cache: "no-cache" }));
+  e.waitUntil(
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.all(requests.map((req) => fetch(req).then((res) => cache.put(req, res))))
+    )
+  );
   self.skipWaiting();
 });
 
@@ -17,7 +22,7 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, { cache: "no-cache" })
       .then((res) => {
         if (res.ok) {
           const clone = res.clone();
