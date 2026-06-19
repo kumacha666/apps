@@ -22,6 +22,8 @@
     { stage: 25, stars: 30 },
     { stage: 50, stars: 80 },
     { stage: 75, stars: 150 },
+    { stage: 100, stars: 200 },
+    { stage: 150, stars: 300 },
   ];
 
   const STAGES = buildStages();
@@ -161,7 +163,7 @@
   // --- Stages ---
   function buildStages() {
     const stages = [];
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 200; i++) {
       const tier = Math.floor(i / 10);
       const moves = Math.max(10, 20 - tier * 2);
       const colors = Math.min(7, 5 + Math.floor(i / 10));
@@ -181,7 +183,7 @@
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "score", target: Math.floor(moves * (50 + i * 1.5)) },
+          mission: { type: "score", target: Math.floor(moves * Math.min(250, 50 + i * 1.5)) },
           star2moves: Math.floor(moves * 0.6),
           star3moves: Math.floor(moves * 0.35),
         });
@@ -190,7 +192,7 @@
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "clear", count: Math.floor(moves * (3.5 + i * 0.07)) },
+          mission: { type: "clear", count: Math.floor(moves * Math.min(12, 3.5 + i * 0.07)) },
           star2moves: Math.floor(moves * 0.6),
           star3moves: Math.floor(moves * 0.35),
         });
