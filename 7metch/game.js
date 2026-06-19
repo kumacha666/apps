@@ -1040,35 +1040,23 @@
   function drawSpecialIndicator(ctx, type, cx, cy, r) {
     ctx.save();
     const s = r * 0.55;
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = "rgba(0,0,0,0.7)";
-    ctx.fillStyle = "#fff";
     ctx.lineCap = "round";
+
+    // dark backdrop for contrast on any piece color
+    ctx.beginPath();
+    ctx.arc(cx, cy, s + 2, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.fill();
 
     switch (type) {
       case "line_h": {
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#fff";
         ctx.beginPath();
         ctx.moveTo(cx - s, cy);
         ctx.lineTo(cx + s, cy);
         ctx.stroke();
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-        const a = s * 0.35;
-        ctx.strokeStyle = "rgba(0,0,0,0.7)";
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(cx - s + a, cy - a);
-        ctx.lineTo(cx - s, cy);
-        ctx.lineTo(cx - s + a, cy + a);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(cx + s - a, cy - a);
-        ctx.lineTo(cx + s, cy);
-        ctx.lineTo(cx + s - a, cy + a);
-        ctx.stroke();
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 1.5;
+        const a = s * 0.4;
         ctx.beginPath();
         ctx.moveTo(cx - s + a, cy - a);
         ctx.lineTo(cx - s, cy);
@@ -1082,28 +1070,13 @@
         break;
       }
       case "line_v": {
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#fff";
         ctx.beginPath();
         ctx.moveTo(cx, cy - s);
         ctx.lineTo(cx, cy + s);
         ctx.stroke();
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-        const a = s * 0.35;
-        ctx.strokeStyle = "rgba(0,0,0,0.7)";
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(cx - a, cy - s + a);
-        ctx.lineTo(cx, cy - s);
-        ctx.lineTo(cx + a, cy - s + a);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(cx - a, cy + s - a);
-        ctx.lineTo(cx, cy + s);
-        ctx.lineTo(cx + a, cy + s - a);
-        ctx.stroke();
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 1.5;
+        const a = s * 0.4;
         ctx.beginPath();
         ctx.moveTo(cx - a, cy - s + a);
         ctx.lineTo(cx, cy - s);
@@ -1117,27 +1090,23 @@
         break;
       }
       case "bomb": {
-        const rings = [s * 0.7, s * 0.4];
-        rings.forEach((rad) => {
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 2;
+        [s * 0.65, s * 0.35].forEach((rad) => {
           ctx.beginPath();
           ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-          ctx.strokeStyle = "rgba(0,0,0,0.6)";
-          ctx.lineWidth = 2.5;
-          ctx.stroke();
-          ctx.strokeStyle = "#fff";
-          ctx.lineWidth = 1.5;
           ctx.stroke();
         });
         ctx.fillStyle = "#fff";
         ctx.beginPath();
-        ctx.arc(cx, cy, s * 0.15, 0, Math.PI * 2);
+        ctx.arc(cx, cy, s * 0.12, 0, Math.PI * 2);
         ctx.fill();
         break;
       }
       case "rainbow": {
         const colors = ["#ff4444", "#ffaa00", "#44ff44", "#4488ff"];
-        const innerR = s * 0.25;
-        const outerR = s * 0.7;
+        const innerR = s * 0.2;
+        const outerR = s * 0.75;
         for (let i = 0; i < 4; i++) {
           const angle = (i / 4) * Math.PI * 2 - Math.PI / 4;
           const x1 = cx + Math.cos(angle) * innerR;
@@ -1147,11 +1116,8 @@
           ctx.beginPath();
           ctx.moveTo(x1, y1);
           ctx.lineTo(x2, y2);
-          ctx.strokeStyle = "rgba(0,0,0,0.6)";
-          ctx.lineWidth = 4;
-          ctx.stroke();
           ctx.strokeStyle = colors[i];
-          ctx.lineWidth = 2.5;
+          ctx.lineWidth = 3;
           ctx.stroke();
         }
         ctx.fillStyle = "#fff";
