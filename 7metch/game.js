@@ -63,7 +63,7 @@
   // --- Stages ---
   function buildStages() {
     const stages = [];
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 100; i++) {
       const tier = Math.floor(i / 10);
       const moves = Math.max(10, 20 - tier * 2);
       const colors = Math.min(7, 5 + Math.floor(i / 10));
@@ -74,7 +74,7 @@
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "color", colorIndex: targetColor, count: Math.floor(moves * (0.5 + i * 0.01)) },
+          mission: { type: "color", colorIndex: targetColor, count: Math.floor(moves * Math.min(1.0, 0.5 + i * 0.01)) },
           star2moves: Math.floor(moves * 0.6),
           star3moves: Math.floor(moves * 0.35),
         });
