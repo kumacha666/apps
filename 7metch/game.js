@@ -777,6 +777,7 @@
   let colorCleared = [];
   let chainCount = 0;
   let lastSwapTarget = null;
+  let debugSpawnType = null;
 
   function getComboType(s1, s2) {
     const normalize = (s) => s === "countdown" ? "bomb" : s;
@@ -1048,6 +1049,11 @@
   function updateItemBar() {
     const coins = saveData.coins || 0;
     const el = document.getElementById("item-coin-count");
+    if (debugMode) {
+      if (el) el.textContent = "∞";
+      document.querySelectorAll(".item-btn").forEach(btn => { btn.disabled = false; });
+      return;
+    }
     if (el) el.textContent = coins;
     document.querySelectorAll(".item-btn").forEach(btn => {
       const cost = ITEM_COSTS[btn.dataset.item];
@@ -1061,13 +1067,12 @@
   }
 
   async function usePinpoint(r, c) {
-    if (!board[r][c] || (saveData.coins || 0) < ITEM_COSTS.pinpoint) {
+    if (!board[r][c] || (!debugMode && (saveData.coins || 0) < ITEM_COSTS.pinpoint)) {
       cancelItemMode();
       return;
     }
     animating = true;
-    saveData.coins -= ITEM_COSTS.pinpoint;
-    writeSave();
+    if (!debugMode) { saveData.coins -= ITEM_COSTS.pinpoint; writeSave(); }
     updateItemBar();
 
     const cleared = new Set();
@@ -1115,8 +1120,7 @@
 
   async function useShuffle() {
     animating = true;
-    saveData.coins -= ITEM_COSTS.shuffle;
-    writeSave();
+    if (!debugMode) { saveData.coins -= ITEM_COSTS.shuffle; writeSave(); }
     updateItemBar();
 
     const pieces = [];
@@ -1148,8 +1152,7 @@
   }
 
   function useAddMoves() {
-    saveData.coins -= ITEM_COSTS.addmoves;
-    writeSave();
+    if (!debugMode) { saveData.coins -= ITEM_COSTS.addmoves; writeSave(); }
     movesLeft += 3;
     updateHUD();
     updateItemBar();
@@ -1158,8 +1161,7 @@
 
   async function useColorBomb(colorIndex) {
     animating = true;
-    saveData.coins -= ITEM_COSTS.colorbomb;
-    writeSave();
+    if (!debugMode) { saveData.coins -= ITEM_COSTS.colorbomb; writeSave(); }
     updateItemBar();
 
     const cleared = new Set();
@@ -1217,6 +1219,17 @@
       grid.appendChild(btn);
     }
     document.getElementById("color-picker-modal").classList.remove("hidden");
+  }
+
+  function spawnSpecialAt(r, c, type) {
+    if (!board[r][c] || !isPlayable(r, c)) return;
+    if (type === "countdown") {
+      board[r][c].special = "countdown";
+      board[r][c].countdown = 5;
+    } else {
+      board[r][c].special = type;
+    }
+    drawBoard();
   }
 
   // --- Animations ---
@@ -1900,7 +1913,7 @@
     nextBtn.style.display = win && currentStage < STAGES.length - 1 ? "" : "none";
 
     const rescueBtn = document.getElementById("btn-rescue");
-    if (!win && (saveData.coins || 0) >= ITEM_COSTS.addmoves) {
+    if (!win && (debugMode || (saveData.coins || 0) >= ITEM_COSTS.addmoves)) {
       rescueBtn.style.display = "";
     } else {
       rescueBtn.style.display = "none";
@@ -1951,6 +1964,11 @@
     e.preventDefault();
     const cell = getCell(e.clientX, e.clientY);
     if (!cell) return;
+
+    if (debugSpawnType) {
+      spawnSpecialAt(cell.r, cell.c, debugSpawnType);
+      return;
+    }
 
     if (itemMode === "pinpoint") {
       cancelItemMode();
@@ -2257,6 +2275,8 @@
       debugMode = true;
       document.getElementById("debug-badge").classList.remove("hidden");
       document.getElementById("debug-panel").classList.remove("hidden");
+      document.getElementById("btn-debug-open").classList.remove("hidden");
+      updateItemBar();
     }
   });
 
@@ -2296,7 +2316,7 @@
       if (animating || !screens.game.classList.contains("active")) return;
       const item = btn.dataset.item;
       const cost = ITEM_COSTS[item];
-      if ((saveData.coins || 0) < cost) return;
+      if (!debugMode && (saveData.coins || 0) < cost) return;
 
       if (item !== "pinpoint" && itemMode === "pinpoint") {
         cancelItemMode();
@@ -2329,14 +2349,52 @@
   });
 
   document.getElementById("btn-rescue").addEventListener("click", () => {
-    if ((saveData.coins || 0) < ITEM_COSTS.addmoves) return;
-    saveData.coins -= ITEM_COSTS.addmoves;
-    writeSave();
+    if (!debugMode && (saveData.coins || 0) < ITEM_COSTS.addmoves) return;
+    if (!debugMode) { saveData.coins -= ITEM_COSTS.addmoves; writeSave(); }
     movesLeft += 3;
     updateHUD();
     updateItemBar();
     showScreen("game");
     track("item_rescue", { stage: STAGES[currentStage].name, coins_remaining: saveData.coins });
+  });
+
+  // --- Special Piece Spawner ---
+  const SPAWN_LABELS = {
+    line_h: "← → 横ライン",
+    line_v: "↑ ↓ 縦ライン",
+    bomb: "◎ ボム",
+    rainbow: "✦ レインボー",
+    diagonal: "╲╱ ナナメ",
+    countdown: "⏱️ カウントダウン",
+  };
+
+  function updateSpawnIndicator() {
+    const el = document.getElementById("spawn-indicator");
+    if (debugSpawnType && SPAWN_LABELS[debugSpawnType]) {
+      el.textContent = `スポナーON: ${SPAWN_LABELS[debugSpawnType]}（盤面タップで設置）`;
+      el.classList.remove("hidden");
+    } else {
+      el.classList.add("hidden");
+    }
+  }
+
+  document.querySelectorAll(".btn-spawn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const type = btn.dataset.spawn;
+      document.querySelectorAll(".btn-spawn").forEach(b => b.classList.remove("active"));
+      if (type === "off" || debugSpawnType === type) {
+        debugSpawnType = null;
+      } else {
+        debugSpawnType = type;
+        btn.classList.add("active");
+      }
+      document.getElementById("debug-panel").classList.add("hidden");
+      updateSpawnIndicator();
+    });
+  });
+
+  document.getElementById("btn-debug-open").addEventListener("click", () => {
+    document.getElementById("debug-panel").classList.remove("hidden");
   });
 
   showScreen("title");

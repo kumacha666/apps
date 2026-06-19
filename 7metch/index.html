@@ -72,6 +72,18 @@
           </div>
         </div>
         <div class="debug-section">
+          <label>特殊ピーススポナー（ゲーム中にタップで設置）</label>
+          <div class="debug-spawn-row">
+            <button class="btn-spawn" data-spawn="line_h">← →</button>
+            <button class="btn-spawn" data-spawn="line_v">↑ ↓</button>
+            <button class="btn-spawn" data-spawn="bomb">◎ボム</button>
+            <button class="btn-spawn" data-spawn="rainbow">✦虹</button>
+            <button class="btn-spawn" data-spawn="diagonal">╲╱斜</button>
+            <button class="btn-spawn" data-spawn="countdown">⏱️爆</button>
+            <button class="btn-spawn" data-spawn="off">OFF</button>
+          </div>
+        </div>
+        <div class="debug-section">
           <button id="btn-debug-unlock-all" class="btn-debug wide">全ステージ解放</button>
         </div>
         <div class="debug-section">
@@ -240,7 +252,9 @@
       <div id="game-buttons">
         <button id="btn-retry" class="btn-secondary">リトライ</button>
         <button id="btn-quit" class="btn-secondary">やめる</button>
+        <button id="btn-debug-open" class="btn-secondary hidden">🔧</button>
       </div>
+      <div id="spawn-indicator" class="hidden"></div>
     </div>
 
     <div id="screen-result" class="screen">
