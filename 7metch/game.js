@@ -1411,19 +1411,46 @@
     showScreen("title");
   });
 
-  document.getElementById("btn-backup").addEventListener("click", async () => {
-    const data = btoa(unescape(encodeURIComponent(JSON.stringify(saveData))));
-    try {
-      await navigator.clipboard.writeText(data);
-      alert("バックアップコードをコピーしました！\n安全な場所に保存してください。");
-    } catch {
-      prompt("下のコードをコピーして保存してください：", data);
-    }
+  document.getElementById("btn-backup").addEventListener("click", () => {
+    const json = JSON.stringify(saveData, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    a.href = url;
+    a.download = `7metch_backup_${date}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   });
 
+  let restoreData = null;
+
   document.getElementById("btn-restore").addEventListener("click", () => {
-    document.getElementById("restore-input").value = "";
+    restoreData = null;
+    document.getElementById("restore-file").value = "";
+    document.getElementById("restore-file-name").textContent = "";
+    document.getElementById("btn-restore-exec").disabled = true;
     document.getElementById("restore-modal").classList.remove("hidden");
+  });
+
+  document.getElementById("restore-file").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    document.getElementById("restore-file-name").textContent = file.name;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (!parsed.cleared || !parsed.bestStars) throw new Error();
+        restoreData = parsed;
+        document.getElementById("btn-restore-exec").disabled = false;
+      } catch {
+        restoreData = null;
+        document.getElementById("btn-restore-exec").disabled = true;
+        alert("このファイルはバックアップデータではありません。");
+      }
+    };
+    reader.readAsText(file);
   });
 
   document.getElementById("btn-restore-cancel").addEventListener("click", () => {
@@ -1431,18 +1458,11 @@
   });
 
   document.getElementById("btn-restore-exec").addEventListener("click", () => {
-    const input = document.getElementById("restore-input").value.trim();
-    if (!input) return;
-    try {
-      const parsed = JSON.parse(decodeURIComponent(escape(atob(input))));
-      if (!parsed.cleared || !parsed.bestStars) throw new Error();
-      saveData = parsed;
-      writeSave();
-      document.getElementById("restore-modal").classList.add("hidden");
-      alert("データを復元しました！");
-    } catch {
-      alert("バックアップコードが正しくありません。");
-    }
+    if (!restoreData) return;
+    saveData = restoreData;
+    writeSave();
+    document.getElementById("restore-modal").classList.add("hidden");
+    alert("データを復元しました！");
   });
 
   document.getElementById("btn-feedback").addEventListener("click", () => {
