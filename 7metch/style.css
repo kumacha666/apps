@@ -428,6 +428,12 @@ body {
   -webkit-user-select: none;
   user-select: none;
 }
+#credits {
+  color: var(--text-dim);
+  font-size: 0.6rem;
+  margin-top: 8px;
+  opacity: 0.4;
+}
 
 /* Debug Panel */
 #debug-badge {
