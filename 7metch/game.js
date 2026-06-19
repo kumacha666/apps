@@ -73,7 +73,7 @@
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "color", colorIndex: targetColor, count: 25 + tier * 10 },
+          mission: { type: "color", colorIndex: targetColor, count: 10 + tier * 3 },
           star2moves: Math.floor(moves * 0.6),
           star3moves: Math.floor(moves * 0.35),
         });
