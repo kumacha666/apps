@@ -6,6 +6,7 @@
   const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#3a86ff", "#ff6bb3", "#88cc44"];
   const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross", "octagon"];
   const PIECE_NAMES_JA = ["まる", "ダイヤ", "しかく", "さんかく", "ほし", "ヘキサ", "クロス", "オクタ"];
+  const PIECE_SYMBOLS = ["●", "◆", "■", "▲", "★", "⬡", "✚", "⬣"];
   const MATCH_MIN = 3;
 
   const ANIM = {
@@ -358,9 +359,9 @@
       case "clear": return `${m.count}個 けそう`;
       case "color":
         if (html) {
-          return `<span style="color:${PIECE_COLORS[m.colorIndex]};font-weight:900">${PIECE_NAMES_JA[m.colorIndex]}</span>を${m.count}個けそう`;
+          return `<span style="color:${PIECE_COLORS[m.colorIndex]};font-weight:900">${PIECE_SYMBOLS[m.colorIndex]}</span>を${m.count}個けそう`;
         }
-        return `${PIECE_NAMES_JA[m.colorIndex]}を${m.count}個けそう`;
+        return `${PIECE_SYMBOLS[m.colorIndex]}を${m.count}個けそう`;
     }
   }
 
@@ -491,7 +492,7 @@
     SFX.bomb();
     const cleared = new Set();
     for (const [r, c] of exploded) {
-      const extra = activateSpecial(r, c, cleared);
+      const extra = activateSpecial(r, c, cleared, "countdown");
       cleared.add(r * cols + c);
       extra.forEach(([er, ec]) => cleared.add(er * cols + ec));
     }
@@ -670,32 +671,35 @@
   }
 
   // --- Special Piece Activation ---
-  function activateSpecial(r, c, alreadyCleared) {
+  function activateSpecial(r, c, alreadyCleared, triggeredBy) {
     const piece = board[r][c];
     if (!piece || !piece.special) return [];
+    let sp = piece.special;
+    if (triggeredBy === "line_h" && sp === "line_h") sp = "line_v";
+    else if (triggeredBy === "line_v" && sp === "line_v") sp = "line_h";
     const extra = [];
     const key = (r2, c2) => r2 * cols + c2;
 
-    if (piece.special === "line_h") {
+    if (sp === "line_h") {
       for (let cc = 0; cc < cols; cc++) {
         if (!alreadyCleared.has(key(r, cc)) && board[r][cc] && isPlayable(r, cc)) {
           extra.push([r, cc]);
         }
       }
-    } else if (piece.special === "line_v") {
+    } else if (sp === "line_v") {
       for (let rr = 0; rr < rows; rr++) {
         if (!alreadyCleared.has(key(rr, c)) && board[rr][c] && isPlayable(rr, c)) {
           extra.push([rr, c]);
         }
       }
-    } else if (piece.special === "line_d") {
+    } else if (sp === "line_d") {
       for (let d = -Math.max(rows, cols); d <= Math.max(rows, cols); d++) {
         const r1 = r + d, c1 = c + d;
         if (inBounds(r1, c1) && !alreadyCleared.has(key(r1, c1)) && board[r1][c1] && isPlayable(r1, c1)) extra.push([r1, c1]);
         const r2 = r + d, c2 = c - d;
         if (inBounds(r2, c2) && !alreadyCleared.has(key(r2, c2)) && board[r2][c2] && isPlayable(r2, c2)) extra.push([r2, c2]);
       }
-    } else if (piece.special === "bomb") {
+    } else if (sp === "bomb") {
       for (let dr = -2; dr <= 2; dr++) {
         for (let dc = -2; dc <= 2; dc++) {
           const nr = r + dr;
@@ -705,7 +709,7 @@
           }
         }
       }
-    } else if (piece.special === "rainbow") {
+    } else if (sp === "rainbow") {
       const targetColor = piece.color;
       for (let rr = 0; rr < rows; rr++) {
         for (let cc = 0; cc < cols; cc++) {
@@ -714,7 +718,7 @@
           }
         }
       }
-    } else if (piece.special === "countdown") {
+    } else if (sp === "countdown") {
       for (let dr = -2; dr <= 2; dr++) {
         for (let dc = -2; dc <= 2; dc++) {
           const nr = r + dr, nc = c + dc;
@@ -893,7 +897,7 @@
         const cleared = new Set(comboCells.map(([r, c]) => r * cols + c));
         comboCells.forEach(([cr, cc]) => {
           if (board[cr][cc] && board[cr][cc].special && !(cr === r1 && cc === c1) && !(cr === r2 && cc === c2)) {
-            const extra = activateSpecial(cr, cc, cleared);
+            const extra = activateSpecial(cr, cc, cleared, board[cr][cc].special);
             extra.forEach(([er, ec]) => {
               if (!cleared.has(er * cols + ec)) {
                 cleared.add(er * cols + ec);
@@ -972,7 +976,7 @@
           extra.forEach(([er, ec]) => {
             cleared.add(er * cols + ec);
             if (board[er][ec] && board[er][ec].special) {
-              const extra2 = activateSpecial(er, ec, cleared);
+              const extra2 = activateSpecial(er, ec, cleared, sp);
               extra2.forEach(([er2, ec2]) => cleared.add(er2 * cols + ec2));
             }
           });
@@ -1067,7 +1071,7 @@
       extra.forEach(([er, ec]) => {
         cleared.add(er * cols + ec);
         if (board[er][ec] && board[er][ec].special) {
-          const extra2 = activateSpecial(er, ec, cleared);
+          const extra2 = activateSpecial(er, ec, cleared, sp);
           extra2.forEach(([er2, ec2]) => cleared.add(er2 * cols + ec2));
         }
       });
