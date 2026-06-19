@@ -514,6 +514,24 @@
       }
     }
 
+    // 2×2 square match (diagonal line feature)
+    const stg = STAGES[currentStage];
+    if (stg && stg.features && stg.features.diagonalLine) {
+      for (let r = 0; r < rows - 1; r++) {
+        for (let c = 0; c < cols - 1; c++) {
+          if (!board[r][c] || isHole(r, c) || isRock(r, c)) continue;
+          const color = board[r][c].color;
+          const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
+          const allMatch = cells.every(([cr, cc]) =>
+            board[cr][cc] && !isHole(cr, cc) && !isRock(cr, cc) && board[cr][cc].color === color
+          );
+          if (allMatch) {
+            cells.forEach(([cr, cc]) => matched.add(cr * cols + cc));
+          }
+        }
+      }
+    }
+
     return [...matched].map((v) => [Math.floor(v / cols), v % cols]);
   }
 
@@ -581,7 +599,29 @@
       }
     }
 
-    // 5+ line → rainbow, 4 line → line clear (with diagonal variant)
+    // 2×2 square match → diagonal line piece
+    if (stg.features && stg.features.diagonalLine) {
+      for (let r = 0; r < rows - 1; r++) {
+        for (let c = 0; c < cols - 1; c++) {
+          if (!board[r][c] || isHole(r, c) || isRock(r, c)) continue;
+          const color = board[r][c].color;
+          const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
+          const allMatch = cells.every(([cr, cc]) =>
+            board[cr][cc] && !isHole(cr, cc) && !isRock(cr, cc) &&
+            board[cr][cc].color === color && matchSet.has(cr * cols + cc)
+          );
+          if (!allMatch) continue;
+          const allFree = cells.every(([cr, cc]) => !usedCells.has(cr * cols + cc));
+          if (!allFree) continue;
+          // Place diagonal line at top-left of the 2×2
+          const key = r * cols + c;
+          specials.push({ r, c, type: "line_d", color });
+          cells.forEach(([cr, cc]) => usedCells.add(cr * cols + cc));
+        }
+      }
+    }
+
+    // 5+ line → rainbow, 4 line → line clear
     const allLines = [
       ...hLines.map((h) => ({ ...h, dir: "h" })),
       ...vLines.map((v) => ({ ...v, dir: "v" })),
@@ -597,12 +637,7 @@
         usedCells.add(midKey);
       } else if (line.length === 4) {
         const pos = line[1];
-        let type;
-        if (stg.features && stg.features.diagonalLine && Math.random() < 0.3) {
-          type = "line_d";
-        } else {
-          type = dir === "h" ? "line_v" : "line_h";
-        }
+        const type = dir === "h" ? "line_v" : "line_h";
         const posKey = pos[0] * cols + pos[1];
         if (!usedCells.has(posKey)) {
           specials.push({ r: pos[0], c: pos[1], type, color });
