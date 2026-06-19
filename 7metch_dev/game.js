@@ -182,6 +182,8 @@
   let mission = {};
   let missionProgress = {};
   let saveData = loadSave();
+  let itemMode = null;
+  let debugSpawnType = null;
 
   const screens = {
     title: document.getElementById("screen-title"),
@@ -1129,6 +1131,163 @@
     }
   }
 
+  // --- Items (Dev: free / infinite coins) ---
+  function cancelItemMode() {
+    itemMode = null;
+    canvas.classList.remove("item-targeting");
+  }
+
+  async function usePinpoint(r, c) {
+    if (!board[r][c]) { cancelItemMode(); return; }
+    animating = true;
+
+    const cleared = new Set();
+    cleared.add(r * cols + c);
+    if (board[r][c].special) {
+      const sp = board[r][c].special;
+      if (sp === "bomb") SFX.bomb();
+      else if (sp === "line_h" || sp === "line_v") SFX.line();
+      else if (sp === "rainbow") SFX.rainbow();
+      const extra = activateSpecial(r, c, cleared);
+      extra.forEach(([er, ec]) => {
+        cleared.add(er * cols + ec);
+        if (board[er][ec] && board[er][ec].special) {
+          const extra2 = activateSpecial(er, ec, cleared);
+          extra2.forEach(([er2, ec2]) => cleared.add(er2 * cols + ec2));
+        }
+      });
+    }
+
+    const clearList = [...cleared].map(v => [Math.floor(v / cols), v % cols]);
+    clearList.forEach(([cr, cc]) => {
+      if (board[cr][cc]) {
+        const ci = board[cr][cc].color;
+        colorCleared[ci] = (colorCleared[ci] || 0) + 1;
+        totalCleared++;
+      }
+    });
+    score += clearList.length * 10;
+
+    if (!board[r][c].special) SFX.bomb();
+    await animateClear(clearList);
+    clearList.forEach(([cr, cc]) => { board[cr][cc] = null; });
+
+    const fallMap = applyGravityData();
+    if (fallMap.length > 0) SFX.drop();
+    await animateDrop(fallMap);
+    await sleep(ANIM.CHAIN_PAUSE_MS);
+    await resolveBoard();
+
+    updateHUD();
+    checkWinLose();
+    animating = false;
+  }
+
+  async function useShuffle() {
+    animating = true;
+
+    const pieces = [];
+    const positions = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] && isPlayable(r, c)) {
+          pieces.push(board[r][c]);
+          positions.push([r, c]);
+        }
+      }
+    }
+
+    for (let i = pieces.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pieces[i], pieces[j]] = [pieces[j], pieces[i]];
+    }
+
+    positions.forEach(([r, c], idx) => { board[r][c] = pieces[idx]; });
+
+    SFX.swap();
+    drawBoard();
+    await sleep(300);
+    await resolveBoard();
+
+    updateHUD();
+    checkWinLose();
+    animating = false;
+  }
+
+  function useAddMoves() {
+    movesLeft += 3;
+    updateHUD();
+    SFX.stageClear();
+  }
+
+  async function useColorBomb(colorIndex) {
+    animating = true;
+
+    const cleared = new Set();
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] && board[r][c].color === colorIndex && isPlayable(r, c)) {
+          cleared.add(r * cols + c);
+        }
+      }
+    }
+
+    if (cleared.size === 0) { animating = false; return; }
+
+    const clearList = [...cleared].map(v => [Math.floor(v / cols), v % cols]);
+    clearList.forEach(([cr, cc]) => {
+      if (board[cr][cc]) {
+        const ci = board[cr][cc].color;
+        colorCleared[ci] = (colorCleared[ci] || 0) + 1;
+        totalCleared++;
+      }
+    });
+    score += clearList.length * 10;
+
+    SFX.rainbow();
+    await animateClear(clearList);
+    clearList.forEach(([cr, cc]) => { board[cr][cc] = null; });
+
+    const fallMap = applyGravityData();
+    if (fallMap.length > 0) SFX.drop();
+    await animateDrop(fallMap);
+    await sleep(ANIM.CHAIN_PAUSE_MS);
+    await resolveBoard();
+
+    updateHUD();
+    checkWinLose();
+    animating = false;
+  }
+
+  function showColorPicker() {
+    const grid = document.getElementById("color-picker-grid");
+    grid.innerHTML = "";
+    const numColors = STAGES[currentStage].colors;
+    for (let i = 0; i < numColors; i++) {
+      const btn = document.createElement("button");
+      btn.className = "color-pick-btn";
+      btn.style.background = PIECE_COLORS[i];
+      btn.title = PIECE_NAMES_JA[i];
+      btn.addEventListener("click", () => {
+        document.getElementById("color-picker-modal").classList.add("hidden");
+        useColorBomb(i);
+      });
+      grid.appendChild(btn);
+    }
+    document.getElementById("color-picker-modal").classList.remove("hidden");
+  }
+
+  function spawnSpecialAt(r, c, type) {
+    if (!board[r][c] || !isPlayable(r, c)) return;
+    if (type === "countdown") {
+      board[r][c].special = "countdown";
+      board[r][c].countdown = 5;
+    } else {
+      board[r][c].special = type;
+    }
+    drawBoard();
+  }
+
   // --- Animations ---
   async function animateSwap(r1, c1, r2, c2) {
     const frames = ANIM.SWAP_FRAMES;
@@ -1857,6 +2016,17 @@
     const cell = getCell(e.clientX, e.clientY);
     if (!cell) return;
 
+    if (debugSpawnType) {
+      spawnSpecialAt(cell.r, cell.c, debugSpawnType);
+      return;
+    }
+
+    if (itemMode === "pinpoint") {
+      cancelItemMode();
+      usePinpoint(cell.r, cell.c);
+      return;
+    }
+
     if (selected) {
       if (isAdjacent(selected.r, selected.c, cell.r, cell.c)) {
         doMove(selected.r, selected.c, cell.r, cell.c);
@@ -2115,6 +2285,8 @@
     chainCount = 0;
     selected = null;
     animating = false;
+    itemMode = null;
+    canvas.classList.remove("item-targeting");
 
     initCellState(stg);
     resizeCanvas();
@@ -2196,6 +2368,57 @@
 
   document.getElementById("btn-debug-close").addEventListener("click", () => {
     document.getElementById("debug-panel").classList.add("hidden");
+  });
+
+  // --- Item Buttons (Dev: infinite coins, no cost) ---
+  document.querySelectorAll(".item-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (animating || !screens.game.classList.contains("active")) return;
+      const item = btn.dataset.item;
+
+      if (item !== "pinpoint" && itemMode === "pinpoint") {
+        cancelItemMode();
+      }
+
+      switch (item) {
+        case "pinpoint":
+          if (itemMode === "pinpoint") {
+            cancelItemMode();
+          } else {
+            itemMode = "pinpoint";
+            canvas.classList.add("item-targeting");
+          }
+          break;
+        case "shuffle":
+          useShuffle();
+          break;
+        case "addmoves":
+          useAddMoves();
+          break;
+        case "colorbomb":
+          showColorPicker();
+          break;
+      }
+    });
+  });
+
+  document.getElementById("btn-color-cancel").addEventListener("click", () => {
+    document.getElementById("color-picker-modal").classList.add("hidden");
+  });
+
+  // --- Special Piece Spawner ---
+  document.querySelectorAll(".btn-spawn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const type = btn.dataset.spawn;
+      document.querySelectorAll(".btn-spawn").forEach(b => b.classList.remove("active"));
+      if (type === "off" || debugSpawnType === type) {
+        debugSpawnType = null;
+      } else {
+        debugSpawnType = type;
+        btn.classList.add("active");
+      }
+      document.getElementById("debug-panel").classList.add("hidden");
+    });
   });
 
   showScreen("title");

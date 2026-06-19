@@ -163,6 +163,8 @@
   let mission = {};
   let missionProgress = {};
   let saveData = loadSave();
+  let itemMode = null;
+  let coinsEarned = 0;
 
   const screens = {
     title: document.getElementById("screen-title"),
@@ -181,9 +183,21 @@
   function loadSave() {
     try {
       const d = JSON.parse(localStorage.getItem("7metch_save"));
-      return d || { cleared: {}, bestStars: {} };
+      if (!d) return { cleared: {}, bestStars: {}, coins: 0 };
+      if (d.coins === undefined) {
+        d.coins = 0;
+        for (const stars of Object.values(d.bestStars)) {
+          d.coins += stars * 3;
+        }
+        for (const gate of STAR_GATES) {
+          if (d.cleared[gate.stage]) {
+            d.coins += 5;
+          }
+        }
+      }
+      return d;
     } catch {
-      return { cleared: {}, bestStars: {} };
+      return { cleared: {}, bestStars: {}, coins: 0 };
     }
   }
 
@@ -751,6 +765,182 @@
     }
   }
 
+  // --- Items ---
+  const ITEM_COSTS = { pinpoint: 3, shuffle: 5, addmoves: 8, colorbomb: 12 };
+
+  function updateItemBar() {
+    const coins = saveData.coins || 0;
+    const el = document.getElementById("item-coin-count");
+    if (el) el.textContent = coins;
+    document.querySelectorAll(".item-btn").forEach(btn => {
+      const cost = ITEM_COSTS[btn.dataset.item];
+      btn.disabled = coins < cost;
+    });
+  }
+
+  function cancelItemMode() {
+    itemMode = null;
+    canvas.classList.remove("item-targeting");
+  }
+
+  async function usePinpoint(r, c) {
+    if (!board[r][c] || (saveData.coins || 0) < ITEM_COSTS.pinpoint) {
+      cancelItemMode();
+      return;
+    }
+    animating = true;
+    saveData.coins -= ITEM_COSTS.pinpoint;
+    writeSave();
+    updateItemBar();
+
+    const cleared = new Set();
+    cleared.add(r * cols + c);
+    if (board[r][c].special) {
+      const sp = board[r][c].special;
+      if (sp === "bomb") SFX.bomb();
+      else if (sp === "line_h" || sp === "line_v") SFX.line();
+      else if (sp === "rainbow") SFX.rainbow();
+      const extra = activateSpecial(r, c, cleared);
+      extra.forEach(([er, ec]) => {
+        cleared.add(er * cols + ec);
+        if (board[er][ec] && board[er][ec].special) {
+          const extra2 = activateSpecial(er, ec, cleared);
+          extra2.forEach(([er2, ec2]) => cleared.add(er2 * cols + ec2));
+        }
+      });
+    }
+
+    const clearList = [...cleared].map(v => [Math.floor(v / cols), v % cols]);
+    clearList.forEach(([cr, cc]) => {
+      if (board[cr][cc]) {
+        const ci = board[cr][cc].color;
+        colorCleared[ci] = (colorCleared[ci] || 0) + 1;
+        totalCleared++;
+      }
+    });
+    score += clearList.length * 10;
+
+    if (!board[r][c].special) SFX.bomb();
+    await animateClear(clearList);
+    clearList.forEach(([cr, cc]) => { board[cr][cc] = null; });
+
+    const fallMap = applyGravityData();
+    if (fallMap.length > 0) SFX.drop();
+    await animateDrop(fallMap);
+    await sleep(ANIM.CHAIN_PAUSE_MS);
+    await resolveBoard();
+
+    updateHUD();
+    checkWinLose();
+    animating = false;
+  }
+
+  async function useShuffle() {
+    animating = true;
+    saveData.coins -= ITEM_COSTS.shuffle;
+    writeSave();
+    updateItemBar();
+
+    const pieces = [];
+    const positions = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c]) {
+          pieces.push(board[r][c]);
+          positions.push([r, c]);
+        }
+      }
+    }
+
+    for (let i = pieces.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pieces[i], pieces[j]] = [pieces[j], pieces[i]];
+    }
+
+    positions.forEach(([r, c], idx) => { board[r][c] = pieces[idx]; });
+
+    SFX.swap();
+    drawBoard();
+    await sleep(300);
+    await resolveBoard();
+
+    updateHUD();
+    checkWinLose();
+    animating = false;
+  }
+
+  function useAddMoves() {
+    saveData.coins -= ITEM_COSTS.addmoves;
+    writeSave();
+    movesLeft += 3;
+    updateHUD();
+    updateItemBar();
+    SFX.stageClear();
+  }
+
+  async function useColorBomb(colorIndex) {
+    animating = true;
+    saveData.coins -= ITEM_COSTS.colorbomb;
+    writeSave();
+    updateItemBar();
+
+    const cleared = new Set();
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] && board[r][c].color === colorIndex) {
+          cleared.add(r * cols + c);
+        }
+      }
+    }
+
+    if (cleared.size === 0) {
+      animating = false;
+      return;
+    }
+
+    const clearList = [...cleared].map(v => [Math.floor(v / cols), v % cols]);
+    clearList.forEach(([cr, cc]) => {
+      if (board[cr][cc]) {
+        const ci = board[cr][cc].color;
+        colorCleared[ci] = (colorCleared[ci] || 0) + 1;
+        totalCleared++;
+      }
+    });
+    score += clearList.length * 10;
+
+    SFX.rainbow();
+    await animateClear(clearList);
+    clearList.forEach(([cr, cc]) => { board[cr][cc] = null; });
+
+    const fallMap = applyGravityData();
+    if (fallMap.length > 0) SFX.drop();
+    await animateDrop(fallMap);
+    await sleep(ANIM.CHAIN_PAUSE_MS);
+    await resolveBoard();
+
+    updateHUD();
+    checkWinLose();
+    animating = false;
+  }
+
+  function showColorPicker() {
+    const grid = document.getElementById("color-picker-grid");
+    grid.innerHTML = "";
+    const numColors = STAGES[currentStage].colors;
+    for (let i = 0; i < numColors; i++) {
+      const btn = document.createElement("button");
+      btn.className = "color-pick-btn";
+      btn.style.background = PIECE_COLORS[i];
+      btn.title = PIECE_NAMES_JA[i];
+      btn.addEventListener("click", () => {
+        document.getElementById("color-picker-modal").classList.add("hidden");
+        useColorBomb(i);
+      });
+      grid.appendChild(btn);
+    }
+    document.getElementById("color-picker-modal").classList.remove("hidden");
+  }
+
   // --- Animations ---
   async function animateSwap(r1, c1, r2, c2) {
     const frames = ANIM.SWAP_FRAMES;
@@ -1271,12 +1461,21 @@
       else if (usedMoves <= stg.star2moves) stars = 2;
 
       const prev = saveData.bestStars[currentStage] || 0;
+      const isFirstClear = !saveData.cleared[currentStage];
+      coinsEarned = stars;
+      const newStars = Math.max(0, stars - prev);
+      coinsEarned += newStars * 2;
+      if (isFirstClear && STAR_GATES.some(g => g.stage === currentStage)) {
+        coinsEarned += 5;
+      }
+      saveData.coins = (saveData.coins || 0) + coinsEarned;
+
       if (stars > prev) saveData.bestStars[currentStage] = stars;
       saveData.cleared[currentStage] = true;
       writeSave();
 
       SFX.stageClear();
-      track("stage_clear", { stage: stg.name, stars, moves_used: usedMoves, moves_total: stg.moves, mission_type: stg.mission.type });
+      track("stage_clear", { stage: stg.name, stars, moves_used: usedMoves, moves_total: stg.moves, mission_type: stg.mission.type, coins_earned: coinsEarned });
       showResult(true, stars);
     } else if (movesLeft <= 0) {
       const stg = STAGES[currentStage];
@@ -1291,10 +1490,21 @@
     document.getElementById("result-stars").textContent = win
       ? "★".repeat(stars) + "☆".repeat(3 - stars)
       : "";
-    document.getElementById("result-details").textContent = `スコア: ${score}`;
+    let details = `スコア: ${score}`;
+    if (win && coinsEarned > 0) {
+      details += `<br>🪙 +${coinsEarned} コイン（所持: ${saveData.coins || 0}）`;
+    }
+    document.getElementById("result-details").innerHTML = details;
 
     const nextBtn = document.getElementById("btn-next");
     nextBtn.style.display = win && currentStage < STAGES.length - 1 ? "" : "none";
+
+    const rescueBtn = document.getElementById("btn-rescue");
+    if (!win && (saveData.coins || 0) >= ITEM_COSTS.addmoves) {
+      rescueBtn.style.display = "";
+    } else {
+      rescueBtn.style.display = "none";
+    }
 
     showScreen("result");
   }
@@ -1341,6 +1551,12 @@
     e.preventDefault();
     const cell = getCell(e.clientX, e.clientY);
     if (!cell) return;
+
+    if (itemMode === "pinpoint") {
+      cancelItemMode();
+      usePinpoint(cell.r, cell.c);
+      return;
+    }
 
     if (selected) {
       if (isAdjacent(selected.r, selected.c, cell.r, cell.c)) {
@@ -1471,6 +1687,17 @@
 
   document.getElementById("btn-restore-exec").addEventListener("click", () => {
     if (!restoreData) return;
+    if (restoreData.coins === undefined) {
+      restoreData.coins = 0;
+      for (const stars of Object.values(restoreData.bestStars)) {
+        restoreData.coins += stars * 3;
+      }
+      for (const gate of STAR_GATES) {
+        if (restoreData.cleared[gate.stage]) {
+          restoreData.coins += 5;
+        }
+      }
+    }
     saveData = restoreData;
     writeSave();
     document.getElementById("restore-modal").classList.add("hidden");
@@ -1518,7 +1745,7 @@
     grid.innerHTML = "";
     const total = getTotalStars();
 
-    document.getElementById("total-stars-display").textContent = `★ ${total}`;
+    document.getElementById("total-stars-display").innerHTML = `★ ${total}　<span style="color:#4ecdc4">🪙 ${saveData.coins || 0}</span>`;
 
     const lastClearedIdx = Object.keys(saveData.cleared)
       .map(Number)
@@ -1573,10 +1800,14 @@
     chainCount = 0;
     selected = null;
     animating = false;
+    itemMode = null;
+    coinsEarned = 0;
+    canvas.classList.remove("item-targeting");
 
     resizeCanvas();
     createBoard(stg.colors);
     updateHUD();
+    updateItemBar();
     drawBoard();
     showScreen("game");
     track("stage_start", { stage: stg.name, mission_type: stg.mission.type });
@@ -1653,6 +1884,55 @@
 
   document.getElementById("btn-debug-close").addEventListener("click", () => {
     document.getElementById("debug-panel").classList.add("hidden");
+  });
+
+  // --- Item Buttons ---
+  document.querySelectorAll(".item-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (animating || !screens.game.classList.contains("active")) return;
+      const item = btn.dataset.item;
+      const cost = ITEM_COSTS[item];
+      if ((saveData.coins || 0) < cost) return;
+
+      if (item !== "pinpoint" && itemMode === "pinpoint") {
+        cancelItemMode();
+      }
+
+      switch (item) {
+        case "pinpoint":
+          if (itemMode === "pinpoint") {
+            cancelItemMode();
+          } else {
+            itemMode = "pinpoint";
+            canvas.classList.add("item-targeting");
+          }
+          break;
+        case "shuffle":
+          useShuffle();
+          break;
+        case "addmoves":
+          useAddMoves();
+          break;
+        case "colorbomb":
+          showColorPicker();
+          break;
+      }
+    });
+  });
+
+  document.getElementById("btn-color-cancel").addEventListener("click", () => {
+    document.getElementById("color-picker-modal").classList.add("hidden");
+  });
+
+  document.getElementById("btn-rescue").addEventListener("click", () => {
+    if ((saveData.coins || 0) < ITEM_COSTS.addmoves) return;
+    saveData.coins -= ITEM_COSTS.addmoves;
+    writeSave();
+    movesLeft += 3;
+    updateHUD();
+    updateItemBar();
+    showScreen("game");
+    track("item_rescue", { stage: STAGES[currentStage].name, coins_remaining: saveData.coins });
   });
 
   showScreen("title");

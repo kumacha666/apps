@@ -32,7 +32,7 @@
       </div>
       <button id="btn-feedback" class="btn-link">ご意見・フィードバック</button>
       <button id="btn-sound-toggle" class="btn-sound">🔊</button>
-      <div id="version-info">v2.2.0</div>
+      <div id="version-info">v3.0.0</div>
     </div>
 
     <div id="restore-modal" class="hidden">
@@ -47,6 +47,14 @@
           <button id="btn-restore-exec" class="btn-primary" disabled>復元する</button>
           <button id="btn-restore-cancel" class="btn-secondary">キャンセル</button>
         </div>
+      </div>
+    </div>
+
+    <div id="color-picker-modal" class="hidden">
+      <div id="color-picker-content">
+        <h3>消す色を選んでください</h3>
+        <div id="color-picker-grid"></div>
+        <button id="btn-color-cancel" class="btn-secondary">キャンセル</button>
       </div>
     </div>
 
@@ -173,6 +181,13 @@
         </div>
       </div>
       <canvas id="game-canvas"></canvas>
+      <div id="item-bar">
+        <div id="item-coins">🪙 <span id="item-coin-count">0</span></div>
+        <button class="item-btn" data-item="pinpoint" title="ピンポイント破壊"><span class="item-icon">🎯</span><span class="item-cost">🪙3</span></button>
+        <button class="item-btn" data-item="shuffle" title="シャッフル"><span class="item-icon">🔀</span><span class="item-cost">🪙5</span></button>
+        <button class="item-btn" data-item="addmoves" title="+3手"><span class="item-icon">＋3</span><span class="item-cost">🪙8</span></button>
+        <button class="item-btn" data-item="colorbomb" title="カラーボム"><span class="item-icon">🌈</span><span class="item-cost">🪙12</span></button>
+      </div>
       <div id="game-buttons">
         <button id="btn-retry" class="btn-secondary">リトライ</button>
         <button id="btn-quit" class="btn-secondary">やめる</button>
@@ -186,6 +201,7 @@
         <div id="result-details"></div>
         <div id="result-buttons">
           <button id="btn-next" class="btn-primary">次のステージ</button>
+          <button id="btn-rescue" class="btn-primary" style="display:none">🪙8 +3手で続ける</button>
           <button id="btn-result-retry" class="btn-secondary">リトライ</button>
           <button id="btn-result-stages" class="btn-secondary">ステージ選択</button>
         </div>
