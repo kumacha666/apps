@@ -82,7 +82,7 @@
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "score", target: 1200 + i * 200 },
+          mission: { type: "score", target: Math.floor(moves * (35 + i)) },
           star2moves: Math.floor(moves * 0.6),
           star3moves: Math.floor(moves * 0.35),
         });
@@ -91,7 +91,7 @@
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "clear", count: 40 + i * 4 },
+          mission: { type: "clear", count: Math.floor(moves * (2.5 + i * 0.05)) },
           star2moves: Math.floor(moves * 0.6),
           star3moves: Math.floor(moves * 0.35),
         });
