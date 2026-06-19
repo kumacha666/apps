@@ -8,6 +8,14 @@
   <title>ナナメッチ — 斜めマッチパズル</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
+  <!-- GA4: 測定IDを取得後、MEASUREMENT_ID を置き換える -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=MEASUREMENT_ID"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'MEASUREMENT_ID');
+  </script>
 </head>
 <body>
   <div id="app">
@@ -22,8 +30,9 @@
       <button id="btn-start" class="btn-primary">はじめる</button>
       <button id="btn-stage-select" class="btn-secondary">ステージ選択</button>
       <button id="btn-help" class="btn-secondary">あそびかた</button>
+      <button id="btn-feedback" class="btn-link">ご意見・フィードバック</button>
       <button id="btn-sound-toggle" class="btn-sound">🔊</button>
-      <div id="version-info">v1.7.0</div>
+      <div id="version-info">v1.8.0</div>
     </div>
 
     <div id="debug-panel" class="hidden">
