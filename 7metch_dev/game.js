@@ -981,8 +981,6 @@
         });
 
         const clearList = [...cleared].map((v) => [Math.floor(v / cols), v % cols]);
-        // Damage ice on adjacent cells
-        damageAdjacentIce(clearList);
 
         clearList.forEach(([r, c]) => {
           if (board[r][c]) {
@@ -995,6 +993,7 @@
 
         await animateClear(clearList);
         clearList.forEach(([r, c]) => { board[r][c] = null; });
+        damageAdjacentIce(clearList);
 
         const fallMap = applyGravityData();
         await animateDrop(fallMap);
@@ -1096,8 +1095,6 @@
 
       const clearList = [...cleared].map((v) => [Math.floor(v / cols), v % cols]);
 
-      damageAdjacentIce(clearList);
-
       clearList.forEach(([r, c]) => {
         if (board[r][c]) {
           const ci = board[r][c].color;
@@ -1120,6 +1117,8 @@
       clearList.forEach(([r, c]) => {
         board[r][c] = null;
       });
+
+      damageAdjacentIce(clearList);
 
       specials.forEach((sp) => {
         if (board[sp.r] && board[sp.r][sp.c] === null) {
@@ -1316,6 +1315,7 @@
           if (board[r][c] && isPlayable(r, c)) {
             drawPieceAt(board[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
           }
+          if (isIce(r, c)) drawIceOverlay(r, c);
         }
       }
 
@@ -1353,6 +1353,7 @@
           if (board[r][c] && isPlayable(r, c)) {
             drawPieceAt(board[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
           }
+          if (isIce(r, c)) drawIceOverlay(r, c);
         }
       }
 
@@ -1438,6 +1439,7 @@
           if (frozen[r][c] && isPlayable(r, c)) {
             drawPieceAt(frozen[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
           }
+          if (isIce(r, c)) drawIceOverlay(r, c);
         }
       }
 
@@ -1558,32 +1560,6 @@
 
         ctx.fillStyle = (r + c) % 2 === 0 ? "#1a2744" : "#1e2d50";
         ctx.fillRect(x, y, cellSize, cellSize);
-
-        // Ice overlay
-        if (isIce(r, c)) {
-          ctx.save();
-          const iceAlpha = cellState[r][c] === "ice2" ? 0.35 : 0.2;
-          ctx.fillStyle = `rgba(100, 200, 255, ${iceAlpha})`;
-          ctx.fillRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
-          ctx.strokeStyle = `rgba(150, 220, 255, ${iceAlpha + 0.15})`;
-          ctx.lineWidth = 2;
-          ctx.strokeRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
-          // Ice crystal lines
-          ctx.strokeStyle = `rgba(200, 240, 255, ${iceAlpha})`;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(x + cellSize * 0.2, y + cellSize * 0.3);
-          ctx.lineTo(x + cellSize * 0.5, y + cellSize * 0.15);
-          ctx.lineTo(x + cellSize * 0.8, y + cellSize * 0.3);
-          ctx.stroke();
-          if (cellState[r][c] === "ice2") {
-            ctx.beginPath();
-            ctx.moveTo(x + cellSize * 0.3, y + cellSize * 0.7);
-            ctx.lineTo(x + cellSize * 0.6, y + cellSize * 0.85);
-            ctx.stroke();
-          }
-          ctx.restore();
-        }
       }
     }
   }
@@ -1603,6 +1579,31 @@
     }
   }
 
+  function drawIceOverlay(r, c) {
+    const x = c * cellSize, y = r * cellSize;
+    ctx.save();
+    const iceAlpha = cellState[r][c] === "ice2" ? 0.35 : 0.2;
+    ctx.fillStyle = `rgba(100, 200, 255, ${iceAlpha})`;
+    ctx.fillRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+    ctx.strokeStyle = `rgba(150, 220, 255, ${iceAlpha + 0.15})`;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
+    ctx.strokeStyle = `rgba(200, 240, 255, ${iceAlpha})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x + cellSize * 0.2, y + cellSize * 0.3);
+    ctx.lineTo(x + cellSize * 0.5, y + cellSize * 0.15);
+    ctx.lineTo(x + cellSize * 0.8, y + cellSize * 0.3);
+    ctx.stroke();
+    if (cellState[r][c] === "ice2") {
+      ctx.beginPath();
+      ctx.moveTo(x + cellSize * 0.3, y + cellSize * 0.7);
+      ctx.lineTo(x + cellSize * 0.6, y + cellSize * 0.85);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function drawBoard(overlay) {
     drawBoardBase();
 
@@ -1616,6 +1617,8 @@
         const cy = r * cellSize + cellSize / 2;
 
         drawPieceAt(piece, cx, cy);
+
+        if (isIce(r, c)) drawIceOverlay(r, c);
 
         if (selected && selected.r === r && selected.c === c) {
           ctx.save();
