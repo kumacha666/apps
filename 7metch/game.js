@@ -105,7 +105,7 @@
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "score", target: Math.floor(moves * (35 + i)) },
+          mission: { type: "score", target: Math.floor(moves * (50 + i * 1.5)) },
           star2moves: Math.floor(moves * 0.6),
           star3moves: Math.floor(moves * 0.35),
         });
@@ -114,7 +114,7 @@
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "clear", count: Math.floor(moves * (2.5 + i * 0.05)) },
+          mission: { type: "clear", count: Math.floor(moves * (3.5 + i * 0.07)) },
           star2moves: Math.floor(moves * 0.6),
           star3moves: Math.floor(moves * 0.35),
         });
