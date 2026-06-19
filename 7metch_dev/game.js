@@ -183,11 +183,7 @@
     return Object.values(saveData.bestStars).reduce((sum, s) => sum + s, 0);
   }
 
-  function isStageUnlocked(i) {
-    if (i === 0) return true;
-    if (!saveData.cleared[i - 1]) return false;
-    const gate = STAR_GATES.find((g) => g.stage === i);
-    if (gate && getTotalStars() < gate.stars) return false;
+  function isStageUnlocked() {
     return true;
   }
 
@@ -196,57 +192,46 @@
   }
 
   // --- Stages ---
-  function boardSizeForStage(i) {
-    if (i < 10) return { cols: 6, rows: 7 };
-    if (i < 100) return { cols: 7, rows: 8 };
-    return { cols: 8, rows: 9 };
-  }
+  const BOARD_SIZES = [
+    { cols: 6,  rows: 7,  label: "6×7" },
+    { cols: 7,  rows: 8,  label: "7×8" },
+    { cols: 8,  rows: 9,  label: "8×9" },
+    { cols: 9,  rows: 10, label: "9×10" },
+    { cols: 10, rows: 11, label: "10×11" },
+    { cols: 11, rows: 12, label: "11×12" },
+  ];
 
   function buildStages() {
     const stages = [];
-    for (let i = 0; i < 200; i++) {
-      const tier = Math.floor(i / 10);
-      const moves = Math.max(10, 20 - tier * 2);
-      const colors = Math.min(7, 5 + Math.floor(i / 10));
-      const size = boardSizeForStage(i);
-      const area = size.cols * size.rows;
-      const areaFactor = area / 56;
-      const star2rate = i < 10 ? 0.65 : 0.6;
-      const star3rate = i < 10 ? 0.45 : 0.35;
-
-      if (i % 5 === 0 && i > 0) {
-        const targetColor = i % colors;
+    for (let si = 0; si < BOARD_SIZES.length; si++) {
+      const size = BOARD_SIZES[si];
+      const colors = Math.min(7, 5 + si);
+      for (let j = 0; j < 5; j++) {
+        const idx = si * 5 + j;
+        const moves = 20;
+        const area = size.cols * size.rows;
+        const areaFactor = area / 56;
+        let mission;
+        if (j === 0) {
+          mission = { type: "score", target: Math.floor(moves * 60 * areaFactor) };
+        } else if (j === 1) {
+          mission = { type: "clear", count: Math.floor(moves * 4 * areaFactor) };
+        } else if (j === 2) {
+          mission = { type: "color", colorIndex: 0, count: Math.floor(moves * 0.6 * areaFactor) };
+        } else if (j === 3) {
+          mission = { type: "score", target: Math.floor(moves * 100 * areaFactor) };
+        } else {
+          mission = { type: "clear", count: Math.floor(moves * 6 * areaFactor) };
+        }
         stages.push({
-          name: `${i + 1}`,
+          name: `${size.label}-${j + 1}`,
           moves,
           colors,
           boardCols: size.cols,
           boardRows: size.rows,
-          mission: { type: "color", colorIndex: targetColor, count: Math.floor(moves * Math.min(1.0, 0.5 + i * 0.01) * areaFactor) },
-          star2moves: Math.floor(moves * star2rate),
-          star3moves: Math.floor(moves * star3rate),
-        });
-      } else if (i % 3 === 0) {
-        stages.push({
-          name: `${i + 1}`,
-          moves,
-          colors,
-          boardCols: size.cols,
-          boardRows: size.rows,
-          mission: { type: "score", target: Math.floor(moves * Math.min(250, 50 + i * 1.5) * areaFactor) },
-          star2moves: Math.floor(moves * star2rate),
-          star3moves: Math.floor(moves * star3rate),
-        });
-      } else {
-        stages.push({
-          name: `${i + 1}`,
-          moves,
-          colors,
-          boardCols: size.cols,
-          boardRows: size.rows,
-          mission: { type: "clear", count: Math.floor(moves * Math.min(12, 3.5 + i * 0.07) * areaFactor) },
-          star2moves: Math.floor(moves * star2rate),
-          star3moves: Math.floor(moves * star3rate),
+          mission,
+          star2moves: Math.floor(moves * 0.6),
+          star3moves: Math.floor(moves * 0.35),
         });
       }
     }
@@ -1508,24 +1493,18 @@
       .reduce((max, n) => Math.max(max, n), -1);
     const visibleUpTo = lastClearedIdx + 6;
 
-    let stopped = false;
+    let prevSize = "";
 
     for (let i = 0; i < STAGES.length; i++) {
-      if (stopped) break;
-
-      const gate = getGateFor(i);
-      if (gate && gate.stars > total && i > lastClearedIdx) {
-        const gateEl = document.createElement("div");
-        gateEl.className = "stage-gate";
-        gateEl.innerHTML = `★${gate.stars} で次のエリア解放（あと${gate.stars - total}）`;
-        grid.appendChild(gateEl);
-        stopped = true;
-        break;
-      }
-
-      if (i > visibleUpTo && !saveData.cleared[i]) break;
-
       const stg = STAGES[i];
+      const sizeLabel = `${stg.boardCols}×${stg.boardRows}`;
+      if (sizeLabel !== prevSize) {
+        const header = document.createElement("div");
+        header.className = "stage-gate";
+        header.textContent = sizeLabel;
+        grid.appendChild(header);
+        prevSize = sizeLabel;
+      }
       const btn = document.createElement("button");
       btn.className = "stage-btn";
       const unlocked = isStageUnlocked(i);

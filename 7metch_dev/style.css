@@ -221,10 +221,14 @@ body {
 #stage-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
+  gap: 6px;
   max-height: 55vh;
   overflow-y: auto;
   padding: 8px;
+}
+
+.stage-btn span:first-child {
+  font-size: 0.7rem;
 }
 
 .stage-gate {
