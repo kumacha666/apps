@@ -2407,6 +2407,25 @@
   });
 
   // --- Special Piece Spawner ---
+  const SPAWN_LABELS = {
+    line_h: "← → 横ライン",
+    line_v: "↑ ↓ 縦ライン",
+    bomb: "◎ ボム",
+    rainbow: "✦ レインボー",
+    diagonal: "╲╱ ナナメ",
+    countdown: "⏱️ カウントダウン",
+  };
+
+  function updateSpawnIndicator() {
+    const el = document.getElementById("spawn-indicator");
+    if (debugSpawnType && SPAWN_LABELS[debugSpawnType]) {
+      el.textContent = `スポナーON: ${SPAWN_LABELS[debugSpawnType]}（盤面タップで設置）`;
+      el.classList.remove("hidden");
+    } else {
+      el.classList.add("hidden");
+    }
+  }
+
   document.querySelectorAll(".btn-spawn").forEach(btn => {
     btn.addEventListener("click", () => {
       const type = btn.dataset.spawn;
@@ -2418,7 +2437,12 @@
         btn.classList.add("active");
       }
       document.getElementById("debug-panel").classList.add("hidden");
+      updateSpawnIndicator();
     });
+  });
+
+  document.getElementById("btn-debug-open").addEventListener("click", () => {
+    document.getElementById("debug-panel").classList.remove("hidden");
   });
 
   showScreen("title");
