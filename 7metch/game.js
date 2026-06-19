@@ -1554,6 +1554,7 @@
     if (debugTapCount >= 7) {
       debugTapCount = 0;
       debugMode = true;
+      document.getElementById("debug-badge").classList.remove("hidden");
       document.getElementById("debug-panel").classList.remove("hidden");
     }
   });

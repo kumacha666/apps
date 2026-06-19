@@ -351,6 +351,26 @@ body {
 }
 
 /* Debug Panel */
+#debug-badge {
+  position: fixed;
+  top: 6px;
+  right: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 900;
+  letter-spacing: 1px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  z-index: 300;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+#debug-badge.hidden {
+  display: none;
+}
+
 #debug-panel {
   position: fixed;
   inset: 0;
