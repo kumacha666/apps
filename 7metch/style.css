@@ -533,6 +533,53 @@ body {
   color: #faa;
 }
 
+.debug-spawn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.btn-spawn {
+  background: #1a3a5c;
+  color: var(--gold);
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-spawn.active {
+  background: var(--gold);
+  color: #000;
+}
+
+#btn-debug-open {
+  min-width: auto;
+  padding: 10px 14px;
+  font-size: 1rem;
+}
+
+#btn-debug-open.hidden {
+  display: none;
+}
+
+#spawn-indicator {
+  background: var(--gold);
+  color: #000;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: center;
+  padding: 4px 8px;
+  border-radius: 6px;
+  width: 100%;
+}
+
+#spawn-indicator.hidden {
+  display: none;
+}
+
 /* Update Toast */
 #update-toast {
   position: fixed;
