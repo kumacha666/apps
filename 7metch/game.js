@@ -1,8 +1,8 @@
 (function () {
   "use strict";
 
-  const COLS = 7;
-  const ROWS = 8;
+  let cols = 7;
+  let rows = 8;
   const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#3a86ff", "#ff6bb3"];
   const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross"];
   const PIECE_NAMES_JA = ["まる", "ダイヤ", "しかく", "さんかく", "ほし", "ヘキサ", "クロス"];
@@ -57,6 +57,7 @@
   }
 
   function track(event, params) {
+    if (debugMode) return;
     trackGA(event, params || {});
     trackGAS({ event, ...params });
   }
@@ -195,12 +196,23 @@
   }
 
   // --- Stages ---
+  function boardSizeForStage(i) {
+    if (i < 10) return { cols: 6, rows: 7 };
+    if (i < 100) return { cols: 7, rows: 8 };
+    return { cols: 8, rows: 9 };
+  }
+
   function buildStages() {
     const stages = [];
     for (let i = 0; i < 200; i++) {
       const tier = Math.floor(i / 10);
       const moves = Math.max(10, 20 - tier * 2);
       const colors = Math.min(7, 5 + Math.floor(i / 10));
+      const size = boardSizeForStage(i);
+      const area = size.cols * size.rows;
+      const areaFactor = area / 56;
+      const star2rate = i < 10 ? 0.65 : 0.6;
+      const star3rate = i < 10 ? 0.45 : 0.35;
 
       if (i % 5 === 0 && i > 0) {
         const targetColor = i % colors;
@@ -208,27 +220,33 @@
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "color", colorIndex: targetColor, count: Math.floor(moves * Math.min(1.0, 0.5 + i * 0.01)) },
-          star2moves: Math.floor(moves * 0.6),
-          star3moves: Math.floor(moves * 0.35),
+          boardCols: size.cols,
+          boardRows: size.rows,
+          mission: { type: "color", colorIndex: targetColor, count: Math.floor(moves * Math.min(1.0, 0.5 + i * 0.01) * areaFactor) },
+          star2moves: Math.floor(moves * star2rate),
+          star3moves: Math.floor(moves * star3rate),
         });
       } else if (i % 3 === 0) {
         stages.push({
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "score", target: Math.floor(moves * Math.min(250, 50 + i * 1.5)) },
-          star2moves: Math.floor(moves * 0.6),
-          star3moves: Math.floor(moves * 0.35),
+          boardCols: size.cols,
+          boardRows: size.rows,
+          mission: { type: "score", target: Math.floor(moves * Math.min(250, 50 + i * 1.5) * areaFactor) },
+          star2moves: Math.floor(moves * star2rate),
+          star3moves: Math.floor(moves * star3rate),
         });
       } else {
         stages.push({
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "clear", count: Math.floor(moves * Math.min(12, 3.5 + i * 0.07)) },
-          star2moves: Math.floor(moves * 0.6),
-          star3moves: Math.floor(moves * 0.35),
+          boardCols: size.cols,
+          boardRows: size.rows,
+          mission: { type: "clear", count: Math.floor(moves * Math.min(12, 3.5 + i * 0.07) * areaFactor) },
+          star2moves: Math.floor(moves * star2rate),
+          star3moves: Math.floor(moves * star3rate),
         });
       }
     }
@@ -250,15 +268,15 @@
   // --- Board ---
   function createBoard(numColors) {
     board = [];
-    for (let r = 0; r < ROWS; r++) {
+    for (let r = 0; r < rows; r++) {
       board[r] = [];
-      for (let c = 0; c < COLS; c++) {
+      for (let c = 0; c < cols; c++) {
         board[r][c] = randomPiece(numColors);
       }
     }
     while (findAllMatches().length > 0) {
-      for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
           board[r][c] = randomPiece(numColors);
         }
       }
@@ -270,7 +288,7 @@
   }
 
   function inBounds(r, c) {
-    return r >= 0 && r < ROWS && c >= 0 && c < COLS;
+    return r >= 0 && r < rows && c >= 0 && c < cols;
   }
 
   function isAdjacent(r1, c1, r2, c2) {
@@ -287,8 +305,8 @@
       [1, 0],
     ];
 
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
         if (!board[r][c]) continue;
         const color = board[r][c].color;
 
@@ -302,24 +320,24 @@
             nc += dc;
           }
           if (line.length >= MATCH_MIN) {
-            line.forEach(([lr, lc]) => matched.add(lr * COLS + lc));
+            line.forEach(([lr, lc]) => matched.add(lr * cols + lc));
           }
         }
       }
     }
 
-    return [...matched].map((v) => [Math.floor(v / COLS), v % COLS]);
+    return [...matched].map((v) => [Math.floor(v / cols), v % cols]);
   }
 
   function findSpecialCreations(matches) {
     const specials = [];
-    const matchSet = new Set(matches.map(([r, c]) => r * COLS + c));
+    const matchSet = new Set(matches.map(([r, c]) => r * cols + c));
 
     const hLines = [];
     const vLines = [];
 
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
         if (!board[r][c]) continue;
         const color = board[r][c].color;
 
@@ -331,7 +349,7 @@
             line.push([r, nc]);
             nc++;
           }
-          if (line.length >= MATCH_MIN && line.every(([lr, lc]) => matchSet.has(lr * COLS + lc))) {
+          if (line.length >= MATCH_MIN && line.every(([lr, lc]) => matchSet.has(lr * cols + lc))) {
             hLines.push({ line, color });
           }
         }
@@ -344,7 +362,7 @@
             line.push([nr, c]);
             nr++;
           }
-          if (line.length >= MATCH_MIN && line.every(([lr, lc]) => matchSet.has(lr * COLS + lc))) {
+          if (line.length >= MATCH_MIN && line.every(([lr, lc]) => matchSet.has(lr * cols + lc))) {
             vLines.push({ line, color });
           }
         }
@@ -360,12 +378,12 @@
         for (const [hr, hc] of h.line) {
           for (const [vr, vc] of v.line) {
             if (hr === vr && hc === vc) {
-              const key = hr * COLS + hc;
+              const key = hr * cols + hc;
               if (!usedCells.has(key)) {
                 specials.push({ r: hr, c: hc, type: "bomb", color: h.color });
                 usedCells.add(key);
-                h.line.forEach(([lr, lc]) => usedCells.add(lr * COLS + lc));
-                v.line.forEach(([lr, lc]) => usedCells.add(lr * COLS + lc));
+                h.line.forEach(([lr, lc]) => usedCells.add(lr * cols + lc));
+                v.line.forEach(([lr, lc]) => usedCells.add(lr * cols + lc));
               }
             }
           }
@@ -381,7 +399,7 @@
 
     for (const { line, color, dir } of allLines) {
       const mid = line[Math.floor(line.length / 2)];
-      const midKey = mid[0] * COLS + mid[1];
+      const midKey = mid[0] * cols + mid[1];
       if (usedCells.has(midKey)) continue;
 
       if (line.length >= 5) {
@@ -390,7 +408,7 @@
       } else if (line.length === 4) {
         const pos = line[1];
         const type = dir === "h" ? "line_v" : "line_h";
-        const posKey = pos[0] * COLS + pos[1];
+        const posKey = pos[0] * cols + pos[1];
         if (!usedCells.has(posKey)) {
           specials.push({ r: pos[0], c: pos[1], type, color });
           usedCells.add(posKey);
@@ -406,16 +424,16 @@
     const piece = board[r][c];
     if (!piece || !piece.special) return [];
     const extra = [];
-    const key = (r2, c2) => r2 * COLS + c2;
+    const key = (r2, c2) => r2 * cols + c2;
 
     if (piece.special === "line_h") {
-      for (let cc = 0; cc < COLS; cc++) {
+      for (let cc = 0; cc < cols; cc++) {
         if (!alreadyCleared.has(key(r, cc)) && board[r][cc]) {
           extra.push([r, cc]);
         }
       }
     } else if (piece.special === "line_v") {
-      for (let rr = 0; rr < ROWS; rr++) {
+      for (let rr = 0; rr < rows; rr++) {
         if (!alreadyCleared.has(key(rr, c)) && board[rr][c]) {
           extra.push([rr, c]);
         }
@@ -432,8 +450,8 @@
       }
     } else if (piece.special === "rainbow") {
       const targetColor = piece.color;
-      for (let rr = 0; rr < ROWS; rr++) {
-        for (let cc = 0; cc < COLS; cc++) {
+      for (let rr = 0; rr < rows; rr++) {
+        for (let cc = 0; cc < cols; cc++) {
           if (board[rr][cc] && board[rr][cc].color === targetColor && !alreadyCleared.has(key(rr, cc))) {
             extra.push([rr, cc]);
           }
@@ -448,9 +466,9 @@
     const numColors = STAGES[currentStage].colors;
     const fallMap = [];
 
-    for (let c = 0; c < COLS; c++) {
-      let writeRow = ROWS - 1;
-      for (let r = ROWS - 1; r >= 0; r--) {
+    for (let c = 0; c < cols; c++) {
+      let writeRow = rows - 1;
+      for (let r = rows - 1; r >= 0; r--) {
         if (board[r][c]) {
           if (r !== writeRow) {
             board[writeRow][c] = board[r][c];
@@ -502,24 +520,24 @@
 
   function activateCombo(comboType, r, c, p1, p2) {
     const extra = [];
-    const key = (r2, c2) => r2 * COLS + c2;
+    const key = (r2, c2) => r2 * cols + c2;
     const cleared = new Set();
 
     switch (comboType) {
       case "cross":
-        for (let cc = 0; cc < COLS; cc++) {
+        for (let cc = 0; cc < cols; cc++) {
           if (board[r][cc]) extra.push([r, cc]);
         }
-        for (let rr = 0; rr < ROWS; rr++) {
+        for (let rr = 0; rr < rows; rr++) {
           if (board[rr][c]) extra.push([rr, c]);
         }
         break;
       case "triple_line": {
         for (let d = -1; d <= 1; d++) {
-          for (let cc = 0; cc < COLS; cc++) {
+          for (let cc = 0; cc < cols; cc++) {
             if (inBounds(r + d, cc) && board[r + d][cc]) extra.push([r + d, cc]);
           }
-          for (let rr = 0; rr < ROWS; rr++) {
+          for (let rr = 0; rr < rows; rr++) {
             if (inBounds(rr, c + d) && board[rr][c + d]) extra.push([rr, c + d]);
           }
         }
@@ -540,8 +558,8 @@
         const other = p1.special === "rainbow" ? p2 : p1;
         const targetColor = other.color;
         const spType = comboType === "rainbow_line" ? "line_h" : "bomb";
-        for (let rr = 0; rr < ROWS; rr++) {
-          for (let cc = 0; cc < COLS; cc++) {
+        for (let rr = 0; rr < rows; rr++) {
+          for (let cc = 0; cc < cols; cc++) {
             if (board[rr][cc] && board[rr][cc].color === targetColor) {
               board[rr][cc].special = spType;
               extra.push([rr, cc]);
@@ -551,8 +569,8 @@
         break;
       }
       case "board_clear":
-        for (let rr = 0; rr < ROWS; rr++) {
-          for (let cc = 0; cc < COLS; cc++) {
+        for (let rr = 0; rr < rows; rr++) {
+          for (let cc = 0; cc < cols; cc++) {
             if (board[rr][cc]) extra.push([rr, cc]);
           }
         }
@@ -560,7 +578,7 @@
     }
 
     const unique = new Map();
-    extra.forEach(([er, ec]) => unique.set(er * COLS + ec, [er, ec]));
+    extra.forEach(([er, ec]) => unique.set(er * cols + ec, [er, ec]));
     return [...unique.values()];
   }
 
@@ -588,20 +606,20 @@
         const comboCells = activateCombo(comboType, r2, c2, p1, p2);
 
         // Activate specials on combo-cleared cells (chain reaction)
-        const cleared = new Set(comboCells.map(([r, c]) => r * COLS + c));
+        const cleared = new Set(comboCells.map(([r, c]) => r * cols + c));
         comboCells.forEach(([cr, cc]) => {
           if (board[cr][cc] && board[cr][cc].special && !(cr === r1 && cc === c1) && !(cr === r2 && cc === c2)) {
             const extra = activateSpecial(cr, cc, cleared);
             extra.forEach(([er, ec]) => {
-              if (!cleared.has(er * COLS + ec)) {
-                cleared.add(er * COLS + ec);
+              if (!cleared.has(er * cols + ec)) {
+                cleared.add(er * cols + ec);
                 comboCells.push([er, ec]);
               }
             });
           }
         });
 
-        const clearList = [...cleared].map((v) => [Math.floor(v / COLS), v % COLS]);
+        const clearList = [...cleared].map((v) => [Math.floor(v / cols), v % cols]);
         clearList.forEach(([r, c]) => {
           if (board[r][c]) {
             const ci = board[r][c].color;
@@ -655,7 +673,7 @@
       const specials = findSpecialCreations(matches);
 
       const cleared = new Set();
-      matches.forEach(([r, c]) => cleared.add(r * COLS + c));
+      matches.forEach(([r, c]) => cleared.add(r * cols + c));
 
       let hasSpecialActivation = false;
       matches.forEach(([r, c]) => {
@@ -667,16 +685,16 @@
           else if (sp === "rainbow") SFX.rainbow();
           const extra = activateSpecial(r, c, cleared);
           extra.forEach(([er, ec]) => {
-            cleared.add(er * COLS + ec);
+            cleared.add(er * cols + ec);
             if (board[er][ec] && board[er][ec].special) {
               const extra2 = activateSpecial(er, ec, cleared);
-              extra2.forEach(([er2, ec2]) => cleared.add(er2 * COLS + ec2));
+              extra2.forEach(([er2, ec2]) => cleared.add(er2 * cols + ec2));
             }
           });
         }
       });
 
-      const clearList = [...cleared].map((v) => [Math.floor(v / COLS), v % COLS]);
+      const clearList = [...cleared].map((v) => [Math.floor(v / cols), v % cols]);
 
       clearList.forEach(([r, c]) => {
         if (board[r][c]) {
@@ -733,8 +751,8 @@
 
       drawBoardBase();
 
-      for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
           if ((r === r1 && c === c1) || (r === r2 && c === c2)) continue;
           if (board[r][c]) {
             drawPieceAt(board[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
@@ -758,7 +776,7 @@
   }
 
   async function animateClear(cells) {
-    const clearSet = new Set(cells.map(([r, c]) => r * COLS + c));
+    const clearSet = new Set(cells.map(([r, c]) => r * cols + c));
     const pieceSnapshots = cells.map(([r, c]) => ({
       r, c,
       color: board[r][c] ? PIECE_COLORS[board[r][c].color] : "#fff",
@@ -770,9 +788,9 @@
       const t = frame / totalFrames;
 
       drawBoardBase();
-      for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-          if (clearSet.has(r * COLS + c)) continue;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (clearSet.has(r * cols + c)) continue;
           if (board[r][c]) {
             drawPieceAt(board[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
           }
@@ -840,14 +858,14 @@
     const totalFrames = Math.ceil(maxDist / ANIM.DROP_SPEED);
 
     const frozen = [];
-    for (let r = 0; r < ROWS; r++) {
+    for (let r = 0; r < rows; r++) {
       frozen[r] = [];
-      for (let c = 0; c < COLS; c++) {
+      for (let c = 0; c < cols; c++) {
         frozen[r][c] = board[r][c];
       }
     }
 
-    const fallingCells = new Set(fallMap.map((f) => f.toR * COLS + f.c));
+    const fallingCells = new Set(fallMap.map((f) => f.toR * cols + f.c));
 
     for (let frame = 0; frame <= totalFrames; frame++) {
       const t = Math.min(frame / totalFrames, 1);
@@ -855,9 +873,9 @@
 
       drawBoardBase();
 
-      for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-          if (fallingCells.has(r * COLS + c)) continue;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (fallingCells.has(r * cols + c)) continue;
           if (frozen[r][c]) {
             drawPieceAt(frozen[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
           }
@@ -940,8 +958,8 @@
     ctx.fillStyle = "#16213e";
     ctx.fillRect(0, 0, boardPixelW, boardPixelH);
 
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
         const x = c * cellSize;
         const y = r * cellSize;
         ctx.fillStyle = (r + c) % 2 === 0 ? "#1a2744" : "#1e2d50";
@@ -968,8 +986,8 @@
   function drawBoard(overlay) {
     drawBoardBase();
 
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
         const piece = board[r][c];
         if (!piece) continue;
 
@@ -1480,6 +1498,8 @@
 
   function startStage(index) {
     const stg = STAGES[index];
+    cols = stg.boardCols;
+    rows = stg.boardRows;
     movesLeft = stg.moves;
     score = 0;
     totalCleared = 0;
@@ -1501,11 +1521,11 @@
     const maxW = app.clientWidth - 16;
     const maxH = app.clientHeight - 140;
 
-    cellSize = Math.min(Math.floor(maxW / COLS), Math.floor(maxH / ROWS));
+    cellSize = Math.min(Math.floor(maxW / cols), Math.floor(maxH / rows));
     cellSize = Math.max(cellSize, 28);
 
-    boardPixelW = COLS * cellSize;
-    boardPixelH = ROWS * cellSize;
+    boardPixelW = cols * cellSize;
+    boardPixelH = rows * cellSize;
 
     const dpr = window.devicePixelRatio || 1;
     canvas.width = boardPixelW * dpr;
