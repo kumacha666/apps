@@ -102,24 +102,36 @@
       playTone(base * 1.5, 0.08, "sine", 0.08, 0.12);
     },
     bomb() {
-      playTone(100, 0.3, "sawtooth", 0.15);
-      playTone(60, 0.4, "sine", 0.18, 0.05);
+      playTone(150, 0.15, "sawtooth", 0.12);
+      playTone(100, 0.3, "sawtooth", 0.18);
+      playTone(60, 0.45, "sine", 0.20, 0.05);
+      playTone(40, 0.3, "sine", 0.10, 0.15);
+      playTone(200, 0.08, "square", 0.06, 0.02);
     },
     line() {
-      playTone(800, 0.06, "sawtooth", 0.08);
-      playTone(1200, 0.06, "sawtooth", 0.07, 0.04);
-      playTone(1600, 0.06, "sawtooth", 0.06, 0.08);
+      playTone(600, 0.06, "sawtooth", 0.10);
+      playTone(900, 0.06, "sawtooth", 0.09, 0.03);
+      playTone(1200, 0.06, "sawtooth", 0.08, 0.06);
+      playTone(1600, 0.06, "sawtooth", 0.07, 0.09);
+      playTone(2000, 0.08, "sine", 0.05, 0.12);
     },
     rainbow() {
-      for (let i = 0; i < 5; i++) {
-        playTone(500 + i * 150, 0.12, "sine", 0.08, i * 0.05);
-      }
+      const notes = [523, 659, 784, 988, 1175, 1397, 1568];
+      notes.forEach((f, i) => {
+        playTone(f, 0.18, "sine", 0.12, i * 0.04);
+        playTone(f * 0.5, 0.15, "triangle", 0.06, i * 0.04);
+      });
+      playTone(1568, 0.4, "sine", 0.08, 0.28);
+      playTone(2093, 0.3, "sine", 0.06, 0.32);
     },
     combo() {
-      playTone(300, 0.15, "sawtooth", 0.10);
-      playTone(450, 0.12, "sine", 0.12, 0.08);
-      playTone(600, 0.12, "sine", 0.12, 0.14);
-      playTone(900, 0.15, "sine", 0.10, 0.20);
+      playTone(200, 0.12, "sawtooth", 0.10);
+      playTone(350, 0.10, "sine", 0.12, 0.05);
+      playTone(500, 0.10, "sine", 0.14, 0.10);
+      playTone(700, 0.10, "sine", 0.14, 0.15);
+      playTone(900, 0.12, "sine", 0.12, 0.20);
+      playTone(1200, 0.15, "sine", 0.10, 0.25);
+      playTone(300, 0.3, "triangle", 0.06, 0.08);
     },
     stageClear() {
       const notes = [523, 659, 784, 1047];
@@ -206,7 +218,7 @@
     const stages = [];
     for (let i = 0; i < 200; i++) {
       const tier = Math.floor(i / 10);
-      const moves = Math.max(10, 20 - tier * 2);
+      const moves = Math.max(12, 20 - tier * 2);
       const colors = Math.min(7, 5 + Math.floor(i / 10));
       const size = boardSizeForStage(i);
       const area = size.cols * size.rows;
@@ -233,7 +245,7 @@
           colors,
           boardCols: size.cols,
           boardRows: size.rows,
-          mission: { type: "score", target: Math.floor(moves * Math.min(250, 50 + i * 1.5) * areaFactor) },
+          mission: { type: "score", target: Math.floor(moves * Math.min(120, 50 + i * 1.5) * areaFactor) },
           star2moves: Math.floor(moves * star2rate),
           star3moves: Math.floor(moves * star3rate),
         });
