@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>ナナメッチ DEV</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="dev-banner">DEVELOPMENT BUILD — 計測対象外</div>
+  <div id="app">
+    <div id="screen-title" class="screen active">
+      <div class="title-logo"><span class="t-accent">ナナメ</span><span class="t-accent2">ッチ</span></div>
+      <div id="dev-badge">DEV BUILD</div>
+      <p class="title-sub"><span class="t-accent">ナナメ</span>に動かせる3<span class="t-accent">マッチ</span>パズル</p>
+      <button id="btn-start" class="btn-primary">はじめる</button>
+      <button id="btn-stage-select" class="btn-secondary">ステージ選択</button>
+      <button id="btn-help" class="btn-secondary">あそびかた</button>
+      <div id="data-buttons">
+        <button id="btn-backup" class="btn-link">バックアップ</button>
+        <span class="btn-link-sep">|</span>
+        <button id="btn-restore" class="btn-link">復元</button>
+      </div>
+      <button id="btn-sound-toggle" class="btn-sound">🔊</button>
+      <div id="version-info">dev</div>
+    </div>
+
+    <div id="restore-modal" class="hidden">
+      <div id="restore-content">
+        <h3>データ復元</h3>
+        <p>バックアップファイルを選択してください</p>
+        <label id="restore-file-label" class="btn-secondary">ファイルを選ぶ
+          <input type="file" id="restore-file" accept=".json" hidden />
+        </label>
+        <div id="restore-file-name"></div>
+        <div class="restore-buttons">
+          <button id="btn-restore-exec" class="btn-primary" disabled>復元する</button>
+          <button id="btn-restore-cancel" class="btn-secondary">キャンセル</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="debug-badge" class="hidden">DEBUG</div>
+
+    <div id="debug-panel" class="hidden">
+      <div id="debug-content">
+        <h3>🔧 デバッグモード</h3>
+        <div class="debug-section">
+          <label>ステージジャンプ</label>
+          <div class="debug-row">
+            <input type="number" id="debug-stage-num" min="1" max="200" value="1" />
+            <button id="btn-debug-jump" class="btn-debug">GO</button>
+          </div>
+        </div>
+        <div class="debug-section">
+          <button id="btn-debug-unlock-all" class="btn-debug wide">全ステージ解放</button>
+        </div>
+        <div class="debug-section">
+          <button id="btn-debug-reset" class="btn-debug wide danger">セーブデータリセット</button>
+        </div>
+        <button id="btn-debug-close" class="btn-secondary wide">とじる</button>
+      </div>
+    </div>
+
+    <div id="update-toast" class="hidden">
+      新しいバージョンがあります
+      <button id="btn-update">更新する</button>
+    </div>
+
+    <div id="screen-stage-select" class="screen">
+      <h2>ステージ選択</h2>
+      <div id="total-stars-display"></div>
+      <div id="stage-grid"></div>
+      <button id="btn-back-title" class="btn-secondary">もどる</button>
+    </div>
+
+    <div id="screen-help" class="screen">
+      <div id="help-content">
+        <h2>あそびかた</h2>
+
+        <div class="help-section">
+          <h3>基本ルール</h3>
+          <p>ピースを<strong>8方向</strong>（上下左右＋ナナメ）にスワイプして入れ替えます。</p>
+          <p>同じ色のピースが<strong>タテまたはヨコに3つ以上</strong>並ぶと消えます。</p>
+          <p>制限手数以内にミッションを達成すると★がもらえます。</p>
+        </div>
+
+        <div class="help-section">
+          <h3>★評価</h3>
+          <p>⭐ ミッション達成</p>
+          <p>⭐⭐ 手数の半分以上残してクリア</p>
+          <p>⭐⭐⭐ 手数の75%以上残してクリア</p>
+        </div>
+
+        <div class="help-section">
+          <h3>スペシャルピース</h3>
+          <table class="help-table">
+            <tr><th>ピース</th><th>出しかた</th><th>効果</th></tr>
+            <tr>
+              <td class="help-icon">← →</td>
+              <td>ヨコに4つ消し</td>
+              <td>ヨコ1列を消す</td>
+            </tr>
+            <tr>
+              <td class="help-icon">↑ ↓</td>
+              <td>タテに4つ消し</td>
+              <td>タテ1列を消す</td>
+            </tr>
+            <tr>
+              <td class="help-icon">◎</td>
+              <td>T字・L字消し</td>
+              <td>周囲を爆破</td>
+            </tr>
+            <tr>
+              <td class="help-icon">✦</td>
+              <td>5つ以上消し</td>
+              <td>指定色を全消し</td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="help-section">
+          <h3>スペシャル × スペシャル コンボ</h3>
+          <p class="help-hint">スペシャルピース同士を入れ替えると特別な効果が発動！</p>
+          <table class="help-table">
+            <tr><th>組み合わせ</th><th>効果</th></tr>
+            <tr><td>ライン × ライン</td><td>十字消し</td></tr>
+            <tr><td>ボム × ライン</td><td>3列十字消し</td></tr>
+            <tr><td>ボム × ボム</td><td>巨大爆破（7×7）</td></tr>
+            <tr><td>レインボー × ライン</td><td>同色すべてライン化</td></tr>
+            <tr><td>レインボー × ボム</td><td>同色すべてボム化</td></tr>
+            <tr><td>レインボー × レインボー</td><td>全消し！</td></tr>
+          </table>
+        </div>
+
+        <div class="help-section">
+          <h3>盤面サイズ</h3>
+          <p>Stage 1〜10：6×7（入門）</p>
+          <p>Stage 11〜100：7×8（通常）</p>
+          <p>Stage 101〜200：8×9（上級）</p>
+        </div>
+
+        <div class="help-section">
+          <h3>★ゲート</h3>
+          <p>一定数の★を集めると次のエリアが解放されます。</p>
+          <p>たくさん★を集めて先へ進みましょう！</p>
+        </div>
+
+        <button id="btn-back-help" class="btn-secondary">もどる</button>
+      </div>
+    </div>
+
+    <div id="screen-game" class="screen">
+      <div id="game-hud">
+        <div id="hud-left">
+          <div id="hud-stage"></div>
+          <div id="hud-moves"></div>
+          <div id="hud-stars"></div>
+        </div>
+        <div id="hud-mission">
+          <div id="hud-mission-label"></div>
+          <div id="hud-mission-progress"></div>
+        </div>
+      </div>
+      <canvas id="game-canvas"></canvas>
+      <div id="game-buttons">
+        <button id="btn-retry" class="btn-secondary">リトライ</button>
+        <button id="btn-quit" class="btn-secondary">やめる</button>
+      </div>
+    </div>
+
+    <div id="screen-result" class="screen">
+      <div id="result-content">
+        <h2 id="result-title"></h2>
+        <div id="result-stars"></div>
+        <div id="result-details"></div>
+        <div id="result-buttons">
+          <button id="btn-next" class="btn-primary">次のステージ</button>
+          <button id="btn-result-retry" class="btn-secondary">リトライ</button>
+          <button id="btn-result-stages" class="btn-secondary">ステージ選択</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js").then((reg) => {
+        reg.addEventListener("updatefound", () => {
+          const newSW = reg.installing;
+          newSW.addEventListener("statechange", () => {
+            if (newSW.state === "activated" && navigator.serviceWorker.controller) {
+              const toast = document.getElementById("update-toast");
+              toast.classList.remove("hidden");
+              document.getElementById("btn-update").addEventListener("click", () => {
+                location.reload();
+              });
+            }
+          });
+        });
+      });
+    }
+  </script>
+</body>
+</html>
