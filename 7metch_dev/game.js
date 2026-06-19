@@ -957,6 +957,7 @@
         updateHUD();
 
         const comboCells = activateCombo(comboType, r2, c2, p1, p2);
+        comboCells.push([r1, c1], [r2, c2]);
 
         const cleared = new Set(comboCells.map(([r, c]) => r * cols + c));
         comboCells.forEach(([cr, cc]) => {
@@ -2191,11 +2192,13 @@
 
 
   document.getElementById("btn-retry").addEventListener("click", () => {
+    if (!confirm("リトライしますか？")) return;
     track("stage_retry", { stage: STAGES[currentStage].name });
     startStage(currentStage);
   });
 
   document.getElementById("btn-quit").addEventListener("click", () => {
+    if (!confirm("タイトルに戻りますか？")) return;
     showScreen("title");
   });
 

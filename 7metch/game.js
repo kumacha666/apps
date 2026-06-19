@@ -630,6 +630,7 @@
         updateHUD();
 
         const comboCells = activateCombo(comboType, r2, c2, p1, p2);
+        comboCells.push([r1, c1], [r2, c2]);
 
         // Activate specials on combo-cleared cells (chain reaction)
         const cleared = new Set(comboCells.map(([r, c]) => r * cols + c));
@@ -1711,11 +1712,13 @@
   });
 
   document.getElementById("btn-retry").addEventListener("click", () => {
+    if (!confirm("リトライしますか？")) return;
     track("stage_retry", { stage: STAGES[currentStage].name });
     startStage(currentStage);
   });
 
   document.getElementById("btn-quit").addEventListener("click", () => {
+    if (!confirm("タイトルに戻りますか？")) return;
     showScreen("title");
   });
 

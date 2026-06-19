@@ -80,6 +80,11 @@ body {
   font-weight: 700;
 }
 
+.title-sub .t-accent2 {
+  color: var(--gold);
+  font-weight: 700;
+}
+
 /* Buttons */
 .btn-primary, .btn-secondary {
   border: none;
