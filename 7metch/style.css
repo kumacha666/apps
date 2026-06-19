@@ -466,6 +466,7 @@ body {
 #screen-help {
   padding: 16px;
   overflow-y: auto;
+  justify-content: flex-start;
 }
 
 #help-content {
