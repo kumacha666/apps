@@ -26,6 +26,82 @@
 
   const STAGES = buildStages();
 
+  // --- Sound ---
+  let audioCtx = null;
+  let soundEnabled = true;
+
+  function initAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  }
+
+  function playTone(freq, duration, type, vol, delay) {
+    if (!soundEnabled || !audioCtx) return;
+    const t = audioCtx.currentTime + (delay || 0);
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type || "sine";
+    osc.frequency.setValueAtTime(freq, t);
+    gain.gain.setValueAtTime(vol || 0.15, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + duration);
+  }
+
+  const SFX = {
+    swap() {
+      playTone(520, 0.08, "sine", 0.12);
+      playTone(660, 0.08, "sine", 0.10, 0.04);
+    },
+    invalidSwap() {
+      playTone(200, 0.15, "square", 0.08);
+      playTone(160, 0.15, "square", 0.08, 0.1);
+    },
+    clear(chain) {
+      const base = 440 + Math.min(chain - 1, 6) * 80;
+      playTone(base, 0.12, "sine", 0.13);
+      playTone(base * 1.25, 0.1, "sine", 0.10, 0.06);
+      playTone(base * 1.5, 0.08, "sine", 0.08, 0.12);
+    },
+    bomb() {
+      playTone(100, 0.3, "sawtooth", 0.15);
+      playTone(60, 0.4, "sine", 0.18, 0.05);
+    },
+    line() {
+      playTone(800, 0.06, "sawtooth", 0.08);
+      playTone(1200, 0.06, "sawtooth", 0.07, 0.04);
+      playTone(1600, 0.06, "sawtooth", 0.06, 0.08);
+    },
+    rainbow() {
+      for (let i = 0; i < 5; i++) {
+        playTone(500 + i * 150, 0.12, "sine", 0.08, i * 0.05);
+      }
+    },
+    combo() {
+      playTone(300, 0.15, "sawtooth", 0.10);
+      playTone(450, 0.12, "sine", 0.12, 0.08);
+      playTone(600, 0.12, "sine", 0.12, 0.14);
+      playTone(900, 0.15, "sine", 0.10, 0.20);
+    },
+    stageClear() {
+      const notes = [523, 659, 784, 1047];
+      notes.forEach((f, i) => {
+        playTone(f, 0.25, "sine", 0.12, i * 0.12);
+        playTone(f * 0.5, 0.25, "triangle", 0.06, i * 0.12);
+      });
+    },
+    stageFail() {
+      playTone(400, 0.2, "sine", 0.10);
+      playTone(320, 0.2, "sine", 0.10, 0.15);
+      playTone(250, 0.35, "sine", 0.08, 0.30);
+    },
+    drop() {
+      playTone(300, 0.06, "sine", 0.05);
+    },
+  };
+
   const canvas = document.getElementById("game-canvas");
   const ctx = canvas.getContext("2d");
 
@@ -459,6 +535,7 @@
     const p1 = board[r1][c1];
     const p2 = board[r2][c2];
 
+    SFX.swap();
     await animateSwap(r1, c1, r2, c2);
     swapPieces(r1, c1, r2, c2);
 
@@ -466,6 +543,7 @@
     if (p1 && p2 && p1.special && p2.special) {
       const comboType = getComboType(p1.special, p2.special);
       if (comboType) {
+        SFX.combo();
         movesLeft--;
         chainCount = 1;
         updateHUD();
@@ -514,6 +592,7 @@
 
     const matches = findAllMatches();
     if (matches.length === 0) {
+      SFX.invalidSwap();
       await animateSwap(r2, c2, r1, c1);
       swapPieces(r1, c1, r2, c2);
       animating = false;
@@ -541,8 +620,14 @@
       const cleared = new Set();
       matches.forEach(([r, c]) => cleared.add(r * COLS + c));
 
+      let hasSpecialActivation = false;
       matches.forEach(([r, c]) => {
         if (board[r][c] && board[r][c].special) {
+          hasSpecialActivation = true;
+          const sp = board[r][c].special;
+          if (sp === "bomb") SFX.bomb();
+          else if (sp === "line_h" || sp === "line_v") SFX.line();
+          else if (sp === "rainbow") SFX.rainbow();
           const extra = activateSpecial(r, c, cleared);
           extra.forEach(([er, ec]) => {
             cleared.add(er * COLS + ec);
@@ -567,6 +652,8 @@
       const points = clearList.length * 10 * chainCount;
       score += points;
 
+      if (!hasSpecialActivation) SFX.clear(chainCount);
+
       if (chainCount > 1) {
         await showChainLabel(chainCount);
       }
@@ -586,6 +673,7 @@
       });
 
       const fallMap = applyGravityData();
+      if (fallMap.length > 0) SFX.drop();
       await animateDrop(fallMap);
 
       updateHUD();
@@ -1052,8 +1140,10 @@
       saveData.cleared[currentStage] = true;
       writeSave();
 
+      SFX.stageClear();
       showResult(true, stars);
     } else if (movesLeft <= 0) {
+      SFX.stageFail();
       showResult(false, 0);
     }
   }
@@ -1157,7 +1247,13 @@
   });
 
   // --- Screen Transitions ---
+  document.getElementById("btn-sound-toggle").addEventListener("click", () => {
+    soundEnabled = !soundEnabled;
+    document.getElementById("btn-sound-toggle").textContent = soundEnabled ? "🔊" : "🔇";
+  });
+
   document.getElementById("btn-start").addEventListener("click", () => {
+    initAudio();
     const lastCleared = Object.keys(saveData.cleared)
       .map(Number)
       .sort((a, b) => a - b);
@@ -1172,6 +1268,7 @@
   });
 
   document.getElementById("btn-stage-select").addEventListener("click", () => {
+    initAudio();
     buildStageSelect();
     showScreen("stageSelect");
   });
