@@ -21,8 +21,9 @@
       <p class="title-sub"><span class="t-accent">ナナメ</span>に動かせる3<span class="t-accent">マッチ</span>パズル</p>
       <button id="btn-start" class="btn-primary">はじめる</button>
       <button id="btn-stage-select" class="btn-secondary">ステージ選択</button>
+      <button id="btn-help" class="btn-secondary">あそびかた</button>
       <button id="btn-sound-toggle" class="btn-sound">🔊</button>
-      <div id="version-info">v1.6.0</div>
+      <div id="version-info">v1.7.0</div>
     </div>
 
     <div id="debug-panel" class="hidden">
@@ -55,6 +56,75 @@
       <div id="total-stars-display"></div>
       <div id="stage-grid"></div>
       <button id="btn-back-title" class="btn-secondary">もどる</button>
+    </div>
+
+    <div id="screen-help" class="screen">
+      <div id="help-content">
+        <h2>あそびかた</h2>
+
+        <div class="help-section">
+          <h3>基本ルール</h3>
+          <p>ピースを<strong>8方向</strong>（上下左右＋ナナメ）にスワイプして入れ替えます。</p>
+          <p>同じ色のピースが<strong>タテまたはヨコに3つ以上</strong>並ぶと消えます。</p>
+          <p>制限手数以内にミッションを達成すると★がもらえます。</p>
+        </div>
+
+        <div class="help-section">
+          <h3>★評価</h3>
+          <p>⭐ ミッション達成</p>
+          <p>⭐⭐ 手数の半分以上残してクリア</p>
+          <p>⭐⭐⭐ 手数の75%以上残してクリア</p>
+        </div>
+
+        <div class="help-section">
+          <h3>スペシャルピース</h3>
+          <table class="help-table">
+            <tr><th>ピース</th><th>出しかた</th><th>効果</th></tr>
+            <tr>
+              <td class="help-icon">← →</td>
+              <td>ヨコに4つ消し</td>
+              <td>ヨコ1列を消す</td>
+            </tr>
+            <tr>
+              <td class="help-icon">↑ ↓</td>
+              <td>タテに4つ消し</td>
+              <td>タテ1列を消す</td>
+            </tr>
+            <tr>
+              <td class="help-icon">◎</td>
+              <td>T字・L字消し</td>
+              <td>周囲を爆破</td>
+            </tr>
+            <tr>
+              <td class="help-icon">✦</td>
+              <td>5つ以上消し</td>
+              <td>指定色を全消し</td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="help-section">
+          <h3>スペシャル × スペシャル コンボ</h3>
+          <p class="help-hint">スペシャルピース同士を入れ替えると特別な効果が発動！</p>
+          <table class="help-table">
+            <tr><th>組み合わせ</th><th>効果</th></tr>
+            <tr><td>ライン × ライン</td><td>十字消し</td></tr>
+            <tr><td>ボム × ライン</td><td>3列十字消し</td></tr>
+            <tr><td>ボム × ボム</td><td>巨大爆破（7×7）</td></tr>
+            <tr><td>レインボー × ライン</td><td>同色すべてライン化</td></tr>
+            <tr><td>レインボー × ボム</td><td>同色すべてボム化</td></tr>
+            <tr><td>レインボー × レインボー</td><td>全消し！</td></tr>
+          </table>
+        </div>
+
+        <div class="help-section">
+          <h3>★ゲート</h3>
+          <p>一定数の★を集めると次のエリアが解放されます。</p>
+          <p>たくさん★を集めて先へ進みましょう！</p>
+        </div>
+
+        <button id="btn-back-help" class="btn-secondary">もどる</button>
+      </div>
     </div>
 
     <div id="screen-game" class="screen">
