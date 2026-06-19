@@ -5,6 +5,7 @@
   const ROWS = 8;
   const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#3a86ff", "#ff6bb3"];
   const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross"];
+  const PIECE_NAMES_JA = ["まる", "ダイヤ", "しかく", "さんかく", "ほし", "ヘキサ", "クロス"];
   const MATCH_MIN = 3;
 
   const ANIM = {
@@ -73,7 +74,7 @@
           name: `${i + 1}`,
           moves,
           colors,
-          mission: { type: "color", colorIndex: targetColor, count: 10 + tier * 3 },
+          mission: { type: "color", colorIndex: targetColor, count: Math.floor(moves * (0.5 + i * 0.01)) },
           star2moves: Math.floor(moves * 0.6),
           star3moves: Math.floor(moves * 0.35),
         });
@@ -100,11 +101,15 @@
     return stages;
   }
 
-  function getMissionText(m) {
+  function getMissionText(m, html) {
     switch (m.type) {
       case "score": return `${m.target}点 とろう`;
       case "clear": return `${m.count}個 けそう`;
-      case "color": return `${PIECE_SHAPES[m.colorIndex]}を${m.count}個けそう`;
+      case "color":
+        if (html) {
+          return `<span style="color:${PIECE_COLORS[m.colorIndex]};font-weight:900">${PIECE_NAMES_JA[m.colorIndex]}</span>を${m.count}個けそう`;
+        }
+        return `${PIECE_NAMES_JA[m.colorIndex]}を${m.count}個けそう`;
     }
   }
 
@@ -766,7 +771,7 @@
     document.getElementById("hud-moves").textContent = `のこり ${movesLeft} 手`;
 
     const m = STAGES[currentStage].mission;
-    document.getElementById("hud-mission-label").textContent = getMissionText(m);
+    document.getElementById("hud-mission-label").innerHTML = getMissionText(m, true);
 
     let current = 0;
     let target = 0;
