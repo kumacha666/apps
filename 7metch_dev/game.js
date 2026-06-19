@@ -1893,6 +1893,33 @@
     document.getElementById("btn-sound-toggle").textContent = soundEnabled ? "🔊" : "🔇";
   });
 
+  document.getElementById("btn-check-update").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-check-update");
+    const original = btn.textContent;
+    btn.textContent = "確認中…";
+    btn.disabled = true;
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (!reg) { btn.textContent = "SW未登録"; setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2000); return; }
+      await reg.update();
+      const waiting = reg.waiting || reg.installing;
+      if (waiting) {
+        btn.textContent = "更新あり！再読込します…";
+        waiting.addEventListener("statechange", () => {
+          if (waiting.state === "activated") location.reload();
+        });
+        if (waiting.state === "activated") location.reload();
+        setTimeout(() => location.reload(), 3000);
+      } else {
+        btn.textContent = "✓ 最新です";
+        setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2000);
+      }
+    } catch {
+      btn.textContent = "確認失敗";
+      setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2000);
+    }
+  });
+
   document.getElementById("btn-start").addEventListener("click", () => {
     initAudio();
     const lastCleared = Object.keys(saveData.cleared)
