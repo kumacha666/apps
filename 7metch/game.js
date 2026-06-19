@@ -1030,15 +1030,29 @@
 
     document.getElementById("total-stars-display").textContent = `★ ${total}`;
 
-    STAGES.forEach((stg, i) => {
+    const lastClearedIdx = Object.keys(saveData.cleared)
+      .map(Number)
+      .reduce((max, n) => Math.max(max, n), -1);
+    const visibleUpTo = lastClearedIdx + 6;
+
+    let stopped = false;
+
+    for (let i = 0; i < STAGES.length; i++) {
+      if (stopped) break;
+
       const gate = getGateFor(i);
-      if (gate && gate.stars > total) {
+      if (gate && gate.stars > total && i > lastClearedIdx) {
         const gateEl = document.createElement("div");
         gateEl.className = "stage-gate";
-        gateEl.innerHTML = `★${gate.stars} ひつよう（あと${gate.stars - total}）`;
+        gateEl.innerHTML = `★${gate.stars} で次のエリア解放（あと${gate.stars - total}）`;
         grid.appendChild(gateEl);
+        stopped = true;
+        break;
       }
 
+      if (i > visibleUpTo && !saveData.cleared[i]) break;
+
+      const stg = STAGES[i];
       const btn = document.createElement("button");
       btn.className = "stage-btn";
       const unlocked = isStageUnlocked(i);
@@ -1055,7 +1069,7 @@
       }
 
       grid.appendChild(btn);
-    });
+    }
   }
 
   function startStage(index) {
