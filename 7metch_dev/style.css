@@ -369,6 +369,27 @@ body {
   min-width: auto;
 }
 
+#btn-debug-open {
+  min-width: auto;
+  padding: 10px 14px;
+  font-size: 1rem;
+}
+
+#spawn-indicator {
+  background: var(--gold);
+  color: #000;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: center;
+  padding: 4px 8px;
+  border-radius: 6px;
+  width: 100%;
+}
+
+#spawn-indicator.hidden {
+  display: none;
+}
+
 /* Result */
 #screen-result {
   background: rgba(0, 0, 0, 0.7);
