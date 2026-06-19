@@ -3,9 +3,9 @@
 
   let cols = 7;
   let rows = 8;
-  const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#3a86ff", "#ff6bb3"];
-  const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross"];
-  const PIECE_NAMES_JA = ["まる", "ダイヤ", "しかく", "さんかく", "ほし", "ヘキサ", "クロス"];
+  const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#3a86ff", "#ff6bb3", "#88cc44"];
+  const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross", "octagon"];
+  const PIECE_NAMES_JA = ["まる", "ダイヤ", "しかく", "さんかく", "ほし", "ヘキサ", "クロス", "オクタ"];
   const MATCH_MIN = 3;
 
   const ANIM = {
@@ -21,9 +21,13 @@
   const STAR_GATES = [
     { stage: 25, stars: 30 },
     { stage: 50, stars: 80 },
-    { stage: 75, stars: 150 },
-    { stage: 100, stars: 200 },
-    { stage: 150, stars: 300 },
+    { stage: 75, stars: 140 },
+    { stage: 100, stars: 190 },
+    { stage: 150, stars: 290 },
+    { stage: 200, stars: 390 },
+    { stage: 250, stars: 490 },
+    { stage: 300, stars: 590 },
+    { stage: 350, stars: 690 },
   ];
 
   const STAGES = buildStages();
@@ -148,6 +152,14 @@
     drop() {
       playTone(300, 0.06, "sine", 0.05);
     },
+    countdown() {
+      playTone(880, 0.05, "square", 0.08);
+      playTone(660, 0.08, "square", 0.06, 0.05);
+    },
+    iceCrack() {
+      playTone(1200, 0.04, "square", 0.06);
+      playTone(900, 0.06, "square", 0.05, 0.03);
+    },
   };
 
   const canvas = document.getElementById("game-canvas");
@@ -165,6 +177,7 @@
   let saveData = loadSave();
   let itemMode = null;
   let coinsEarned = 0;
+  let cellState = [];
 
   const screens = {
     title: document.getElementById("screen-title"),
@@ -225,56 +238,116 @@
   function boardSizeForStage(i) {
     if (i < 10) return { cols: 6, rows: 7 };
     if (i < 100) return { cols: 7, rows: 8 };
-    return { cols: 8, rows: 9 };
+    if (i < 250) return { cols: 8, rows: 9 };
+    return { cols: 9, rows: 10 };
+  }
+
+  function generateHolePattern(c, r, variant) {
+    const holes = [];
+    switch (variant) {
+      case 0:
+        holes.push([0,0],[0,1],[1,0]);
+        holes.push([0,c-1],[0,c-2],[1,c-1]);
+        holes.push([r-1,0],[r-1,1],[r-2,0]);
+        holes.push([r-1,c-1],[r-1,c-2],[r-2,c-1]);
+        break;
+      case 1:
+        for (let rr = 0; rr < r; rr++) {
+          for (let cc = 0; cc < c; cc++) {
+            const dr = Math.abs(rr - Math.floor(r/2));
+            const dc = Math.abs(cc - Math.floor(c/2));
+            if (dr + dc <= 1 && !(dr === 0 && dc === 0)) holes.push([rr, cc]);
+          }
+        }
+        break;
+      case 2:
+        holes.push([0,0],[0,c-1],[r-1,0],[r-1,c-1]);
+        holes.push([0, Math.floor(c/2)]);
+        holes.push([r-1, Math.floor(c/2)]);
+        break;
+      case 3:
+        for (let rr = 0; rr < 3; rr++) {
+          for (let cc = c-3; cc < c; cc++) {
+            if (rr === 0 || cc === c-1) continue;
+            holes.push([rr, cc]);
+          }
+        }
+        break;
+      case 4:
+        holes.push([0,0],[0,c-1],[r-1,0],[r-1,c-1]);
+        holes.push([0,Math.floor(c/2)],[r-1,Math.floor(c/2)]);
+        holes.push([Math.floor(r/2),0],[Math.floor(r/2),c-1]);
+        break;
+    }
+    return holes;
   }
 
   function buildStages() {
     const stages = [];
-    for (let i = 0; i < 200; i++) {
-      const tier = Math.floor(i / 10);
-      const moves = Math.max(12, 20 - tier * 2);
-      const colors = Math.min(7, 5 + Math.floor(i / 10));
+    for (let i = 0; i < 350; i++) {
       const size = boardSizeForStage(i);
-      const area = size.cols * size.rows;
-      const areaFactor = area / 56;
+      const tier = Math.floor(i / 10);
+      const baseMoves = Math.max(12, 20 - tier * 2);
+      let moves;
+      if (i < 10) moves = 20;
+      else if (size.cols >= 9) moves = Math.max(16, baseMoves);
+      else if (size.cols >= 8) moves = Math.max(14, baseMoves);
+      else moves = baseMoves;
+
+      const baseColors = Math.min(7, 5 + Math.floor(i / 10));
+      const colors = (i >= 200) ? 8 : baseColors;
       const star2rate = i < 10 ? 0.65 : 0.6;
       const star3rate = i < 10 ? 0.45 : 0.35;
 
+      const features = {};
+      if (i >= 10) features.diagonalLine = true;
+      if (i >= 100) features.ice = true;
+      if (i >= 150) features.rock = true;
+      if (i >= 250) features.holes = true;
+      if (i >= 300) features.countdown = true;
+
+      let iceCells = 0, rockCells = 0, holePattern = null, countdownBombs = 0;
+      if (features.ice) {
+        const progress = Math.min(1, (i - 100) / 100);
+        iceCells = 2 + Math.floor(progress * 4);
+      }
+      if (features.rock) {
+        const progress = Math.min(1, (i - 150) / 100);
+        rockCells = 1 + Math.floor(progress * 2);
+      }
+      if (features.holes) {
+        holePattern = generateHolePattern(size.cols, size.rows, i % 5);
+      }
+      if (features.countdown) {
+        const progress = Math.min(1, (i - 300) / 50);
+        countdownBombs = 1 + Math.floor(progress * 2);
+      }
+
+      let mission;
       if (i % 5 === 0 && i > 0) {
         const targetColor = i % colors;
-        stages.push({
-          name: `${i + 1}`,
-          moves,
-          colors,
-          boardCols: size.cols,
-          boardRows: size.rows,
-          mission: { type: "color", colorIndex: targetColor, count: Math.floor(moves * Math.min(1.0, 0.5 + i * 0.01) * areaFactor) },
-          star2moves: Math.floor(moves * star2rate),
-          star3moves: Math.floor(moves * star3rate),
-        });
+        mission = { type: "color", colorIndex: targetColor, count: Math.floor(moves * Math.min(1.0, 0.5 + i * 0.008)) };
       } else if (i % 3 === 0) {
-        stages.push({
-          name: `${i + 1}`,
-          moves,
-          colors,
-          boardCols: size.cols,
-          boardRows: size.rows,
-          mission: { type: "score", target: Math.floor(moves * Math.min(120, 50 + i * 1.5) * areaFactor) },
-          star2moves: Math.floor(moves * star2rate),
-          star3moves: Math.floor(moves * star3rate),
-        });
+        mission = { type: "score", target: Math.floor(moves * Math.min(100, 50 + i * 1.0)) };
       } else {
-        stages.push({
-          name: `${i + 1}`,
-          moves,
-          colors,
-          boardCols: size.cols,
-          boardRows: size.rows,
-          mission: { type: "clear", count: Math.floor(moves * Math.min(12, 3.5 + i * 0.07) * areaFactor) },
-          star2moves: Math.floor(moves * star2rate),
-          star3moves: Math.floor(moves * star3rate),
-        });
+        mission = { type: "clear", count: Math.floor(moves * Math.min(8, 3.0 + i * 0.04)) };
       }
+
+      stages.push({
+        name: `${i + 1}`,
+        moves,
+        colors,
+        boardCols: size.cols,
+        boardRows: size.rows,
+        mission,
+        star2moves: Math.floor(moves * star2rate),
+        star3moves: Math.floor(moves * star3rate),
+        features,
+        iceCells,
+        rockCells,
+        holePattern,
+        countdownBombs,
+      });
     }
     return stages;
   }
@@ -297,20 +370,145 @@
     for (let r = 0; r < rows; r++) {
       board[r] = [];
       for (let c = 0; c < cols; c++) {
-        board[r][c] = randomPiece(numColors);
+        if (isHole(r, c) || isRock(r, c)) {
+          board[r][c] = null;
+        } else {
+          board[r][c] = randomPiece(numColors);
+        }
       }
     }
     while (findAllMatches().length > 0) {
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
+          if (isHole(r, c) || isRock(r, c)) continue;
           board[r][c] = randomPiece(numColors);
         }
+      }
+    }
+    const stg = STAGES[currentStage];
+    if (stg.countdownBombs > 0) {
+      let placed = 0, attempts = 0;
+      while (placed < stg.countdownBombs && attempts < 200) {
+        const br = Math.floor(Math.random() * rows);
+        const bc = Math.floor(Math.random() * cols);
+        if (board[br][bc] && !board[br][bc].special) {
+          board[br][bc].special = "countdown";
+          board[br][bc].countdown = 8 + Math.floor(Math.random() * 5);
+          placed++;
+        }
+        attempts++;
       }
     }
   }
 
   function randomPiece(numColors) {
     return { color: Math.floor(Math.random() * numColors), special: null };
+  }
+
+  function initCellState(stg) {
+    cellState = [];
+    for (let r = 0; r < rows; r++) {
+      cellState[r] = [];
+      for (let c = 0; c < cols; c++) {
+        cellState[r][c] = null;
+      }
+    }
+    if (stg.holePattern) {
+      for (const [hr, hc] of stg.holePattern) {
+        if (hr >= 0 && hr < rows && hc >= 0 && hc < cols) {
+          cellState[hr][hc] = "hole";
+        }
+      }
+    }
+    if (stg.rockCells > 0) {
+      let placed = 0, attempts = 0;
+      while (placed < stg.rockCells && attempts < 200) {
+        const rr = 1 + Math.floor(Math.random() * (rows - 2));
+        const rc = 1 + Math.floor(Math.random() * (cols - 2));
+        if (cellState[rr][rc] === null) {
+          cellState[rr][rc] = "rock";
+          placed++;
+        }
+        attempts++;
+      }
+    }
+    if (stg.iceCells > 0) {
+      let placed = 0, attempts = 0;
+      while (placed < stg.iceCells && attempts < 200) {
+        const ir = Math.floor(Math.random() * rows);
+        const ic = Math.floor(Math.random() * cols);
+        if (cellState[ir][ic] === null) {
+          cellState[ir][ic] = "ice2";
+          placed++;
+        }
+        attempts++;
+      }
+    }
+  }
+
+  function isHole(r, c) { return cellState[r] && cellState[r][c] === "hole"; }
+  function isRock(r, c) { return cellState[r] && cellState[r][c] === "rock"; }
+  function isIce(r, c) { return cellState[r] && (cellState[r][c] === "ice1" || cellState[r][c] === "ice2"); }
+  function isPlayable(r, c) { return !isHole(r, c) && !isRock(r, c); }
+
+  function damageIce(r, c) {
+    if (cellState[r][c] === "ice2") { cellState[r][c] = "ice1"; SFX.iceCrack(); return false; }
+    if (cellState[r][c] === "ice1") { cellState[r][c] = null; SFX.iceCrack(); return true; }
+    return true;
+  }
+
+  function damageAdjacentIce(clearList) {
+    const iceSet = new Set();
+    for (const [r, c] of clearList) {
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          const nr = r + dr, nc = c + dc;
+          if (inBounds(nr, nc) && isIce(nr, nc)) iceSet.add(nr * cols + nc);
+        }
+      }
+    }
+    for (const key of iceSet) {
+      damageIce(Math.floor(key / cols), key % cols);
+    }
+  }
+
+  function tickCountdowns() {
+    const exploded = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] && board[r][c].special === "countdown") {
+          board[r][c].countdown--;
+          if (board[r][c].countdown <= 0) exploded.push([r, c]);
+        }
+      }
+    }
+    return exploded;
+  }
+
+  async function handleCountdownExplosions(exploded) {
+    if (exploded.length === 0) return;
+    SFX.bomb();
+    const cleared = new Set();
+    for (const [r, c] of exploded) {
+      const extra = activateSpecial(r, c, cleared);
+      cleared.add(r * cols + c);
+      extra.forEach(([er, ec]) => cleared.add(er * cols + ec));
+    }
+    const clearList = [...cleared].map((v) => [Math.floor(v / cols), v % cols]);
+    clearList.forEach(([r, c]) => {
+      if (board[r][c]) {
+        const ci = board[r][c].color;
+        colorCleared[ci] = (colorCleared[ci] || 0) + 1;
+        totalCleared++;
+      }
+    });
+    score += clearList.length * 10;
+    await animateClear(clearList);
+    clearList.forEach(([r, c]) => { board[r][c] = null; });
+    const fallMap = applyGravityData();
+    await animateDrop(fallMap);
+    await sleep(ANIM.CHAIN_PAUSE_MS);
   }
 
   function inBounds(r, c) {
@@ -326,21 +524,16 @@
   // --- Match Finding ---
   function findAllMatches() {
     const matched = new Set();
-    const directions = [
-      [0, 1],
-      [1, 0],
-    ];
-
+    const directions = [[0, 1], [1, 0]];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (!board[r][c]) continue;
+        if (isHole(r, c) || isRock(r, c)) continue;
         const color = board[r][c].color;
-
         for (const [dr, dc] of directions) {
           const line = [[r, c]];
-          let nr = r + dr;
-          let nc = c + dc;
-          while (inBounds(nr, nc) && board[nr][nc] && board[nr][nc].color === color) {
+          let nr = r + dr, nc = c + dc;
+          while (inBounds(nr, nc) && board[nr][nc] && !isHole(nr, nc) && !isRock(nr, nc) && board[nr][nc].color === color) {
             line.push([nr, nc]);
             nr += dr;
             nc += dc;
@@ -351,13 +544,27 @@
         }
       }
     }
-
+    const stg = STAGES[currentStage];
+    if (stg && stg.features && stg.features.diagonalLine) {
+      for (let r = 0; r < rows - 1; r++) {
+        for (let c = 0; c < cols - 1; c++) {
+          if (!board[r][c] || isHole(r, c) || isRock(r, c)) continue;
+          const color = board[r][c].color;
+          const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
+          const allMatch = cells.every(([cr, cc]) =>
+            board[cr][cc] && !isHole(cr, cc) && !isRock(cr, cc) && board[cr][cc].color === color
+          );
+          if (allMatch) cells.forEach(([cr, cc]) => matched.add(cr * cols + cc));
+        }
+      }
+    }
     return [...matched].map((v) => [Math.floor(v / cols), v % cols]);
   }
 
   function findSpecialCreations(matches) {
     const specials = [];
     const matchSet = new Set(matches.map(([r, c]) => r * cols + c));
+    const stg = STAGES[currentStage];
 
     const hLines = [];
     const vLines = [];
@@ -365,13 +572,14 @@
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (!board[r][c]) continue;
+        if (isHole(r, c) || isRock(r, c)) continue;
         const color = board[r][c].color;
 
         // horizontal
         {
           const line = [[r, c]];
           let nc = c + 1;
-          while (inBounds(r, nc) && board[r][nc] && board[r][nc].color === color) {
+          while (inBounds(r, nc) && board[r][nc] && !isHole(r, nc) && !isRock(r, nc) && board[r][nc].color === color) {
             line.push([r, nc]);
             nc++;
           }
@@ -384,7 +592,7 @@
         {
           const line = [[r, c]];
           let nr = r + 1;
-          while (inBounds(nr, c) && board[nr][c] && board[nr][c].color === color) {
+          while (inBounds(nr, c) && board[nr][c] && !isHole(nr, c) && !isRock(nr, c) && board[nr][c].color === color) {
             line.push([nr, c]);
             nr++;
           }
@@ -442,6 +650,20 @@
       }
     }
 
+    // 2×2 square → diagonal line
+    if (stg && stg.features && stg.features.diagonalLine) {
+      for (let r = 0; r < rows - 1; r++) {
+        for (let c = 0; c < cols - 1; c++) {
+          const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
+          if (cells.every(([cr,cc]) => matchSet.has(cr * cols + cc)) &&
+              cells.every(([cr,cc]) => !usedCells.has(cr * cols + cc))) {
+            specials.push({ r: r, c: c, type: "line_d" });
+            cells.forEach(([cr,cc]) => usedCells.add(cr * cols + cc));
+          }
+        }
+      }
+    }
+
     return specials;
   }
 
@@ -454,22 +676,29 @@
 
     if (piece.special === "line_h") {
       for (let cc = 0; cc < cols; cc++) {
-        if (!alreadyCleared.has(key(r, cc)) && board[r][cc]) {
+        if (!alreadyCleared.has(key(r, cc)) && board[r][cc] && isPlayable(r, cc)) {
           extra.push([r, cc]);
         }
       }
     } else if (piece.special === "line_v") {
       for (let rr = 0; rr < rows; rr++) {
-        if (!alreadyCleared.has(key(rr, c)) && board[rr][c]) {
+        if (!alreadyCleared.has(key(rr, c)) && board[rr][c] && isPlayable(rr, c)) {
           extra.push([rr, c]);
         }
+      }
+    } else if (piece.special === "line_d") {
+      for (let d = -Math.max(rows, cols); d <= Math.max(rows, cols); d++) {
+        const r1 = r + d, c1 = c + d;
+        if (inBounds(r1, c1) && !alreadyCleared.has(key(r1, c1)) && board[r1][c1] && isPlayable(r1, c1)) extra.push([r1, c1]);
+        const r2 = r + d, c2 = c - d;
+        if (inBounds(r2, c2) && !alreadyCleared.has(key(r2, c2)) && board[r2][c2] && isPlayable(r2, c2)) extra.push([r2, c2]);
       }
     } else if (piece.special === "bomb") {
       for (let dr = -2; dr <= 2; dr++) {
         for (let dc = -2; dc <= 2; dc++) {
           const nr = r + dr;
           const nc = c + dc;
-          if (inBounds(nr, nc) && !alreadyCleared.has(key(nr, nc)) && board[nr][nc]) {
+          if (inBounds(nr, nc) && !alreadyCleared.has(key(nr, nc)) && board[nr][nc] && isPlayable(nr, nc)) {
             extra.push([nr, nc]);
           }
         }
@@ -478,9 +707,16 @@
       const targetColor = piece.color;
       for (let rr = 0; rr < rows; rr++) {
         for (let cc = 0; cc < cols; cc++) {
-          if (board[rr][cc] && board[rr][cc].color === targetColor && !alreadyCleared.has(key(rr, cc))) {
+          if (board[rr][cc] && board[rr][cc].color === targetColor && !alreadyCleared.has(key(rr, cc)) && isPlayable(rr, cc)) {
             extra.push([rr, cc]);
           }
+        }
+      }
+    } else if (piece.special === "countdown") {
+      for (let dr = -2; dr <= 2; dr++) {
+        for (let dc = -2; dc <= 2; dc++) {
+          const nr = r + dr, nc = c + dc;
+          if (inBounds(nr, nc) && !alreadyCleared.has(key(nr, nc)) && board[nr][nc] && isPlayable(nr, nc)) extra.push([nr, nc]);
         }
       }
     }
@@ -491,10 +727,11 @@
   function applyGravityData() {
     const numColors = STAGES[currentStage].colors;
     const fallMap = [];
-
     for (let c = 0; c < cols; c++) {
       let writeRow = rows - 1;
-      for (let r = rows - 1; r >= 0; r--) {
+      while (writeRow >= 0 && (isHole(writeRow, c) || isRock(writeRow, c))) writeRow--;
+      for (let r = writeRow; r >= 0; r--) {
+        if (isHole(r, c) || isRock(r, c)) continue;
         if (board[r][c]) {
           if (r !== writeRow) {
             board[writeRow][c] = board[r][c];
@@ -502,10 +739,12 @@
             fallMap.push({ c, fromR: r, toR: writeRow, piece: board[writeRow][c] });
           }
           writeRow--;
+          while (writeRow >= 0 && (isHole(writeRow, c) || isRock(writeRow, c))) writeRow--;
         }
       }
       let newPieceOffset = 0;
       for (let r = writeRow; r >= 0; r--) {
+        if (isHole(r, c) || isRock(r, c)) continue;
         board[r][c] = randomPiece(numColors);
         newPieceOffset++;
         fallMap.push({ c, fromR: -newPieceOffset, toR: r, piece: board[r][c], isNew: true });
@@ -528,16 +767,22 @@
   let chainCount = 0;
 
   function getComboType(s1, s2) {
-    const pair = [s1, s2].sort().join("+");
+    const normalize = (s) => s === "countdown" ? "bomb" : s;
+    const pair = [normalize(s1), normalize(s2)].sort().join("+");
     const combos = {
       "line_h+line_h": "cross",
       "line_h+line_v": "cross",
       "line_v+line_v": "cross",
+      "line_d+line_h": "star_cross",
+      "line_d+line_v": "star_cross",
+      "line_d+line_d": "star_cross",
       "bomb+line_h": "triple_line",
       "bomb+line_v": "triple_line",
+      "bomb+line_d": "triple_line",
       "bomb+bomb": "big_bomb",
       "line_h+rainbow": "rainbow_line",
       "line_v+rainbow": "rainbow_line",
+      "line_d+rainbow": "rainbow_line",
       "bomb+rainbow": "rainbow_bomb",
       "rainbow+rainbow": "board_clear",
     };
@@ -552,19 +797,29 @@
     switch (comboType) {
       case "cross":
         for (let cc = 0; cc < cols; cc++) {
-          if (board[r][cc]) extra.push([r, cc]);
+          if (board[r][cc] && isPlayable(r, cc)) extra.push([r, cc]);
         }
         for (let rr = 0; rr < rows; rr++) {
-          if (board[rr][c]) extra.push([rr, c]);
+          if (board[rr][c] && isPlayable(rr, c)) extra.push([rr, c]);
+        }
+        break;
+      case "star_cross":
+        for (let cc = 0; cc < cols; cc++) if (board[r][cc] && isPlayable(r, cc)) extra.push([r, cc]);
+        for (let rr = 0; rr < rows; rr++) if (board[rr][c] && isPlayable(rr, c)) extra.push([rr, c]);
+        for (let d = -Math.max(rows, cols); d <= Math.max(rows, cols); d++) {
+          const r1 = r + d, c1 = c + d;
+          if (inBounds(r1, c1) && board[r1][c1] && isPlayable(r1, c1)) extra.push([r1, c1]);
+          const r2 = r + d, c2 = c - d;
+          if (inBounds(r2, c2) && board[r2][c2] && isPlayable(r2, c2)) extra.push([r2, c2]);
         }
         break;
       case "triple_line": {
         for (let d = -1; d <= 1; d++) {
           for (let cc = 0; cc < cols; cc++) {
-            if (inBounds(r + d, cc) && board[r + d][cc]) extra.push([r + d, cc]);
+            if (inBounds(r + d, cc) && board[r + d][cc] && isPlayable(r + d, cc)) extra.push([r + d, cc]);
           }
           for (let rr = 0; rr < rows; rr++) {
-            if (inBounds(rr, c + d) && board[rr][c + d]) extra.push([rr, c + d]);
+            if (inBounds(rr, c + d) && board[rr][c + d] && isPlayable(rr, c + d)) extra.push([rr, c + d]);
           }
         }
         break;
@@ -572,7 +827,7 @@
       case "big_bomb":
         for (let dr = -3; dr <= 3; dr++) {
           for (let dc = -3; dc <= 3; dc++) {
-            if (inBounds(r + dr, c + dc) && board[r + dr][c + dc]) {
+            if (inBounds(r + dr, c + dc) && board[r + dr][c + dc] && isPlayable(r + dr, c + dc)) {
               extra.push([r + dr, c + dc]);
             }
           }
@@ -586,7 +841,7 @@
         const spType = comboType === "rainbow_line" ? "line_h" : "bomb";
         for (let rr = 0; rr < rows; rr++) {
           for (let cc = 0; cc < cols; cc++) {
-            if (board[rr][cc] && board[rr][cc].color === targetColor) {
+            if (board[rr][cc] && board[rr][cc].color === targetColor && isPlayable(rr, cc)) {
               board[rr][cc].special = spType;
               extra.push([rr, cc]);
             }
@@ -597,7 +852,7 @@
       case "board_clear":
         for (let rr = 0; rr < rows; rr++) {
           for (let cc = 0; cc < cols; cc++) {
-            if (board[rr][cc]) extra.push([rr, cc]);
+            if (board[rr][cc] && isPlayable(rr, cc)) extra.push([rr, cc]);
           }
         }
         break;
