@@ -506,6 +506,7 @@
     score += clearList.length * 10;
     await animateClear(clearList);
     clearList.forEach(([r, c]) => { board[r][c] = null; });
+    damageAdjacentIce(clearList);
     const fallMap = applyGravityData();
     await animateDrop(fallMap);
     await sleep(ANIM.CHAIN_PAUSE_MS);
@@ -657,7 +658,8 @@
           const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
           if (cells.every(([cr,cc]) => matchSet.has(cr * cols + cc)) &&
               cells.every(([cr,cc]) => !usedCells.has(cr * cols + cc))) {
-            specials.push({ r: r, c: c, type: "line_d" });
+            const sqColor = board[r][c] ? board[r][c].color : 0;
+            specials.push({ r: r, c: c, type: "line_d", color: sqColor });
             cells.forEach(([cr,cc]) => usedCells.add(cr * cols + cc));
           }
         }
@@ -913,6 +915,7 @@
 
         await animateClear(clearList);
         clearList.forEach(([r, c]) => { board[r][c] = null; });
+        damageAdjacentIce(clearList);
 
         const fallMap = applyGravityData();
         await animateDrop(fallMap);
@@ -962,8 +965,8 @@
         if (board[r][c] && board[r][c].special) {
           hasSpecialActivation = true;
           const sp = board[r][c].special;
-          if (sp === "bomb") SFX.bomb();
-          else if (sp === "line_h" || sp === "line_v") SFX.line();
+          if (sp === "bomb" || sp === "countdown") SFX.bomb();
+          else if (sp === "line_h" || sp === "line_v" || sp === "line_d") SFX.line();
           else if (sp === "rainbow") SFX.rainbow();
           const extra = activateSpecial(r, c, cleared);
           extra.forEach(([er, ec]) => {
@@ -1001,6 +1004,8 @@
         board[r][c] = null;
       });
 
+      damageAdjacentIce(clearList);
+
       specials.forEach((sp) => {
         if (board[sp.r] && board[sp.r][sp.c] === null) {
           board[sp.r][sp.c] = { color: sp.color, special: sp.type };
@@ -1019,6 +1024,8 @@
 
       matches = findAllMatches();
     }
+    const exploded = tickCountdowns();
+    await handleCountdownExplosions(exploded);
   }
 
   // --- Items ---
@@ -1053,8 +1060,8 @@
     cleared.add(r * cols + c);
     if (board[r][c].special) {
       const sp = board[r][c].special;
-      if (sp === "bomb") SFX.bomb();
-      else if (sp === "line_h" || sp === "line_v") SFX.line();
+      if (sp === "bomb" || sp === "countdown") SFX.bomb();
+      else if (sp === "line_h" || sp === "line_v" || sp === "line_d") SFX.line();
       else if (sp === "rainbow") SFX.rainbow();
       const extra = activateSpecial(r, c, cleared);
       extra.forEach(([er, ec]) => {
@@ -1079,6 +1086,7 @@
     if (!board[r][c].special) SFX.bomb();
     await animateClear(clearList);
     clearList.forEach(([cr, cc]) => { board[cr][cc] = null; });
+    damageAdjacentIce(clearList);
 
     const fallMap = applyGravityData();
     if (fallMap.length > 0) SFX.drop();
@@ -1420,6 +1428,36 @@
       for (let c = 0; c < cols; c++) {
         const x = c * cellSize;
         const y = r * cellSize;
+        if (isHole(r, c)) {
+          ctx.fillStyle = "#0d1117";
+          ctx.fillRect(x, y, cellSize, cellSize);
+          continue;
+        }
+        if (isRock(r, c)) {
+          ctx.fillStyle = "#2a2a3a";
+          ctx.fillRect(x, y, cellSize, cellSize);
+          ctx.save();
+          ctx.fillStyle = "#3a3a4a";
+          const rcx = x + cellSize / 2;
+          const rcy = y + cellSize / 2;
+          const rr = cellSize / 2 - 4;
+          ctx.beginPath();
+          ctx.arc(rcx, rcy, rr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#555";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.strokeStyle = "#666";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(rcx - rr * 0.4, rcy - rr * 0.4);
+          ctx.lineTo(rcx + rr * 0.4, rcy + rr * 0.4);
+          ctx.moveTo(rcx + rr * 0.4, rcy - rr * 0.4);
+          ctx.lineTo(rcx - rr * 0.4, rcy + rr * 0.4);
+          ctx.stroke();
+          ctx.restore();
+          continue;
+        }
         ctx.fillStyle = (r + c) % 2 === 0 ? "#1a2744" : "#1e2d50";
         ctx.fillRect(x, y, cellSize, cellSize);
       }
@@ -1437,7 +1475,7 @@
     drawShape(ctx, PIECE_SHAPES[piece.color], cx, cy, radius);
 
     if (piece.special) {
-      drawSpecialIndicator(ctx, piece.special, cx, cy, radius);
+      drawSpecialIndicator(ctx, piece.special, cx, cy, radius, piece);
     }
   }
 
@@ -1446,13 +1484,39 @@
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
+        if (!board[r][c] || isHole(r, c) || isRock(r, c)) continue;
         const piece = board[r][c];
-        if (!piece) continue;
 
         const cx = c * cellSize + cellSize / 2;
         const cy = r * cellSize + cellSize / 2;
+        const x = c * cellSize;
+        const y = r * cellSize;
 
         drawPieceAt(piece, cx, cy);
+
+        if (isIce(r, c)) {
+          ctx.save();
+          const iceAlpha = cellState[r][c] === "ice2" ? 0.35 : 0.2;
+          ctx.fillStyle = `rgba(100, 200, 255, ${iceAlpha})`;
+          ctx.fillRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+          ctx.strokeStyle = `rgba(150, 220, 255, ${iceAlpha + 0.15})`;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
+          ctx.strokeStyle = `rgba(200, 240, 255, ${iceAlpha})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x + cellSize * 0.2, y + cellSize * 0.3);
+          ctx.lineTo(x + cellSize * 0.5, y + cellSize * 0.15);
+          ctx.lineTo(x + cellSize * 0.8, y + cellSize * 0.3);
+          ctx.stroke();
+          if (cellState[r][c] === "ice2") {
+            ctx.beginPath();
+            ctx.moveTo(x + cellSize * 0.3, y + cellSize * 0.7);
+            ctx.lineTo(x + cellSize * 0.6, y + cellSize * 0.85);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
 
         if (selected && selected.r === r && selected.c === c) {
           ctx.save();
@@ -1545,10 +1609,25 @@
         ctx.stroke();
         break;
       }
+      case "octagon": {
+        const oct = r * 0.92;
+        ctx.beginPath();
+        for (let i = 0; i < 8; i++) {
+          const angle = (Math.PI / 8) + (i * Math.PI / 4);
+          const px = cx + oct * Math.cos(angle);
+          const py = cy + oct * Math.sin(angle);
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        break;
+      }
     }
   }
 
-  function drawSpecialIndicator(ctx, type, cx, cy, r) {
+  function drawSpecialIndicator(ctx, type, cx, cy, r, piece) {
     ctx.save();
     const s = r * 0.55;
     ctx.lineCap = "round";
@@ -1600,6 +1679,32 @@
         ctx.stroke();
         break;
       }
+      case "line_d": {
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#ffd700";
+        const ds = s * 0.75;
+        ctx.beginPath();
+        ctx.moveTo(cx - ds, cy - ds);
+        ctx.lineTo(cx + ds, cy + ds);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cx + ds, cy - ds);
+        ctx.lineTo(cx - ds, cy + ds);
+        ctx.stroke();
+        const a = s * 0.25;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx - ds + a, cy - ds);
+        ctx.lineTo(cx - ds, cy - ds);
+        ctx.lineTo(cx - ds, cy - ds + a);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cx + ds - a, cy + ds);
+        ctx.lineTo(cx + ds, cy + ds);
+        ctx.lineTo(cx + ds, cy + ds - a);
+        ctx.stroke();
+        break;
+      }
       case "bomb": {
         ctx.strokeStyle = "#fff";
         ctx.lineWidth = 2;
@@ -1635,6 +1740,23 @@
         ctx.beginPath();
         ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
         ctx.fill();
+        break;
+      }
+      case "countdown": {
+        const count = piece ? piece.countdown : 0;
+        const urgency = count <= 3;
+        ctx.fillStyle = urgency ? "#ff4444" : "#ffd700";
+        ctx.font = `bold ${s * 1.3}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(count.toString(), cx, cy);
+        if (urgency) {
+          ctx.strokeStyle = "#ff4444";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(cx, cy, s * 0.8, 0, Math.PI * 2);
+          ctx.stroke();
+        }
         break;
       }
     }
@@ -1772,7 +1894,7 @@
     const y = py - rect.top;
     const c = Math.floor(x / cellSize);
     const r = Math.floor(y / cellSize);
-    if (inBounds(r, c)) return { r, c };
+    if (inBounds(r, c) && !isHole(r, c) && !isRock(r, c)) return { r, c };
     return null;
   }
 
@@ -1839,6 +1961,7 @@
     const targetR = dragStart.r + dir.dr;
     const targetC = dragStart.c + dir.dc;
     if (!inBounds(targetR, targetC)) return;
+    if (isHole(targetR, targetC) || isRock(targetR, targetC)) return;
 
     selected = null;
     doMove(dragStart.r, dragStart.c, targetR, targetC);
@@ -2063,6 +2186,7 @@
     canvas.classList.remove("item-targeting");
 
     resizeCanvas();
+    initCellState(stg);
     createBoard(stg.colors);
     updateHUD();
     updateItemBar();
@@ -2134,7 +2258,7 @@
 
   document.getElementById("btn-debug-reset").addEventListener("click", () => {
     if (confirm("セーブデータをリセットしますか？")) {
-      saveData = { cleared: {}, bestStars: {} };
+      saveData = { cleared: {}, bestStars: {}, coins: 0 };
       writeSave();
       alert("リセットしました");
     }
