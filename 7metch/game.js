@@ -856,6 +856,30 @@
   }
 
   let dragStart = null;
+  let dragStartPx = null;
+  const DRAG_THRESHOLD = 12;
+
+  function dragDirection(sx, sy, ex, ey) {
+    const dx = ex - sx;
+    const dy = ey - sy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < DRAG_THRESHOLD) return null;
+
+    const angle = Math.atan2(dy, dx);
+    const sector = Math.round(angle / (Math.PI / 4));
+    switch (sector) {
+      case 0:  return { dr: 0, dc: 1 };
+      case 1:  return { dr: 1, dc: 1 };
+      case 2:  return { dr: 1, dc: 0 };
+      case 3:  return { dr: 1, dc: -1 };
+      case 4:
+      case -4: return { dr: 0, dc: -1 };
+      case -3: return { dr: -1, dc: -1 };
+      case -2: return { dr: -1, dc: 0 };
+      case -1: return { dr: -1, dc: 1 };
+    }
+    return null;
+  }
 
   canvas.addEventListener("pointerdown", (e) => {
     if (animating) return;
@@ -874,29 +898,35 @@
 
     selected = cell;
     dragStart = cell;
+    dragStartPx = { x: e.clientX, y: e.clientY };
     drawBoard();
   });
 
   canvas.addEventListener("pointermove", (e) => {
-    if (!dragStart || animating) return;
+    if (!dragStart || !dragStartPx || animating) return;
     e.preventDefault();
-    const cell = getCell(e.clientX, e.clientY);
-    if (!cell) return;
-    if (cell.r === dragStart.r && cell.c === dragStart.c) return;
 
-    if (isAdjacent(dragStart.r, dragStart.c, cell.r, cell.c)) {
-      selected = null;
-      doMove(dragStart.r, dragStart.c, cell.r, cell.c);
-      dragStart = null;
-    }
+    const dir = dragDirection(dragStartPx.x, dragStartPx.y, e.clientX, e.clientY);
+    if (!dir) return;
+
+    const targetR = dragStart.r + dir.dr;
+    const targetC = dragStart.c + dir.dc;
+    if (!inBounds(targetR, targetC)) return;
+
+    selected = null;
+    doMove(dragStart.r, dragStart.c, targetR, targetC);
+    dragStart = null;
+    dragStartPx = null;
   });
 
   canvas.addEventListener("pointerup", () => {
     dragStart = null;
+    dragStartPx = null;
   });
 
   canvas.addEventListener("pointerleave", () => {
     dragStart = null;
+    dragStartPx = null;
   });
 
   // --- Screen Transitions ---
