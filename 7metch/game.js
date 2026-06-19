@@ -6,7 +6,7 @@
   const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#3a86ff", "#ff6bb3", "#88cc44"];
   const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross", "octagon"];
   const PIECE_NAMES_JA = ["まる", "ダイヤ", "しかく", "さんかく", "ほし", "ヘキサ", "クロス", "オクタ"];
-  const PIECE_SYMBOLS = ["●", "◆", "■", "▲", "★", "⬡", "✚", "⬣"];
+  const PIECE_SYMBOLS = ["●", "◆", "■", "▲", "★", "⬢", "✚", "◉"];
   const MATCH_MIN = 3;
 
   const ANIM = {
@@ -359,7 +359,7 @@
       case "clear": return `${m.count}個 けそう`;
       case "color":
         if (html) {
-          return `<span style="color:${PIECE_COLORS[m.colorIndex]};font-weight:900">${PIECE_SYMBOLS[m.colorIndex]}</span>を${m.count}個けそう`;
+          return `<span style="color:${PIECE_COLORS[m.colorIndex]};font-size:1.4em;vertical-align:-0.1em;text-shadow:0 0 4px ${PIECE_COLORS[m.colorIndex]}80">${PIECE_SYMBOLS[m.colorIndex]}</span>を${m.count}個けそう`;
         }
         return `${PIECE_SYMBOLS[m.colorIndex]}を${m.count}個けそう`;
     }
