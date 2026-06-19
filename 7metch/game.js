@@ -201,41 +201,91 @@
 
   function findSpecialCreations(matches) {
     const specials = [];
-    const directions = [
-      [0, 1],
-      [1, 0],
-    ];
+    const matchSet = new Set(matches.map(([r, c]) => r * COLS + c));
+
+    const hLines = [];
+    const vLines = [];
 
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         if (!board[r][c]) continue;
         const color = board[r][c].color;
 
-        for (const [dr, dc] of directions) {
+        // horizontal
+        {
           const line = [[r, c]];
-          let nr = r + dr;
-          let nc = c + dc;
-          while (inBounds(nr, nc) && board[nr][nc] && board[nr][nc].color === color) {
-            line.push([nr, nc]);
-            nr += dr;
-            nc += dc;
+          let nc = c + 1;
+          while (inBounds(r, nc) && board[r][nc] && board[r][nc].color === color) {
+            line.push([r, nc]);
+            nc++;
           }
-          if (line.length >= 5) {
-            const mid = line[Math.floor(line.length / 2)];
-            specials.push({ r: mid[0], c: mid[1], type: "rainbow", color });
-          } else if (line.length === 4) {
-            const mid = line[1];
-            if (dc === 0) {
-              specials.push({ r: mid[0], c: mid[1], type: "line_h", color });
-            } else if (dr === 0) {
-              specials.push({ r: mid[0], c: mid[1], type: "line_v", color });
-            } else {
-              specials.push({ r: mid[0], c: mid[1], type: "bomb", color });
+          if (line.length >= MATCH_MIN && line.every(([lr, lc]) => matchSet.has(lr * COLS + lc))) {
+            hLines.push({ line, color });
+          }
+        }
+
+        // vertical
+        {
+          const line = [[r, c]];
+          let nr = r + 1;
+          while (inBounds(nr, c) && board[nr][c] && board[nr][c].color === color) {
+            line.push([nr, c]);
+            nr++;
+          }
+          if (line.length >= MATCH_MIN && line.every(([lr, lc]) => matchSet.has(lr * COLS + lc))) {
+            vLines.push({ line, color });
+          }
+        }
+      }
+    }
+
+    const usedCells = new Set();
+
+    // T/L shape: intersecting horizontal + vertical of same color → bomb
+    for (const h of hLines) {
+      for (const v of vLines) {
+        if (h.color !== v.color) continue;
+        for (const [hr, hc] of h.line) {
+          for (const [vr, vc] of v.line) {
+            if (hr === vr && hc === vc) {
+              const key = hr * COLS + hc;
+              if (!usedCells.has(key)) {
+                specials.push({ r: hr, c: hc, type: "bomb", color: h.color });
+                usedCells.add(key);
+                h.line.forEach(([lr, lc]) => usedCells.add(lr * COLS + lc));
+                v.line.forEach(([lr, lc]) => usedCells.add(lr * COLS + lc));
+              }
             }
           }
         }
       }
     }
+
+    // 5+ line → rainbow, 4 line → line clear
+    const allLines = [
+      ...hLines.map((h) => ({ ...h, dir: "h" })),
+      ...vLines.map((v) => ({ ...v, dir: "v" })),
+    ];
+
+    for (const { line, color, dir } of allLines) {
+      const mid = line[Math.floor(line.length / 2)];
+      const midKey = mid[0] * COLS + mid[1];
+      if (usedCells.has(midKey)) continue;
+
+      if (line.length >= 5) {
+        specials.push({ r: mid[0], c: mid[1], type: "rainbow", color });
+        usedCells.add(midKey);
+      } else if (line.length === 4) {
+        const pos = line[1];
+        const type = dir === "h" ? "line_v" : "line_h";
+        const posKey = pos[0] * COLS + pos[1];
+        if (!usedCells.has(posKey)) {
+          specials.push({ r: pos[0], c: pos[1], type, color });
+          usedCells.add(posKey);
+        }
+      }
+    }
+
     return specials;
   }
 
@@ -321,12 +371,146 @@
   let colorCleared = [];
   let chainCount = 0;
 
+  function getComboType(s1, s2) {
+    const pair = [s1, s2].sort().join("+");
+    const combos = {
+      "line_h+line_h": "cross",
+      "line_h+line_v": "cross",
+      "line_v+line_v": "cross",
+      "bomb+line_h": "triple_line",
+      "bomb+line_v": "triple_line",
+      "bomb+bomb": "big_bomb",
+      "line_h+rainbow": "rainbow_line",
+      "line_v+rainbow": "rainbow_line",
+      "bomb+rainbow": "rainbow_bomb",
+      "rainbow+rainbow": "board_clear",
+    };
+    return combos[pair] || null;
+  }
+
+  function activateCombo(comboType, r, c, p1, p2) {
+    const extra = [];
+    const key = (r2, c2) => r2 * COLS + c2;
+    const cleared = new Set();
+
+    switch (comboType) {
+      case "cross":
+        for (let cc = 0; cc < COLS; cc++) {
+          if (board[r][cc]) extra.push([r, cc]);
+        }
+        for (let rr = 0; rr < ROWS; rr++) {
+          if (board[rr][c]) extra.push([rr, c]);
+        }
+        break;
+      case "triple_line": {
+        for (let d = -1; d <= 1; d++) {
+          for (let cc = 0; cc < COLS; cc++) {
+            if (inBounds(r + d, cc) && board[r + d][cc]) extra.push([r + d, cc]);
+          }
+          for (let rr = 0; rr < ROWS; rr++) {
+            if (inBounds(rr, c + d) && board[rr][c + d]) extra.push([rr, c + d]);
+          }
+        }
+        break;
+      }
+      case "big_bomb":
+        for (let dr = -3; dr <= 3; dr++) {
+          for (let dc = -3; dc <= 3; dc++) {
+            if (inBounds(r + dr, c + dc) && board[r + dr][c + dc]) {
+              extra.push([r + dr, c + dc]);
+            }
+          }
+        }
+        break;
+      case "rainbow_line":
+      case "rainbow_bomb": {
+        const rainbow = p1.special === "rainbow" ? p1 : p2;
+        const other = p1.special === "rainbow" ? p2 : p1;
+        const targetColor = other.color;
+        const spType = comboType === "rainbow_line" ? "line_h" : "bomb";
+        for (let rr = 0; rr < ROWS; rr++) {
+          for (let cc = 0; cc < COLS; cc++) {
+            if (board[rr][cc] && board[rr][cc].color === targetColor) {
+              board[rr][cc].special = spType;
+              extra.push([rr, cc]);
+            }
+          }
+        }
+        break;
+      }
+      case "board_clear":
+        for (let rr = 0; rr < ROWS; rr++) {
+          for (let cc = 0; cc < COLS; cc++) {
+            if (board[rr][cc]) extra.push([rr, cc]);
+          }
+        }
+        break;
+    }
+
+    const unique = new Map();
+    extra.forEach(([er, ec]) => unique.set(er * COLS + ec, [er, ec]));
+    return [...unique.values()];
+  }
+
   async function doMove(r1, c1, r2, c2) {
     if (animating) return;
     animating = true;
 
+    const p1 = board[r1][c1];
+    const p2 = board[r2][c2];
+
     await animateSwap(r1, c1, r2, c2);
     swapPieces(r1, c1, r2, c2);
+
+    // Special swap combo
+    if (p1 && p2 && p1.special && p2.special) {
+      const comboType = getComboType(p1.special, p2.special);
+      if (comboType) {
+        movesLeft--;
+        chainCount = 1;
+        updateHUD();
+
+        const comboCells = activateCombo(comboType, r2, c2, p1, p2);
+
+        // Activate specials on combo-cleared cells (chain reaction)
+        const cleared = new Set(comboCells.map(([r, c]) => r * COLS + c));
+        comboCells.forEach(([cr, cc]) => {
+          if (board[cr][cc] && board[cr][cc].special && !(cr === r1 && cc === c1) && !(cr === r2 && cc === c2)) {
+            const extra = activateSpecial(cr, cc, cleared);
+            extra.forEach(([er, ec]) => {
+              if (!cleared.has(er * COLS + ec)) {
+                cleared.add(er * COLS + ec);
+                comboCells.push([er, ec]);
+              }
+            });
+          }
+        });
+
+        const clearList = [...cleared].map((v) => [Math.floor(v / COLS), v % COLS]);
+        clearList.forEach(([r, c]) => {
+          if (board[r][c]) {
+            const ci = board[r][c].color;
+            colorCleared[ci] = (colorCleared[ci] || 0) + 1;
+            totalCleared++;
+          }
+        });
+        score += clearList.length * 10 * chainCount;
+
+        await animateClear(clearList);
+        clearList.forEach(([r, c]) => { board[r][c] = null; });
+
+        const fallMap = applyGravityData();
+        await animateDrop(fallMap);
+        await sleep(ANIM.CHAIN_PAUSE_MS);
+
+        await resolveBoard();
+
+        updateHUD();
+        checkWinLose();
+        animating = false;
+        return;
+      }
+    }
 
     const matches = findAllMatches();
     if (matches.length === 0) {
@@ -778,7 +962,8 @@
         ctx.fillText("｜", cx, cy);
         break;
       case "bomb":
-        ctx.fillText("💥", cx, cy - 1);
+        ctx.font = `bold ${r * 0.6}px sans-serif`;
+        ctx.fillText("◆", cx, cy);
         break;
       case "rainbow":
         ctx.fillText("✦", cx, cy);
