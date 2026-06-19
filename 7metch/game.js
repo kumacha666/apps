@@ -29,8 +29,8 @@
   const STAGES = buildStages();
 
   // --- Tracking ---
-  const GA_MEASUREMENT_ID = "";  // G-XXXXXXXXXX を設定
-  const GAS_ENDPOINT = "";       // GAS デプロイ URL を設定
+  const GA_MEASUREMENT_ID = "G-CT956V6Y2V";
+  const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbw6_EH0cRSKYnKVefYMRUnIZSnCm-Xcz8iPlOed-5zou54a_Yf09FJedIYNtY5qZCyX/exec";
   const FEEDBACK_URL = "";       // Google フォーム URL を設定
 
   function getAnonId() {
