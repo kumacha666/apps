@@ -3,7 +3,7 @@
 
   const COLS = 7;
   const ROWS = 8;
-  const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#a8e6cf", "#ff6bb3"];
+  const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#3a86ff", "#ff6bb3"];
   const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross"];
   const MATCH_MIN = 3;
 
@@ -794,6 +794,21 @@
     } else {
       progressEl.style.color = "";
     }
+
+    const stg = STAGES[currentStage];
+    const usedMoves = stg.moves - movesLeft;
+    let currentStars = 3;
+    if (usedMoves > stg.star3moves) currentStars = 2;
+    if (usedMoves > stg.star2moves) currentStars = 1;
+
+    const starsEl = document.getElementById("hud-stars");
+    let html = "";
+    for (let s = 0; s < 3; s++) {
+      html += s < currentStars
+        ? '<span class="star-on">★</span>'
+        : '<span class="star-off">★</span>';
+    }
+    starsEl.innerHTML = html;
   }
 
   // --- Win/Lose ---

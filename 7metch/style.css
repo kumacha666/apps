@@ -177,6 +177,20 @@ body {
   flex-shrink: 0;
 }
 
+#hud-stars {
+  font-size: 1.1rem;
+  letter-spacing: 2px;
+  text-align: center;
+}
+
+#hud-stars .star-on {
+  color: var(--gold);
+}
+
+#hud-stars .star-off {
+  color: #333;
+}
+
 #hud-stage {
   font-weight: 700;
   font-size: 0.85rem;
