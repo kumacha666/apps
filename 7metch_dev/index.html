@@ -44,6 +44,14 @@
       </div>
     </div>
 
+    <div id="color-picker-modal" class="hidden">
+      <div id="color-picker-content">
+        <h3>消す色を選んでください</h3>
+        <div id="color-picker-grid"></div>
+        <button id="btn-color-cancel" class="btn-secondary">キャンセル</button>
+      </div>
+    </div>
+
     <div id="debug-badge" class="hidden">DEBUG</div>
 
     <div id="debug-panel" class="hidden">
@@ -54,6 +62,18 @@
           <div class="debug-row">
             <input type="number" id="debug-stage-num" min="1" max="30" value="1" />
             <button id="btn-debug-jump" class="btn-debug">GO</button>
+          </div>
+        </div>
+        <div class="debug-section">
+          <label>特殊ピーススポナー（ゲーム中にタップで設置）</label>
+          <div class="debug-spawn-row">
+            <button class="btn-spawn" data-spawn="line_h">← →</button>
+            <button class="btn-spawn" data-spawn="line_v">↑ ↓</button>
+            <button class="btn-spawn" data-spawn="bomb">◎ボム</button>
+            <button class="btn-spawn" data-spawn="rainbow">✦虹</button>
+            <button class="btn-spawn" data-spawn="diagonal">╲╱斜</button>
+            <button class="btn-spawn" data-spawn="countdown">⏱️爆</button>
+            <button class="btn-spawn" data-spawn="off">OFF</button>
           </div>
         </div>
         <div class="debug-section">
@@ -202,6 +222,13 @@
         </div>
       </div>
       <canvas id="game-canvas"></canvas>
+      <div id="item-bar">
+        <div id="item-coins">🪙 <span id="item-coin-count">∞</span></div>
+        <button class="item-btn" data-item="pinpoint" title="ピンポイント破壊"><span class="item-icon">🎯</span><span class="item-cost">無料</span></button>
+        <button class="item-btn" data-item="shuffle" title="シャッフル"><span class="item-icon">🔀</span><span class="item-cost">無料</span></button>
+        <button class="item-btn" data-item="addmoves" title="+3手"><span class="item-icon">＋3</span><span class="item-cost">無料</span></button>
+        <button class="item-btn" data-item="colorbomb" title="カラーボム"><span class="item-icon">🌈</span><span class="item-cost">無料</span></button>
+      </div>
       <div id="game-buttons">
         <button id="btn-retry" class="btn-secondary">リトライ</button>
         <button id="btn-quit" class="btn-secondary">やめる</button>
