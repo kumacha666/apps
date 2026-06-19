@@ -26,6 +26,16 @@
     { stage: 150, stars: 300 },
   ];
 
+  // --- Stages ---
+  const BOARD_SIZES = [
+    { cols: 6,  rows: 7,  label: "6×7" },
+    { cols: 7,  rows: 8,  label: "7×8" },
+    { cols: 8,  rows: 9,  label: "8×9" },
+    { cols: 9,  rows: 10, label: "9×10" },
+    { cols: 10, rows: 11, label: "10×11" },
+    { cols: 11, rows: 12, label: "11×12" },
+  ];
+
   const STAGES = buildStages();
 
   // --- Tracking ---
@@ -199,24 +209,6 @@
   function getGateFor(i) {
     return STAR_GATES.find((g) => g.stage === i) || null;
   }
-
-  // --- Stages ---
-  const BOARD_SIZES = [
-    { cols: 6,  rows: 7,  label: "6×7" },
-    { cols: 7,  rows: 8,  label: "7×8" },
-    { cols: 8,  rows: 9,  label: "8×9" },
-    { cols: 9,  rows: 10, label: "9×10" },
-    { cols: 10, rows: 11, label: "10×11" },
-    { cols: 11, rows: 12, label: "11×12" },
-  ];
-
-  // Feature flags per size group:
-  // Group 0 (6×7): basic, no features
-  // Group 1 (7×8): diagonal line piece
-  // Group 2 (8×9): ice obstacles
-  // Group 3 (9×10): 8th color + rocks
-  // Group 4 (10×11): holes (non-rectangular)
-  // Group 5 (11×12): countdown bombs + all features combined
 
   function buildStages() {
     const stages = [];
