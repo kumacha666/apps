@@ -107,6 +107,79 @@ body {
   color: var(--text);
 }
 
+#data-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-link-sep {
+  color: var(--text-dim);
+  opacity: 0.4;
+  font-size: 0.85rem;
+}
+
+/* Restore Modal */
+#restore-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+#restore-modal.hidden {
+  display: none;
+}
+
+#restore-content {
+  background: var(--bg-light);
+  border: 2px solid var(--accent2);
+  border-radius: 16px;
+  padding: 24px;
+  min-width: 280px;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: center;
+}
+
+#restore-content h3 {
+  font-size: 1.1rem;
+}
+
+#restore-content p {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+#restore-input {
+  background: var(--bg);
+  border: 1px solid var(--accent2);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 10px;
+  font-size: 0.85rem;
+  resize: none;
+  font-family: monospace;
+}
+
+.restore-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.restore-buttons .btn-primary,
+.restore-buttons .btn-secondary {
+  flex: 1;
+  min-width: auto;
+  padding: 10px;
+  font-size: 0.9rem;
+}
+
 .btn-link {
   background: none;
   border: none;
