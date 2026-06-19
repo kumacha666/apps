@@ -452,6 +452,84 @@ body {
   white-space: nowrap;
 }
 
+/* Help */
+#screen-help {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+#help-content {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 24px;
+}
+
+#help-content h2 {
+  text-align: center;
+  font-size: 1.4rem;
+}
+
+.help-section {
+  background: var(--bg-light);
+  border: 1px solid var(--accent2);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.help-section h3 {
+  color: var(--accent);
+  font-size: 0.95rem;
+  margin-bottom: 4px;
+}
+
+.help-section p {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.help-hint {
+  font-weight: 700;
+  color: var(--gold) !important;
+}
+
+.help-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.help-table th {
+  background: var(--accent2);
+  padding: 6px 8px;
+  text-align: left;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.help-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  color: var(--text-dim);
+}
+
+.help-table tr:last-child td {
+  border-bottom: none;
+}
+
+.help-icon {
+  color: var(--gold) !important;
+  font-weight: 700;
+  text-align: center !important;
+  white-space: nowrap;
+}
+
 @media (max-height: 700px) {
   :root { --cell-size: 40px; }
   .title-logo { font-size: 2.4rem; }

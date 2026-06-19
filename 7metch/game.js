@@ -121,6 +121,7 @@
   const screens = {
     title: document.getElementById("screen-title"),
     stageSelect: document.getElementById("screen-stage-select"),
+    help: document.getElementById("screen-help"),
     game: document.getElementById("screen-game"),
     result: document.getElementById("screen-result"),
   };
@@ -1344,6 +1345,14 @@
   });
 
   document.getElementById("btn-back-title").addEventListener("click", () => {
+    showScreen("title");
+  });
+
+  document.getElementById("btn-help").addEventListener("click", () => {
+    showScreen("help");
+  });
+
+  document.getElementById("btn-back-help").addEventListener("click", () => {
     showScreen("title");
   });
 
