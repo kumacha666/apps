@@ -1499,40 +1499,71 @@
         const y = snap.r * cellSize + cellSize / 2;
         const baseR = cellSize / 2 - 2;
 
+        // Phase 1: Glow brightening (planet shines before dying)
         if (t < 0.3) {
           const fadeT = t / 0.3;
-          ctx.globalAlpha = 1 - fadeT * 0.3;
+          ctx.globalAlpha = 1 - fadeT * 0.2;
           if (snap.piece) drawPieceAt(snap.piece, x, y);
-          ctx.globalAlpha = 0.8 * (1 - fadeT);
+          // Expanding white glow
+          ctx.globalAlpha = 0.6 * (1 - fadeT);
+          ctx.shadowColor = snap.color;
+          ctx.shadowBlur = baseR * fadeT * 0.8;
           ctx.fillStyle = "#fff";
           ctx.beginPath();
-          ctx.arc(x, y, baseR * (1 + fadeT * 0.15), 0, Math.PI * 2);
+          ctx.arc(x, y, baseR * (0.6 + fadeT * 0.3), 0, Math.PI * 2);
           ctx.fill();
+          ctx.shadowBlur = 0;
         }
 
+        // Phase 2: Shrink + star-shaped particle burst
         if (t >= 0.2) {
           const shrinkT = Math.min((t - 0.2) / 0.8, 1);
           const ease = 1 - (1 - shrinkT) * (1 - shrinkT);
           const scale = 1 - ease;
           const alpha = 1 - ease;
 
+          // Shrinking planet
           ctx.globalAlpha = alpha;
           ctx.fillStyle = snap.color;
           ctx.beginPath();
           ctx.arc(x, y, baseR * scale, 0, Math.PI * 2);
           ctx.fill();
 
-          const numParticles = 4;
+          // White flash ring at moment of death
+          if (shrinkT > 0.1 && shrinkT < 0.4) {
+            const flashT = (shrinkT - 0.1) / 0.3;
+            ctx.globalAlpha = 0.5 * (1 - flashT);
+            ctx.strokeStyle = "#fff";
+            ctx.lineWidth = 2 * (1 - flashT);
+            ctx.beginPath();
+            ctx.arc(x, y, baseR * (0.5 + flashT * 0.8), 0, Math.PI * 2);
+            ctx.stroke();
+          }
+
+          // Star-dust particles bursting outward
+          const numParticles = 6;
           for (let p = 0; p < numParticles; p++) {
-            const angle = (p / numParticles) * Math.PI * 2 + idx * 0.5;
-            const dist = baseR * 0.5 + ease * cellSize * 0.6;
+            const angle = (p / numParticles) * Math.PI * 2 + idx * 0.7;
+            const dist = baseR * 0.3 + ease * cellSize * 0.7;
             const px = x + Math.cos(angle) * dist;
             const py = y + Math.sin(angle) * dist;
-            const pSize = baseR * 0.2 * (1 - ease);
-            ctx.globalAlpha = alpha * 0.8;
+            const pSize = baseR * 0.15 * (1 - ease);
+            ctx.globalAlpha = alpha * 0.7;
             ctx.fillStyle = snap.color;
+            // Draw tiny 4-point star shape
             ctx.beginPath();
-            ctx.arc(px, py, pSize, 0, Math.PI * 2);
+            ctx.moveTo(px, py - pSize);
+            ctx.lineTo(px + pSize * 0.3, py);
+            ctx.lineTo(px, py + pSize);
+            ctx.lineTo(px - pSize * 0.3, py);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(px - pSize, py);
+            ctx.lineTo(px, py + pSize * 0.3);
+            ctx.lineTo(px + pSize, py);
+            ctx.lineTo(px, py - pSize * 0.3);
+            ctx.closePath();
             ctx.fill();
           }
         }
