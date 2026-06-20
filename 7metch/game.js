@@ -91,75 +91,129 @@
     osc.stop(t + duration);
   }
 
+  function playSweep(startFreq, endFreq, duration, type, vol, delay) {
+    if (!soundEnabled || !audioCtx) return;
+    const t = audioCtx.currentTime + (delay || 0);
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type || "sine";
+    osc.frequency.setValueAtTime(startFreq, t);
+    osc.frequency.linearRampToValueAtTime(endFreq, t + duration);
+    gain.gain.setValueAtTime(vol || 0.15, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + duration);
+  }
+
+  function playNoise(duration, vol, filterFreq, filterType, delay) {
+    if (!soundEnabled || !audioCtx) return;
+    const t = audioCtx.currentTime + (delay || 0);
+    const bufSize = Math.ceil(audioCtx.sampleRate * duration);
+    const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const gain = audioCtx.createGain();
+    gain.gain.setValueAtTime(vol || 0.05, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    if (filterFreq) {
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = filterType || "lowpass";
+      filter.frequency.setValueAtTime(filterFreq, t);
+      src.connect(filter);
+      filter.connect(gain);
+    } else {
+      src.connect(gain);
+    }
+    gain.connect(audioCtx.destination);
+    src.start(t);
+    src.stop(t + duration);
+  }
+
   const SFX = {
     swap() {
-      playTone(520, 0.08, "sine", 0.12);
-      playTone(660, 0.08, "sine", 0.10, 0.04);
+      playSweep(250, 800, 0.12, "sine", 0.10);
+      playSweep(300, 900, 0.10, "triangle", 0.06, 0.02);
+      playNoise(0.08, 0.03, 2500, "bandpass", 0.02);
     },
     invalidSwap() {
-      playTone(200, 0.15, "square", 0.08);
-      playTone(160, 0.15, "square", 0.08, 0.1);
+      playTone(150, 0.12, "square", 0.07);
+      playTone(140, 0.12, "square", 0.06, 0.03);
+      playTone(130, 0.15, "square", 0.05, 0.08);
     },
     clear(chain) {
-      const base = 440 + Math.min(chain - 1, 6) * 80;
-      playTone(base, 0.12, "sine", 0.13);
-      playTone(base * 1.25, 0.1, "sine", 0.10, 0.06);
-      playTone(base * 1.5, 0.08, "sine", 0.08, 0.12);
+      const base = 523 + Math.min(chain - 1, 5) * 80;
+      playTone(base, 0.15, "sine", 0.11);
+      playTone(base + 3, 0.15, "sine", 0.08);
+      playTone(base - 3, 0.15, "sine", 0.08);
+      playTone(base * 1.5, 0.05, "sine", 0.06, 0.05);
+      playTone(3000 + chain * 200, 0.03, "sine", 0.04, 0.02);
+      playTone(3500 + chain * 200, 0.03, "sine", 0.03, 0.05);
+      playTone(base * 0.5, 0.08, "sine", 0.04, 0.04);
     },
     bomb() {
-      playTone(150, 0.15, "sawtooth", 0.12);
-      playTone(100, 0.3, "sawtooth", 0.18);
-      playTone(60, 0.45, "sine", 0.20, 0.05);
-      playTone(40, 0.3, "sine", 0.10, 0.15);
-      playTone(200, 0.08, "square", 0.06, 0.02);
+      playNoise(0.6, 0.12, 6000, "lowpass");
+      playSweep(200, 40, 0.5, "sawtooth", 0.15, 0.02);
+      playTone(60, 0.6, "sine", 0.18, 0.05);
+      playTone(55, 0.5, "sine", 0.12, 0.08);
+      playSweep(80, 30, 0.4, "sawtooth", 0.08, 0.1);
+      playTone(200, 0.1, "sine", 0.06, 0.15);
+      playTone(150, 0.15, "sine", 0.04, 0.25);
     },
     line() {
-      playTone(600, 0.06, "sawtooth", 0.10);
-      playTone(900, 0.06, "sawtooth", 0.09, 0.03);
-      playTone(1200, 0.06, "sawtooth", 0.08, 0.06);
-      playTone(1600, 0.06, "sawtooth", 0.07, 0.09);
-      playTone(2000, 0.08, "sine", 0.05, 0.12);
+      playSweep(1500, 400, 0.2, "sawtooth", 0.08);
+      playSweep(500, 1200, 0.2, "sawtooth", 0.07, 0.15);
+      playNoise(0.35, 0.05, 2000, "bandpass");
+      playTone(300, 0.05, "sine", 0.04, 0.1);
     },
     rainbow() {
-      const notes = [523, 659, 784, 988, 1175, 1397, 1568];
-      notes.forEach((f, i) => {
-        playTone(f, 0.18, "sine", 0.12, i * 0.04);
-        playTone(f * 0.5, 0.15, "triangle", 0.06, i * 0.04);
-      });
-      playTone(1568, 0.4, "sine", 0.08, 0.28);
-      playTone(2093, 0.3, "sine", 0.06, 0.32);
+      playTone(80, 0.6, "sine", 0.12);
+      playSweep(1500, 60, 0.5, "sine", 0.10, 0.05);
+      playSweep(1200, 80, 0.4, "triangle", 0.06, 0.08);
+      playTone(120, 0.3, "triangle", 0.08, 0.1);
+      playNoise(0.4, 0.04, 800, "lowpass", 0.1);
     },
     combo() {
-      playTone(200, 0.12, "sawtooth", 0.10);
-      playTone(350, 0.10, "sine", 0.12, 0.05);
-      playTone(500, 0.10, "sine", 0.14, 0.10);
-      playTone(700, 0.10, "sine", 0.14, 0.15);
-      playTone(900, 0.12, "sine", 0.12, 0.20);
-      playTone(1200, 0.15, "sine", 0.10, 0.25);
-      playTone(300, 0.3, "triangle", 0.06, 0.08);
+      playSweep(200, 1000, 0.15, "sine", 0.10);
+      playSweep(2000, 1000, 0.15, "sawtooth", 0.06);
+      playNoise(0.1, 0.06, 3000, "bandpass", 0.12);
+      playTone(80, 0.15, "sine", 0.10, 0.12);
+      playTone(1200, 0.08, "sine", 0.05, 0.15);
     },
     stageClear() {
       const notes = [523, 659, 784, 1047];
       notes.forEach((f, i) => {
-        playTone(f, 0.25, "sine", 0.12, i * 0.12);
-        playTone(f * 0.5, 0.25, "triangle", 0.06, i * 0.12);
+        playTone(f, 0.3, "triangle", 0.10, i * 0.1);
+        playTone(f, 0.3, "sine", 0.08, i * 0.1);
+        playTone(f * 0.5, 0.25, "sine", 0.04, i * 0.1);
       });
+      playTone(1047, 0.5, "sine", 0.06, 0.4);
+      playTone(1047, 0.5, "triangle", 0.04, 0.42);
     },
     stageFail() {
-      playTone(400, 0.2, "sine", 0.10);
-      playTone(320, 0.2, "sine", 0.10, 0.15);
-      playTone(250, 0.35, "sine", 0.08, 0.30);
+      playTone(400, 0.25, "sine", 0.08);
+      playTone(350, 0.25, "sine", 0.08, 0.18);
+      playTone(280, 0.4, "sine", 0.07, 0.36);
+      playTone(280, 0.3, "triangle", 0.04, 0.38);
     },
     drop() {
-      playTone(300, 0.06, "sine", 0.05);
+      playSweep(400, 220, 0.1, "sine", 0.04);
+      playTone(220, 0.05, "sine", 0.02, 0.06);
     },
     countdown() {
-      playTone(880, 0.05, "square", 0.08);
-      playTone(660, 0.08, "square", 0.06, 0.05);
+      playTone(440, 0.08, "square", 0.06);
+      playTone(880, 0.06, "square", 0.04);
+      playTone(440, 0.08, "square", 0.06, 0.12);
+      playTone(880, 0.06, "square", 0.04, 0.12);
     },
     iceCrack() {
-      playTone(1200, 0.04, "square", 0.06);
-      playTone(900, 0.06, "square", 0.05, 0.03);
+      playNoise(0.12, 0.06, 4000, "highpass");
+      playTone(3000, 0.04, "triangle", 0.05);
+      playTone(2500, 0.03, "triangle", 0.03, 0.03);
+      playTone(3500, 0.03, "triangle", 0.03, 0.05);
     },
   };
 
