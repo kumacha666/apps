@@ -230,8 +230,9 @@
   // Deep space background state
   let bgStars = [];
   let bgShootingStar = null;
-  let bgFrame = 0;
   let bgAnimId = null;
+  let bgGradCache = null;
+  let bgGradSize = null;
   let board = [];
   let selected = null;
   let animating = false;
@@ -2172,14 +2173,17 @@
 
   function drawSpaceBackground() {
     const w = boardPixelW, h = boardPixelH;
-    bgFrame++;
 
-    // Deep space gradient
-    const bgGrad = ctx.createLinearGradient(0, 0, w * 0.3, h);
-    bgGrad.addColorStop(0, "#050510");
-    bgGrad.addColorStop(0.5, "#08081a");
-    bgGrad.addColorStop(1, "#0a0518");
-    ctx.fillStyle = bgGrad;
+    // Cached deep space gradient (recreate only on resize)
+    const sizeKey = w + "x" + h;
+    if (bgGradSize !== sizeKey) {
+      bgGradCache = ctx.createLinearGradient(0, 0, w * 0.3, h);
+      bgGradCache.addColorStop(0, "#050510");
+      bgGradCache.addColorStop(0.5, "#08081a");
+      bgGradCache.addColorStop(1, "#0a0518");
+      bgGradSize = sizeKey;
+    }
+    ctx.fillStyle = bgGradCache;
     ctx.fillRect(0, 0, w, h);
 
     // Stars
