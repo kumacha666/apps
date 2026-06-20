@@ -669,10 +669,12 @@
     if (stg && stg.features && stg.features.diagonalLine) {
       for (let r = 0; r < rows - 1; r++) {
         for (let c = 0; c < cols - 1; c++) {
+          if (!board[r][c]) continue;
+          const sqColor = board[r][c].color;
           const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
-          if (cells.every(([cr,cc]) => matchSet.has(cr * cols + cc)) &&
+          if (cells.every(([cr,cc]) => board[cr][cc] && board[cr][cc].color === sqColor) &&
+              cells.every(([cr,cc]) => matchSet.has(cr * cols + cc)) &&
               cells.every(([cr,cc]) => !usedCells.has(cr * cols + cc))) {
-            const sqColor = board[r][c] ? board[r][c].color : 0;
             let sr = r, sc = c;
             if (lastSwapTarget && cells.some(([cr,cc]) => cr === lastSwapTarget.r && cc === lastSwapTarget.c)) {
               sr = lastSwapTarget.r;
