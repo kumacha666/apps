@@ -189,6 +189,7 @@
   };
 
   function showScreen(name) {
+    if (name !== "game") clearHint();
     Object.values(screens).forEach((s) => s.classList.remove("active"));
     screens[name].classList.add("active");
   }
@@ -675,6 +676,91 @@
     return specials;
   }
 
+  function findSpecialHint() {
+    const PRIORITY = { rainbow: 3, bomb: 2, line_d: 2, line_h: 1, line_v: 1 };
+    let best = [];
+    let bestPriority = 0;
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (!board[r][c] || !isPlayable(r, c)) continue;
+        const neighbors = [
+          [r-1,c-1],[r-1,c],[r-1,c+1],
+          [r,c+1],[r+1,c+1],[r+1,c],[r+1,c-1],[r,c-1]
+        ];
+        for (const [nr, nc] of neighbors) {
+          if (!inBounds(nr, nc) || !board[nr][nc] || !isPlayable(nr, nc)) continue;
+          if (nr < r || (nr === r && nc < c)) continue;
+
+          swapPieces(r, c, nr, nc);
+          const matches = findAllMatches();
+          if (matches.length > 0) {
+            const specials = findSpecialCreations(matches);
+            for (const sp of specials) {
+              const p = PRIORITY[sp.type] || 0;
+              if (p > bestPriority) {
+                bestPriority = p;
+                best = [{ r, c, nr, nc }];
+              } else if (p === bestPriority && p > 0) {
+                best.push({ r, c, nr, nc });
+              }
+            }
+          }
+          swapPieces(r, c, nr, nc);
+        }
+      }
+    }
+
+    if (best.length === 0) return null;
+    const pick = best[Math.floor(Math.random() * best.length)];
+    return { r: pick.r, c: pick.c };
+  }
+
+  function startHintTimer() {
+    clearHint();
+    hintTimer = setTimeout(() => {
+      if (animating) return;
+      const hint = findSpecialHint();
+      if (hint) {
+        hintCell = hint;
+        startHintAnim();
+      }
+    }, HINT_DELAY_MS);
+  }
+
+  function clearHint() {
+    if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
+    if (hintAnimId) { cancelAnimationFrame(hintAnimId); hintAnimId = null; }
+    if (hintCell) { hintCell = null; drawBoard(); }
+  }
+
+  function startHintAnim() {
+    const startTime = performance.now();
+    function tick() {
+      if (!hintCell) return;
+      drawBoard(() => {
+        const elapsed = performance.now() - startTime;
+        const pulse = 0.5 + 0.5 * Math.sin(elapsed / 300);
+        const cx = hintCell.c * cellSize + cellSize / 2;
+        const cy = hintCell.r * cellSize + cellSize / 2;
+        const radius = cellSize * 0.45;
+        ctx.save();
+        ctx.globalAlpha = 0.25 + 0.35 * pulse;
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius * (0.9 + 0.15 * pulse), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#ffe66d";
+        ctx.lineWidth = 2.5;
+        ctx.globalAlpha = 0.6 + 0.4 * pulse;
+        ctx.stroke();
+        ctx.restore();
+      });
+      hintAnimId = requestAnimationFrame(tick);
+    }
+    tick();
+  }
+
   // --- Special Piece Activation ---
   function activateSpecial(r, c, alreadyCleared, triggeredBy) {
     const piece = board[r][c];
@@ -778,6 +864,10 @@
   let chainCount = 0;
   let lastSwapTarget = null;
   let debugSpawnType = null;
+  let hintTimer = null;
+  let hintCell = null;
+  let hintAnimId = null;
+  const HINT_DELAY_MS = 3000;
 
   function getComboType(s1, s2) {
     const normalize = (s) => s === "countdown" ? "bomb" : s;
@@ -879,6 +969,7 @@
   async function doMove(r1, c1, r2, c2) {
     if (animating) return;
     animating = true;
+    clearHint();
 
     const p1 = board[r1][c1];
     const p2 = board[r2][c2];
@@ -939,6 +1030,7 @@
         updateHUD();
         checkWinLose();
         animating = false;
+        startHintTimer();
         return;
       }
     }
@@ -950,6 +1042,7 @@
       swapPieces(r1, c1, r2, c2);
       animating = false;
       drawBoard();
+      startHintTimer();
       return;
     }
 
@@ -963,6 +1056,7 @@
     updateHUD();
     checkWinLose();
     animating = false;
+    startHintTimer();
   }
 
   async function resolveBoard() {
@@ -1116,6 +1210,7 @@
     updateHUD();
     checkWinLose();
     animating = false;
+    startHintTimer();
   }
 
   async function useShuffle() {
@@ -1149,6 +1244,7 @@
     updateHUD();
     checkWinLose();
     animating = false;
+    startHintTimer();
   }
 
   function useAddMoves() {
@@ -1157,6 +1253,7 @@
     updateHUD();
     updateItemBar();
     SFX.stageClear();
+    startHintTimer();
   }
 
   async function useColorBomb(colorIndex) {
@@ -1201,6 +1298,7 @@
     updateHUD();
     checkWinLose();
     animating = false;
+    startHintTimer();
   }
 
   function showColorPicker() {
@@ -1962,6 +2060,7 @@
   canvas.addEventListener("pointerdown", (e) => {
     if (animating) return;
     e.preventDefault();
+    clearHint();
     const cell = getCell(e.clientX, e.clientY);
     if (!cell) return;
 
@@ -2233,6 +2332,7 @@
     drawBoard();
     showScreen("game");
     track("stage_start", { stage: stg.name, mission_type: stg.mission.type });
+    startHintTimer();
   }
 
   function resizeCanvas() {
