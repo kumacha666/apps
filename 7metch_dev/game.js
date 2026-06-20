@@ -6,7 +6,7 @@
   const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#3a86ff", "#ff6bb3", "#88cc44"];
   const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross", "octagon"];
   const PIECE_NAMES_JA = ["太陽", "月", "火星", "水星", "木星", "金星", "土星", "地球"];
-  const PIECE_SYMBOLS = ["●", "◆", "■", "▲", "★", "⬢", "✚", "◉"];
+  const PIECE_SYMBOLS = ["☀️", "🌙", "🔴", "💎", "🟠", "💙", "🪐", "🌍"];
   const MATCH_MIN = 3;
 
   const ANIM = {
@@ -1724,7 +1724,7 @@
           continue;
         }
         // Semi-transparent cell overlay so stars show through subtly
-        ctx.fillStyle = (r + c) % 2 === 0 ? "rgba(10,18,40,0.82)" : "rgba(14,24,50,0.82)";
+        ctx.fillStyle = (r + c) % 2 === 0 ? "rgba(10,18,40,0.65)" : "rgba(14,24,50,0.65)";
         ctx.fillRect(x, y, cellSize, cellSize);
       }
     }
@@ -1878,58 +1878,58 @@
     ctx.restore();
   }
 
-  // Sun: Corona rays emanating from the sphere
+  // Sun: Bold corona rays + surface flares
   function drawSun(ctx, cx, cy, r, color) {
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.clip();
-    // Solar surface texture - lighter patches
     for (let i = 0; i < 5; i++) {
       const angle = (i / 5) * Math.PI * 2 + 0.3;
-      const dist = r * 0.4;
+      const dist = r * 0.35;
       const px = cx + Math.cos(angle) * dist;
       const py = cy + Math.sin(angle) * dist;
-      const spotGrad = ctx.createRadialGradient(px, py, 0, px, py, r * 0.3);
-      spotGrad.addColorStop(0, "rgba(255,255,200,0.3)");
-      spotGrad.addColorStop(1, "rgba(255,255,200,0)");
+      const spotGrad = ctx.createRadialGradient(px, py, 0, px, py, r * 0.4);
+      spotGrad.addColorStop(0, "rgba(255,255,180,0.5)");
+      spotGrad.addColorStop(1, "rgba(255,255,180,0)");
       ctx.fillStyle = spotGrad;
       ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
     }
     ctx.restore();
-    // Corona rays outside sphere
+    // Bold corona rays
     ctx.save();
-    ctx.globalAlpha = 0.35;
     for (let i = 0; i < 12; i++) {
       const angle = (i / 12) * Math.PI * 2;
-      const innerR = r * 1.0;
-      const outerR = r * 1.25;
-      const x1 = cx + Math.cos(angle) * innerR;
-      const y1 = cy + Math.sin(angle) * innerR;
+      const long = i % 2 === 0;
+      const outerR = long ? r * 1.35 : r * 1.2;
+      const x1 = cx + Math.cos(angle) * r;
+      const y1 = cy + Math.sin(angle) * r;
       const x2 = cx + Math.cos(angle) * outerR;
       const y2 = cy + Math.sin(angle) * outerR;
+      const grad = ctx.createLinearGradient(x1, y1, x2, y2);
+      grad.addColorStop(0, "rgba(255,224,160,0.7)");
+      grad.addColorStop(1, "rgba(255,224,160,0)");
       ctx.beginPath();
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
-      ctx.strokeStyle = "#ffe0a0";
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = long ? 2.5 : 1.5;
       ctx.stroke();
     }
     ctx.restore();
   }
 
-  // Moon: Craters on surface
+  // Moon: Bold craters with shadows
   function drawMoon(ctx, cx, cy, r, color) {
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.clip();
-    // Craters
     const craters = [
-      { x: 0.2, y: -0.15, s: 0.18 },
-      { x: -0.3, y: 0.25, s: 0.22 },
-      { x: 0.35, y: 0.3, s: 0.15 },
-      { x: -0.1, y: -0.35, s: 0.12 },
+      { x: 0.2, y: -0.15, s: 0.22 },
+      { x: -0.3, y: 0.25, s: 0.28 },
+      { x: 0.35, y: 0.3, s: 0.18 },
+      { x: -0.1, y: -0.35, s: 0.16 },
     ];
     for (const c of craters) {
       const px = cx + c.x * r;
@@ -1937,40 +1937,38 @@
       const cr = c.s * r;
       ctx.beginPath();
       ctx.arc(px, py, cr, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(0,0,0,0.15)";
+      ctx.fillStyle = "rgba(0,0,0,0.25)";
       ctx.fill();
-      // Crater rim highlight
       ctx.beginPath();
-      ctx.arc(px - cr * 0.15, py - cr * 0.15, cr * 0.85, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(255,255,255,0.1)";
-      ctx.lineWidth = 0.5;
+      ctx.arc(px - cr * 0.2, py - cr * 0.2, cr * 0.8, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255,255,255,0.2)";
+      ctx.lineWidth = 1;
       ctx.stroke();
     }
     ctx.restore();
   }
 
-  // Mars: Dark surface patches, polar ice cap
+  // Mars: Bold dark patches + prominent polar ice cap
   function drawMars(ctx, cx, cy, r, color) {
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.clip();
-    // Dark patches
     const patches = [
-      { x: -0.2, y: 0.1, s: 0.35 },
-      { x: 0.25, y: -0.2, s: 0.25 },
+      { x: -0.2, y: 0.1, s: 0.4 },
+      { x: 0.25, y: -0.15, s: 0.3 },
+      { x: 0.05, y: 0.35, s: 0.25 },
     ];
     for (const p of patches) {
       const grad = ctx.createRadialGradient(cx + p.x * r, cy + p.y * r, 0, cx + p.x * r, cy + p.y * r, p.s * r);
-      grad.addColorStop(0, "rgba(120,40,20,0.3)");
-      grad.addColorStop(1, "rgba(120,40,20,0)");
+      grad.addColorStop(0, "rgba(100,30,10,0.45)");
+      grad.addColorStop(1, "rgba(100,30,10,0)");
       ctx.fillStyle = grad;
       ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
     }
-    // Polar ice cap
     ctx.beginPath();
-    ctx.arc(cx, cy - r * 0.75, r * 0.3, 0, Math.PI, false);
-    ctx.fillStyle = "rgba(255,255,255,0.25)";
+    ctx.ellipse(cx, cy - r * 0.72, r * 0.35, r * 0.18, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
     ctx.fill();
     ctx.restore();
   }
@@ -2001,63 +1999,73 @@
     ctx.restore();
   }
 
-  // Jupiter: Horizontal cloud bands + Great Red Spot
+  // Jupiter: Bold cloud bands + prominent Great Red Spot
   function drawJupiter(ctx, cx, cy, r, color) {
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.clip();
-    // Cloud bands
-    const bandColors = [
-      "rgba(200,160,80,0.2)",
-      "rgba(180,140,60,0.15)",
-      "rgba(220,180,100,0.2)",
-      "rgba(160,120,40,0.15)",
+    const bands = [
+      { y: -0.65, h: 0.22, c: "rgba(200,160,80,0.35)" },
+      { y: -0.35, h: 0.18, c: "rgba(140,100,40,0.25)" },
+      { y: -0.08, h: 0.22, c: "rgba(220,180,100,0.35)" },
+      { y: 0.22, h: 0.18, c: "rgba(160,120,50,0.25)" },
+      { y: 0.48, h: 0.22, c: "rgba(200,160,80,0.3)" },
     ];
-    for (let i = 0; i < bandColors.length; i++) {
-      const by = cy - r * 0.6 + (i * r * 0.35);
-      ctx.fillStyle = bandColors[i];
-      ctx.fillRect(cx - r, by, r * 2, r * 0.15);
+    for (const b of bands) {
+      ctx.fillStyle = b.c;
+      ctx.fillRect(cx - r, cy + b.y * r, r * 2, b.h * r);
     }
-    // Great Red Spot
     ctx.beginPath();
-    ctx.ellipse(cx + r * 0.2, cy + r * 0.15, r * 0.18, r * 0.12, 0, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(200,80,30,0.35)";
+    ctx.ellipse(cx + r * 0.2, cy + r * 0.15, r * 0.22, r * 0.15, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(200,70,20,0.5)";
     ctx.fill();
+    ctx.strokeStyle = "rgba(180,60,10,0.3)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
     ctx.restore();
   }
 
-  // Venus: Cloud swirl patterns
+  // Venus: Bold cloud swirl patterns
   function drawVenus(ctx, cx, cy, r, color) {
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.clip();
-    // Swirl cloud patterns
-    for (let i = 0; i < 3; i++) {
-      const angle = (i / 3) * Math.PI * 2;
+    for (let i = 0; i < 4; i++) {
+      const angle = (i / 4) * Math.PI * 2;
       ctx.beginPath();
-      ctx.arc(cx + Math.cos(angle) * r * 0.2, cy + Math.sin(angle) * r * 0.2, r * 0.6, angle, angle + Math.PI * 0.8, false);
-      ctx.strokeStyle = "rgba(255,255,255,0.12)";
-      ctx.lineWidth = r * 0.12;
+      ctx.arc(cx + Math.cos(angle) * r * 0.15, cy + Math.sin(angle) * r * 0.15, r * 0.65, angle, angle + Math.PI * 0.9, false);
+      ctx.strokeStyle = "rgba(255,255,255,0.2)";
+      ctx.lineWidth = r * 0.15;
       ctx.stroke();
     }
+    const cGrad = ctx.createRadialGradient(cx, cy, r * 0.1, cx, cy, r * 0.7);
+    cGrad.addColorStop(0, "rgba(255,255,200,0.15)");
+    cGrad.addColorStop(1, "rgba(255,255,200,0)");
+    ctx.fillStyle = cGrad;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
     ctx.restore();
   }
 
-  // Saturn: Rings (drawn as ellipses). Note: rings extend outside the sphere
+  // Saturn: Bold prominent rings
   function drawSaturn(ctx, cx, cy, r, color) {
-    // Draw rings behind planet (back half)
+    // Back half of rings
     ctx.save();
-    ctx.globalAlpha = 0.4;
+    ctx.globalAlpha = 0.5;
     ctx.beginPath();
-    ctx.ellipse(cx, cy, r * 1.45, r * 0.35, -0.2, Math.PI, Math.PI * 2);
-    ctx.strokeStyle = lightenColor(color, 40);
-    ctx.lineWidth = r * 0.12;
+    ctx.ellipse(cx, cy, r * 1.45, r * 0.4, -0.15, Math.PI, Math.PI * 2);
+    ctx.strokeStyle = lightenColor(color, 60);
+    ctx.lineWidth = r * 0.18;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 1.25, r * 0.33, -0.15, Math.PI, Math.PI * 2);
+    ctx.strokeStyle = lightenColor(color, 35);
+    ctx.lineWidth = r * 0.08;
     ctx.stroke();
     ctx.restore();
 
-    // Redraw planet sphere on top (to cover back ring)
+    // Redraw planet sphere
     const grad = ctx.createRadialGradient(cx - r * 0.25, cy - r * 0.25, r * 0.1, cx, cy, r);
     grad.addColorStop(0, lightenColor(color, 60));
     grad.addColorStop(0.5, color);
@@ -2074,54 +2082,57 @@
     ctx.clip();
     for (let i = 0; i < 3; i++) {
       const by = cy - r * 0.4 + i * r * 0.35;
-      ctx.fillStyle = "rgba(255,255,255,0.08)";
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
       ctx.fillRect(cx - r, by, r * 2, r * 0.12);
     }
     ctx.restore();
 
-    // Front half of rings
+    // Front half of rings - bold
     ctx.save();
-    ctx.globalAlpha = 0.5;
+    ctx.globalAlpha = 0.7;
     ctx.beginPath();
-    ctx.ellipse(cx, cy, r * 1.45, r * 0.35, -0.2, 0, Math.PI);
-    ctx.strokeStyle = lightenColor(color, 50);
-    ctx.lineWidth = r * 0.12;
+    ctx.ellipse(cx, cy, r * 1.45, r * 0.4, -0.15, 0, Math.PI);
+    ctx.strokeStyle = lightenColor(color, 70);
+    ctx.lineWidth = r * 0.18;
     ctx.stroke();
-    // Inner ring
     ctx.beginPath();
-    ctx.ellipse(cx, cy, r * 1.2, r * 0.28, -0.2, 0, Math.PI);
-    ctx.strokeStyle = lightenColor(color, 30);
-    ctx.lineWidth = r * 0.06;
+    ctx.ellipse(cx, cy, r * 1.25, r * 0.33, -0.15, 0, Math.PI);
+    ctx.strokeStyle = lightenColor(color, 40);
+    ctx.lineWidth = r * 0.08;
     ctx.stroke();
     ctx.restore();
   }
 
-  // Earth: Continent blobs + ocean
+  // Earth: Bold continents + clouds
   function drawEarth(ctx, cx, cy, r, color) {
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.clip();
-    // Continent-like blobs (green-ish on blue-green base)
     const continents = [
-      { x: -0.15, y: -0.2, w: 0.35, h: 0.3 },
-      { x: 0.15, y: 0.1, w: 0.3, h: 0.35 },
-      { x: -0.35, y: 0.2, w: 0.2, h: 0.2 },
+      { x: -0.15, y: -0.25, w: 0.4, h: 0.35 },
+      { x: 0.2, y: 0.1, w: 0.35, h: 0.4 },
+      { x: -0.4, y: 0.2, w: 0.25, h: 0.25 },
     ];
     for (const c of continents) {
       const grad = ctx.createRadialGradient(
         cx + c.x * r, cy + c.y * r, 0,
         cx + c.x * r, cy + c.y * r, c.w * r
       );
-      grad.addColorStop(0, "rgba(60,160,60,0.35)");
-      grad.addColorStop(1, "rgba(60,160,60,0)");
+      grad.addColorStop(0, "rgba(40,180,40,0.55)");
+      grad.addColorStop(0.7, "rgba(40,160,40,0.3)");
+      grad.addColorStop(1, "rgba(40,160,40,0)");
       ctx.fillStyle = grad;
       ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
     }
-    // Cloud wisps
     ctx.beginPath();
-    ctx.arc(cx - r * 0.2, cy - r * 0.1, r * 0.5, -0.5, 0.5);
-    ctx.strokeStyle = "rgba(255,255,255,0.15)";
+    ctx.arc(cx - r * 0.2, cy - r * 0.15, r * 0.55, -0.6, 0.6);
+    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.lineWidth = r * 0.12;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx + r * 0.3, cy + r * 0.3, r * 0.4, -0.8, 0.3);
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
     ctx.lineWidth = r * 0.08;
     ctx.stroke();
     ctx.restore();
@@ -2155,9 +2166,9 @@
     bgStars = [];
     const w = boardPixelW, h = boardPixelH;
     const layers = [
-      { count: 60, speed: 0.08, sizeMin: 0.5, sizeMax: 1.2, alpha: 0.4 },
-      { count: 35, speed: 0.22, sizeMin: 0.8, sizeMax: 1.8, alpha: 0.6 },
-      { count: 15, speed: 0.45, sizeMin: 1.2, sizeMax: 2.5, alpha: 0.8 },
+      { count: 80, speed: 0.08, sizeMin: 0.6, sizeMax: 1.5, alpha: 0.5 },
+      { count: 45, speed: 0.22, sizeMin: 1.0, sizeMax: 2.2, alpha: 0.7 },
+      { count: 20, speed: 0.45, sizeMin: 1.5, sizeMax: 3.0, alpha: 0.9 },
     ];
     for (const layer of layers) {
       for (let i = 0; i < layer.count; i++) {
@@ -2180,9 +2191,9 @@
     const sizeKey = w + "x" + h;
     if (bgGradSize !== sizeKey) {
       bgGradCache = ctx.createLinearGradient(0, 0, w * 0.3, h);
-      bgGradCache.addColorStop(0, "#050510");
-      bgGradCache.addColorStop(0.5, "#08081a");
-      bgGradCache.addColorStop(1, "#0a0518");
+      bgGradCache.addColorStop(0, "#0a0a2e");
+      bgGradCache.addColorStop(0.5, "#0d1030");
+      bgGradCache.addColorStop(1, "#150a30");
       bgGradSize = sizeKey;
     }
     ctx.fillStyle = bgGradCache;
