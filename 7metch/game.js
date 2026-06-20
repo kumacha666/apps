@@ -676,97 +676,8 @@
     return specials;
   }
 
-  function classifyBestSpecial(matches) {
-    const PRIORITY = { rainbow: 3, bomb: 2, line_d: 2, line_h: 1, line_v: 1 };
-    const matchSet = new Set(matches.map(([r, c]) => r * cols + c));
-    const stg = STAGES[currentStage];
-
-    const hLines = [];
-    const vLines = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (!board[r][c] || isHole(r, c) || isRock(r, c)) continue;
-        const color = board[r][c].color;
-        {
-          const line = [[r, c]];
-          let nc2 = c + 1;
-          while (inBounds(r, nc2) && board[r][nc2] && !isHole(r, nc2) && !isRock(r, nc2) && board[r][nc2].color === color) {
-            line.push([r, nc2]); nc2++;
-          }
-          if (line.length >= MATCH_MIN && line.every(([lr, lc]) => matchSet.has(lr * cols + lc)))
-            hLines.push({ line, color });
-        }
-        {
-          const line = [[r, c]];
-          let nr2 = r + 1;
-          while (inBounds(nr2, c) && board[nr2][c] && !isHole(nr2, c) && !isRock(nr2, c) && board[nr2][c].color === color) {
-            line.push([nr2, c]); nr2++;
-          }
-          if (line.length >= MATCH_MIN && line.every(([lr, lc]) => matchSet.has(lr * cols + lc)))
-            vLines.push({ line, color });
-        }
-      }
-    }
-
-    const candidates = [];
-    const usedCells = new Set();
-
-    for (const h of hLines) {
-      for (const v of vLines) {
-        if (h.color !== v.color) continue;
-        for (const [hr, hc] of h.line) {
-          for (const [vr, vc] of v.line) {
-            if (hr === vr && hc === vc) {
-              const key = hr * cols + hc;
-              if (!usedCells.has(key)) {
-                const keys = new Set();
-                h.line.forEach(([lr, lc]) => keys.add(lr * cols + lc));
-                v.line.forEach(([lr, lc]) => keys.add(lr * cols + lc));
-                candidates.push({ priority: PRIORITY.bomb, cells: [...keys].map(v => [Math.floor(v / cols), v % cols]) });
-                keys.forEach(k => usedCells.add(k));
-              }
-            }
-          }
-        }
-      }
-    }
-
-    const allLines = [
-      ...hLines.map(h => ({ ...h, dir: "h" })),
-      ...vLines.map(v => ({ ...v, dir: "v" })),
-    ];
-    for (const { line, dir } of allLines) {
-      const midKey = line[Math.floor(line.length / 2)][0] * cols + line[Math.floor(line.length / 2)][1];
-      if (usedCells.has(midKey)) continue;
-      if (line.length >= 5) {
-        candidates.push({ priority: PRIORITY.rainbow, cells: line.map(([r, c]) => [r, c]) });
-        usedCells.add(midKey);
-      } else if (line.length === 4) {
-        const type = dir === "h" ? "line_v" : "line_h";
-        candidates.push({ priority: PRIORITY[type], cells: line.map(([r, c]) => [r, c]) });
-        usedCells.add(midKey);
-      }
-    }
-
-    if (stg && stg.features && stg.features.diagonalLine) {
-      for (let r = 0; r < rows - 1; r++) {
-        for (let c = 0; c < cols - 1; c++) {
-          const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
-          if (cells.every(([cr,cc]) => matchSet.has(cr * cols + cc)) &&
-              cells.every(([cr,cc]) => !usedCells.has(cr * cols + cc))) {
-            candidates.push({ priority: PRIORITY.line_d, cells });
-            cells.forEach(([cr,cc]) => usedCells.add(cr * cols + cc));
-          }
-        }
-      }
-    }
-
-    if (candidates.length === 0) return null;
-    candidates.sort((a, b) => b.priority - a.priority);
-    return candidates[0];
-  }
-
   function findSpecialHint() {
+    const PRIORITY = { rainbow: 3, bomb: 2, line_d: 2, line_h: 1, line_v: 1 };
     let bestList = [];
     let bestPriority = 0;
 
@@ -784,13 +695,20 @@
           swapPieces(r, c, nr, nc);
           const matches = findAllMatches();
           if (matches.length > 0) {
-            const result = classifyBestSpecial(matches);
-            if (result) {
-              if (result.priority > bestPriority) {
-                bestPriority = result.priority;
-                bestList = [result.cells];
-              } else if (result.priority === bestPriority) {
-                bestList.push(result.cells);
+            const specials = findSpecialCreations(matches);
+            for (const sp of specials) {
+              const p = PRIORITY[sp.type] || 0;
+              if (p > 0) {
+                const matchSet = new Set(matches.map(([mr, mc]) => mr * cols + mc));
+                const pos1in = matchSet.has(r * cols + c);
+                const pos2in = matchSet.has(nr * cols + nc);
+                const mover = pos1in ? { r: nr, c: nc } : { r, c };
+                if (p > bestPriority) {
+                  bestPriority = p;
+                  bestList = [mover];
+                } else if (p === bestPriority) {
+                  bestList.push(mover);
+                }
               }
             }
           }
@@ -807,9 +725,9 @@
     clearHint();
     hintTimer = setTimeout(() => {
       if (animating) return;
-      const cells = findSpecialHint();
-      if (cells) {
-        hintCells = cells;
+      const hint = findSpecialHint();
+      if (hint) {
+        hintCell = hint;
         startHintAnim();
       }
     }, HINT_DELAY_MS);
@@ -818,31 +736,29 @@
   function clearHint() {
     if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
     if (hintAnimId) { cancelAnimationFrame(hintAnimId); hintAnimId = null; }
-    if (hintCells) { hintCells = null; drawBoard(); }
+    if (hintCell) { hintCell = null; drawBoard(); }
   }
 
   function startHintAnim() {
     const startTime = performance.now();
     function tick() {
-      if (!hintCells) return;
+      if (!hintCell) return;
       drawBoard(() => {
         const elapsed = performance.now() - startTime;
         const pulse = 0.5 + 0.5 * Math.sin(elapsed / 300);
+        const cx = hintCell.c * cellSize + cellSize / 2;
+        const cy = hintCell.r * cellSize + cellSize / 2;
+        const radius = cellSize * 0.45;
         ctx.save();
-        for (const [hr, hc] of hintCells) {
-          const cx = hc * cellSize + cellSize / 2;
-          const cy = hr * cellSize + cellSize / 2;
-          const radius = cellSize * 0.45;
-          ctx.globalAlpha = 0.25 + 0.35 * pulse;
-          ctx.fillStyle = "#fff";
-          ctx.beginPath();
-          ctx.arc(cx, cy, radius * (0.9 + 0.15 * pulse), 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = "#ffe66d";
-          ctx.lineWidth = 2.5;
-          ctx.globalAlpha = 0.6 + 0.4 * pulse;
-          ctx.stroke();
-        }
+        ctx.globalAlpha = 0.25 + 0.35 * pulse;
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius * (0.9 + 0.15 * pulse), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#ffe66d";
+        ctx.lineWidth = 2.5;
+        ctx.globalAlpha = 0.6 + 0.4 * pulse;
+        ctx.stroke();
         ctx.restore();
       });
       hintAnimId = requestAnimationFrame(tick);
@@ -954,7 +870,7 @@
   let lastSwapTarget = null;
   let debugSpawnType = null;
   let hintTimer = null;
-  let hintCells = null;
+  let hintCell = null;
   let hintAnimId = null;
   const HINT_DELAY_MS = 3000;
 
