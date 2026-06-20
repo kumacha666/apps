@@ -5,7 +5,7 @@
   let rows = 8;
   const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#3a86ff", "#ff6bb3", "#88cc44"];
   const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross", "octagon"];
-  const PIECE_NAMES_JA = ["まる", "ダイヤ", "しかく", "さんかく", "ほし", "ヘキサ", "クロス", "オクタ"];
+  const PIECE_NAMES_JA = ["太陽", "月", "火星", "水星", "木星", "金星", "土星", "地球"];
   const PIECE_SYMBOLS = ["●", "◆", "■", "▲", "★", "⬢", "✚", "◉"];
   const MATCH_MIN = 3;
 
@@ -168,6 +168,10 @@
 
   let cellSize = 48;
   let boardPixelW, boardPixelH;
+
+  // Offscreen canvas cache for planet pieces
+  let pieceCache = {};
+  let pieceCacheSize = 0; // tracks cellSize used for cache
   let board = [];
   let selected = null;
   let animating = false;
@@ -1633,11 +1637,14 @@
     if (!piece) return;
     const radius = cellSize / 2 - 4;
 
-    ctx.fillStyle = PIECE_COLORS[piece.color];
-    ctx.strokeStyle = "rgba(255,255,255,0.15)";
-    ctx.lineWidth = 1;
-
-    drawShape(ctx, PIECE_SHAPES[piece.color], cx, cy, radius);
+    if (pieceCacheSize === cellSize && pieceCache[piece.color]) {
+      const cached = pieceCache[piece.color];
+      const pad = 1.4;
+      const size = Math.ceil(cellSize * pad);
+      ctx.drawImage(cached, cx - size / 2, cy - size / 2, size, size);
+    } else {
+      drawPlanet(ctx, piece.color, cx, cy, radius);
+    }
 
     if (piece.special) {
       drawSpecialIndicator(ctx, piece.special, cx, cy, radius, piece);
@@ -1701,99 +1708,349 @@
     if (overlay) overlay();
   }
 
-  function drawShape(ctx, shape, cx, cy, r) {
+  // --- Color utility functions for planet gradients ---
+  function hexToRgb(hex) {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+      r: parseInt(result[1], 16),
+      g: parseInt(result[2], 16),
+      b: parseInt(result[3], 16)
+    } : { r: 0, g: 0, b: 0 };
+  }
+
+  function lightenColor(hex, amount) {
+    const rgb = hexToRgb(hex);
+    const r = Math.min(255, rgb.r + amount);
+    const g = Math.min(255, rgb.g + amount);
+    const b = Math.min(255, rgb.b + amount);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function darkenColor(hex, amount) {
+    const rgb = hexToRgb(hex);
+    const r = Math.max(0, rgb.r - amount);
+    const g = Math.max(0, rgb.g - amount);
+    const b = Math.max(0, rgb.b - amount);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  // --- Planet drawing functions ---
+  function drawPlanet(ctx, colorIdx, cx, cy, r) {
+    ctx.save();
+    const color = PIECE_COLORS[colorIdx];
+
+    // Outer glow
+    ctx.shadowColor = color;
+    ctx.shadowBlur = r * 0.4;
+
+    // Base sphere with radial gradient (3D effect)
+    const grad = ctx.createRadialGradient(cx - r * 0.25, cy - r * 0.25, r * 0.1, cx, cy, r);
+    grad.addColorStop(0, lightenColor(color, 60));
+    grad.addColorStop(0.5, color);
+    grad.addColorStop(1, darkenColor(color, 60));
+
     ctx.beginPath();
-    switch (shape) {
-      case "circle":
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        break;
-      case "diamond":
-        ctx.moveTo(cx, cy - r);
-        ctx.lineTo(cx + r, cy);
-        ctx.lineTo(cx, cy + r);
-        ctx.lineTo(cx - r, cy);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        break;
-      case "square":
-        ctx.rect(cx - r * 0.75, cy - r * 0.75, r * 1.5, r * 1.5);
-        ctx.fill();
-        ctx.stroke();
-        break;
-      case "triangle":
-        ctx.moveTo(cx, cy - r);
-        ctx.lineTo(cx + r * 0.87, cy + r * 0.5);
-        ctx.lineTo(cx - r * 0.87, cy + r * 0.5);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        break;
-      case "star": {
-        const spikes = 5;
-        const outerR = r;
-        const innerR = r * 0.45;
-        ctx.moveTo(cx, cy - outerR);
-        for (let i = 0; i < spikes; i++) {
-          const angle1 = (i * 2 * Math.PI) / spikes - Math.PI / 2;
-          const angle2 = angle1 + Math.PI / spikes;
-          ctx.lineTo(cx + Math.cos(angle1) * outerR, cy + Math.sin(angle1) * outerR);
-          ctx.lineTo(cx + Math.cos(angle2) * innerR, cy + Math.sin(angle2) * innerR);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        break;
-      }
-      case "hex": {
-        for (let i = 0; i < 6; i++) {
-          const angle = (i * Math.PI) / 3 - Math.PI / 6;
-          const px = cx + r * Math.cos(angle);
-          const py = cy + r * Math.sin(angle);
-          if (i === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        break;
-      }
-      case "cross": {
-        const w = r * 0.38;
-        ctx.moveTo(cx - w, cy - r);
-        ctx.lineTo(cx + w, cy - r);
-        ctx.lineTo(cx + w, cy - w);
-        ctx.lineTo(cx + r, cy - w);
-        ctx.lineTo(cx + r, cy + w);
-        ctx.lineTo(cx + w, cy + w);
-        ctx.lineTo(cx + w, cy + r);
-        ctx.lineTo(cx - w, cy + r);
-        ctx.lineTo(cx - w, cy + w);
-        ctx.lineTo(cx - r, cy + w);
-        ctx.lineTo(cx - r, cy - w);
-        ctx.lineTo(cx - w, cy - w);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        break;
-      }
-      case "octagon": {
-        const oct = r * 0.92;
-        ctx.beginPath();
-        for (let i = 0; i < 8; i++) {
-          const angle = (Math.PI / 8) + (i * Math.PI / 4);
-          const px = cx + oct * Math.cos(angle);
-          const py = cy + oct * Math.sin(angle);
-          if (i === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        break;
-      }
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Reset shadow for details
+    ctx.shadowBlur = 0;
+
+    // Planet-specific surface details
+    switch (colorIdx) {
+      case 0: drawSun(ctx, cx, cy, r, color); break;
+      case 1: drawMoon(ctx, cx, cy, r, color); break;
+      case 2: drawMars(ctx, cx, cy, r, color); break;
+      case 3: drawMercury(ctx, cx, cy, r, color); break;
+      case 4: drawJupiter(ctx, cx, cy, r, color); break;
+      case 5: drawVenus(ctx, cx, cy, r, color); break;
+      case 6: drawSaturn(ctx, cx, cy, r, color); break;
+      case 7: drawEarth(ctx, cx, cy, r, color); break;
+    }
+
+    // Specular highlight (universal for all planets)
+    const hlGrad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 0, cx - r * 0.3, cy - r * 0.3, r * 0.6);
+    hlGrad.addColorStop(0, "rgba(255,255,255,0.45)");
+    hlGrad.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = hlGrad;
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // Sun: Corona rays emanating from the sphere
+  function drawSun(ctx, cx, cy, r, color) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    // Solar surface texture - lighter patches
+    for (let i = 0; i < 5; i++) {
+      const angle = (i / 5) * Math.PI * 2 + 0.3;
+      const dist = r * 0.4;
+      const px = cx + Math.cos(angle) * dist;
+      const py = cy + Math.sin(angle) * dist;
+      const spotGrad = ctx.createRadialGradient(px, py, 0, px, py, r * 0.3);
+      spotGrad.addColorStop(0, "rgba(255,255,200,0.3)");
+      spotGrad.addColorStop(1, "rgba(255,255,200,0)");
+      ctx.fillStyle = spotGrad;
+      ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    }
+    ctx.restore();
+    // Corona rays outside sphere
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2;
+      const innerR = r * 1.0;
+      const outerR = r * 1.25;
+      const x1 = cx + Math.cos(angle) * innerR;
+      const y1 = cy + Math.sin(angle) * innerR;
+      const x2 = cx + Math.cos(angle) * outerR;
+      const y2 = cy + Math.sin(angle) * outerR;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.strokeStyle = "#ffe0a0";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Moon: Craters on surface
+  function drawMoon(ctx, cx, cy, r, color) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    // Craters
+    const craters = [
+      { x: 0.2, y: -0.15, s: 0.18 },
+      { x: -0.3, y: 0.25, s: 0.22 },
+      { x: 0.35, y: 0.3, s: 0.15 },
+      { x: -0.1, y: -0.35, s: 0.12 },
+    ];
+    for (const c of craters) {
+      const px = cx + c.x * r;
+      const py = cy + c.y * r;
+      const cr = c.s * r;
+      ctx.beginPath();
+      ctx.arc(px, py, cr, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(0,0,0,0.15)";
+      ctx.fill();
+      // Crater rim highlight
+      ctx.beginPath();
+      ctx.arc(px - cr * 0.15, py - cr * 0.15, cr * 0.85, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255,255,255,0.1)";
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Mars: Dark surface patches, polar ice cap
+  function drawMars(ctx, cx, cy, r, color) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    // Dark patches
+    const patches = [
+      { x: -0.2, y: 0.1, s: 0.35 },
+      { x: 0.25, y: -0.2, s: 0.25 },
+    ];
+    for (const p of patches) {
+      const grad = ctx.createRadialGradient(cx + p.x * r, cy + p.y * r, 0, cx + p.x * r, cy + p.y * r, p.s * r);
+      grad.addColorStop(0, "rgba(120,40,20,0.3)");
+      grad.addColorStop(1, "rgba(120,40,20,0)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    }
+    // Polar ice cap
+    ctx.beginPath();
+    ctx.arc(cx, cy - r * 0.75, r * 0.3, 0, Math.PI, false);
+    ctx.fillStyle = "rgba(255,255,255,0.25)";
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Mercury: Heavily cratered
+  function drawMercury(ctx, cx, cy, r, color) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    const craters = [
+      { x: 0.15, y: -0.2, s: 0.15 },
+      { x: -0.25, y: 0.1, s: 0.2 },
+      { x: 0.3, y: 0.25, s: 0.12 },
+      { x: -0.1, y: -0.35, s: 0.1 },
+      { x: 0.0, y: 0.3, s: 0.14 },
+      { x: -0.35, y: -0.15, s: 0.1 },
+    ];
+    for (const c of craters) {
+      const px = cx + c.x * r;
+      const py = cy + c.y * r;
+      const cr = c.s * r;
+      ctx.beginPath();
+      ctx.arc(px, py, cr, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(0,0,0,0.2)";
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // Jupiter: Horizontal cloud bands + Great Red Spot
+  function drawJupiter(ctx, cx, cy, r, color) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    // Cloud bands
+    const bandColors = [
+      "rgba(200,160,80,0.2)",
+      "rgba(180,140,60,0.15)",
+      "rgba(220,180,100,0.2)",
+      "rgba(160,120,40,0.15)",
+    ];
+    for (let i = 0; i < bandColors.length; i++) {
+      const by = cy - r * 0.6 + (i * r * 0.35);
+      ctx.fillStyle = bandColors[i];
+      ctx.fillRect(cx - r, by, r * 2, r * 0.15);
+    }
+    // Great Red Spot
+    ctx.beginPath();
+    ctx.ellipse(cx + r * 0.2, cy + r * 0.15, r * 0.18, r * 0.12, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(200,80,30,0.35)";
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Venus: Cloud swirl patterns
+  function drawVenus(ctx, cx, cy, r, color) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    // Swirl cloud patterns
+    for (let i = 0; i < 3; i++) {
+      const angle = (i / 3) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(angle) * r * 0.2, cy + Math.sin(angle) * r * 0.2, r * 0.6, angle, angle + Math.PI * 0.8, false);
+      ctx.strokeStyle = "rgba(255,255,255,0.12)";
+      ctx.lineWidth = r * 0.12;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Saturn: Rings (drawn as ellipses). Note: rings extend outside the sphere
+  function drawSaturn(ctx, cx, cy, r, color) {
+    // Draw rings behind planet (back half)
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 1.45, r * 0.35, -0.2, Math.PI, Math.PI * 2);
+    ctx.strokeStyle = lightenColor(color, 40);
+    ctx.lineWidth = r * 0.12;
+    ctx.stroke();
+    ctx.restore();
+
+    // Redraw planet sphere on top (to cover back ring)
+    const grad = ctx.createRadialGradient(cx - r * 0.25, cy - r * 0.25, r * 0.1, cx, cy, r);
+    grad.addColorStop(0, lightenColor(color, 60));
+    grad.addColorStop(0.5, color);
+    grad.addColorStop(1, darkenColor(color, 60));
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Surface bands
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    for (let i = 0; i < 3; i++) {
+      const by = cy - r * 0.4 + i * r * 0.35;
+      ctx.fillStyle = "rgba(255,255,255,0.08)";
+      ctx.fillRect(cx - r, by, r * 2, r * 0.12);
+    }
+    ctx.restore();
+
+    // Front half of rings
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 1.45, r * 0.35, -0.2, 0, Math.PI);
+    ctx.strokeStyle = lightenColor(color, 50);
+    ctx.lineWidth = r * 0.12;
+    ctx.stroke();
+    // Inner ring
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 1.2, r * 0.28, -0.2, 0, Math.PI);
+    ctx.strokeStyle = lightenColor(color, 30);
+    ctx.lineWidth = r * 0.06;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Earth: Continent blobs + ocean
+  function drawEarth(ctx, cx, cy, r, color) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    // Continent-like blobs (green-ish on blue-green base)
+    const continents = [
+      { x: -0.15, y: -0.2, w: 0.35, h: 0.3 },
+      { x: 0.15, y: 0.1, w: 0.3, h: 0.35 },
+      { x: -0.35, y: 0.2, w: 0.2, h: 0.2 },
+    ];
+    for (const c of continents) {
+      const grad = ctx.createRadialGradient(
+        cx + c.x * r, cy + c.y * r, 0,
+        cx + c.x * r, cy + c.y * r, c.w * r
+      );
+      grad.addColorStop(0, "rgba(60,160,60,0.35)");
+      grad.addColorStop(1, "rgba(60,160,60,0)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    }
+    // Cloud wisps
+    ctx.beginPath();
+    ctx.arc(cx - r * 0.2, cy - r * 0.1, r * 0.5, -0.5, 0.5);
+    ctx.strokeStyle = "rgba(255,255,255,0.15)";
+    ctx.lineWidth = r * 0.08;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // --- Offscreen canvas cache for planet pieces ---
+  function buildPieceCache() {
+    pieceCache = {};
+    pieceCacheSize = cellSize;
+    const pad = 1.4;
+    const size = Math.ceil(cellSize * pad);
+    const dpr = window.devicePixelRatio || 1;
+
+    for (let colorIdx = 0; colorIdx < PIECE_COLORS.length; colorIdx++) {
+      const offCanvas = document.createElement("canvas");
+      offCanvas.width = size * dpr;
+      offCanvas.height = size * dpr;
+      const offCtx = offCanvas.getContext("2d");
+      offCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const cx = size / 2;
+      const cy = size / 2;
+      const radius = cellSize / 2 - 4;
+
+      drawPlanet(offCtx, colorIdx, cx, cy, radius);
+      pieceCache[colorIdx] = offCanvas;
     }
   }
 
@@ -2389,6 +2646,7 @@
     canvas.style.width = boardPixelW + "px";
     canvas.style.height = boardPixelH + "px";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    buildPieceCache();
   }
 
   window.addEventListener("resize", () => {
