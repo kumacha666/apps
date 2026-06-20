@@ -701,13 +701,16 @@
               if (p > 0) {
                 const matchSet = new Set(matches.map(([mr, mc]) => mr * cols + mc));
                 const pos1in = matchSet.has(r * cols + c);
-                const pos2in = matchSet.has(nr * cols + nc);
                 const mover = pos1in ? { r: nr, c: nc } : { r, c };
+                const swapDest = pos1in ? { r, c } : { r: nr, c: nc };
+                const pattern = matches
+                  .filter(([mr, mc]) => !(mr === swapDest.r && mc === swapDest.c))
+                  .map(([mr, mc]) => ({ r: mr, c: mc }));
                 if (p > bestPriority) {
                   bestPriority = p;
-                  bestList = [mover];
+                  bestList = [{ mover, pattern }];
                 } else if (p === bestPriority) {
-                  bestList.push(mover);
+                  bestList.push({ mover, pattern });
                 }
               }
             }
@@ -727,7 +730,7 @@
       if (animating) return;
       const hint = findSpecialHint();
       if (hint) {
-        hintCell = hint;
+        hintData = hint;
         startHintAnim();
       }
     }, HINT_DELAY_MS);
@@ -736,24 +739,39 @@
   function clearHint() {
     if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
     if (hintAnimId) { cancelAnimationFrame(hintAnimId); hintAnimId = null; }
-    if (hintCell) { hintCell = null; drawBoard(); }
+    if (hintData) { hintData = null; drawBoard(); }
   }
 
   function startHintAnim() {
     const startTime = performance.now();
     function tick() {
-      if (!hintCell) return;
+      if (!hintData) return;
       drawBoard(() => {
         const elapsed = performance.now() - startTime;
         const pulse = 0.5 + 0.5 * Math.sin(elapsed / 300);
-        const cx = hintCell.c * cellSize + cellSize / 2;
-        const cy = hintCell.r * cellSize + cellSize / 2;
-        const radius = cellSize * 0.45;
         ctx.save();
-        ctx.globalAlpha = 0.25 + 0.35 * pulse;
+        for (const cell of hintData.pattern) {
+          const cx = cell.c * cellSize + cellSize / 2;
+          const cy = cell.r * cellSize + cellSize / 2;
+          const radius = cellSize * 0.45;
+          ctx.globalAlpha = 0.15 + 0.2 * pulse;
+          ctx.fillStyle = "#fff";
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius * (0.9 + 0.1 * pulse), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#ffe66d";
+          ctx.lineWidth = 1.5;
+          ctx.globalAlpha = 0.3 + 0.3 * pulse;
+          ctx.stroke();
+        }
+        const m = hintData.mover;
+        const mcx = m.c * cellSize + cellSize / 2;
+        const mcy = m.r * cellSize + cellSize / 2;
+        const mr = cellSize * 0.45;
+        ctx.globalAlpha = 0.3 + 0.4 * pulse;
         ctx.fillStyle = "#fff";
         ctx.beginPath();
-        ctx.arc(cx, cy, radius * (0.9 + 0.15 * pulse), 0, Math.PI * 2);
+        ctx.arc(mcx, mcy, mr * (0.9 + 0.15 * pulse), 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = "#ffe66d";
         ctx.lineWidth = 2.5;
@@ -870,7 +888,7 @@
   let lastSwapTarget = null;
   let debugSpawnType = null;
   let hintTimer = null;
-  let hintCell = null;
+  let hintData = null;
   let hintAnimId = null;
   const HINT_DELAY_MS = 3000;
 
