@@ -2059,131 +2059,203 @@
     const s = r * 0.55;
     ctx.lineCap = "round";
 
-    // dark backdrop for contrast on any piece color
     ctx.beginPath();
     ctx.arc(cx, cy, s + 2, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
     ctx.fill();
 
     switch (type) {
       case "line_h": {
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = "#fff";
+        // Comet tail horizontal
+        const grad = ctx.createLinearGradient(cx - s, cy, cx + s, cy);
+        grad.addColorStop(0, "rgba(255,255,200,0.1)");
+        grad.addColorStop(0.4, "rgba(255,255,200,0.8)");
+        grad.addColorStop(0.5, "#fff");
+        grad.addColorStop(0.6, "rgba(255,255,200,0.8)");
+        grad.addColorStop(1, "rgba(255,255,200,0.1)");
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 2.5;
         ctx.beginPath();
         ctx.moveTo(cx - s, cy);
         ctx.lineTo(cx + s, cy);
         ctx.stroke();
-        const a = s * 0.4;
+        // Comet heads at both ends
+        ctx.fillStyle = "#fff";
+        ctx.shadowColor = "#ffe080";
+        ctx.shadowBlur = 4;
         ctx.beginPath();
-        ctx.moveTo(cx - s + a, cy - a);
-        ctx.lineTo(cx - s, cy);
-        ctx.lineTo(cx - s + a, cy + a);
-        ctx.stroke();
+        ctx.arc(cx - s * 0.85, cy, s * 0.15, 0, Math.PI * 2);
+        ctx.fill();
         ctx.beginPath();
-        ctx.moveTo(cx + s - a, cy - a);
-        ctx.lineTo(cx + s, cy);
-        ctx.lineTo(cx + s - a, cy + a);
-        ctx.stroke();
+        ctx.arc(cx + s * 0.85, cy, s * 0.15, 0, Math.PI * 2);
+        ctx.fill();
         break;
       }
       case "line_v": {
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = "#fff";
+        const grad = ctx.createLinearGradient(cx, cy - s, cx, cy + s);
+        grad.addColorStop(0, "rgba(255,255,200,0.1)");
+        grad.addColorStop(0.4, "rgba(255,255,200,0.8)");
+        grad.addColorStop(0.5, "#fff");
+        grad.addColorStop(0.6, "rgba(255,255,200,0.8)");
+        grad.addColorStop(1, "rgba(255,255,200,0.1)");
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 2.5;
         ctx.beginPath();
         ctx.moveTo(cx, cy - s);
         ctx.lineTo(cx, cy + s);
         ctx.stroke();
-        const a = s * 0.4;
+        ctx.fillStyle = "#fff";
+        ctx.shadowColor = "#ffe080";
+        ctx.shadowBlur = 4;
         ctx.beginPath();
-        ctx.moveTo(cx - a, cy - s + a);
-        ctx.lineTo(cx, cy - s);
-        ctx.lineTo(cx + a, cy - s + a);
-        ctx.stroke();
+        ctx.arc(cx, cy - s * 0.85, s * 0.15, 0, Math.PI * 2);
+        ctx.fill();
         ctx.beginPath();
-        ctx.moveTo(cx - a, cy + s - a);
-        ctx.lineTo(cx, cy + s);
-        ctx.lineTo(cx + a, cy + s - a);
-        ctx.stroke();
+        ctx.arc(cx, cy + s * 0.85, s * 0.15, 0, Math.PI * 2);
+        ctx.fill();
         break;
       }
       case "line_d": {
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = "#ffd700";
+        // Meteor shower — X-shaped golden trails
         const ds = s * 0.75;
+        ctx.shadowColor = "#ffd700";
+        ctx.shadowBlur = 3;
+        ctx.lineWidth = 2;
+        // Trail 1
+        const g1 = ctx.createLinearGradient(cx - ds, cy - ds, cx + ds, cy + ds);
+        g1.addColorStop(0, "rgba(255,215,0,0.2)");
+        g1.addColorStop(0.5, "#ffd700");
+        g1.addColorStop(1, "rgba(255,215,0,0.2)");
+        ctx.strokeStyle = g1;
         ctx.beginPath();
         ctx.moveTo(cx - ds, cy - ds);
         ctx.lineTo(cx + ds, cy + ds);
         ctx.stroke();
+        // Trail 2
+        const g2 = ctx.createLinearGradient(cx + ds, cy - ds, cx - ds, cy + ds);
+        g2.addColorStop(0, "rgba(255,215,0,0.2)");
+        g2.addColorStop(0.5, "#ffd700");
+        g2.addColorStop(1, "rgba(255,215,0,0.2)");
+        ctx.strokeStyle = g2;
         ctx.beginPath();
         ctx.moveTo(cx + ds, cy - ds);
         ctx.lineTo(cx - ds, cy + ds);
         ctx.stroke();
-        const a = s * 0.25;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(cx - ds + a, cy - ds);
-        ctx.lineTo(cx - ds, cy - ds);
-        ctx.lineTo(cx - ds, cy - ds + a);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(cx + ds - a, cy + ds);
-        ctx.lineTo(cx + ds, cy + ds);
-        ctx.lineTo(cx + ds, cy + ds - a);
-        ctx.stroke();
+        // Meteor heads at corners
+        ctx.fillStyle = "#ffe880";
+        const mhs = s * 0.1;
+        [[cx - ds, cy - ds], [cx + ds, cy + ds], [cx + ds, cy - ds], [cx - ds, cy + ds]].forEach(([mx, my]) => {
+          ctx.beginPath();
+          ctx.arc(mx, my, mhs, 0, Math.PI * 2);
+          ctx.fill();
+        });
         break;
       }
       case "bomb": {
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 2;
-        [s * 0.65, s * 0.35].forEach((rad) => {
-          ctx.beginPath();
-          ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-          ctx.stroke();
-        });
-        ctx.fillStyle = "#fff";
+        // Supernova — pulsing light rings + radial rays
+        ctx.shadowColor = "#fff";
+        ctx.shadowBlur = 4;
+        // Outer ring
+        ctx.strokeStyle = "rgba(255,255,255,0.6)";
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.arc(cx, cy, s * 0.12, 0, Math.PI * 2);
+        ctx.arc(cx, cy, s * 0.7, 0, Math.PI * 2);
+        ctx.stroke();
+        // Inner ring
+        ctx.strokeStyle = "rgba(255,200,100,0.8)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(cx, cy, s * 0.4, 0, Math.PI * 2);
+        ctx.stroke();
+        // Radial rays
+        ctx.shadowBlur = 0;
+        for (let i = 0; i < 8; i++) {
+          const angle = (i / 8) * Math.PI * 2;
+          const x1 = cx + Math.cos(angle) * s * 0.25;
+          const y1 = cy + Math.sin(angle) * s * 0.25;
+          const x2 = cx + Math.cos(angle) * s * 0.75;
+          const y2 = cy + Math.sin(angle) * s * 0.75;
+          const rg = ctx.createLinearGradient(x1, y1, x2, y2);
+          rg.addColorStop(0, "rgba(255,220,150,0.7)");
+          rg.addColorStop(1, "rgba(255,220,150,0)");
+          ctx.strokeStyle = rg;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.stroke();
+        }
+        // Bright center
+        ctx.fillStyle = "#fff";
+        ctx.shadowColor = "#ffe080";
+        ctx.shadowBlur = 5;
+        ctx.beginPath();
+        ctx.arc(cx, cy, s * 0.15, 0, Math.PI * 2);
         ctx.fill();
         break;
       }
       case "rainbow": {
-        const colors = ["#ff4444", "#ffaa00", "#44ff44", "#4488ff"];
-        const innerR = s * 0.2;
-        const outerR = s * 0.75;
-        for (let i = 0; i < 4; i++) {
-          const angle = (i / 4) * Math.PI * 2 - Math.PI / 4;
-          const x1 = cx + Math.cos(angle) * innerR;
-          const y1 = cy + Math.sin(angle) * innerR;
-          const x2 = cx + Math.cos(angle) * outerR;
-          const y2 = cy + Math.sin(angle) * outerR;
+        // Black hole — swirling accretion disk with rainbow gravity lens
+        const colors = ["#ff4444", "#ffaa00", "#44ff44", "#4488ff", "#ff44ff", "#44ffff"];
+        // Accretion disk arcs
+        for (let i = 0; i < colors.length; i++) {
+          const angle = (i / colors.length) * Math.PI * 2;
           ctx.beginPath();
-          ctx.moveTo(x1, y1);
-          ctx.lineTo(x2, y2);
+          ctx.arc(cx, cy, s * 0.6, angle, angle + Math.PI * 0.5);
           ctx.strokeStyle = colors[i];
-          ctx.lineWidth = 3;
+          ctx.lineWidth = 2;
+          ctx.globalAlpha = 0.6;
           ctx.stroke();
         }
-        ctx.fillStyle = "#fff";
+        ctx.globalAlpha = 1;
+        // Dark center vortex
+        const vGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, s * 0.3);
+        vGrad.addColorStop(0, "#000");
+        vGrad.addColorStop(0.7, "rgba(30,0,50,0.9)");
+        vGrad.addColorStop(1, "rgba(30,0,50,0)");
+        ctx.fillStyle = vGrad;
         ctx.beginPath();
-        ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+        ctx.arc(cx, cy, s * 0.3, 0, Math.PI * 2);
         ctx.fill();
+        // Bright event horizon ring
+        ctx.strokeStyle = "rgba(255,255,255,0.5)";
+        ctx.lineWidth = 1;
+        ctx.shadowColor = "#fff";
+        ctx.shadowBlur = 3;
+        ctx.beginPath();
+        ctx.arc(cx, cy, s * 0.2, 0, Math.PI * 2);
+        ctx.stroke();
         break;
       }
       case "countdown": {
+        // Meteor — cracked rock with glowing countdown
         const count = piece ? piece.countdown : 0;
         const urgency = count <= 3;
+        // Rock texture
+        ctx.fillStyle = urgency ? "rgba(120,30,20,0.7)" : "rgba(80,70,60,0.7)";
+        ctx.beginPath();
+        ctx.arc(cx, cy, s * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+        // Cracks
+        ctx.strokeStyle = urgency ? "rgba(255,80,40,0.7)" : "rgba(255,200,100,0.4)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(cx - s * 0.2, cy - s * 0.5);
+        ctx.lineTo(cx + s * 0.1, cy);
+        ctx.lineTo(cx + s * 0.3, cy + s * 0.4);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cx + s * 0.1, cy);
+        ctx.lineTo(cx - s * 0.3, cy + s * 0.2);
+        ctx.stroke();
+        // Countdown number
         ctx.fillStyle = urgency ? "#ff4444" : "#ffd700";
-        ctx.font = `bold ${s * 1.3}px sans-serif`;
+        ctx.shadowColor = urgency ? "#ff0000" : "#ffd700";
+        ctx.shadowBlur = urgency ? 6 : 3;
+        ctx.font = `bold ${s * 1.2}px sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(count.toString(), cx, cy);
-        if (urgency) {
-          ctx.strokeStyle = "#ff4444";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(cx, cy, s * 0.8, 0, Math.PI * 2);
-          ctx.stroke();
-        }
         break;
       }
     }
