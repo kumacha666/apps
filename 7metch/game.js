@@ -711,11 +711,13 @@
             for (const sp of specials) {
               const p = PRIORITY[sp.type] || 0;
               if (p > 0) {
-                const matchSet = new Set(matches.map(([mr, mc]) => mr * cols + mc));
-                const pos1in = matchSet.has(r * cols + c);
+                const colorMatches = matches.filter(([mr, mc]) =>
+                  board[mr][mc] && board[mr][mc].color === sp.color);
+                const colorSet = new Set(colorMatches.map(([mr, mc]) => mr * cols + mc));
+                const pos1in = colorSet.has(r * cols + c);
                 const mover = pos1in ? { r: nr, c: nc } : { r, c };
                 const swapDest = pos1in ? { r, c } : { r: nr, c: nc };
-                const pattern = matches
+                const pattern = colorMatches
                   .filter(([mr, mc]) => !(mr === swapDest.r && mc === swapDest.c))
                   .map(([mr, mc]) => ({ r: mr, c: mc }));
                 if (p > bestPriority) {
