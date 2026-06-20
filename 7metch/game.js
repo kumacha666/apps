@@ -171,7 +171,13 @@
 
   // Offscreen canvas cache for planet pieces
   let pieceCache = {};
-  let pieceCacheSize = 0; // tracks cellSize used for cache
+  let pieceCacheSize = 0;
+
+  // Deep space background state
+  let bgStars = [];
+  let bgShootingStar = null;
+  let bgFrame = 0;
+  let bgAnimId = null;
   let board = [];
   let selected = null;
   let animating = false;
@@ -193,9 +199,10 @@
   };
 
   function showScreen(name) {
-    if (name !== "game") clearHint();
+    if (name !== "game") { clearHint(); stopBgAnim(); }
     Object.values(screens).forEach((s) => s.classList.remove("active"));
     screens[name].classList.add("active");
+    if (name === "game") startBgAnim();
   }
 
   // --- Save / Load ---
@@ -1590,20 +1597,21 @@
   // --- Drawing ---
   function drawBoardBase() {
     ctx.clearRect(0, 0, boardPixelW, boardPixelH);
-    ctx.fillStyle = "#16213e";
-    ctx.fillRect(0, 0, boardPixelW, boardPixelH);
+
+    // Animated space background
+    drawSpaceBackground();
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const x = c * cellSize;
         const y = r * cellSize;
         if (isHole(r, c)) {
-          ctx.fillStyle = "#0d1117";
+          ctx.fillStyle = "rgba(5,5,16,0.85)";
           ctx.fillRect(x, y, cellSize, cellSize);
           continue;
         }
         if (isRock(r, c)) {
-          ctx.fillStyle = "#2a2a3a";
+          ctx.fillStyle = "rgba(25,25,40,0.9)";
           ctx.fillRect(x, y, cellSize, cellSize);
           ctx.save();
           ctx.fillStyle = "#3a3a4a";
@@ -1627,7 +1635,8 @@
           ctx.restore();
           continue;
         }
-        ctx.fillStyle = (r + c) % 2 === 0 ? "#1a2744" : "#1e2d50";
+        // Semi-transparent cell overlay so stars show through subtly
+        ctx.fillStyle = (r + c) % 2 === 0 ? "rgba(10,18,40,0.82)" : "rgba(14,24,50,0.82)";
         ctx.fillRect(x, y, cellSize, cellSize);
       }
     }
@@ -2052,6 +2061,107 @@
       drawPlanet(offCtx, colorIdx, cx, cy, radius);
       pieceCache[colorIdx] = offCanvas;
     }
+  }
+
+  function initBgStars() {
+    bgStars = [];
+    const w = boardPixelW, h = boardPixelH;
+    const layers = [
+      { count: 60, speed: 0.08, sizeMin: 0.5, sizeMax: 1.2, alpha: 0.4 },
+      { count: 35, speed: 0.22, sizeMin: 0.8, sizeMax: 1.8, alpha: 0.6 },
+      { count: 15, speed: 0.45, sizeMin: 1.2, sizeMax: 2.5, alpha: 0.8 },
+    ];
+    for (const layer of layers) {
+      for (let i = 0; i < layer.count; i++) {
+        bgStars.push({
+          x: Math.random() * w,
+          y: Math.random() * h,
+          size: layer.sizeMin + Math.random() * (layer.sizeMax - layer.sizeMin),
+          speed: layer.speed + Math.random() * layer.speed * 0.3,
+          alpha: layer.alpha * (0.6 + Math.random() * 0.4),
+          twinkle: Math.random() * Math.PI * 2,
+        });
+      }
+    }
+  }
+
+  function drawSpaceBackground() {
+    const w = boardPixelW, h = boardPixelH;
+    bgFrame++;
+
+    // Deep space gradient
+    const bgGrad = ctx.createLinearGradient(0, 0, w * 0.3, h);
+    bgGrad.addColorStop(0, "#050510");
+    bgGrad.addColorStop(0.5, "#08081a");
+    bgGrad.addColorStop(1, "#0a0518");
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    // Stars
+    for (const star of bgStars) {
+      star.y += star.speed;
+      star.x += star.speed * 0.15;
+      if (star.y > h) { star.y = -2; star.x = Math.random() * w; }
+      if (star.x > w) star.x -= w;
+
+      star.twinkle += 0.03;
+      const flicker = 0.7 + 0.3 * Math.sin(star.twinkle);
+      ctx.globalAlpha = star.alpha * flicker;
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Shooting star (occasional)
+    if (!bgShootingStar && Math.random() < 0.003) {
+      bgShootingStar = {
+        x: Math.random() * w * 0.6,
+        y: Math.random() * h * 0.3,
+        vx: 3 + Math.random() * 2,
+        vy: 1.5 + Math.random(),
+        life: 1,
+      };
+    }
+    if (bgShootingStar) {
+      const ss = bgShootingStar;
+      ss.x += ss.vx;
+      ss.y += ss.vy;
+      ss.life -= 0.03;
+      if (ss.life <= 0) { bgShootingStar = null; }
+      else {
+        ctx.save();
+        ctx.globalAlpha = ss.life;
+        const tailLen = 20;
+        const grad = ctx.createLinearGradient(ss.x, ss.y, ss.x - ss.vx * tailLen * 0.3, ss.y - ss.vy * tailLen * 0.3);
+        grad.addColorStop(0, "#fff");
+        grad.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(ss.x, ss.y);
+        ctx.lineTo(ss.x - ss.vx * tailLen * 0.3, ss.y - ss.vy * tailLen * 0.3);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+  function startBgAnim() {
+    stopBgAnim();
+    function tick() {
+      if (!screens.game.classList.contains("active")) return;
+      if (!animating && !hintData) {
+        drawBoard();
+      }
+      bgAnimId = requestAnimationFrame(tick);
+    }
+    bgAnimId = requestAnimationFrame(tick);
+  }
+
+  function stopBgAnim() {
+    if (bgAnimId) { cancelAnimationFrame(bgAnimId); bgAnimId = null; }
   }
 
   function drawSpecialIndicator(ctx, type, cx, cy, r, piece) {
@@ -2719,6 +2829,7 @@
     canvas.style.height = boardPixelH + "px";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     buildPieceCache();
+    initBgStars();
   }
 
   window.addEventListener("resize", () => {
