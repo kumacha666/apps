@@ -8,7 +8,7 @@
 #   その他 → patch
 #   BREAKING CHANGE / feat!: / fix!: → major (4.0.0 → 5.0.0)
 #
-# タグベース: bump後に v{NEW} タグを作成。次回はそのタグ以降のコミットを解析。
+# 範囲の決定: 直前の「chore: vX.Y.Z リリース」コミットから HEAD まで
 
 set -euo pipefail
 
@@ -29,9 +29,9 @@ IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
 
 cd "$GIT_ROOT"
 
-LAST_TAG=$(git tag -l "7metch-v*" --sort=-v:refname | head -1 2>/dev/null || true)
-if [[ -n "$LAST_TAG" ]]; then
-  RANGE="${LAST_TAG}..HEAD"
+LAST_RELEASE=$(git log --oneline --grep="^chore: v[0-9]" -- "$APP_DIR/index.html" | head -1 | awk '{print $1}')
+if [[ -n "$LAST_RELEASE" ]]; then
+  RANGE="${LAST_RELEASE}..HEAD"
 else
   RANGE=""
 fi
@@ -82,6 +82,5 @@ fi
 sed -i "s/id=\"version-info\">v${CURRENT}/id=\"version-info\">v${NEW}/" "$SCRIPT_DIR/index.html"
 sed -i "s/const CACHE_NAME = \"7metch-v[^\"]*\"/const CACHE_NAME = \"7metch-v${NEW}\"/" "$SCRIPT_DIR/sw.js"
 
-git tag "7metch-v${NEW}"
-
-echo "✔ index.html, sw.js を更新 / タグ 7metch-v${NEW} を作成しました"
+echo "✔ index.html, sw.js を更新しました"
+echo "次のステップ: git add & commit -m 'chore: v${NEW} リリース' → push"
