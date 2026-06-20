@@ -367,6 +367,18 @@
   }
 
   // --- Board ---
+  function hasSquare() {
+    for (let r = 0; r < rows - 1; r++) {
+      for (let c = 0; c < cols - 1; c++) {
+        const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
+        if (cells.some(([cr,cc]) => !board[cr][cc] || isHole(cr,cc) || isRock(cr,cc))) continue;
+        const color = board[r][c].color;
+        if (cells.every(([cr,cc]) => board[cr][cc].color === color)) return true;
+      }
+    }
+    return false;
+  }
+
   function createBoard(numColors) {
     board = [];
     for (let r = 0; r < rows; r++) {
@@ -379,7 +391,7 @@
         }
       }
     }
-    while (findAllMatches().length > 0) {
+    while (findAllMatches().length > 0 || hasSquare()) {
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           if (isHole(r, c) || isRock(r, c)) continue;
