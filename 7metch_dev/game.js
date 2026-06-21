@@ -2517,7 +2517,14 @@
         });
         score += clearList.length * 10 * chainCount;
 
-        await animateClear(clearList, specialInfos);
+        const comboInfo = [];
+        if (comboType === "board_clear") comboInfo.push({ r: r2, c: c2, type: "galaxy", color: (p2 || p1).color });
+        else if (comboType === "big_bomb") comboInfo.push({ r: r2, c: c2, type: "big_bomb", color: (p2 || p1).color });
+        else if (comboType === "cross" || comboType === "star_cross") comboInfo.push({ r: r2, c: c2, type: comboType, color: (p2 || p1).color });
+        else if (comboType === "triple_line") comboInfo.push({ r: r2, c: c2, type: "line_h", color: (p2 || p1).color });
+        else if (comboType === "rainbow_line") comboInfo.push({ r: r2, c: c2, type: "rainbow", color: (p2 || p1).color });
+        else if (comboType === "rainbow_bomb") comboInfo.push({ r: r2, c: c2, type: "bomb", color: (p2 || p1).color });
+        await animateClear(clearList, comboInfo);
         clearList.forEach(([r, c]) => { board[r][c] = null; });
         damageAdjacentIce(clearList);
 
@@ -2610,7 +2617,7 @@
         await showChainLabel(chainCount);
       }
 
-      await animateClear(clearList);
+      await animateClear(clearList, specialInfos);
 
       clearList.forEach(([r, c]) => {
         board[r][c] = null;
@@ -2824,6 +2831,7 @@
 
   function spawnSpecialAt(r, c, type) {
     if (!board[r][c] || !isPlayable(r, c)) return;
+    if (type === "diagonal") type = "line_d";
     if (type === "countdown") {
       board[r][c].special = "countdown";
       board[r][c].countdown = 5;
