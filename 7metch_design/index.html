@@ -3,1021 +3,226 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ナナメッチ 特殊ピース リデザイン案</title>
+<title>ナナメッチ ピース リデザイン案</title>
 <style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
-  background: #0a0a2e;
-  color: #eee;
-  padding: 20px;
-  line-height: 1.6;
-}
-h1 {
-  text-align: center;
-  font-size: 1.6rem;
-  margin-bottom: 8px;
-}
-.subtitle {
-  text-align: center;
-  color: #aaa;
-  font-size: 0.9rem;
-  margin-bottom: 32px;
-}
-h2 {
-  font-size: 1.3rem;
-  margin: 32px 0 12px;
-  padding-bottom: 8px;
-  border-bottom: 2px solid #e94560;
-}
-h3 {
-  font-size: 1rem;
-  color: #ffd700;
-  margin: 20px 0 8px;
-}
-.section {
-  max-width: 800px;
-  margin: 0 auto;
-}
-.piece-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  margin: 12px 0 24px;
-  justify-content: center;
-}
-.piece-card {
-  background: #16213e;
-  border: 2px solid #0f3460;
-  border-radius: 12px;
-  padding: 12px;
-  text-align: center;
-  width: 150px;
-}
-.piece-card.current {
-  border-color: #e94560;
-}
-.piece-card.current .card-label { color: #e94560; }
-.piece-card canvas {
-  display: block;
-  margin: 0 auto 8px;
-  border-radius: 8px;
-}
-.card-label {
-  font-weight: 700;
-  font-size: 0.85rem;
-  margin-bottom: 4px;
-  color: #4ecdc4;
-}
-.card-desc {
-  font-size: 0.75rem;
-  color: #aaa;
-}
-.pattern-section {
-  background: #16213e;
-  border: 2px solid #0f3460;
-  border-radius: 12px;
-  padding: 16px;
-  margin: 16px 0;
-}
-.pattern-section h3 { margin-top: 0; }
-.pattern-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  justify-content: center;
-  margin-top: 8px;
-}
-.pattern-item {
-  text-align: center;
-}
-.pattern-item canvas {
-  display: block;
-  margin: 0 auto 4px;
-}
-.pattern-item .lbl {
-  font-size: 0.7rem;
-  color: #aaa;
-}
-.bg-section {
-  margin: 32px 0;
-}
-.bg-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  justify-content: center;
-}
-.bg-card {
-  background: #16213e;
-  border: 2px solid #0f3460;
-  border-radius: 12px;
-  padding: 12px;
-  text-align: center;
-  width: 200px;
-}
-.bg-card canvas {
-  display: block;
-  margin: 0 auto 8px;
-  border-radius: 8px;
-}
-.note {
-  background: rgba(255,215,0,0.1);
-  border-left: 3px solid #ffd700;
-  padding: 12px;
-  margin: 16px 0;
-  font-size: 0.85rem;
-  border-radius: 0 8px 8px 0;
-}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Hiragino Sans","Noto Sans JP",sans-serif;background:#0a0a2e;color:#eee;padding:20px;line-height:1.6}
+h1{text-align:center;font-size:1.6rem;margin-bottom:8px}
+.subtitle{text-align:center;color:#aaa;font-size:.9rem;margin-bottom:32px}
+h2{font-size:1.3rem;margin:32px 0 12px;padding-bottom:8px;border-bottom:2px solid #e94560}
+h3{font-size:1rem;color:#ffd700;margin:20px 0 8px}
+.section{max-width:860px;margin:0 auto}
+.piece-row{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0 24px;justify-content:center}
+.piece-card{background:#16213e;border:2px solid #0f3460;border-radius:12px;padding:10px;text-align:center;width:130px}
+.piece-card.current{border-color:#e94560}
+.piece-card.current .card-label{color:#e94560}
+.piece-card canvas{display:block;margin:0 auto 6px;border-radius:8px}
+.card-label{font-weight:700;font-size:.8rem;margin-bottom:3px;color:#4ecdc4}
+.card-desc{font-size:.7rem;color:#aaa;line-height:1.4}
+.normal-row{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0 24px;justify-content:center}
+.normal-card{background:#16213e;border:2px solid #0f3460;border-radius:10px;padding:8px;text-align:center;width:90px}
+.normal-card canvas{display:block;margin:0 auto 4px;border-radius:6px}
+.normal-card .card-label{font-weight:700;font-size:.75rem;color:#4ecdc4;margin-bottom:2px}
+.normal-card .card-desc{font-size:.65rem;color:#aaa}
+.pattern-section{background:#16213e;border:2px solid #0f3460;border-radius:12px;padding:16px;margin:16px 0}
+.pattern-section h3{margin-top:0}
+.pattern-row{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:8px}
+.pattern-item{text-align:center}
+.pattern-item canvas{display:block;margin:0 auto 4px}
+.pattern-item .lbl{font-size:.7rem;color:#aaa}
+.note{background:rgba(255,215,0,.1);border-left:3px solid #ffd700;padding:12px;margin:16px 0;font-size:.85rem;border-radius:0 8px 8px 0}
+.spec-table{width:100%;border-collapse:collapse;margin:12px 0;font-size:.82rem}
+.spec-table th,.spec-table td{border:1px solid #0f3460;padding:8px 10px;text-align:left}
+.spec-table th{background:#0f3460;color:#ffd700;font-weight:700}
+.spec-table td{background:#16213e}
+.bg-row{display:flex;flex-wrap:wrap;gap:16px;justify-content:center;margin:12px 0}
+.bg-card{background:#16213e;border:2px solid #0f3460;border-radius:12px;padding:12px;text-align:center;width:200px}
+.bg-card canvas{display:block;margin:0 auto 8px;border-radius:8px}
 </style>
 </head>
 <body>
-
 <div class="section">
-  <h1>ナナメッチ 特殊ピース リデザイン案</h1>
-  <p class="subtitle">フィードバック募集用 — 2026-06-21</p>
-
-  <div class="note">
-    <strong>変更方針:</strong> 特殊ピースは惑星の上に重ねるのではなく、惑星を消して専用アイコンをセル全体に大きく描画する。
-  </div>
-
-  <!-- LINE_H -->
-  <h2>横ライン消し (line_h)</h2>
-  <div class="piece-row" id="row-line_h"></div>
-
-  <!-- LINE_V -->
-  <h2>縦ライン消し (line_v)</h2>
-  <div class="piece-row" id="row-line_v"></div>
-
-  <!-- LINE_D -->
-  <h2>斜めライン消し (line_d)</h2>
-  <div class="piece-row" id="row-line_d"></div>
-
-  <!-- BOMB -->
-  <h2>ボム — 周囲爆発 (bomb)</h2>
-  <div class="piece-row" id="row-bomb"></div>
-
-  <!-- RAINBOW -->
-  <h2>レインボー — 全色消し (rainbow)</h2>
-  <div class="piece-row" id="row-rainbow"></div>
-
-  <!-- COUNTDOWN -->
-  <h2>カウントダウン — 時限爆弾 (countdown)</h2>
-  <div class="piece-row" id="row-countdown"></div>
-
-  <!-- PATTERNS -->
-  <h2>組み合わせパターン</h2>
-
-  <div class="pattern-section">
-    <h3>パターン1: 宇宙統一</h3>
-    <p style="font-size:0.8rem;color:#aaa;margin-bottom:8px;">ロケット + 超新星 + ブラックホール + 隕石</p>
-    <div class="pattern-row" id="pat1"></div>
-  </div>
-
-  <div class="pattern-section">
-    <h3>パターン2: 分かりやすさ重視</h3>
-    <p style="font-size:0.8rem;color:#aaa;margin-bottom:8px;">ロケット + 爆弾 + 虹色プリズム + 時限爆弾</p>
-    <div class="pattern-row" id="pat2"></div>
-  </div>
-
-  <div class="pattern-section">
-    <h3>パターン3: バランス型</h3>
-    <p style="font-size:0.8rem;color:#aaa;margin-bottom:8px;">ロケット + 機雷 + ワープホール + 隕石</p>
-    <div class="pattern-row" id="pat3"></div>
-  </div>
-
-  <!-- BACKGROUND -->
-  <h2>背景の変更案</h2>
-  <div class="bg-row" id="row-bg"></div>
-
+<h1>ナナメッチ ピース リデザイン案</h1>
+<p class="subtitle">フィードバック募集用 — 2026-06-21</p>
+<h2>通常ピース（現在の惑星デザイン）</h2>
+<div class="note">各ピースはCanvas 2D APIで描画された惑星。放射グラデーション+固有の表面ディテール+光沢ハイライト付き。</div>
+<div class="normal-row" id="row-normal"></div>
+<h2>レインボーの仕様</h2>
+<div class="note">レインボーは「全色消し」ではなく「単色全消し」が基本。コンボ時のみ全消しや変換が発生します。</div>
+<table class="spec-table">
+<tr><th>操作</th><th>生成条件</th><th>効果</th></tr>
+<tr><td>レインボー単体発動</td><td>5個以上の直線マッチ</td><td>スワップ先のピースと<strong>同じ色のピースを盤面から全消し</strong></td></tr>
+<tr><td>レインボー × ライン</td><td>レインボーとラインピースをスワップ</td><td>対象色の全ピースにライン効果を付与して消去</td></tr>
+<tr><td>レインボー × ボム</td><td>レインボーとボムをスワップ</td><td>対象色の全ピースにボム効果を付与して消去</td></tr>
+<tr><td>レインボー × レインボー</td><td>レインボー同士をスワップ</td><td><strong>盤面全消し（board_clear）</strong></td></tr>
+</table>
+<h2>特殊ピースの変更方針</h2>
+<div class="note"><strong>現状の問題:</strong> 惑星の上に半透明の黒丸+小さなインジケーターを重ねているだけで、特殊ピースと通常ピースの区別がつきにくい。<br><strong>変更方針:</strong> 特殊ピースは惑星を描画せず、専用アイコンをセル全体に大きく描画する。</div>
+<h2>横ライン消し (line_h)</h2>
+<p style="font-size:.82rem;color:#aaa;margin-bottom:8px">生成: 4個直線マッチ（横）→ 縦ライン生成 / 効果: 横一列を消去</p>
+<div class="piece-row" id="row-line_h"></div>
+<h2>縦ライン消し (line_v)</h2>
+<p style="font-size:.82rem;color:#aaa;margin-bottom:8px">生成: 4個直線マッチ（縦）→ 横ライン生成 / 効果: 縦一列を消去</p>
+<div class="piece-row" id="row-line_v"></div>
+<h2>斜めライン消し (line_d)</h2>
+<p style="font-size:.82rem;color:#aaa;margin-bottom:8px">生成: 2×2正方形マッチ / 効果: 斜め4方向を消去</p>
+<div class="piece-row" id="row-line_d"></div>
+<h2>ボム — 周囲爆発 (bomb)</h2>
+<p style="font-size:.82rem;color:#aaa;margin-bottom:8px">生成: L字・T字マッチ / 効果: 周囲のピースを消去</p>
+<div class="piece-row" id="row-bomb"></div>
+<h2>レインボー — 単色全消し (rainbow)</h2>
+<p style="font-size:.82rem;color:#aaa;margin-bottom:8px">生成: 5個以上直線マッチ / 効果: スワップ先と同色を全消し（レインボー×レインボーで盤面全消し）</p>
+<div class="piece-row" id="row-rainbow"></div>
+<h2>カウントダウン — 時限爆弾 (countdown)</h2>
+<p style="font-size:.82rem;color:#aaa;margin-bottom:8px">敵配置ギミック / 効果: カウント0で周囲にダメージ</p>
+<div class="piece-row" id="row-countdown"></div>
+<h2>組み合わせパターン</h2>
+<div class="pattern-section"><h3>パターン1: 宇宙統一</h3><p style="font-size:.8rem;color:#aaa;margin-bottom:8px">ロケット + 超新星 + ブラックホール + 隕石</p><div class="pattern-row" id="pat1"></div></div>
+<div class="pattern-section"><h3>パターン2: 分かりやすさ重視</h3><p style="font-size:.8rem;color:#aaa;margin-bottom:8px">ロケット + 爆弾 + 虹色プリズム + 時限爆弾</p><div class="pattern-row" id="pat2"></div></div>
+<div class="pattern-section"><h3>パターン3: バランス型</h3><p style="font-size:.8rem;color:#aaa;margin-bottom:8px">ロケット + 機雷 + ワープホール + 隕石</p><div class="pattern-row" id="pat3"></div></div>
+<h2>背景の変更案</h2>
+<div class="bg-row" id="row-bg"></div>
 </div>
-
 <script>
-const SZ = 100;
-const dpr = window.devicePixelRatio || 1;
+const PC=["#e94560","#4ecdc4","#ffe66d","#7b68ee","#ff8a5c","#3a86ff","#ff6bb3","#88cc44"];
+const PN=["太陽","月","火星","水星","木星","金星","土星","地球"];
+const dpr=devicePixelRatio||1;
+function mc(w,h){const c=document.createElement("canvas");c.width=w*dpr;c.height=h*dpr;c.style.width=w+"px";c.style.height=h+"px";const x=c.getContext("2d");x.scale(dpr,dpr);return{c,ctx:x}}
+function lc(h,a){let r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16);return`rgb(${Math.min(255,r+a)},${Math.min(255,g+a)},${Math.min(255,b+a)})`}
+function dc(h,a){let r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16);return`rgb(${Math.max(0,r-a)},${Math.max(0,g-a)},${Math.max(0,b-a)})`}
 
-function makeCanvas(w, h) {
-  const c = document.createElement("canvas");
-  c.width = w * dpr;
-  c.height = h * dpr;
-  c.style.width = w + "px";
-  c.style.height = h + "px";
-  const ctx = c.getContext("2d");
-  ctx.scale(dpr, dpr);
-  return { c, ctx };
+function drawPlanet(ctx,ci,cx,cy,r){
+  ctx.save();const color=PC[ci];
+  ctx.shadowColor=color;ctx.shadowBlur=r*0.6;
+  const g=ctx.createRadialGradient(cx-r*.25,cy-r*.25,r*.1,cx,cy,r);
+  g.addColorStop(0,lc(color,60));g.addColorStop(.5,color);g.addColorStop(1,dc(color,60));
+  ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fillStyle=g;ctx.fill();
+  ctx.shadowBlur=0;
+  switch(ci){case 0:dSun(ctx,cx,cy,r);break;case 1:dMoon(ctx,cx,cy,r);break;case 2:dMars(ctx,cx,cy,r);break;case 3:dMerc(ctx,cx,cy,r);break;case 4:dJup(ctx,cx,cy,r);break;case 5:dVen(ctx,cx,cy,r);break;case 6:dSat(ctx,cx,cy,r,color);break;case 7:dEar(ctx,cx,cy,r);break}
+  const hl=ctx.createRadialGradient(cx-r*.3,cy-r*.3,0,cx-r*.3,cy-r*.3,r*.6);
+  hl.addColorStop(0,"rgba(255,255,255,0.45)");hl.addColorStop(1,"rgba(255,255,255,0)");
+  ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fillStyle=hl;ctx.fill();ctx.restore()
+}
+function dSun(ctx,cx,cy,r){
+  ctx.save();ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.clip();
+  for(let i=0;i<5;i++){const a=(i/5)*Math.PI*2+.3,d=r*.35,px=cx+Math.cos(a)*d,py=cy+Math.sin(a)*d;
+  const sg=ctx.createRadialGradient(px,py,0,px,py,r*.4);sg.addColorStop(0,"rgba(255,255,180,0.5)");sg.addColorStop(1,"rgba(255,255,180,0)");ctx.fillStyle=sg;ctx.fillRect(cx-r,cy-r,r*2,r*2)}
+  ctx.restore();ctx.save();
+  for(let i=0;i<12;i++){const a=(i/12)*Math.PI*2,l=i%2===0,oR=l?r*1.35:r*1.2;
+  const x1=cx+Math.cos(a)*r,y1=cy+Math.sin(a)*r,x2=cx+Math.cos(a)*oR,y2=cy+Math.sin(a)*oR;
+  const g=ctx.createLinearGradient(x1,y1,x2,y2);g.addColorStop(0,"rgba(255,224,160,0.7)");g.addColorStop(1,"rgba(255,224,160,0)");
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.strokeStyle=g;ctx.lineWidth=l?2.5:1.5;ctx.stroke()}ctx.restore()
+}
+function dMoon(ctx,cx,cy,r){
+  ctx.save();ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.clip();
+  [{x:.2,y:-.15,s:.22},{x:-.3,y:.25,s:.28},{x:.35,y:.3,s:.18},{x:-.1,y:-.35,s:.16}].forEach(c=>{
+  const px=cx+c.x*r,py=cy+c.y*r,cr=c.s*r;
+  ctx.beginPath();ctx.arc(px,py,cr,0,Math.PI*2);ctx.fillStyle="rgba(0,0,0,0.25)";ctx.fill();
+  ctx.beginPath();ctx.arc(px-cr*.2,py-cr*.2,cr*.8,0,Math.PI*2);ctx.strokeStyle="rgba(255,255,255,0.2)";ctx.lineWidth=1;ctx.stroke()});ctx.restore()
+}
+function dMars(ctx,cx,cy,r){
+  ctx.save();ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.clip();
+  [{x:-.2,y:.1,s:.4},{x:.25,y:-.15,s:.3},{x:.05,y:.35,s:.25}].forEach(p=>{
+  const g=ctx.createRadialGradient(cx+p.x*r,cy+p.y*r,0,cx+p.x*r,cy+p.y*r,p.s*r);g.addColorStop(0,"rgba(100,30,10,0.45)");g.addColorStop(1,"rgba(100,30,10,0)");ctx.fillStyle=g;ctx.fillRect(cx-r,cy-r,r*2,r*2)});
+  ctx.beginPath();ctx.ellipse(cx,cy-r*.72,r*.35,r*.18,0,0,Math.PI*2);ctx.fillStyle="rgba(255,255,255,0.4)";ctx.fill();ctx.restore()
+}
+function dMerc(ctx,cx,cy,r){
+  ctx.save();ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.clip();
+  [{x:.15,y:-.2,s:.2},{x:-.25,y:.1,s:.25},{x:.3,y:.25,s:.16},{x:-.1,y:-.38,s:.14},{x:0,y:.32,s:.18},{x:-.38,y:-.15,s:.13}].forEach(c=>{
+  const px=cx+c.x*r,py=cy+c.y*r,cr=c.s*r;
+  ctx.beginPath();ctx.arc(px,py,cr,0,Math.PI*2);ctx.fillStyle="rgba(0,0,0,0.3)";ctx.fill();
+  ctx.beginPath();ctx.arc(px-cr*.15,py-cr*.15,cr*.85,0,Math.PI*2);ctx.strokeStyle="rgba(255,255,255,0.2)";ctx.lineWidth=.8;ctx.stroke()});ctx.restore()
+}
+function dJup(ctx,cx,cy,r){
+  ctx.save();ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.clip();
+  [{y:-.65,h:.22,c:"rgba(200,160,80,0.35)"},{y:-.35,h:.18,c:"rgba(140,100,40,0.25)"},{y:-.08,h:.22,c:"rgba(220,180,100,0.35)"},{y:.22,h:.18,c:"rgba(160,120,50,0.25)"},{y:.48,h:.22,c:"rgba(200,160,80,0.3)"}].forEach(b=>{ctx.fillStyle=b.c;ctx.fillRect(cx-r,cy+b.y*r,r*2,b.h*r)});
+  ctx.beginPath();ctx.ellipse(cx+r*.2,cy+r*.15,r*.22,r*.15,0,0,Math.PI*2);ctx.fillStyle="rgba(200,70,20,0.5)";ctx.fill();ctx.strokeStyle="rgba(180,60,10,0.3)";ctx.lineWidth=1;ctx.stroke();ctx.restore()
+}
+function dVen(ctx,cx,cy,r){
+  ctx.save();ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.clip();
+  for(let i=0;i<4;i++){const a=(i/4)*Math.PI*2;ctx.beginPath();ctx.arc(cx+Math.cos(a)*r*.15,cy+Math.sin(a)*r*.15,r*.65,a,a+Math.PI*.9,false);ctx.strokeStyle="rgba(255,255,255,0.2)";ctx.lineWidth=r*.15;ctx.stroke()}
+  const cg=ctx.createRadialGradient(cx,cy,r*.1,cx,cy,r*.7);cg.addColorStop(0,"rgba(255,255,200,0.15)");cg.addColorStop(1,"rgba(255,255,200,0)");ctx.fillStyle=cg;ctx.fillRect(cx-r,cy-r,r*2,r*2);ctx.restore()
+}
+function dSat(ctx,cx,cy,r,color){
+  if(!color)color=PC[6];
+  ctx.save();ctx.globalAlpha=.5;ctx.beginPath();ctx.ellipse(cx,cy,r*1.45,r*.4,-.15,Math.PI,Math.PI*2);ctx.strokeStyle=lc(color,60);ctx.lineWidth=r*.18;ctx.stroke();
+  ctx.beginPath();ctx.ellipse(cx,cy,r*1.25,r*.33,-.15,Math.PI,Math.PI*2);ctx.strokeStyle=lc(color,35);ctx.lineWidth=r*.08;ctx.stroke();ctx.restore();
+  const g=ctx.createRadialGradient(cx-r*.25,cy-r*.25,r*.1,cx,cy,r);g.addColorStop(0,lc(color,60));g.addColorStop(.5,color);g.addColorStop(1,dc(color,60));
+  ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fillStyle=g;ctx.fill();
+  ctx.save();ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.clip();
+  for(let i=0;i<3;i++){const by=cy-r*.4+i*r*.35;ctx.fillStyle="rgba(255,255,255,0.12)";ctx.fillRect(cx-r,by,r*2,r*.12)}ctx.restore();
+  ctx.save();ctx.globalAlpha=.7;ctx.beginPath();ctx.ellipse(cx,cy,r*1.45,r*.4,-.15,0,Math.PI);ctx.strokeStyle=lc(color,70);ctx.lineWidth=r*.18;ctx.stroke();
+  ctx.beginPath();ctx.ellipse(cx,cy,r*1.25,r*.33,-.15,0,Math.PI);ctx.strokeStyle=lc(color,40);ctx.lineWidth=r*.08;ctx.stroke();ctx.restore()
+}
+function dEar(ctx,cx,cy,r){
+  ctx.save();ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.clip();
+  [{x:-.15,y:-.25,w:.4,h:.35},{x:.2,y:.1,w:.35,h:.4},{x:-.4,y:.2,w:.25,h:.25}].forEach(c=>{
+  const g=ctx.createRadialGradient(cx+c.x*r,cy+c.y*r,0,cx+c.x*r,cy+c.y*r,c.w*r);g.addColorStop(0,"rgba(40,180,40,0.55)");g.addColorStop(.7,"rgba(40,160,40,0.3)");g.addColorStop(1,"rgba(40,160,40,0)");ctx.fillStyle=g;ctx.fillRect(cx-r,cy-r,r*2,r*2)});
+  ctx.beginPath();ctx.arc(cx-r*.2,cy-r*.15,r*.55,-.6,.6);ctx.strokeStyle="rgba(255,255,255,0.25)";ctx.lineWidth=r*.12;ctx.stroke();
+  ctx.beginPath();ctx.arc(cx+r*.3,cy+r*.3,r*.4,-.8,.3);ctx.strokeStyle="rgba(255,255,255,0.18)";ctx.lineWidth=r*.08;ctx.stroke();ctx.restore()
 }
 
-function card(parent, label, desc, drawFn, isCurrent) {
-  const div = document.createElement("div");
-  div.className = "piece-card" + (isCurrent ? " current" : "");
-  const { c, ctx } = makeCanvas(SZ, SZ);
-  drawFn(ctx, SZ / 2, SZ / 2, SZ * 0.42);
-  const lbl = document.createElement("div");
-  lbl.className = "card-label";
-  lbl.textContent = label;
-  const d = document.createElement("div");
-  d.className = "card-desc";
-  d.textContent = desc;
-  div.appendChild(c);
-  div.appendChild(lbl);
-  div.appendChild(d);
-  parent.appendChild(div);
-}
+function drawCellBg(ctx,cx,cy,r){ctx.save();ctx.fillStyle="rgba(10,18,40,0.6)";ctx.fillRect(cx-r-4,cy-r-4,(r+4)*2,(r+4)*2);ctx.restore()}
+function drawStar5(ctx,cx,cy,r){ctx.beginPath();for(let i=0;i<5;i++){const a=(i*2*Math.PI/5)-Math.PI/2;const x=cx+Math.cos(a)*r,y=cy+Math.sin(a)*r;if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);const a2=a+Math.PI/5;ctx.lineTo(cx+Math.cos(a2)*r*.4,cy+Math.sin(a2)*r*.4)}ctx.closePath();ctx.fill()}
 
-function patternItem(parent, label, drawFn) {
-  const div = document.createElement("div");
-  div.className = "pattern-item";
-  const { c, ctx } = makeCanvas(64, 64);
-  drawFn(ctx, 32, 32, 26);
-  const lbl = document.createElement("div");
-  lbl.className = "lbl";
-  lbl.textContent = label;
-  div.appendChild(c);
-  div.appendChild(lbl);
-  parent.appendChild(div);
-}
+function card(p,l,d,fn,cur){const div=document.createElement("div");div.className="piece-card"+(cur?" current":"");const{c,ctx}=mc(100,100);fn(ctx,50,50,42);const lb=document.createElement("div");lb.className="card-label";lb.textContent=l;const dd=document.createElement("div");dd.className="card-desc";dd.textContent=d;div.appendChild(c);div.appendChild(lb);div.appendChild(dd);p.appendChild(div)}
+function pItem(p,l,fn){const div=document.createElement("div");div.className="pattern-item";const{c,ctx}=mc(64,64);fn(ctx,32,32,26);const lb=document.createElement("div");lb.className="lbl";lb.textContent=l;div.appendChild(c);div.appendChild(lb);p.appendChild(div)}
 
-// --- helpers ---
-function lighten(hex, amt) {
-  let r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
-  r = Math.min(255, r + amt); g = Math.min(255, g + amt); b = Math.min(255, b + amt);
-  return `rgb(${r},${g},${b})`;
-}
-function darken(hex, amt) {
-  let r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
-  r = Math.max(0, r - amt); g = Math.max(0, g - amt); b = Math.max(0, b - amt);
-  return `rgb(${r},${g},${b})`;
-}
+// ===== CURRENT SPECIAL PIECES =====
+function curLH(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);drawPlanet(ctx,0,cx,cy,r*.85);ctx.save();const s=r*.55*.85;ctx.beginPath();ctx.arc(cx,cy,s+2,0,Math.PI*2);ctx.fillStyle="rgba(0,0,0,0.5)";ctx.fill();const g=ctx.createLinearGradient(cx-s,cy,cx+s,cy);g.addColorStop(0,"rgba(255,255,200,0.1)");g.addColorStop(.4,"rgba(255,255,200,0.8)");g.addColorStop(.5,"#fff");g.addColorStop(.6,"rgba(255,255,200,0.8)");g.addColorStop(1,"rgba(255,255,200,0.1)");ctx.strokeStyle=g;ctx.lineWidth=2.5;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(cx-s,cy);ctx.lineTo(cx+s,cy);ctx.stroke();ctx.fillStyle="#fff";ctx.shadowColor="#ffe080";ctx.shadowBlur=4;ctx.beginPath();ctx.arc(cx-s*.85,cy,s*.15,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(cx+s*.85,cy,s*.15,0,Math.PI*2);ctx.fill();ctx.restore()}
+function curLV(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);drawPlanet(ctx,1,cx,cy,r*.85);ctx.save();const s=r*.55*.85;ctx.beginPath();ctx.arc(cx,cy,s+2,0,Math.PI*2);ctx.fillStyle="rgba(0,0,0,0.5)";ctx.fill();const g=ctx.createLinearGradient(cx,cy-s,cx,cy+s);g.addColorStop(0,"rgba(255,255,200,0.1)");g.addColorStop(.4,"rgba(255,255,200,0.8)");g.addColorStop(.5,"#fff");g.addColorStop(.6,"rgba(255,255,200,0.8)");g.addColorStop(1,"rgba(255,255,200,0.1)");ctx.strokeStyle=g;ctx.lineWidth=2.5;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(cx,cy-s);ctx.lineTo(cx,cy+s);ctx.stroke();ctx.fillStyle="#fff";ctx.shadowColor="#ffe080";ctx.shadowBlur=4;ctx.beginPath();ctx.arc(cx,cy-s*.85,s*.15,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(cx,cy+s*.85,s*.15,0,Math.PI*2);ctx.fill();ctx.restore()}
+function curLD(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);drawPlanet(ctx,2,cx,cy,r*.85);ctx.save();const s=r*.55*.85;ctx.beginPath();ctx.arc(cx,cy,s+2,0,Math.PI*2);ctx.fillStyle="rgba(0,0,0,0.5)";ctx.fill();const ds=s*.75;ctx.shadowColor="#ffd700";ctx.shadowBlur=3;ctx.lineWidth=2;ctx.lineCap="round";const g1=ctx.createLinearGradient(cx-ds,cy-ds,cx+ds,cy+ds);g1.addColorStop(0,"rgba(255,215,0,0.2)");g1.addColorStop(.5,"#ffd700");g1.addColorStop(1,"rgba(255,215,0,0.2)");ctx.strokeStyle=g1;ctx.beginPath();ctx.moveTo(cx-ds,cy-ds);ctx.lineTo(cx+ds,cy+ds);ctx.stroke();const g2=ctx.createLinearGradient(cx+ds,cy-ds,cx-ds,cy+ds);g2.addColorStop(0,"rgba(255,215,0,0.2)");g2.addColorStop(.5,"#ffd700");g2.addColorStop(1,"rgba(255,215,0,0.2)");ctx.strokeStyle=g2;ctx.beginPath();ctx.moveTo(cx+ds,cy-ds);ctx.lineTo(cx-ds,cy+ds);ctx.stroke();ctx.fillStyle="#ffe880";const mh=s*.1;[[cx-ds,cy-ds],[cx+ds,cy+ds],[cx+ds,cy-ds],[cx-ds,cy+ds]].forEach(([x,y])=>{ctx.beginPath();ctx.arc(x,y,mh,0,Math.PI*2);ctx.fill()});ctx.restore()}
+function curBomb(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);drawPlanet(ctx,3,cx,cy,r*.85);ctx.save();const s=r*.55*.85;ctx.beginPath();ctx.arc(cx,cy,s+2,0,Math.PI*2);ctx.fillStyle="rgba(0,0,0,0.5)";ctx.fill();ctx.shadowColor="#fff";ctx.shadowBlur=4;ctx.strokeStyle="rgba(255,255,255,0.6)";ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(cx,cy,s*.7,0,Math.PI*2);ctx.stroke();ctx.strokeStyle="rgba(255,200,100,0.8)";ctx.lineWidth=1;ctx.beginPath();ctx.arc(cx,cy,s*.4,0,Math.PI*2);ctx.stroke();ctx.shadowBlur=0;for(let i=0;i<8;i++){const a=(i/8)*Math.PI*2;const x1=cx+Math.cos(a)*s*.25,y1=cy+Math.sin(a)*s*.25,x2=cx+Math.cos(a)*s*.75,y2=cy+Math.sin(a)*s*.75;const rg=ctx.createLinearGradient(x1,y1,x2,y2);rg.addColorStop(0,"rgba(255,220,150,0.7)");rg.addColorStop(1,"rgba(255,220,150,0)");ctx.strokeStyle=rg;ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke()}ctx.fillStyle="#fff";ctx.shadowColor="#ffe080";ctx.shadowBlur=5;ctx.beginPath();ctx.arc(cx,cy,s*.15,0,Math.PI*2);ctx.fill();ctx.restore()}
+function curRain(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);drawPlanet(ctx,4,cx,cy,r*.85);ctx.save();const s=r*.55*.85;ctx.beginPath();ctx.arc(cx,cy,s+2,0,Math.PI*2);ctx.fillStyle="rgba(0,0,0,0.5)";ctx.fill();const cs=["#ff4444","#ffaa00","#44ff44","#4488ff","#ff44ff","#44ffff"];for(let i=0;i<cs.length;i++){const a=(i/cs.length)*Math.PI*2;ctx.beginPath();ctx.arc(cx,cy,s*.6,a,a+Math.PI*.5);ctx.strokeStyle=cs[i];ctx.lineWidth=2;ctx.globalAlpha=.6;ctx.stroke()}ctx.globalAlpha=1;const vg=ctx.createRadialGradient(cx,cy,0,cx,cy,s*.3);vg.addColorStop(0,"#000");vg.addColorStop(.7,"rgba(30,0,50,0.9)");vg.addColorStop(1,"rgba(30,0,50,0)");ctx.fillStyle=vg;ctx.beginPath();ctx.arc(cx,cy,s*.3,0,Math.PI*2);ctx.fill();ctx.strokeStyle="rgba(255,255,255,0.5)";ctx.lineWidth=1;ctx.shadowColor="#fff";ctx.shadowBlur=3;ctx.beginPath();ctx.arc(cx,cy,s*.2,0,Math.PI*2);ctx.stroke();ctx.restore()}
+function curCD(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);drawPlanet(ctx,5,cx,cy,r*.85);ctx.save();const s=r*.55*.85;ctx.beginPath();ctx.arc(cx,cy,s+2,0,Math.PI*2);ctx.fillStyle="rgba(0,0,0,0.5)";ctx.fill();ctx.fillStyle="rgba(80,70,60,0.7)";ctx.beginPath();ctx.arc(cx,cy,s*.6,0,Math.PI*2);ctx.fill();ctx.strokeStyle="rgba(255,200,100,0.4)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(cx-s*.2,cy-s*.5);ctx.lineTo(cx+s*.1,cy);ctx.lineTo(cx+s*.3,cy+s*.4);ctx.stroke();ctx.beginPath();ctx.moveTo(cx+s*.1,cy);ctx.lineTo(cx-s*.3,cy+s*.2);ctx.stroke();ctx.fillStyle="#ffd700";ctx.shadowColor="#ffd700";ctx.shadowBlur=3;ctx.font=`bold ${s*1.2}px sans-serif`;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("5",cx,cy);ctx.restore()}
 
-// draw a sample planet underneath (for "current" versions)
-function drawPlanetBase(ctx, cx, cy, r, color) {
-  ctx.save();
-  const grad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.1, cx, cy, r);
-  grad.addColorStop(0, lighten(color, 60));
-  grad.addColorStop(0.7, color);
-  grad.addColorStop(1, darken(color, 80));
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = grad;
-  ctx.fill();
-  // highlight
-  const hl = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.35, r * 0.05, cx - r * 0.2, cy - r * 0.2, r * 0.5);
-  hl.addColorStop(0, "rgba(255,255,255,0.5)");
-  hl.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = hl;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
+// ===== NEW DESIGNS =====
+function dRocket(ctx,cx,cy,r,a){drawCellBg(ctx,cx,cy,r);ctx.save();ctx.translate(cx,cy);ctx.rotate(a);const s=r*.85;const fg=ctx.createLinearGradient(0,s*.4,0,s*.9);fg.addColorStop(0,"#ff6600");fg.addColorStop(.5,"#ffaa00");fg.addColorStop(1,"rgba(255,100,0,0)");ctx.fillStyle=fg;ctx.beginPath();ctx.moveTo(-s*.15,s*.35);ctx.quadraticCurveTo(-s*.2,s*.7,0,s*.85);ctx.quadraticCurveTo(s*.2,s*.7,s*.15,s*.35);ctx.fill();const bg=ctx.createLinearGradient(-s*.2,0,s*.2,0);bg.addColorStop(0,"#ccc");bg.addColorStop(.3,"#fff");bg.addColorStop(.7,"#fff");bg.addColorStop(1,"#aaa");ctx.fillStyle=bg;ctx.beginPath();ctx.moveTo(0,-s*.7);ctx.quadraticCurveTo(s*.25,-s*.3,s*.2,s*.35);ctx.lineTo(-s*.2,s*.35);ctx.quadraticCurveTo(-s*.25,-s*.3,0,-s*.7);ctx.fill();ctx.fillStyle="#e94560";ctx.beginPath();ctx.moveTo(0,-s*.7);ctx.quadraticCurveTo(s*.12,-s*.45,s*.15,-s*.3);ctx.lineTo(-s*.15,-s*.3);ctx.quadraticCurveTo(-s*.12,-s*.45,0,-s*.7);ctx.fill();ctx.fillStyle="#4ecdc4";ctx.shadowColor="#4ecdc4";ctx.shadowBlur=4;ctx.beginPath();ctx.arc(0,-s*.05,s*.1,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle="#e94560";ctx.beginPath();ctx.moveTo(-s*.2,s*.15);ctx.lineTo(-s*.35,s*.4);ctx.lineTo(-s*.15,s*.35);ctx.fill();ctx.beginPath();ctx.moveTo(s*.2,s*.15);ctx.lineTo(s*.35,s*.4);ctx.lineTo(s*.15,s*.35);ctx.fill();ctx.restore()}
+function nRH(ctx,cx,cy,r){dRocket(ctx,cx,cy,r,Math.PI/2)}
+function nRV(ctx,cx,cy,r){dRocket(ctx,cx,cy,r,0)}
+function nRD(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();const s=r*.55;function sR(ctx,s2){const fg=ctx.createLinearGradient(0,s2*.3,0,s2*.7);fg.addColorStop(0,"#ff6600");fg.addColorStop(1,"rgba(255,100,0,0)");ctx.fillStyle=fg;ctx.beginPath();ctx.moveTo(-s2*.1,s2*.25);ctx.quadraticCurveTo(0,s2*.65,s2*.1,s2*.25);ctx.fill();ctx.fillStyle="#ddd";ctx.beginPath();ctx.moveTo(0,-s2*.5);ctx.quadraticCurveTo(s2*.15,-s2*.2,s2*.12,s2*.25);ctx.lineTo(-s2*.12,s2*.25);ctx.quadraticCurveTo(-s2*.15,-s2*.2,0,-s2*.5);ctx.fill();ctx.fillStyle="#e94560";ctx.beginPath();ctx.moveTo(0,-s2*.5);ctx.quadraticCurveTo(s2*.08,-s2*.3,s2*.1,-s2*.2);ctx.lineTo(-s2*.1,-s2*.2);ctx.quadraticCurveTo(-s2*.08,-s2*.3,0,-s2*.5);ctx.fill()}ctx.save();ctx.translate(cx-s*.15,cy-s*.15);ctx.rotate(-Math.PI/4);sR(ctx,s*.7);ctx.restore();ctx.save();ctx.translate(cx+s*.15,cy-s*.15);ctx.rotate(Math.PI/4);sR(ctx,s*.7);ctx.restore();ctx.restore()}
 
-// cell background
-function drawCellBg(ctx, cx, cy, r) {
-  ctx.save();
-  ctx.fillStyle = "rgba(10,18,40,0.6)";
-  ctx.fillRect(cx - r - 4, cy - r - 4, (r + 4) * 2, (r + 4) * 2);
-  ctx.restore();
-}
+function dBeam(ctx,cx,cy,r,a){drawCellBg(ctx,cx,cy,r);ctx.save();ctx.translate(cx,cy);ctx.rotate(a);const s=r*.85;ctx.shadowColor="#4ecdc4";ctx.shadowBlur=8;const bg=ctx.createLinearGradient(0,-s*.8,0,s*.8);bg.addColorStop(0,"rgba(78,205,196,0.1)");bg.addColorStop(.3,"#4ecdc4");bg.addColorStop(.5,"#fff");bg.addColorStop(.7,"#4ecdc4");bg.addColorStop(1,"rgba(78,205,196,0.1)");ctx.strokeStyle=bg;ctx.lineWidth=3;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(0,-s*.8);ctx.lineTo(0,s*.8);ctx.stroke();ctx.fillStyle="#fff";ctx.beginPath();ctx.moveTo(0,-s*.85);ctx.lineTo(-s*.2,-s*.55);ctx.lineTo(s*.2,-s*.55);ctx.fill();ctx.beginPath();ctx.moveTo(0,s*.85);ctx.lineTo(-s*.2,s*.55);ctx.lineTo(s*.2,s*.55);ctx.fill();ctx.restore()}
+function nBH(ctx,cx,cy,r){dBeam(ctx,cx,cy,r,Math.PI/2)}
+function nBV(ctx,cx,cy,r){dBeam(ctx,cx,cy,r,0)}
+function nBD(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();ctx.translate(cx,cy);const s=r*.7;ctx.shadowColor="#4ecdc4";ctx.shadowBlur=6;[Math.PI/4,-Math.PI/4].forEach(a=>{ctx.save();ctx.rotate(a);const bg=ctx.createLinearGradient(0,-s*.8,0,s*.8);bg.addColorStop(0,"rgba(78,205,196,0.1)");bg.addColorStop(.5,"#4ecdc4");bg.addColorStop(1,"rgba(78,205,196,0.1)");ctx.strokeStyle=bg;ctx.lineWidth=2.5;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(0,-s*.8);ctx.lineTo(0,s*.8);ctx.stroke();ctx.fillStyle="#fff";ctx.beginPath();ctx.moveTo(0,-s*.85);ctx.lineTo(-s*.15,-s*.6);ctx.lineTo(s*.15,-s*.6);ctx.fill();ctx.beginPath();ctx.moveTo(0,s*.85);ctx.lineTo(-s*.15,s*.6);ctx.lineTo(s*.15,s*.6);ctx.fill();ctx.restore()});ctx.restore()}
 
-// ==================== CURRENT IMPLEMENTATIONS ====================
+function dSS(ctx,cx,cy,r,a){drawCellBg(ctx,cx,cy,r);ctx.save();ctx.translate(cx,cy);ctx.rotate(a);const s=r*.85;ctx.shadowColor="#ffd700";ctx.shadowBlur=6;const tg=ctx.createLinearGradient(0,s*.8,0,-s*.3);tg.addColorStop(0,"rgba(255,215,0,0)");tg.addColorStop(.5,"rgba(255,215,0,0.4)");tg.addColorStop(1,"#ffd700");ctx.fillStyle=tg;ctx.beginPath();ctx.moveTo(0,-s*.4);ctx.lineTo(-s*.15,s*.8);ctx.lineTo(s*.15,s*.8);ctx.fill();ctx.shadowBlur=8;ctx.fillStyle="#fff";drawStar5(ctx,0,-s*.45,s*.25);ctx.restore()}
+function nSH(ctx,cx,cy,r){dSS(ctx,cx,cy,r,Math.PI/2)}
+function nSV(ctx,cx,cy,r){dSS(ctx,cx,cy,r,0)}
+function nSD(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();ctx.translate(cx,cy);const s=r*.5;[(-Math.PI/4),(Math.PI/4),(Math.PI*3/4),(-Math.PI*3/4)].forEach(a=>{ctx.save();ctx.rotate(a);ctx.shadowColor="#ffd700";ctx.shadowBlur=3;const tg=ctx.createLinearGradient(0,s*.6,0,-s*.1);tg.addColorStop(0,"rgba(255,215,0,0)");tg.addColorStop(1,"#ffd700");ctx.fillStyle=tg;ctx.beginPath();ctx.moveTo(0,-s*.2);ctx.lineTo(-s*.08,s*.6);ctx.lineTo(s*.08,s*.6);ctx.fill();ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(0,-s*.25,s*.1,0,Math.PI*2);ctx.fill();ctx.restore()});ctx.restore()}
 
-function currentLineH(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  drawPlanetBase(ctx, cx, cy, r, "#e94560");
-  ctx.save();
-  const s = r * 0.55;
-  ctx.beginPath(); ctx.arc(cx, cy, s + 2, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fill();
-  const grad = ctx.createLinearGradient(cx - s, cy, cx + s, cy);
-  grad.addColorStop(0, "rgba(255,255,200,0.1)");
-  grad.addColorStop(0.4, "rgba(255,255,200,0.8)");
-  grad.addColorStop(0.5, "#fff");
-  grad.addColorStop(0.6, "rgba(255,255,200,0.8)");
-  grad.addColorStop(1, "rgba(255,255,200,0.1)");
-  ctx.strokeStyle = grad; ctx.lineWidth = 2.5; ctx.lineCap = "round";
-  ctx.beginPath(); ctx.moveTo(cx - s, cy); ctx.lineTo(cx + s, cy); ctx.stroke();
-  ctx.fillStyle = "#fff"; ctx.shadowColor = "#ffe080"; ctx.shadowBlur = 4;
-  ctx.beginPath(); ctx.arc(cx - s * 0.85, cy, s * 0.15, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(cx + s * 0.85, cy, s * 0.15, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
-}
+function nBomb(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();const s=r*.85;ctx.shadowColor="#ff6600";ctx.shadowBlur=6;const bg=ctx.createRadialGradient(cx-s*.15,cy-s*.1,s*.05,cx,cy+s*.05,s*.5);bg.addColorStop(0,"#555");bg.addColorStop(.8,"#222");bg.addColorStop(1,"#111");ctx.fillStyle=bg;ctx.beginPath();ctx.arc(cx,cy+s*.05,s*.5,0,Math.PI*2);ctx.fill();ctx.fillStyle="rgba(255,255,255,0.15)";ctx.beginPath();ctx.arc(cx-s*.15,cy-s*.1,s*.2,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#aaa";ctx.lineWidth=2;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(cx,cy-s*.45);ctx.quadraticCurveTo(cx+s*.2,cy-s*.65,cx+s*.1,cy-s*.75);ctx.stroke();ctx.shadowColor="#ffd700";ctx.shadowBlur=10;ctx.fillStyle="#ffd700";drawStar5(ctx,cx+s*.1,cy-s*.78,s*.15);ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(cx+s*.1,cy-s*.78,s*.05,0,Math.PI*2);ctx.fill();ctx.restore()}
+function nSN(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();const s=r*.85;ctx.shadowColor="#ffd700";ctx.shadowBlur=12;for(let i=0;i<12;i++){const a=(i/12)*Math.PI*2,l=(i%2===0)?s*.9:s*.55,w=(i%2===0)?s*.12:s*.08;ctx.save();ctx.translate(cx,cy);ctx.rotate(a);const rg=ctx.createLinearGradient(0,0,0,-l);rg.addColorStop(0,"#fff");rg.addColorStop(.3,"#ffd700");rg.addColorStop(1,"rgba(255,215,0,0)");ctx.fillStyle=rg;ctx.beginPath();ctx.moveTo(-w,0);ctx.lineTo(0,-l);ctx.lineTo(w,0);ctx.fill();ctx.restore()}const cg=ctx.createRadialGradient(cx,cy,0,cx,cy,s*.3);cg.addColorStop(0,"#fff");cg.addColorStop(.5,"#ffd700");cg.addColorStop(1,"rgba(255,215,0,0.3)");ctx.fillStyle=cg;ctx.beginPath();ctx.arc(cx,cy,s*.3,0,Math.PI*2);ctx.fill();ctx.restore()}
+function nMine(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();const s=r*.85;ctx.shadowColor="#ff4444";ctx.shadowBlur=6;const bg=ctx.createRadialGradient(cx-s*.1,cy-s*.1,s*.05,cx,cy,s*.4);bg.addColorStop(0,"#666");bg.addColorStop(.7,"#333");bg.addColorStop(1,"#222");ctx.fillStyle=bg;ctx.beginPath();ctx.arc(cx,cy,s*.4,0,Math.PI*2);ctx.fill();for(let i=0;i<8;i++){const a=(i/8)*Math.PI*2;ctx.save();ctx.translate(cx,cy);ctx.rotate(a);ctx.fillStyle="#888";ctx.beginPath();ctx.moveTo(-s*.08,-s*.35);ctx.lineTo(0,-s*.7);ctx.lineTo(s*.08,-s*.35);ctx.fill();ctx.fillStyle="#ff4444";ctx.beginPath();ctx.arc(0,-s*.7,s*.06,0,Math.PI*2);ctx.fill();ctx.restore()}ctx.fillStyle="#ff4444";ctx.shadowColor="#ff0000";ctx.shadowBlur=8;ctx.beginPath();ctx.arc(cx,cy,s*.15,0,Math.PI*2);ctx.fill();ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(cx,cy,s*.07,0,Math.PI*2);ctx.fill();ctx.restore()}
 
-function currentLineV(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  drawPlanetBase(ctx, cx, cy, r, "#4ecdc4");
-  ctx.save();
-  const s = r * 0.55;
-  ctx.beginPath(); ctx.arc(cx, cy, s + 2, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fill();
-  const grad = ctx.createLinearGradient(cx, cy - s, cx, cy + s);
-  grad.addColorStop(0, "rgba(255,255,200,0.1)");
-  grad.addColorStop(0.4, "rgba(255,255,200,0.8)");
-  grad.addColorStop(0.5, "#fff");
-  grad.addColorStop(0.6, "rgba(255,255,200,0.8)");
-  grad.addColorStop(1, "rgba(255,255,200,0.1)");
-  ctx.strokeStyle = grad; ctx.lineWidth = 2.5; ctx.lineCap = "round";
-  ctx.beginPath(); ctx.moveTo(cx, cy - s); ctx.lineTo(cx, cy + s); ctx.stroke();
-  ctx.fillStyle = "#fff"; ctx.shadowColor = "#ffe080"; ctx.shadowBlur = 4;
-  ctx.beginPath(); ctx.arc(cx, cy - s * 0.85, s * 0.15, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(cx, cy + s * 0.85, s * 0.15, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
-}
+function nBH2(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();const s=r*.85;const cs=["#ff4444","#ffaa00","#44ff44","#4488ff","#ff44ff","#44ffff"];for(let i=0;i<3;i++){const rr=s*(.85-i*.15);for(let j=0;j<cs.length;j++){const a=(j/cs.length)*Math.PI*2+i*.3;ctx.beginPath();ctx.arc(cx,cy,rr,a,a+Math.PI*.45);ctx.strokeStyle=cs[j];ctx.lineWidth=3-i*.5;ctx.globalAlpha=.7-i*.15;ctx.stroke()}}ctx.globalAlpha=1;const vg=ctx.createRadialGradient(cx,cy,0,cx,cy,s*.35);vg.addColorStop(0,"#000");vg.addColorStop(.6,"rgba(20,0,40,0.95)");vg.addColorStop(1,"rgba(20,0,40,0)");ctx.fillStyle=vg;ctx.beginPath();ctx.arc(cx,cy,s*.35,0,Math.PI*2);ctx.fill();ctx.strokeStyle="rgba(255,255,255,0.6)";ctx.lineWidth=1.5;ctx.shadowColor="#fff";ctx.shadowBlur=8;ctx.beginPath();ctx.arc(cx,cy,s*.2,0,Math.PI*2);ctx.stroke();ctx.restore()}
+function nPrism(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();const s=r*.85;ctx.shadowColor="#fff";ctx.shadowBlur=10;const cs=["#ff4444","#ff8800","#ffdd00","#44ff44","#4488ff","#aa44ff"];const pts=[[0,-s*.8],[s*.55,0],[0,s*.8],[-s*.55,0]];for(let i=0;i<4;i++){const[x1,y1]=pts[i],[x2,y2]=pts[(i+1)%4];const fg=ctx.createLinearGradient(cx+x1,cy+y1,cx+x2,cy+y2);fg.addColorStop(0,cs[i]);fg.addColorStop(.5,cs[i+1]||cs[0]);fg.addColorStop(1,lc(cs[(i+2)%6],40));ctx.fillStyle=fg;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+x1,cy+y1);ctx.lineTo(cx+x2,cy+y2);ctx.fill()}ctx.fillStyle="rgba(255,255,255,0.3)";ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx,cy-s*.8);ctx.lineTo(cx+s*.55,cy);ctx.fill();ctx.strokeStyle="rgba(255,255,255,0.5)";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(cx+pts[0][0],cy+pts[0][1]);pts.slice(1).forEach(([x,y])=>ctx.lineTo(cx+x,cy+y));ctx.closePath();ctx.stroke();ctx.restore()}
+function nWarp(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();const s=r*.85;const cs=["#ff4444","#ffaa00","#44ff44","#4488ff","#ff44ff","#44ffff"];for(let i=5;i>=0;i--){const rr=s*(.15+i*.14);ctx.strokeStyle=cs[i%cs.length];ctx.lineWidth=3;ctx.globalAlpha=.5+(5-i)*.1;ctx.shadowColor=cs[i%cs.length];ctx.shadowBlur=4;ctx.beginPath();ctx.arc(cx,cy,rr,0,Math.PI*2);ctx.stroke()}ctx.globalAlpha=1;const cg=ctx.createRadialGradient(cx,cy,0,cx,cy,s*.2);cg.addColorStop(0,"#fff");cg.addColorStop(.5,"rgba(255,255,255,0.5)");cg.addColorStop(1,"rgba(255,255,255,0)");ctx.fillStyle=cg;ctx.shadowColor="#fff";ctx.shadowBlur=10;ctx.beginPath();ctx.arc(cx,cy,s*.2,0,Math.PI*2);ctx.fill();ctx.restore()}
 
-function currentLineD(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  drawPlanetBase(ctx, cx, cy, r, "#ffe66d");
-  ctx.save();
-  const s = r * 0.55;
-  ctx.beginPath(); ctx.arc(cx, cy, s + 2, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fill();
-  const ds = s * 0.75;
-  ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 3; ctx.lineWidth = 2; ctx.lineCap = "round";
-  const g1 = ctx.createLinearGradient(cx - ds, cy - ds, cx + ds, cy + ds);
-  g1.addColorStop(0, "rgba(255,215,0,0.2)"); g1.addColorStop(0.5, "#ffd700"); g1.addColorStop(1, "rgba(255,215,0,0.2)");
-  ctx.strokeStyle = g1; ctx.beginPath(); ctx.moveTo(cx - ds, cy - ds); ctx.lineTo(cx + ds, cy + ds); ctx.stroke();
-  const g2 = ctx.createLinearGradient(cx + ds, cy - ds, cx - ds, cy + ds);
-  g2.addColorStop(0, "rgba(255,215,0,0.2)"); g2.addColorStop(0.5, "#ffd700"); g2.addColorStop(1, "rgba(255,215,0,0.2)");
-  ctx.strokeStyle = g2; ctx.beginPath(); ctx.moveTo(cx + ds, cy - ds); ctx.lineTo(cx - ds, cy + ds); ctx.stroke();
-  ctx.fillStyle = "#ffe880"; const mhs = s * 0.1;
-  [[cx-ds,cy-ds],[cx+ds,cy+ds],[cx+ds,cy-ds],[cx-ds,cy+ds]].forEach(([mx,my]) => {
-    ctx.beginPath(); ctx.arc(mx, my, mhs, 0, Math.PI * 2); ctx.fill();
-  });
-  ctx.restore();
-}
+function nMeteor(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();const s=r*.85;ctx.shadowColor="#ff4400";ctx.shadowBlur=8;const fg=ctx.createLinearGradient(cx,cy-s*.8,cx,cy+s*.2);fg.addColorStop(0,"rgba(255,68,0,0)");fg.addColorStop(.3,"rgba(255,100,0,0.3)");fg.addColorStop(.7,"#ff6600");fg.addColorStop(1,"#ffaa00");ctx.fillStyle=fg;ctx.beginPath();ctx.moveTo(cx-s*.35,cy-s*.7);ctx.quadraticCurveTo(cx-s*.4,cy-s*.2,cx-s*.3,cy+s*.1);ctx.lineTo(cx+s*.3,cy+s*.1);ctx.quadraticCurveTo(cx+s*.4,cy-s*.2,cx+s*.35,cy-s*.7);ctx.fill();ctx.shadowBlur=4;const rg=ctx.createRadialGradient(cx-s*.1,cy+s*.15,s*.05,cx,cy+s*.2,s*.4);rg.addColorStop(0,"#aa6644");rg.addColorStop(.6,"#774422");rg.addColorStop(1,"#442211");ctx.fillStyle=rg;ctx.beginPath();ctx.arc(cx,cy+s*.2,s*.38,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#ff6600";ctx.lineWidth=1.5;ctx.shadowColor="#ff4400";ctx.shadowBlur=3;ctx.beginPath();ctx.moveTo(cx-s*.15,cy);ctx.lineTo(cx+s*.05,cy+s*.2);ctx.lineTo(cx+s*.2,cy+s*.45);ctx.stroke();ctx.beginPath();ctx.moveTo(cx+s*.05,cy+s*.2);ctx.lineTo(cx-s*.1,cy+s*.4);ctx.stroke();ctx.shadowColor="#ffd700";ctx.shadowBlur=6;ctx.fillStyle="#ffd700";ctx.font=`bold ${s*.65}px sans-serif`;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("5",cx,cy+s*.2);ctx.restore()}
+function nTB(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();const s=r*.85;ctx.shadowColor="#ff4444";ctx.shadowBlur=6;const bg=ctx.createRadialGradient(cx-s*.1,cy,s*.05,cx,cy+s*.05,s*.45);bg.addColorStop(0,"#555");bg.addColorStop(.8,"#222");bg.addColorStop(1,"#111");ctx.fillStyle=bg;ctx.beginPath();ctx.arc(cx,cy+s*.05,s*.45,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#aaa";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx,cy-s*.4);ctx.quadraticCurveTo(cx+s*.15,cy-s*.55,cx+s*.08,cy-s*.65);ctx.stroke();ctx.fillStyle="#ff4444";ctx.shadowColor="#ff0000";ctx.shadowBlur=8;ctx.beginPath();ctx.arc(cx+s*.08,cy-s*.68,s*.08,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle="rgba(0,0,0,0.6)";const dw=s*.5,dh=s*.35;ctx.fillRect(cx-dw/2,cy-dh/2+s*.05,dw,dh);ctx.strokeStyle="#333";ctx.lineWidth=1;ctx.strokeRect(cx-dw/2,cy-dh/2+s*.05,dw,dh);ctx.fillStyle="#ff4444";ctx.shadowColor="#ff0000";ctx.shadowBlur=4;ctx.font=`bold ${s*.55}px monospace`;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("05",cx,cy+s*.08);ctx.restore()}
+function nUS(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();const s=r*.85;ctx.shadowColor="#ff2200";ctx.shadowBlur=15;const rg=ctx.createRadialGradient(cx-s*.1,cy-s*.1,s*.05,cx,cy,s*.5);rg.addColorStop(0,"#ff8866");rg.addColorStop(.5,"#cc3311");rg.addColorStop(1,"#661100");ctx.fillStyle=rg;ctx.beginPath();ctx.arc(cx,cy,s*.5,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#ffaa00";ctx.lineWidth=1.5;ctx.shadowColor="#ffaa00";ctx.shadowBlur=4;ctx.beginPath();ctx.moveTo(cx-s*.3,cy-s*.1);ctx.lineTo(cx,cy);ctx.lineTo(cx+s*.15,cy-s*.3);ctx.stroke();ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+s*.1,cy+s*.35);ctx.stroke();ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx-s*.2,cy+s*.25);ctx.stroke();ctx.shadowColor="#ffd700";ctx.shadowBlur=8;ctx.fillStyle="#fff";ctx.font=`bold ${s*.7}px sans-serif`;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("5",cx,cy+s*.02);ctx.restore()}
 
-function currentBomb(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  drawPlanetBase(ctx, cx, cy, r, "#7b68ee");
-  ctx.save();
-  const s = r * 0.55;
-  ctx.beginPath(); ctx.arc(cx, cy, s + 2, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fill();
-  ctx.shadowColor = "#fff"; ctx.shadowBlur = 4;
-  ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.arc(cx, cy, s * 0.7, 0, Math.PI * 2); ctx.stroke();
-  ctx.strokeStyle = "rgba(255,200,100,0.8)"; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.arc(cx, cy, s * 0.4, 0, Math.PI * 2); ctx.stroke();
-  ctx.shadowBlur = 0;
-  for (let i = 0; i < 8; i++) {
-    const angle = (i / 8) * Math.PI * 2;
-    const x1 = cx + Math.cos(angle) * s * 0.25, y1 = cy + Math.sin(angle) * s * 0.25;
-    const x2 = cx + Math.cos(angle) * s * 0.75, y2 = cy + Math.sin(angle) * s * 0.75;
-    const rg = ctx.createLinearGradient(x1, y1, x2, y2);
-    rg.addColorStop(0, "rgba(255,220,150,0.7)"); rg.addColorStop(1, "rgba(255,220,150,0)");
-    ctx.strokeStyle = rg; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-  }
-  ctx.fillStyle = "#fff"; ctx.shadowColor = "#ffe080"; ctx.shadowBlur = 5;
-  ctx.beginPath(); ctx.arc(cx, cy, s * 0.15, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
-}
+function drawBgDemo(ctx,w,h,anim){const bg=ctx.createLinearGradient(0,0,0,h);bg.addColorStop(0,"#0a0a2e");bg.addColorStop(.5,"#0d1030");bg.addColorStop(1,"#150a30");ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);const rng=(seed)=>{let s=seed;return()=>{s=(s*16807)%2147483647;return s/2147483647}};const rand=rng(42);for(let i=0;i<40;i++){const x=rand()*w,y=rand()*h,r=.5+rand()*2,a=.4+rand()*.6;ctx.fillStyle=`rgba(255,255,255,${a})`;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill()}ctx.fillStyle="rgba(255,255,255,0.7)";ctx.font="bold 11px sans-serif";ctx.textAlign="center";ctx.fillText(anim?"アニメーションあり":"固定（アニメなし）",w/2,h-8);if(anim){const sg=ctx.createLinearGradient(w*.2,h*.15,w*.6,h*.35);sg.addColorStop(0,"rgba(255,255,255,0)");sg.addColorStop(.7,"#fff");sg.addColorStop(1,"#fff");ctx.strokeStyle=sg;ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(w*.2,h*.15);ctx.lineTo(w*.6,h*.35);ctx.stroke();ctx.fillStyle="rgba(255,255,200,0.4)";ctx.font="16px sans-serif";ctx.fillText("✦ ↘",w*.75,h*.25)}}
 
-function currentRainbow(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  drawPlanetBase(ctx, cx, cy, r, "#ff8a5c");
-  ctx.save();
-  const s = r * 0.55;
-  ctx.beginPath(); ctx.arc(cx, cy, s + 2, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fill();
-  const colors = ["#ff4444","#ffaa00","#44ff44","#4488ff","#ff44ff","#44ffff"];
-  for (let i = 0; i < colors.length; i++) {
-    const angle = (i / colors.length) * Math.PI * 2;
-    ctx.beginPath(); ctx.arc(cx, cy, s * 0.6, angle, angle + Math.PI * 0.5);
-    ctx.strokeStyle = colors[i]; ctx.lineWidth = 2; ctx.globalAlpha = 0.6; ctx.stroke();
-  }
-  ctx.globalAlpha = 1;
-  const vGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, s * 0.3);
-  vGrad.addColorStop(0, "#000"); vGrad.addColorStop(0.7, "rgba(30,0,50,0.9)"); vGrad.addColorStop(1, "rgba(30,0,50,0)");
-  ctx.fillStyle = vGrad; ctx.beginPath(); ctx.arc(cx, cy, s * 0.3, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.lineWidth = 1; ctx.shadowColor = "#fff"; ctx.shadowBlur = 3;
-  ctx.beginPath(); ctx.arc(cx, cy, s * 0.2, 0, Math.PI * 2); ctx.stroke();
-  ctx.restore();
-}
+// ===== BUILD =====
+const nr=document.getElementById("row-normal");
+PN.forEach((n,i)=>{const div=document.createElement("div");div.className="normal-card";const{c,ctx}=mc(72,72);ctx.fillStyle="rgba(10,18,40,0.6)";ctx.fillRect(0,0,72,72);drawPlanet(ctx,i,36,36,28);const lb=document.createElement("div");lb.className="card-label";lb.textContent=n;const d=document.createElement("div");d.className="card-desc";d.textContent=PC[i];div.appendChild(c);div.appendChild(lb);div.appendChild(d);nr.appendChild(div)});
 
-function currentCountdown(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  drawPlanetBase(ctx, cx, cy, r, "#3a86ff");
-  ctx.save();
-  const s = r * 0.55;
-  ctx.beginPath(); ctx.arc(cx, cy, s + 2, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fill();
-  ctx.fillStyle = "rgba(80,70,60,0.7)";
-  ctx.beginPath(); ctx.arc(cx, cy, s * 0.6, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = "rgba(255,200,100,0.4)"; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(cx - s*0.2, cy - s*0.5); ctx.lineTo(cx + s*0.1, cy); ctx.lineTo(cx + s*0.3, cy + s*0.4); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx + s*0.1, cy); ctx.lineTo(cx - s*0.3, cy + s*0.2); ctx.stroke();
-  ctx.fillStyle = "#ffd700"; ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 3;
-  ctx.font = `bold ${s * 1.2}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("5", cx, cy);
-  ctx.restore();
-}
+card(document.getElementById("row-line_h"),"現状","惑星+彗星の尾",curLH,true);card(document.getElementById("row-line_h"),"案A: ロケット","横向きロケット+噴射炎",nRH,false);card(document.getElementById("row-line_h"),"案B: 矢印ビーム","レーザービーム+矢印",nBH,false);card(document.getElementById("row-line_h"),"案C: 流れ星","尾を引く星+金の軌跡",nSH,false);
+card(document.getElementById("row-line_v"),"現状","惑星+彗星の尾",curLV,true);card(document.getElementById("row-line_v"),"案A: ロケット","上向きロケット+噴射炎",nRV,false);card(document.getElementById("row-line_v"),"案B: 矢印ビーム","縦レーザービーム",nBV,false);card(document.getElementById("row-line_v"),"案C: 流れ星","縦の流れ星",nSV,false);
+card(document.getElementById("row-line_d"),"現状","惑星+X字流星",curLD,true);card(document.getElementById("row-line_d"),"案A: ロケット","X字に2本のロケット",nRD,false);card(document.getElementById("row-line_d"),"案B: 矢印ビーム","X字交差ビーム",nBD,false);card(document.getElementById("row-line_d"),"案C: 流れ星","4方向の流星群",nSD,false);
+card(document.getElementById("row-bomb"),"現状","惑星+超新星リング",curBomb,true);card(document.getElementById("row-bomb"),"案A: 爆弾","丸い爆弾+導火線+火花",nBomb,false);card(document.getElementById("row-bomb"),"案B: 超新星","大型の放射状フレア",nSN,false);card(document.getElementById("row-bomb"),"案C: 機雷","球体+突起+赤い警告灯",nMine,false);
+card(document.getElementById("row-rainbow"),"現状","惑星+小ブラックホール",curRain,true);card(document.getElementById("row-rainbow"),"案A: ブラックホール","大型の降着円盤+暗い渦",nBH2,false);card(document.getElementById("row-rainbow"),"案B: 虹色プリズム","虹色ダイヤモンド型",nPrism,false);card(document.getElementById("row-rainbow"),"案C: ワープホール","虹色の同心円リング",nWarp,false);
+card(document.getElementById("row-countdown"),"現状","惑星+岩+小さな数字",curCD,true);card(document.getElementById("row-countdown"),"案A: 隕石","燃える岩+炎の尾+数字",nMeteor,false);card(document.getElementById("row-countdown"),"案B: 時限爆弾","爆弾+デジタル表示",nTB,false);card(document.getElementById("row-countdown"),"案C: 不安定な星","脈動する赤い星+ひび割れ",nUS,false);
 
-// ==================== NEW DESIGNS ====================
+pItem(document.getElementById("pat1"),"横ライン",nRH);pItem(document.getElementById("pat1"),"縦ライン",nRV);pItem(document.getElementById("pat1"),"斜めライン",nRD);pItem(document.getElementById("pat1"),"ボム",nSN);pItem(document.getElementById("pat1"),"レインボー",nBH2);pItem(document.getElementById("pat1"),"カウントダウン",nMeteor);
+pItem(document.getElementById("pat2"),"横ライン",nRH);pItem(document.getElementById("pat2"),"縦ライン",nRV);pItem(document.getElementById("pat2"),"斜めライン",nRD);pItem(document.getElementById("pat2"),"ボム",nBomb);pItem(document.getElementById("pat2"),"レインボー",nPrism);pItem(document.getElementById("pat2"),"カウントダウン",nTB);
+pItem(document.getElementById("pat3"),"横ライン",nRH);pItem(document.getElementById("pat3"),"縦ライン",nRV);pItem(document.getElementById("pat3"),"斜めライン",nRD);pItem(document.getElementById("pat3"),"ボム",nMine);pItem(document.getElementById("pat3"),"レインボー",nWarp);pItem(document.getElementById("pat3"),"カウントダウン",nMeteor);
 
-// --- ROCKET (line) ---
-function drawRocket(ctx, cx, cy, r, angle) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(angle);
-  const s = r * 0.85;
-  // exhaust flame
-  ctx.save();
-  const flameGrad = ctx.createLinearGradient(0, s * 0.4, 0, s * 0.9);
-  flameGrad.addColorStop(0, "#ff6600");
-  flameGrad.addColorStop(0.5, "#ffaa00");
-  flameGrad.addColorStop(1, "rgba(255,100,0,0)");
-  ctx.fillStyle = flameGrad;
-  ctx.beginPath();
-  ctx.moveTo(-s * 0.15, s * 0.35);
-  ctx.quadraticCurveTo(-s * 0.2, s * 0.7, 0, s * 0.85);
-  ctx.quadraticCurveTo(s * 0.2, s * 0.7, s * 0.15, s * 0.35);
-  ctx.fill();
-  ctx.restore();
-  // body
-  const bodyGrad = ctx.createLinearGradient(-s * 0.2, 0, s * 0.2, 0);
-  bodyGrad.addColorStop(0, "#ccc");
-  bodyGrad.addColorStop(0.3, "#fff");
-  bodyGrad.addColorStop(0.7, "#fff");
-  bodyGrad.addColorStop(1, "#aaa");
-  ctx.fillStyle = bodyGrad;
-  ctx.beginPath();
-  ctx.moveTo(0, -s * 0.7);
-  ctx.quadraticCurveTo(s * 0.25, -s * 0.3, s * 0.2, s * 0.35);
-  ctx.lineTo(-s * 0.2, s * 0.35);
-  ctx.quadraticCurveTo(-s * 0.25, -s * 0.3, 0, -s * 0.7);
-  ctx.fill();
-  // nose cone
-  ctx.fillStyle = "#e94560";
-  ctx.beginPath();
-  ctx.moveTo(0, -s * 0.7);
-  ctx.quadraticCurveTo(s * 0.12, -s * 0.45, s * 0.15, -s * 0.3);
-  ctx.lineTo(-s * 0.15, -s * 0.3);
-  ctx.quadraticCurveTo(-s * 0.12, -s * 0.45, 0, -s * 0.7);
-  ctx.fill();
-  // window
-  ctx.fillStyle = "#4ecdc4";
-  ctx.shadowColor = "#4ecdc4"; ctx.shadowBlur = 4;
-  ctx.beginPath();
-  ctx.arc(0, -s * 0.05, s * 0.1, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  // fins
-  ctx.fillStyle = "#e94560";
-  ctx.beginPath();
-  ctx.moveTo(-s * 0.2, s * 0.15);
-  ctx.lineTo(-s * 0.35, s * 0.4);
-  ctx.lineTo(-s * 0.15, s * 0.35);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(s * 0.2, s * 0.15);
-  ctx.lineTo(s * 0.35, s * 0.4);
-  ctx.lineTo(s * 0.15, s * 0.35);
-  ctx.fill();
-  ctx.restore();
-}
-
-function newRocketH(ctx, cx, cy, r) { drawRocket(ctx, cx, cy, r, Math.PI / 2); }
-function newRocketV(ctx, cx, cy, r) { drawRocket(ctx, cx, cy, r, 0); }
-function newRocketD(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  const s = r * 0.55;
-  // draw two small rockets in X
-  ctx.save(); ctx.translate(cx - s*0.15, cy - s*0.15); ctx.rotate(-Math.PI / 4);
-  drawSmallRocket(ctx, 0, 0, s * 0.7);
-  ctx.restore();
-  ctx.save(); ctx.translate(cx + s*0.15, cy - s*0.15); ctx.rotate(Math.PI / 4);
-  drawSmallRocket(ctx, 0, 0, s * 0.7);
-  ctx.restore();
-  ctx.restore();
-}
-
-function drawSmallRocket(ctx, cx, cy, s) {
-  // flame
-  const fg = ctx.createLinearGradient(0, s*0.3, 0, s*0.7);
-  fg.addColorStop(0, "#ff6600"); fg.addColorStop(1, "rgba(255,100,0,0)");
-  ctx.fillStyle = fg;
-  ctx.beginPath();
-  ctx.moveTo(-s*0.1, s*0.25); ctx.quadraticCurveTo(0, s*0.65, s*0.1, s*0.25);
-  ctx.fill();
-  // body
-  ctx.fillStyle = "#ddd";
-  ctx.beginPath();
-  ctx.moveTo(0, -s*0.5);
-  ctx.quadraticCurveTo(s*0.15, -s*0.2, s*0.12, s*0.25);
-  ctx.lineTo(-s*0.12, s*0.25);
-  ctx.quadraticCurveTo(-s*0.15, -s*0.2, 0, -s*0.5);
-  ctx.fill();
-  // nose
-  ctx.fillStyle = "#e94560";
-  ctx.beginPath();
-  ctx.moveTo(0, -s*0.5);
-  ctx.quadraticCurveTo(s*0.08, -s*0.3, s*0.1, -s*0.2);
-  ctx.lineTo(-s*0.1, -s*0.2);
-  ctx.quadraticCurveTo(-s*0.08, -s*0.3, 0, -s*0.5);
-  ctx.fill();
-}
-
-// --- ARROW BEAM (line) ---
-function drawBeam(ctx, cx, cy, r, angle) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(angle);
-  const s = r * 0.85;
-  // glow
-  ctx.shadowColor = "#4ecdc4"; ctx.shadowBlur = 8;
-  // beam line
-  const bg = ctx.createLinearGradient(0, -s*0.8, 0, s*0.8);
-  bg.addColorStop(0, "rgba(78,205,196,0.1)");
-  bg.addColorStop(0.3, "#4ecdc4");
-  bg.addColorStop(0.5, "#fff");
-  bg.addColorStop(0.7, "#4ecdc4");
-  bg.addColorStop(1, "rgba(78,205,196,0.1)");
-  ctx.strokeStyle = bg; ctx.lineWidth = 3; ctx.lineCap = "round";
-  ctx.beginPath(); ctx.moveTo(0, -s*0.8); ctx.lineTo(0, s*0.8); ctx.stroke();
-  // arrow heads
-  ctx.fillStyle = "#fff";
-  ctx.beginPath();
-  ctx.moveTo(0, -s*0.85); ctx.lineTo(-s*0.2, -s*0.55); ctx.lineTo(s*0.2, -s*0.55);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(0, s*0.85); ctx.lineTo(-s*0.2, s*0.55); ctx.lineTo(s*0.2, s*0.55);
-  ctx.fill();
-  ctx.restore();
-}
-
-function newBeamH(ctx, cx, cy, r) { drawBeam(ctx, cx, cy, r, Math.PI / 2); }
-function newBeamV(ctx, cx, cy, r) { drawBeam(ctx, cx, cy, r, 0); }
-function newBeamD(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  ctx.translate(cx, cy);
-  const s = r * 0.7;
-  ctx.shadowColor = "#4ecdc4"; ctx.shadowBlur = 6;
-  // X beams
-  [Math.PI/4, -Math.PI/4].forEach(a => {
-    ctx.save(); ctx.rotate(a);
-    const bg = ctx.createLinearGradient(0, -s*0.8, 0, s*0.8);
-    bg.addColorStop(0, "rgba(78,205,196,0.1)"); bg.addColorStop(0.5, "#4ecdc4"); bg.addColorStop(1, "rgba(78,205,196,0.1)");
-    ctx.strokeStyle = bg; ctx.lineWidth = 2.5; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(0, -s*0.8); ctx.lineTo(0, s*0.8); ctx.stroke();
-    ctx.fillStyle = "#fff";
-    ctx.beginPath(); ctx.moveTo(0, -s*0.85); ctx.lineTo(-s*0.15, -s*0.6); ctx.lineTo(s*0.15, -s*0.6); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(0, s*0.85); ctx.lineTo(-s*0.15, s*0.6); ctx.lineTo(s*0.15, s*0.6); ctx.fill();
-    ctx.restore();
-  });
-  ctx.restore();
-}
-
-// --- SHOOTING STAR (line) ---
-function drawShootingStar(ctx, cx, cy, r, angle) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(angle);
-  const s = r * 0.85;
-  // tail
-  ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 6;
-  const tg = ctx.createLinearGradient(0, s*0.8, 0, -s*0.3);
-  tg.addColorStop(0, "rgba(255,215,0,0)");
-  tg.addColorStop(0.5, "rgba(255,215,0,0.4)");
-  tg.addColorStop(1, "#ffd700");
-  ctx.fillStyle = tg;
-  ctx.beginPath();
-  ctx.moveTo(0, -s*0.4);
-  ctx.lineTo(-s*0.15, s*0.8);
-  ctx.lineTo(s*0.15, s*0.8);
-  ctx.fill();
-  // star head
-  ctx.shadowBlur = 8;
-  ctx.fillStyle = "#fff";
-  drawStar5(ctx, 0, -s*0.45, s*0.25);
-  ctx.restore();
-}
-
-function drawStar5(ctx, cx, cy, r) {
-  ctx.beginPath();
-  for (let i = 0; i < 5; i++) {
-    const a = (i * 2 * Math.PI / 5) - Math.PI / 2;
-    const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    const a2 = a + Math.PI / 5;
-    ctx.lineTo(cx + Math.cos(a2) * r * 0.4, cy + Math.sin(a2) * r * 0.4);
-  }
-  ctx.closePath();
-  ctx.fill();
-}
-
-function newStarH(ctx, cx, cy, r) { drawShootingStar(ctx, cx, cy, r, Math.PI / 2); }
-function newStarV(ctx, cx, cy, r) { drawShootingStar(ctx, cx, cy, r, 0); }
-function newStarD(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  ctx.translate(cx, cy);
-  const s = r * 0.5;
-  // multiple small shooting stars in X directions
-  [(-Math.PI/4), (Math.PI/4), (Math.PI*3/4), (-Math.PI*3/4)].forEach((a, i) => {
-    ctx.save(); ctx.rotate(a);
-    ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 3;
-    const tg = ctx.createLinearGradient(0, s*0.6, 0, -s*0.1);
-    tg.addColorStop(0, "rgba(255,215,0,0)"); tg.addColorStop(1, "#ffd700");
-    ctx.fillStyle = tg;
-    ctx.beginPath(); ctx.moveTo(0, -s*0.2); ctx.lineTo(-s*0.08, s*0.6); ctx.lineTo(s*0.08, s*0.6); ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.beginPath(); ctx.arc(0, -s*0.25, s*0.1, 0, Math.PI*2); ctx.fill();
-    ctx.restore();
-  });
-  ctx.restore();
-}
-
-// --- BOMB designs ---
-function newBombClassic(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  const s = r * 0.85;
-  // bomb body
-  ctx.shadowColor = "#ff6600"; ctx.shadowBlur = 6;
-  const bg = ctx.createRadialGradient(cx - s*0.15, cy - s*0.1, s*0.05, cx, cy + s*0.05, s*0.5);
-  bg.addColorStop(0, "#555"); bg.addColorStop(0.8, "#222"); bg.addColorStop(1, "#111");
-  ctx.fillStyle = bg;
-  ctx.beginPath(); ctx.arc(cx, cy + s*0.05, s*0.5, 0, Math.PI * 2); ctx.fill();
-  // highlight
-  ctx.fillStyle = "rgba(255,255,255,0.15)";
-  ctx.beginPath(); ctx.arc(cx - s*0.15, cy - s*0.1, s*0.2, 0, Math.PI * 2); ctx.fill();
-  // fuse
-  ctx.strokeStyle = "#aaa"; ctx.lineWidth = 2; ctx.lineCap = "round";
-  ctx.beginPath(); ctx.moveTo(cx, cy - s*0.45);
-  ctx.quadraticCurveTo(cx + s*0.2, cy - s*0.65, cx + s*0.1, cy - s*0.75);
-  ctx.stroke();
-  // spark
-  ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 10;
-  ctx.fillStyle = "#ffd700";
-  drawStar5(ctx, cx + s*0.1, cy - s*0.78, s*0.15);
-  ctx.fillStyle = "#fff";
-  ctx.beginPath(); ctx.arc(cx + s*0.1, cy - s*0.78, s*0.05, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
-}
-
-function newSupernova(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  const s = r * 0.85;
-  // outer glow
-  ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 12;
-  // rays
-  for (let i = 0; i < 12; i++) {
-    const angle = (i / 12) * Math.PI * 2;
-    const len = (i % 2 === 0) ? s * 0.9 : s * 0.55;
-    const w = (i % 2 === 0) ? s * 0.12 : s * 0.08;
-    ctx.save(); ctx.translate(cx, cy); ctx.rotate(angle);
-    const rg = ctx.createLinearGradient(0, 0, 0, -len);
-    rg.addColorStop(0, "#fff"); rg.addColorStop(0.3, "#ffd700"); rg.addColorStop(1, "rgba(255,215,0,0)");
-    ctx.fillStyle = rg;
-    ctx.beginPath(); ctx.moveTo(-w, 0); ctx.lineTo(0, -len); ctx.lineTo(w, 0); ctx.fill();
-    ctx.restore();
-  }
-  // center
-  const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, s * 0.3);
-  cg.addColorStop(0, "#fff"); cg.addColorStop(0.5, "#ffd700"); cg.addColorStop(1, "rgba(255,215,0,0.3)");
-  ctx.fillStyle = cg;
-  ctx.beginPath(); ctx.arc(cx, cy, s * 0.3, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
-}
-
-function newMine(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  const s = r * 0.85;
-  ctx.shadowColor = "#ff4444"; ctx.shadowBlur = 6;
-  // body
-  const bg = ctx.createRadialGradient(cx - s*0.1, cy - s*0.1, s*0.05, cx, cy, s*0.4);
-  bg.addColorStop(0, "#666"); bg.addColorStop(0.7, "#333"); bg.addColorStop(1, "#222");
-  ctx.fillStyle = bg;
-  ctx.beginPath(); ctx.arc(cx, cy, s*0.4, 0, Math.PI * 2); ctx.fill();
-  // spikes
-  ctx.fillStyle = "#888";
-  for (let i = 0; i < 8; i++) {
-    const angle = (i / 8) * Math.PI * 2;
-    ctx.save(); ctx.translate(cx, cy); ctx.rotate(angle);
-    ctx.beginPath();
-    ctx.moveTo(-s*0.08, -s*0.35);
-    ctx.lineTo(0, -s*0.7);
-    ctx.lineTo(s*0.08, -s*0.35);
-    ctx.fill();
-    // spike tip
-    ctx.fillStyle = "#ff4444";
-    ctx.beginPath(); ctx.arc(0, -s*0.7, s*0.06, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#888";
-    ctx.restore();
-  }
-  // center warning
-  ctx.fillStyle = "#ff4444";
-  ctx.shadowColor = "#ff0000"; ctx.shadowBlur = 8;
-  ctx.beginPath(); ctx.arc(cx, cy, s*0.15, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "#fff";
-  ctx.beginPath(); ctx.arc(cx, cy, s*0.07, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
-}
-
-// --- RAINBOW designs ---
-function newBlackHole(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  const s = r * 0.85;
-  // accretion disk
-  const colors = ["#ff4444","#ffaa00","#44ff44","#4488ff","#ff44ff","#44ffff"];
-  for (let i = 0; i < 3; i++) {
-    const rr = s * (0.85 - i * 0.15);
-    for (let j = 0; j < colors.length; j++) {
-      const angle = (j / colors.length) * Math.PI * 2 + i * 0.3;
-      ctx.beginPath(); ctx.arc(cx, cy, rr, angle, angle + Math.PI * 0.45);
-      ctx.strokeStyle = colors[j]; ctx.lineWidth = 3 - i * 0.5;
-      ctx.globalAlpha = 0.7 - i * 0.15; ctx.stroke();
-    }
-  }
-  ctx.globalAlpha = 1;
-  // dark center
-  const vg = ctx.createRadialGradient(cx, cy, 0, cx, cy, s * 0.35);
-  vg.addColorStop(0, "#000"); vg.addColorStop(0.6, "rgba(20,0,40,0.95)"); vg.addColorStop(1, "rgba(20,0,40,0)");
-  ctx.fillStyle = vg;
-  ctx.beginPath(); ctx.arc(cx, cy, s * 0.35, 0, Math.PI * 2); ctx.fill();
-  // event horizon glow
-  ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = 1.5;
-  ctx.shadowColor = "#fff"; ctx.shadowBlur = 8;
-  ctx.beginPath(); ctx.arc(cx, cy, s * 0.2, 0, Math.PI * 2); ctx.stroke();
-  ctx.restore();
-}
-
-function newPrism(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  const s = r * 0.85;
-  // rainbow glow
-  ctx.shadowColor = "#fff"; ctx.shadowBlur = 10;
-  // diamond shape
-  const colors = ["#ff4444","#ff8800","#ffdd00","#44ff44","#4488ff","#aa44ff"];
-  // facets
-  const pts = [[0,-s*0.8],[s*0.55,0],[0,s*0.8],[-s*0.55,0]];
-  for (let i = 0; i < 4; i++) {
-    const [x1,y1] = pts[i];
-    const [x2,y2] = pts[(i+1)%4];
-    const fg = ctx.createLinearGradient(cx+x1, cy+y1, cx+x2, cy+y2);
-    fg.addColorStop(0, colors[i]); fg.addColorStop(0.5, colors[i+1] || colors[0]); fg.addColorStop(1, lighten(colors[(i+2)%6], 40));
-    ctx.fillStyle = fg;
-    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx+x1, cy+y1); ctx.lineTo(cx+x2, cy+y2); ctx.fill();
-  }
-  // white highlight
-  ctx.fillStyle = "rgba(255,255,255,0.3)";
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy-s*0.8); ctx.lineTo(cx+s*0.55, cy); ctx.fill();
-  // outline
-  ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(cx+pts[0][0], cy+pts[0][1]);
-  pts.slice(1).forEach(([x,y]) => ctx.lineTo(cx+x, cy+y));
-  ctx.closePath(); ctx.stroke();
-  ctx.restore();
-}
-
-function newWarpHole(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  const s = r * 0.85;
-  const colors = ["#ff4444","#ffaa00","#44ff44","#4488ff","#ff44ff","#44ffff"];
-  // concentric rings
-  for (let i = 5; i >= 0; i--) {
-    const rr = s * (0.15 + i * 0.14);
-    ctx.strokeStyle = colors[i % colors.length];
-    ctx.lineWidth = 3;
-    ctx.globalAlpha = 0.5 + (5-i) * 0.1;
-    ctx.shadowColor = colors[i % colors.length]; ctx.shadowBlur = 4;
-    ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.stroke();
-  }
-  ctx.globalAlpha = 1;
-  // bright center
-  const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, s * 0.2);
-  cg.addColorStop(0, "#fff"); cg.addColorStop(0.5, "rgba(255,255,255,0.5)"); cg.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = cg; ctx.shadowColor = "#fff"; ctx.shadowBlur = 10;
-  ctx.beginPath(); ctx.arc(cx, cy, s * 0.2, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
-}
-
-// --- COUNTDOWN designs ---
-function newMeteor(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  const s = r * 0.85;
-  // flame tail (upward)
-  ctx.shadowColor = "#ff4400"; ctx.shadowBlur = 8;
-  const fg = ctx.createLinearGradient(cx, cy - s*0.8, cx, cy + s*0.2);
-  fg.addColorStop(0, "rgba(255,68,0,0)");
-  fg.addColorStop(0.3, "rgba(255,100,0,0.3)");
-  fg.addColorStop(0.7, "#ff6600");
-  fg.addColorStop(1, "#ffaa00");
-  ctx.fillStyle = fg;
-  ctx.beginPath();
-  ctx.moveTo(cx - s*0.35, cy - s*0.7);
-  ctx.quadraticCurveTo(cx - s*0.4, cy - s*0.2, cx - s*0.3, cy + s*0.1);
-  ctx.lineTo(cx + s*0.3, cy + s*0.1);
-  ctx.quadraticCurveTo(cx + s*0.4, cy - s*0.2, cx + s*0.35, cy - s*0.7);
-  ctx.fill();
-  // rock body
-  ctx.shadowBlur = 4;
-  const rg = ctx.createRadialGradient(cx - s*0.1, cy + s*0.15, s*0.05, cx, cy + s*0.2, s*0.4);
-  rg.addColorStop(0, "#aa6644"); rg.addColorStop(0.6, "#774422"); rg.addColorStop(1, "#442211");
-  ctx.fillStyle = rg;
-  ctx.beginPath(); ctx.arc(cx, cy + s*0.2, s*0.38, 0, Math.PI * 2); ctx.fill();
-  // cracks (glowing)
-  ctx.strokeStyle = "#ff6600"; ctx.lineWidth = 1.5; ctx.shadowColor = "#ff4400"; ctx.shadowBlur = 3;
-  ctx.beginPath(); ctx.moveTo(cx - s*0.15, cy); ctx.lineTo(cx + s*0.05, cy + s*0.2);
-  ctx.lineTo(cx + s*0.2, cy + s*0.45); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx + s*0.05, cy + s*0.2); ctx.lineTo(cx - s*0.1, cy + s*0.4); ctx.stroke();
-  // countdown number
-  ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 6;
-  ctx.fillStyle = "#ffd700";
-  ctx.font = `bold ${s * 0.65}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("5", cx, cy + s*0.2);
-  ctx.restore();
-}
-
-function newTimeBomb(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  const s = r * 0.85;
-  // body
-  ctx.shadowColor = "#ff4444"; ctx.shadowBlur = 6;
-  const bg = ctx.createRadialGradient(cx - s*0.1, cy, s*0.05, cx, cy + s*0.05, s*0.45);
-  bg.addColorStop(0, "#555"); bg.addColorStop(0.8, "#222"); bg.addColorStop(1, "#111");
-  ctx.fillStyle = bg;
-  ctx.beginPath(); ctx.arc(cx, cy + s*0.05, s*0.45, 0, Math.PI * 2); ctx.fill();
-  // fuse
-  ctx.strokeStyle = "#aaa"; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(cx, cy - s*0.4);
-  ctx.quadraticCurveTo(cx + s*0.15, cy - s*0.55, cx + s*0.08, cy - s*0.65);
-  ctx.stroke();
-  // spark
-  ctx.fillStyle = "#ff4444"; ctx.shadowColor = "#ff0000"; ctx.shadowBlur = 8;
-  ctx.beginPath(); ctx.arc(cx + s*0.08, cy - s*0.68, s*0.08, 0, Math.PI * 2); ctx.fill();
-  // digital display
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = "rgba(0,0,0,0.6)";
-  const dw = s*0.5, dh = s*0.35;
-  ctx.fillRect(cx - dw/2, cy - dh/2 + s*0.05, dw, dh);
-  ctx.strokeStyle = "#333"; ctx.lineWidth = 1;
-  ctx.strokeRect(cx - dw/2, cy - dh/2 + s*0.05, dw, dh);
-  // number
-  ctx.fillStyle = "#ff4444"; ctx.shadowColor = "#ff0000"; ctx.shadowBlur = 4;
-  ctx.font = `bold ${s * 0.55}px monospace`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("05", cx, cy + s*0.08);
-  ctx.restore();
-}
-
-function newUnstableStar(ctx, cx, cy, r) {
-  drawCellBg(ctx, cx, cy, r);
-  ctx.save();
-  const s = r * 0.85;
-  // pulsing glow
-  ctx.shadowColor = "#ff2200"; ctx.shadowBlur = 15;
-  // body - red giant
-  const rg = ctx.createRadialGradient(cx - s*0.1, cy - s*0.1, s*0.05, cx, cy, s*0.5);
-  rg.addColorStop(0, "#ff8866"); rg.addColorStop(0.5, "#cc3311"); rg.addColorStop(1, "#661100");
-  ctx.fillStyle = rg;
-  ctx.beginPath(); ctx.arc(cx, cy, s*0.5, 0, Math.PI * 2); ctx.fill();
-  // cracks
-  ctx.strokeStyle = "#ffaa00"; ctx.lineWidth = 1.5; ctx.shadowColor = "#ffaa00"; ctx.shadowBlur = 4;
-  ctx.beginPath(); ctx.moveTo(cx - s*0.3, cy - s*0.1); ctx.lineTo(cx, cy); ctx.lineTo(cx + s*0.15, cy - s*0.3); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + s*0.1, cy + s*0.35); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx - s*0.2, cy + s*0.25); ctx.stroke();
-  // countdown number
-  ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 8;
-  ctx.fillStyle = "#fff";
-  ctx.font = `bold ${s * 0.7}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("5", cx, cy + s*0.02);
-  ctx.restore();
-}
-
-// ==================== BACKGROUND DEMOS ====================
-function drawBgDemo(ctx, w, h, animated) {
-  // space gradient
-  const bg = ctx.createLinearGradient(0, 0, 0, h);
-  bg.addColorStop(0, "#0a0a2e"); bg.addColorStop(0.5, "#0d1030"); bg.addColorStop(1, "#150a30");
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
-  // stars
-  const stars = [];
-  const rng = (seed) => { let s = seed; return () => { s = (s * 16807) % 2147483647; return s / 2147483647; }; };
-  const rand = rng(42);
-  for (let i = 0; i < 40; i++) {
-    stars.push({ x: rand() * w, y: rand() * h, r: 0.5 + rand() * 2, a: 0.4 + rand() * 0.6 });
-  }
-  stars.forEach(s => {
-    ctx.fillStyle = `rgba(255,255,255,${s.a})`;
-    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
-  });
-  // label
-  ctx.fillStyle = "rgba(255,255,255,0.7)";
-  ctx.font = "bold 11px sans-serif"; ctx.textAlign = "center";
-  ctx.fillText(animated ? "アニメーションあり" : "固定（アニメなし）", w/2, h - 8);
-  if (animated) {
-    // shooting star indicator
-    ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = 1.5;
-    const sg = ctx.createLinearGradient(w*0.2, h*0.15, w*0.6, h*0.35);
-    sg.addColorStop(0, "rgba(255,255,255,0)"); sg.addColorStop(0.7, "#fff"); sg.addColorStop(1, "#fff");
-    ctx.strokeStyle = sg;
-    ctx.beginPath(); ctx.moveTo(w*0.2, h*0.15); ctx.lineTo(w*0.6, h*0.35); ctx.stroke();
-    // movement arrows
-    ctx.fillStyle = "rgba(255,255,200,0.4)";
-    ctx.font = "16px sans-serif"; ctx.fillText("✦ ↘", w*0.75, h*0.25);
-  }
-}
-
-// ==================== BUILD THE PAGE ====================
-
-// LINE_H
-const rh = document.getElementById("row-line_h");
-card(rh, "現状", "惑星+彗星の尾オーバーレイ", currentLineH, true);
-card(rh, "案A: ロケット", "横向きロケット+噴射炎", newRocketH, false);
-card(rh, "案B: 矢印ビーム", "レーザービーム+矢印", newBeamH, false);
-card(rh, "案C: 流れ星", "尾を引く星+金の軌跡", newStarH, false);
-
-// LINE_V
-const rv = document.getElementById("row-line_v");
-card(rv, "現状", "惑星+彗星の尾オーバーレイ", currentLineV, true);
-card(rv, "案A: ロケット", "上向きロケット+噴射炎", newRocketV, false);
-card(rv, "案B: 矢印ビーム", "縦レーザービーム", newBeamV, false);
-card(rv, "案C: 流れ星", "縦の流れ星", newStarV, false);
-
-// LINE_D
-const rd = document.getElementById("row-line_d");
-card(rd, "現状", "惑星+X字流星軌跡", currentLineD, true);
-card(rd, "案A: ロケット", "X字に2本のロケット", newRocketD, false);
-card(rd, "案B: 矢印ビーム", "X字交差ビーム", newBeamD, false);
-card(rd, "案C: 流れ星", "4方向の流星群", newStarD, false);
-
-// BOMB
-const rb = document.getElementById("row-bomb");
-card(rb, "現状", "惑星+超新星リングオーバーレイ", currentBomb, true);
-card(rb, "案A: 爆弾", "丸い爆弾+導火線+火花", newBombClassic, false);
-card(rb, "案B: 超新星", "大型の放射状フレア", newSupernova, false);
-card(rb, "案C: 機雷", "球体+突起+赤い警告灯", newMine, false);
-
-// RAINBOW
-const rr = document.getElementById("row-rainbow");
-card(rr, "現状", "惑星+小さなブラックホール", currentRainbow, true);
-card(rr, "案A: ブラックホール", "大型の降着円盤+暗い渦", newBlackHole, false);
-card(rr, "案B: 虹色プリズム", "虹色に輝くダイヤモンド型", newPrism, false);
-card(rr, "案C: ワープホール", "虹色の同心円リング", newWarpHole, false);
-
-// COUNTDOWN
-const rc = document.getElementById("row-countdown");
-card(rc, "現状", "惑星+岩+小さな数字", currentCountdown, true);
-card(rc, "案A: 隕石", "燃える岩+炎の尾+大きな数字", newMeteor, false);
-card(rc, "案B: 時限爆弾", "爆弾+デジタル表示", newTimeBomb, false);
-card(rc, "案C: 不安定な星", "脈動する赤い星+ひび割れ", newUnstableStar, false);
-
-// PATTERNS
-const p1 = document.getElementById("pat1");
-patternItem(p1, "横ライン", newRocketH);
-patternItem(p1, "縦ライン", newRocketV);
-patternItem(p1, "斜めライン", newRocketD);
-patternItem(p1, "ボム", newSupernova);
-patternItem(p1, "レインボー", newBlackHole);
-patternItem(p1, "カウントダウン", newMeteor);
-
-const p2 = document.getElementById("pat2");
-patternItem(p2, "横ライン", newRocketH);
-patternItem(p2, "縦ライン", newRocketV);
-patternItem(p2, "斜めライン", newRocketD);
-patternItem(p2, "ボム", newBombClassic);
-patternItem(p2, "レインボー", newPrism);
-patternItem(p2, "カウントダウン", newTimeBomb);
-
-const p3 = document.getElementById("pat3");
-patternItem(p3, "横ライン", newRocketH);
-patternItem(p3, "縦ライン", newRocketV);
-patternItem(p3, "斜めライン", newRocketD);
-patternItem(p3, "ボム", newMine);
-patternItem(p3, "レインボー", newWarpHole);
-patternItem(p3, "カウントダウン", newMeteor);
-
-// BACKGROUND
-const bgRow = document.getElementById("row-bg");
-[
-  ["タイトル画面", true, "変更なし"],
-  ["プレイ中", false, "固定に変更"],
-  ["リザルト画面", true, "アニメ追加"]
-].forEach(([label, anim, note]) => {
-  const div = document.createElement("div");
-  div.className = "bg-card";
-  const { c, ctx } = makeCanvas(180, 120);
-  drawBgDemo(ctx, 180, 120, anim);
-  const lbl = document.createElement("div");
-  lbl.className = "card-label"; lbl.textContent = label;
-  const d = document.createElement("div");
-  d.className = "card-desc"; d.textContent = note;
-  div.appendChild(c); div.appendChild(lbl); div.appendChild(d);
-  bgRow.appendChild(div);
-});
-
+const bgRow=document.getElementById("row-bg");
+[["タイトル画面",true,"変更なし"],["プレイ中",false,"固定に変更"],["リザルト画面",true,"アニメ追加"]].forEach(([l,a,n])=>{const div=document.createElement("div");div.className="bg-card";const{c,ctx}=mc(180,120);drawBgDemo(ctx,180,120,a);const lb=document.createElement("div");lb.className="card-label";lb.textContent=l;const d=document.createElement("div");d.className="card-desc";d.textContent=n;div.appendChild(c);div.appendChild(lb);div.appendChild(d);bgRow.appendChild(div)});
 </script>
 </body>
 </html>
