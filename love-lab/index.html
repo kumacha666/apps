@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LoveLab — 恋愛の"クセ"を、心理学で読み解く。</title>
+  <meta name="description" content="心理学の研究に基づいた12の質問で、あなたの恋愛パターンを分析します。登録不要・完全無料。">
+  <meta name="theme-color" content="#0f0a1a">
+
+  <!-- OGP -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="LoveLab — 恋愛愛着スタイル診断">
+  <meta property="og:description" content="心理学の研究に基づいた12の質問で、あなたの恋愛パターンを分析。登録不要・完全無料。">
+  <meta property="og:image" content="https://kumacha666.github.io/apps/love-lab/ogp.png">
+  <meta property="og:url" content="https://kumacha666.github.io/apps/love-lab/">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="LoveLab — 恋愛愛着スタイル診断">
+  <meta name="twitter:description" content="心理学の研究に基づいた12の質問で、あなたの恋愛パターンを分析。">
+  <meta name="twitter:image" content="https://kumacha666.github.io/apps/love-lab/ogp.png">
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="LoveLab">
+
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💕</text></svg>">
+
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="app-container">
+
+    <!-- Screen 1: Landing -->
+    <div id="screen-landing" class="screen active">
+      <div class="landing-hero">
+        <div class="landing-logo">💕</div>
+        <h1 class="landing-title">LoveLab</h1>
+        <p class="landing-tagline">恋愛の"クセ"を、心理学で読み解く。</p>
+        <p class="landing-desc">心理学の研究に基づいた12の質問で、<br>あなたの恋愛パターンを分析します。</p>
+      </div>
+
+      <div class="landing-features">
+        <div class="feature">
+          <span class="feature-icon">🔬</span>
+          <span class="feature-text">心理学エビデンスに基づく診断</span>
+        </div>
+        <div class="feature">
+          <span class="feature-icon">⏱️</span>
+          <span class="feature-text">たった2分で完了</span>
+        </div>
+        <div class="feature">
+          <span class="feature-icon">🔒</span>
+          <span class="feature-text">登録不要・完全無料</span>
+        </div>
+      </div>
+
+      <button id="btn-start" class="btn-primary">診断をはじめる</button>
+
+      <p class="landing-note">※ この診断はECR-R（親密な関係における経験尺度）に基づいています。<br>占いや性格診断ではなく、心理学研究に基づくセルフ分析ツールです。</p>
+    </div>
+
+    <!-- Screen 2: Questions -->
+    <div id="screen-questions" class="screen">
+      <div class="question-header">
+        <div class="progress-bar">
+          <div id="progress-fill" class="progress-fill"></div>
+        </div>
+        <div id="progress-text" class="progress-text">1 / 12</div>
+      </div>
+
+      <div id="question-container" class="question-container">
+        <p id="question-text" class="question-text"></p>
+
+        <div class="slider-container">
+          <input type="range" id="answer-slider" class="answer-slider" min="1" max="5" step="1" value="3">
+          <div class="slider-labels">
+            <span>全く<br>当てはまらない</span>
+            <span>あまり<br>当てはまらない</span>
+            <span>どちらとも<br>いえない</span>
+            <span>やや<br>当てはまる</span>
+            <span>とても<br>当てはまる</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="question-nav">
+        <button id="btn-prev" class="btn-secondary" disabled>戻る</button>
+        <button id="btn-next" class="btn-primary">次へ</button>
+      </div>
+    </div>
+
+    <!-- Screen 3: Analyzing -->
+    <div id="screen-analyzing" class="screen">
+      <div class="analyzing-content">
+        <div class="analyzing-icon">🔍</div>
+        <p class="analyzing-text">あなたの恋愛パターンを<br>分析しています...</p>
+        <div class="analyzing-dots">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Screen 4: Result -->
+    <div id="screen-result" class="screen">
+      <div class="result-header">
+        <p class="result-label">あなたの恋愛スタイルは...</p>
+        <div id="result-icon" class="result-icon"></div>
+        <h2 id="result-type-name" class="result-type-name"></h2>
+        <p id="result-type-eng" class="result-type-eng"></p>
+        <p id="result-catchphrase" class="result-catchphrase"></p>
+      </div>
+
+      <div class="result-scores">
+        <h3>あなたのスコア</h3>
+        <div class="score-bar-group">
+          <div class="score-row">
+            <span class="score-label">見捨てられ不安</span>
+            <div class="score-track">
+              <div id="anxiety-bar" class="score-fill anxiety"></div>
+            </div>
+            <span id="anxiety-value" class="score-value"></span>
+          </div>
+          <div class="score-row">
+            <span class="score-label">親密性への回避</span>
+            <div class="score-track">
+              <div id="avoidance-bar" class="score-fill avoidance"></div>
+            </div>
+            <span id="avoidance-value" class="score-value"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="result-section">
+        <h3>💕 あなたの恋愛パターン</h3>
+        <p id="result-pattern"></p>
+      </div>
+
+      <div class="result-section">
+        <h3>✨ 恋愛での強み</h3>
+        <ul id="result-strengths"></ul>
+      </div>
+
+      <div class="result-section">
+        <h3>⚠️ 気をつけたいこと</h3>
+        <ul id="result-warnings"></ul>
+      </div>
+
+      <div class="result-section">
+        <h3>💡 改善のヒント</h3>
+        <p id="result-advice"></p>
+      </div>
+
+      <div class="result-section">
+        <h3>💑 相性について</h3>
+        <p id="result-compatibility"></p>
+      </div>
+
+      <div class="result-section result-evidence">
+        <h3>📚 この診断の根拠</h3>
+        <p>この診断は、成人のアタッチメント（愛着）スタイルを測定するECR-R（Experiences in Close Relationships-Revised）に基づいています。Bartholomew &amp; Horowitz (1991) の4分類モデルを採用し、「見捨てられ不安」と「親密性への回避」の2軸でタイプを判定しています。</p>
+        <p class="evidence-note">※ この診断は自己理解のためのセルフ分析ツールです。医療やカウンセリングの代替ではありません。</p>
+      </div>
+
+      <div class="share-section">
+        <h3>結果をシェアする</h3>
+        <div class="share-buttons">
+          <button id="btn-share-x" class="btn-share btn-x">𝕏 でシェア</button>
+          <button id="btn-share-line" class="btn-share btn-line">LINEでシェア</button>
+          <button id="btn-download" class="btn-share btn-download">画像を保存</button>
+        </div>
+      </div>
+
+      <button id="btn-retry" class="btn-secondary btn-full">もう一度診断する</button>
+
+      <canvas id="share-canvas" width="1200" height="630" style="display:none;"></canvas>
+    </div>
+
+  </main>
+
+  <footer class="site-footer">
+    <p>LoveLab — 恋愛の"クセ"を、心理学で読み解く。</p>
+    <p class="footer-note">Based on ECR-R (Fraley et al., 2000)</p>
+  </footer>
+</body>
+</html>
