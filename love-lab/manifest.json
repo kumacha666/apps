@@ -1,0 +1,22 @@
+{
+  "name": "LoveLab — 恋愛の\"クセ\"を心理学で読み解く",
+  "short_name": "LoveLab",
+  "description": "心理学エビデンスに基づく恋愛アタッチメントスタイル診断",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0f0a1a",
+  "theme_color": "#0f0a1a",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
