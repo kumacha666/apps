@@ -443,6 +443,9 @@ body {
   padding: 10px 14px;
   font-size: 1rem;
 }
+#btn-debug-open.hidden {
+  display: none;
+}
 
 #spawn-indicator {
   background: var(--gold);
