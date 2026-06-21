@@ -81,6 +81,14 @@ body {
   margin-bottom: 60px;
 }
 
+.splash-logo .t-accent {
+  color: var(--accent);
+}
+
+.splash-logo .t-accent2 {
+  color: var(--gold);
+}
+
 .splash-tap {
   font-size: 1.1rem;
   color: rgba(255, 255, 255, 0.6);
