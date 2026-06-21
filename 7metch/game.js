@@ -2752,18 +2752,26 @@
   }
 
   // --- Match Finding ---
+  const TAP_ACTIVATE_SPECIALS = new Set(["line_h", "line_v", "line_d", "bomb"]);
+
+  function isMatchable(r, c) {
+    if (!board[r][c]) return false;
+    if (isHole(r, c) || isRock(r, c)) return false;
+    if (board[r][c].special && TAP_ACTIVATE_SPECIALS.has(board[r][c].special)) return false;
+    return true;
+  }
+
   function findAllMatches() {
     const matched = new Set();
     const directions = [[0, 1], [1, 0]];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (!board[r][c]) continue;
-        if (isHole(r, c) || isRock(r, c)) continue;
+        if (!isMatchable(r, c)) continue;
         const color = board[r][c].color;
         for (const [dr, dc] of directions) {
           const line = [[r, c]];
           let nr = r + dr, nc = c + dc;
-          while (inBounds(nr, nc) && board[nr][nc] && !isHole(nr, nc) && !isRock(nr, nc) && board[nr][nc].color === color) {
+          while (inBounds(nr, nc) && isMatchable(nr, nc) && board[nr][nc].color === color) {
             line.push([nr, nc]);
             nr += dr;
             nc += dc;
@@ -2778,12 +2786,10 @@
     if (stg && stg.features && stg.features.diagonalLine) {
       for (let r = 0; r < rows - 1; r++) {
         for (let c = 0; c < cols - 1; c++) {
-          if (!board[r][c] || isHole(r, c) || isRock(r, c)) continue;
+          if (!isMatchable(r, c)) continue;
           const color = board[r][c].color;
           const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
-          const allMatch = cells.every(([cr, cc]) =>
-            board[cr][cc] && !isHole(cr, cc) && !isRock(cr, cc) && board[cr][cc].color === color
-          );
+          const allMatch = cells.every(([cr, cc]) => isMatchable(cr, cc) && board[cr][cc].color === color);
           if (allMatch) cells.forEach(([cr, cc]) => matched.add(cr * cols + cc));
         }
       }
@@ -3013,6 +3019,66 @@
       hintAnimId = requestAnimationFrame(tick);
     }
     tick();
+  }
+
+  async function activateByTap(r, c) {
+    if (animating) return;
+    const piece = board[r][c];
+    if (!piece || !piece.special || !TAP_ACTIVATE_SPECIALS.has(piece.special)) return;
+    animating = true;
+    clearHint();
+
+    SFX.combo(piece.special);
+    track("tap_activate", { type: piece.special, stage: STAGES[currentStage].name });
+    movesLeft--;
+    chainCount = 1;
+    updateHUD();
+
+    const cleared = new Set([r * cols + c]);
+    const clearList = [[r, c]];
+    const extra = activateSpecial(r, c, cleared, piece.special);
+    extra.forEach(([er, ec]) => {
+      if (!cleared.has(er * cols + ec)) {
+        cleared.add(er * cols + ec);
+        clearList.push([er, ec]);
+      }
+    });
+
+    clearList.forEach(([cr, cc]) => {
+      if (board[cr][cc] && board[cr][cc].special && !(cr === r && cc === c)) {
+        const ex2 = activateSpecial(cr, cc, cleared, board[cr][cc].special);
+        ex2.forEach(([er, ec]) => {
+          if (!cleared.has(er * cols + ec)) {
+            cleared.add(er * cols + ec);
+            clearList.push([er, ec]);
+          }
+        });
+      }
+    });
+
+    clearList.forEach(([cr, cc]) => {
+      if (board[cr][cc]) {
+        const ci = board[cr][cc].color;
+        colorCleared[ci] = (colorCleared[ci] || 0) + 1;
+        totalCleared++;
+      }
+    });
+    score += clearList.length * 10 * chainCount;
+
+    await animateClear(clearList, [{ r, c, type: piece.special, color: piece.color }]);
+    clearList.forEach(([cr, cc]) => { board[cr][cc] = null; });
+    damageAdjacentIce(clearList);
+
+    const fallMap = applyGravityData();
+    await animateDrop(fallMap);
+    await sleep(ANIM.CHAIN_PAUSE_MS);
+
+    await resolveBoard();
+
+    updateHUD();
+    checkWinLose();
+    animating = false;
+    startHintTimer();
   }
 
   // --- Special Piece Activation ---
@@ -5375,6 +5441,14 @@
     }
 
     if (selected) {
+      if (selected.r === cell.r && selected.c === cell.c) {
+        const p = board[cell.r][cell.c];
+        if (p && p.special && TAP_ACTIVATE_SPECIALS.has(p.special)) {
+          selected = null;
+          activateByTap(cell.r, cell.c);
+          return;
+        }
+      }
       if (isAdjacent(selected.r, selected.c, cell.r, cell.c)) {
         doMove(selected.r, selected.c, cell.r, cell.c);
         selected = null;
