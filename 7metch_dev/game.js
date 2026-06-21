@@ -1727,7 +1727,7 @@
           continue;
         }
         // Semi-transparent cell overlay so stars show through subtly
-        ctx.fillStyle = (r + c) % 2 === 0 ? "rgba(10,18,40,0.65)" : "rgba(14,24,50,0.65)";
+        ctx.fillStyle = (r + c) % 2 === 0 ? "rgba(10,18,40,0.45)" : "rgba(14,24,50,0.45)";
         ctx.fillRect(x, y, cellSize, cellSize);
       }
     }
