@@ -189,7 +189,7 @@
         </div>
 
         <div class="help-section">
-          <h3>🪙 コイン</h3>
+          <h3><span class="coin-icon"></span> コイン</h3>
           <p>ステージをクリアすると、獲得した<strong>★の数ぶんのコイン</strong>がもらえます。</p>
           <p>まだ★を持っていないステージで新しく★を獲得すると、<strong>1つにつきボーナス+2コイン</strong>！</p>
           <p>★ゲート突破時にはさらに<strong>+5コイン</strong>のボーナスがもらえます。</p>
@@ -203,22 +203,22 @@
             <tr><th>アイテム</th><th>コスト</th><th>効果</th></tr>
             <tr>
               <td class="help-icon">🎯</td>
-              <td>🪙3</td>
+              <td><span class="coin-icon"></span>3</td>
               <td>タップした1ピースを破壊（特殊ピースなら効果発動）</td>
             </tr>
             <tr>
               <td class="help-icon">🔀</td>
-              <td>🪙5</td>
+              <td><span class="coin-icon"></span>5</td>
               <td>盤面のピースをランダムに並べ替え</td>
             </tr>
             <tr>
               <td class="help-icon">＋3</td>
-              <td>🪙8</td>
+              <td><span class="coin-icon"></span>8</td>
               <td>残り手数を3手追加</td>
             </tr>
             <tr>
               <td class="help-icon">🌈</td>
-              <td>🪙12</td>
+              <td><span class="coin-icon"></span>12</td>
               <td>選んだ色のピースをすべて消す</td>
             </tr>
           </table>
@@ -243,11 +243,11 @@
       </div>
       <canvas id="game-canvas"></canvas>
       <div id="item-bar">
-        <div id="item-coins">🪙 <span id="item-coin-count">0</span></div>
-        <button class="item-btn" data-item="pinpoint" title="ピンポイント破壊"><span class="item-icon">🎯</span><span class="item-cost">🪙3</span></button>
-        <button class="item-btn" data-item="shuffle" title="シャッフル"><span class="item-icon">🔀</span><span class="item-cost">🪙5</span></button>
-        <button class="item-btn" data-item="addmoves" title="+3手"><span class="item-icon">＋3</span><span class="item-cost">🪙8</span></button>
-        <button class="item-btn" data-item="colorbomb" title="カラーボム"><span class="item-icon">🌈</span><span class="item-cost">🪙12</span></button>
+        <div id="item-coins"><span class="coin-icon"></span> <span id="item-coin-count">0</span></div>
+        <button class="item-btn" data-item="pinpoint" title="ピンポイント破壊"><span class="item-icon">🎯</span><span class="item-cost"><span class="coin-icon"></span>3</span></button>
+        <button class="item-btn" data-item="shuffle" title="シャッフル"><span class="item-icon">🔀</span><span class="item-cost"><span class="coin-icon"></span>5</span></button>
+        <button class="item-btn" data-item="addmoves" title="+3手"><span class="item-icon">＋3</span><span class="item-cost"><span class="coin-icon"></span>8</span></button>
+        <button class="item-btn" data-item="colorbomb" title="カラーボム"><span class="item-icon">🌈</span><span class="item-cost"><span class="coin-icon"></span>12</span></button>
       </div>
       <div id="game-buttons">
         <button id="btn-retry" class="btn-secondary">リトライ</button>
@@ -264,7 +264,7 @@
         <div id="result-details"></div>
         <div id="result-buttons">
           <button id="btn-next" class="btn-primary">次のステージ</button>
-          <button id="btn-rescue" class="btn-primary" style="display:none">🪙8 +3手で続ける</button>
+          <button id="btn-rescue" class="btn-primary" style="display:none"><span class="coin-icon"></span>8 +3手で続ける</button>
           <button id="btn-result-retry" class="btn-secondary">リトライ</button>
           <button id="btn-result-stages" class="btn-secondary">ステージ選択</button>
         </div>

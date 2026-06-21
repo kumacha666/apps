@@ -218,7 +218,7 @@
       </div>
       <canvas id="game-canvas"></canvas>
       <div id="item-bar">
-        <div id="item-coins">🪙 <span id="item-coin-count">∞</span></div>
+        <div id="item-coins"><span class="coin-icon"></span> <span id="item-coin-count">∞</span></div>
         <button class="item-btn" data-item="pinpoint" title="ピンポイント破壊"><span class="item-icon">🎯</span><span class="item-cost">無料</span></button>
         <button class="item-btn" data-item="shuffle" title="シャッフル"><span class="item-icon">🔀</span><span class="item-cost">無料</span></button>
         <button class="item-btn" data-item="addmoves" title="+3手"><span class="item-icon">＋3</span><span class="item-cost">無料</span></button>
@@ -239,6 +239,7 @@
         <div id="result-details"></div>
         <div id="result-buttons">
           <button id="btn-next" class="btn-primary">次のステージ</button>
+          <button id="btn-rescue" class="btn-primary" style="display:none"><span class="coin-icon"></span>8 +3手で続ける</button>
           <button id="btn-result-retry" class="btn-secondary">リトライ</button>
           <button id="btn-result-stages" class="btn-secondary">ステージ選択</button>
         </div>
