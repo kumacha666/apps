@@ -3055,7 +3055,7 @@
 
     const cleared = new Set([r * cols + c]);
     const clearList = [[r, c]];
-    const extra = activateSpecial(r, c, cleared, piece.special);
+    const extra = activateSpecial(r, c, cleared, null);
     extra.forEach(([er, ec]) => {
       if (!cleared.has(er * cols + ec)) {
         cleared.add(er * cols + ec);
