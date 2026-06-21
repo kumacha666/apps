@@ -255,9 +255,11 @@
 
   function showScreen(name) {
     if (name !== "game") { clearHint(); stopBgAnim(); }
+    if (name !== "title") stopTitleBgAnim();
     Object.values(screens).forEach((s) => s.classList.remove("active"));
     screens[name].classList.add("active");
     if (name === "game") startBgAnim();
+    if (name === "title") startTitleBgAnim();
   }
 
   // --- Save / Load ---
@@ -426,7 +428,8 @@
       case "clear": return `${m.count}個 けそう`;
       case "color":
         if (html) {
-          return `<span style="color:${PIECE_COLORS[m.colorIndex]};font-weight:bold;text-shadow:0 0 6px ${PIECE_COLORS[m.colorIndex]}80">${PIECE_NAMES_JA[m.colorIndex]}</span>を${m.count}個けそう`;
+          const url = getMissionIconUrl(m.colorIndex);
+          return `<img src="${url}" style="width:1.3em;height:1.3em;vertical-align:middle;margin:-2px 2px 0 0" alt="${PIECE_NAMES_JA[m.colorIndex]}">を${m.count}個けそう`;
         }
         return `${PIECE_NAMES_JA[m.colorIndex]}を${m.count}個けそう`;
     }
@@ -2167,6 +2170,21 @@
     }
   }
 
+  let missionIconCache = {};
+  function getMissionIconUrl(colorIdx) {
+    if (missionIconCache[colorIdx]) return missionIconCache[colorIdx];
+    const iconSize = 28;
+    const dpr = window.devicePixelRatio || 1;
+    const c = document.createElement("canvas");
+    c.width = iconSize * dpr;
+    c.height = iconSize * dpr;
+    const cx = c.getContext("2d");
+    cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawPlanet(cx, colorIdx, iconSize / 2, iconSize / 2, iconSize * 0.4);
+    missionIconCache[colorIdx] = c.toDataURL();
+    return missionIconCache[colorIdx];
+  }
+
   function initBgStars() {
     bgStars = [];
     const w = boardPixelW, h = boardPixelH;
@@ -2269,6 +2287,116 @@
 
   function stopBgAnim() {
     if (bgAnimId) { cancelAnimationFrame(bgAnimId); bgAnimId = null; }
+  }
+
+  // --- Title screen background ---
+  let titleBgStars = [];
+  let titleBgAnimId = null;
+  let titleShootingStar = null;
+
+  function initTitleBgStars(w, h) {
+    titleBgStars = [];
+    const layers = [
+      { count: 100, speed: 0.06, sizeMin: 0.5, sizeMax: 1.5, alpha: 0.5 },
+      { count: 55, speed: 0.18, sizeMin: 0.8, sizeMax: 2.0, alpha: 0.7 },
+      { count: 25, speed: 0.35, sizeMin: 1.2, sizeMax: 2.8, alpha: 0.9 },
+    ];
+    for (const layer of layers) {
+      for (let i = 0; i < layer.count; i++) {
+        titleBgStars.push({
+          x: Math.random() * w,
+          y: Math.random() * h,
+          size: layer.sizeMin + Math.random() * (layer.sizeMax - layer.sizeMin),
+          speed: layer.speed + Math.random() * layer.speed * 0.3,
+          alpha: layer.alpha * (0.6 + Math.random() * 0.4),
+          twinkle: Math.random() * Math.PI * 2,
+        });
+      }
+    }
+  }
+
+  function startTitleBgAnim() {
+    stopTitleBgAnim();
+    const canvas = document.getElementById("title-bg-canvas");
+    if (!canvas) return;
+    const tCtx = canvas.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+
+    function resize() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      tCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (titleBgStars.length === 0) initTitleBgStars(rect.width, rect.height);
+    }
+    resize();
+
+    function tick() {
+      if (!screens.title.classList.contains("active")) return;
+      const w = canvas.width / dpr;
+      const h = canvas.height / dpr;
+
+      const grad = tCtx.createLinearGradient(0, 0, w * 0.3, h);
+      grad.addColorStop(0, "#0a0a2e");
+      grad.addColorStop(0.5, "#0d1030");
+      grad.addColorStop(1, "#150a30");
+      tCtx.fillStyle = grad;
+      tCtx.fillRect(0, 0, w, h);
+
+      for (const star of titleBgStars) {
+        star.y += star.speed;
+        star.x += star.speed * 0.12;
+        if (star.y > h) { star.y = -2; star.x = Math.random() * w; }
+        if (star.x > w) star.x -= w;
+        star.twinkle += 0.025;
+        const flicker = 0.7 + 0.3 * Math.sin(star.twinkle);
+        tCtx.globalAlpha = star.alpha * flicker;
+        tCtx.fillStyle = "#fff";
+        tCtx.beginPath();
+        tCtx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+        tCtx.fill();
+      }
+      tCtx.globalAlpha = 1;
+
+      if (!titleShootingStar && Math.random() < 0.004) {
+        titleShootingStar = {
+          x: Math.random() * w * 0.7,
+          y: Math.random() * h * 0.4,
+          vx: 3 + Math.random() * 2,
+          vy: 1.5 + Math.random(),
+          life: 1,
+        };
+      }
+      if (titleShootingStar) {
+        const ss = titleShootingStar;
+        ss.x += ss.vx;
+        ss.y += ss.vy;
+        ss.life -= 0.025;
+        if (ss.life <= 0) { titleShootingStar = null; }
+        else {
+          tCtx.save();
+          tCtx.globalAlpha = ss.life;
+          const tailLen = 25;
+          const sg = tCtx.createLinearGradient(ss.x, ss.y, ss.x - ss.vx * tailLen * 0.3, ss.y - ss.vy * tailLen * 0.3);
+          sg.addColorStop(0, "#fff");
+          sg.addColorStop(1, "rgba(255,255,255,0)");
+          tCtx.strokeStyle = sg;
+          tCtx.lineWidth = 1.5;
+          tCtx.beginPath();
+          tCtx.moveTo(ss.x, ss.y);
+          tCtx.lineTo(ss.x - ss.vx * tailLen * 0.3, ss.y - ss.vy * tailLen * 0.3);
+          tCtx.stroke();
+          tCtx.restore();
+        }
+      }
+
+      titleBgAnimId = requestAnimationFrame(tick);
+    }
+    titleBgAnimId = requestAnimationFrame(tick);
+  }
+
+  function stopTitleBgAnim() {
+    if (titleBgAnimId) { cancelAnimationFrame(titleBgAnimId); titleBgAnimId = null; }
   }
 
   function drawSpecialIndicator(ctx, type, cx, cy, r, piece) {
