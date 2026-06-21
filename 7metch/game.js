@@ -3,7 +3,7 @@
 
   let cols = 7;
   let rows = 8;
-  const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#3a86ff", "#ff6bb3", "#88cc44"];
+  const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#c0c8d8", "#ff8a5c", "#1e4fff", "#ff6bb3", "#88cc44"];
   const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross", "octagon"];
   const PIECE_NAMES_JA = ["太陽", "月", "火星", "水星", "木星", "金星", "土星", "地球"];
   const PIECE_SYMBOLS = ["☀️", "🌙", "🔴", "💎", "🟠", "💙", "🪐", "🌍"];
