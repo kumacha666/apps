@@ -44,14 +44,22 @@ h3{font-size:1rem;color:#ffd700;margin:20px 0 8px}
 <div class="section">
 <h1>ナナメッチ ピース リデザイン案</h1>
 <p class="subtitle">フィードバック募集用 — 2026-06-21</p>
-<h2>通常ピース（現在の惑星デザイン）</h2>
-<div class="note">各ピースはCanvas 2D APIで描画された惑星。放射グラデーション+固有の表面ディテール+光沢ハイライト付き。</div>
-<div class="normal-row" id="row-normal"></div>
+<h2>通常ピースの比較</h2>
+<div class="note">ユーザーから「ピースの情報量が多く見にくい」というフィードバックあり。3パターンを比較して方針を決定します。</div>
+<h3>パターンA: 現在のデザイン（惑星）</h3>
+<p style="font-size:.82rem;color:#aaa;margin-bottom:8px">放射グラデーション+固有の表面ディテール+光沢ハイライト。作り込み◎、情報量が多い</p>
+<div class="normal-row" id="row-normal-a"></div>
+<h3>パターンB: シンプル惑星</h3>
+<p style="font-size:.82rem;color:#aaa;margin-bottom:8px">放射グラデーション+光沢のみ。太陽のグロウと土星のリングは残し、他の表面ディテールを削除</p>
+<div class="normal-row" id="row-normal-b"></div>
+<h3>パターンC: フラットデザイン</h3>
+<p style="font-size:.82rem;color:#aaa;margin-bottom:8px">単色の円+最小限のハイライト。最もシンプルで視認性が高い</p>
+<div class="normal-row" id="row-normal-c"></div>
 <h2>レインボーの仕様</h2>
 <div class="note">レインボーは「全色消し」ではなく「単色全消し」が基本。コンボ時のみ全消しや変換が発生します。</div>
 <table class="spec-table">
 <tr><th>操作</th><th>生成条件</th><th>効果</th></tr>
-<tr><td>レインボー単体発動</td><td>5個以上の直線マッチ</td><td>スワップ先のピースと<strong>同じ色のピースを盤面から全消し</strong></td></tr>
+<tr><td>レインボー単体発動</td><td>5個以上の直線マッチ</td><td>マッチした色を記憶し、3マッチ等で消えると<strong>その色のピースを盤面から全消し</strong></td></tr>
 <tr><td>レインボー × ライン</td><td>レインボーとラインピースをスワップ</td><td>対象色の全ピースにライン効果を付与して消去</td></tr>
 <tr><td>レインボー × ボム</td><td>レインボーとボムをスワップ</td><td>対象色の全ピースにボム効果を付与して消去</td></tr>
 <tr><td>レインボー × レインボー</td><td>レインボー同士をスワップ</td><td><strong>盤面全消し（board_clear）</strong></td></tr>
@@ -71,7 +79,7 @@ h3{font-size:1rem;color:#ffd700;margin:20px 0 8px}
 <p style="font-size:.82rem;color:#aaa;margin-bottom:8px">生成: L字・T字マッチ / 効果: 周囲のピースを消去</p>
 <div class="piece-row" id="row-bomb"></div>
 <h2>レインボー — 単色全消し (rainbow)</h2>
-<p style="font-size:.82rem;color:#aaa;margin-bottom:8px">生成: 5個以上直線マッチ / 効果: スワップ先と同色を全消し（レインボー×レインボーで盤面全消し）</p>
+<p style="font-size:.82rem;color:#aaa;margin-bottom:8px">生成: 5個以上直線マッチ / 効果: マッチした色を記憶→消えるとその色を全消し（レインボー×レインボーで盤面全消し）</p>
 <div class="piece-row" id="row-rainbow"></div>
 <h2>カウントダウン — 時限爆弾 (countdown)</h2>
 <p style="font-size:.82rem;color:#aaa;margin-bottom:8px">敵配置ギミック / 効果: カウント0で周囲にダメージ</p>
@@ -204,11 +212,38 @@ function nMeteor(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();const s=r*.85;c
 function nTB(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();const s=r*.85;ctx.shadowColor="#ff4444";ctx.shadowBlur=6;const bg=ctx.createRadialGradient(cx-s*.1,cy,s*.05,cx,cy+s*.05,s*.45);bg.addColorStop(0,"#555");bg.addColorStop(.8,"#222");bg.addColorStop(1,"#111");ctx.fillStyle=bg;ctx.beginPath();ctx.arc(cx,cy+s*.05,s*.45,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#aaa";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx,cy-s*.4);ctx.quadraticCurveTo(cx+s*.15,cy-s*.55,cx+s*.08,cy-s*.65);ctx.stroke();ctx.fillStyle="#ff4444";ctx.shadowColor="#ff0000";ctx.shadowBlur=8;ctx.beginPath();ctx.arc(cx+s*.08,cy-s*.68,s*.08,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle="rgba(0,0,0,0.6)";const dw=s*.5,dh=s*.35;ctx.fillRect(cx-dw/2,cy-dh/2+s*.05,dw,dh);ctx.strokeStyle="#333";ctx.lineWidth=1;ctx.strokeRect(cx-dw/2,cy-dh/2+s*.05,dw,dh);ctx.fillStyle="#ff4444";ctx.shadowColor="#ff0000";ctx.shadowBlur=4;ctx.font=`bold ${s*.55}px monospace`;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("05",cx,cy+s*.08);ctx.restore()}
 function nUS(ctx,cx,cy,r){drawCellBg(ctx,cx,cy,r);ctx.save();const s=r*.85;ctx.shadowColor="#ff2200";ctx.shadowBlur=15;const rg=ctx.createRadialGradient(cx-s*.1,cy-s*.1,s*.05,cx,cy,s*.5);rg.addColorStop(0,"#ff8866");rg.addColorStop(.5,"#cc3311");rg.addColorStop(1,"#661100");ctx.fillStyle=rg;ctx.beginPath();ctx.arc(cx,cy,s*.5,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#ffaa00";ctx.lineWidth=1.5;ctx.shadowColor="#ffaa00";ctx.shadowBlur=4;ctx.beginPath();ctx.moveTo(cx-s*.3,cy-s*.1);ctx.lineTo(cx,cy);ctx.lineTo(cx+s*.15,cy-s*.3);ctx.stroke();ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+s*.1,cy+s*.35);ctx.stroke();ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx-s*.2,cy+s*.25);ctx.stroke();ctx.shadowColor="#ffd700";ctx.shadowBlur=8;ctx.fillStyle="#fff";ctx.font=`bold ${s*.7}px sans-serif`;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("5",cx,cy+s*.02);ctx.restore()}
 
+function drawSimplePlanet(ctx,ci,cx,cy,r){
+  ctx.save();const color=PC[ci];
+  ctx.shadowColor=color;ctx.shadowBlur=r*0.6;
+  const g=ctx.createRadialGradient(cx-r*.25,cy-r*.25,r*.1,cx,cy,r);
+  g.addColorStop(0,lc(color,60));g.addColorStop(.5,color);g.addColorStop(1,dc(color,60));
+  ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fillStyle=g;ctx.fill();
+  ctx.shadowBlur=0;
+  if(ci===0){ctx.save();const sg=ctx.createRadialGradient(cx,cy,r*.3,cx,cy,r*1.1);sg.addColorStop(0,"rgba(255,255,180,0)");sg.addColorStop(.7,"rgba(255,224,160,0.15)");sg.addColorStop(1,"rgba(255,224,160,0)");ctx.fillStyle=sg;ctx.beginPath();ctx.arc(cx,cy,r*1.1,0,Math.PI*2);ctx.fill();ctx.restore()}
+  if(ci===6){ctx.save();ctx.globalAlpha=.5;ctx.beginPath();ctx.ellipse(cx,cy,r*1.4,r*.35,-.15,0,Math.PI*2);ctx.strokeStyle=lc(color,50);ctx.lineWidth=r*.15;ctx.stroke();ctx.restore()}
+  const hl=ctx.createRadialGradient(cx-r*.3,cy-r*.3,0,cx-r*.3,cy-r*.3,r*.6);
+  hl.addColorStop(0,"rgba(255,255,255,0.45)");hl.addColorStop(1,"rgba(255,255,255,0)");
+  ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fillStyle=hl;ctx.fill();ctx.restore()
+}
+function drawFlatPiece(ctx,ci,cx,cy,r){
+  ctx.save();const color=PC[ci];
+  ctx.shadowColor=color;ctx.shadowBlur=r*0.4;
+  ctx.fillStyle=color;ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fill();
+  ctx.shadowBlur=0;
+  const hl=ctx.createRadialGradient(cx-r*.25,cy-r*.25,0,cx-r*.25,cy-r*.25,r*.5);
+  hl.addColorStop(0,"rgba(255,255,255,0.35)");hl.addColorStop(1,"rgba(255,255,255,0)");
+  ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fillStyle=hl;ctx.fill();
+  ctx.strokeStyle=dc(color,40);ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.stroke();
+  ctx.restore()
+}
+
 function drawBgDemo(ctx,w,h,anim){const bg=ctx.createLinearGradient(0,0,0,h);bg.addColorStop(0,"#0a0a2e");bg.addColorStop(.5,"#0d1030");bg.addColorStop(1,"#150a30");ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);const rng=(seed)=>{let s=seed;return()=>{s=(s*16807)%2147483647;return s/2147483647}};const rand=rng(42);for(let i=0;i<40;i++){const x=rand()*w,y=rand()*h,r=.5+rand()*2,a=.4+rand()*.6;ctx.fillStyle=`rgba(255,255,255,${a})`;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill()}ctx.fillStyle="rgba(255,255,255,0.7)";ctx.font="bold 11px sans-serif";ctx.textAlign="center";ctx.fillText(anim?"アニメーションあり":"固定（アニメなし）",w/2,h-8);if(anim){const sg=ctx.createLinearGradient(w*.2,h*.15,w*.6,h*.35);sg.addColorStop(0,"rgba(255,255,255,0)");sg.addColorStop(.7,"#fff");sg.addColorStop(1,"#fff");ctx.strokeStyle=sg;ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(w*.2,h*.15);ctx.lineTo(w*.6,h*.35);ctx.stroke();ctx.fillStyle="rgba(255,255,200,0.4)";ctx.font="16px sans-serif";ctx.fillText("✦ ↘",w*.75,h*.25)}}
 
 // ===== BUILD =====
-const nr=document.getElementById("row-normal");
-PN.forEach((n,i)=>{const div=document.createElement("div");div.className="normal-card";const{c,ctx}=mc(72,72);ctx.fillStyle="rgba(10,18,40,0.6)";ctx.fillRect(0,0,72,72);drawPlanet(ctx,i,36,36,28);const lb=document.createElement("div");lb.className="card-label";lb.textContent=n;const d=document.createElement("div");d.className="card-desc";d.textContent=PC[i];div.appendChild(c);div.appendChild(lb);div.appendChild(d);nr.appendChild(div)});
+function buildNormalRow(containerId,drawFn){const row=document.getElementById(containerId);PN.forEach((n,i)=>{const div=document.createElement("div");div.className="normal-card";const{c,ctx}=mc(72,72);ctx.fillStyle="rgba(10,18,40,0.6)";ctx.fillRect(0,0,72,72);drawFn(ctx,i,36,36,28);const lb=document.createElement("div");lb.className="card-label";lb.textContent=n;const d=document.createElement("div");d.className="card-desc";d.textContent=PC[i];div.appendChild(c);div.appendChild(lb);div.appendChild(d);row.appendChild(div)})}
+buildNormalRow("row-normal-a",drawPlanet);
+buildNormalRow("row-normal-b",drawSimplePlanet);
+buildNormalRow("row-normal-c",drawFlatPiece);
 
 card(document.getElementById("row-line_h"),"現状","惑星+彗星の尾",curLH,true);card(document.getElementById("row-line_h"),"案A: ロケット","横向きロケット+噴射炎",nRH,false);card(document.getElementById("row-line_h"),"案B: 矢印ビーム","レーザービーム+矢印",nBH,false);card(document.getElementById("row-line_h"),"案C: 流れ星","尾を引く星+金の軌跡",nSH,false);
 card(document.getElementById("row-line_v"),"現状","惑星+彗星の尾",curLV,true);card(document.getElementById("row-line_v"),"案A: ロケット","上向きロケット+噴射炎",nRV,false);card(document.getElementById("row-line_v"),"案B: 矢印ビーム","縦レーザービーム",nBV,false);card(document.getElementById("row-line_v"),"案C: 流れ星","縦の流れ星",nSV,false);
