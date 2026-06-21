@@ -744,6 +744,12 @@ body {
   text-align: center !important;
   white-space: nowrap;
 }
+.help-piece-canvas {
+  display: block;
+  margin: 0 auto;
+  width: 36px;
+  height: 36px;
+}
 
 .coin-icon {
   display: inline-block;

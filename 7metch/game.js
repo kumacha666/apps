@@ -5549,8 +5549,23 @@
     showScreen("title");
   });
 
+  function renderHelpPieceIcons() {
+    document.querySelectorAll(".help-piece-canvas").forEach(cv => {
+      const type = cv.dataset.special;
+      const dpr = window.devicePixelRatio || 1;
+      const size = 48 * dpr;
+      cv.width = size;
+      cv.height = size;
+      const ctx = cv.getContext("2d");
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, 48, 48);
+      drawSpecialIcon(ctx, type, 24, 24, 20, null);
+    });
+  }
+
   document.getElementById("btn-help").addEventListener("click", () => {
     showScreen("help");
+    renderHelpPieceIcons();
   });
 
   document.getElementById("btn-back-help").addEventListener("click", () => {
