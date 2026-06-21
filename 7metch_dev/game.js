@@ -123,7 +123,7 @@
   }
 
   // --- BGM System ---
-  const BGM_MASTER = 0.20;
+  const BGM_MASTER = 0.70;
   const BGM_CROSSFADE_MS = 500;
 
   const BGM_SCALE = {
@@ -5710,6 +5710,15 @@
 
   document.getElementById("btn-debug-open").addEventListener("click", () => {
     document.getElementById("debug-panel").classList.remove("hidden");
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!audioCtx || !bgmInitialized) return;
+    if (document.hidden) {
+      audioCtx.suspend();
+    } else {
+      if (soundEnabled) audioCtx.resume();
+    }
   });
 
   showScreen("title");
