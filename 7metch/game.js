@@ -3028,7 +3028,9 @@
     animating = true;
     clearHint();
 
-    SFX.combo(piece.special);
+    if (piece.special === "bomb") SFX.bomb();
+    else if (piece.special === "line_d") { SFX.line(); SFX.diagonal(); }
+    else if (piece.special === "line_h" || piece.special === "line_v") SFX.line();
     track("tap_activate", { type: piece.special, stage: STAGES[currentStage].name });
     movesLeft--;
     chainCount = 1;
