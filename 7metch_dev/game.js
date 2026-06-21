@@ -68,156 +68,1548 @@
   }
 
   // --- Sound ---
+  // --- Sound System ---
   let audioCtx = null;
   let soundEnabled = true;
+  let masterGain = null;
 
   function initAudio() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!audioCtx) {
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = 0.3;
+        masterGain.connect(audioCtx.destination);
+      } catch (e) {
+        soundEnabled = false;
+        return;
+      }
+    }
     if (audioCtx.state === "suspended") audioCtx.resume();
   }
 
-  function playTone(freq, duration, type, vol, delay) {
-    if (!soundEnabled || !audioCtx) return;
-    const t = audioCtx.currentTime + (delay || 0);
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = type || "sine";
-    osc.frequency.setValueAtTime(freq, t);
-    gain.gain.setValueAtTime(vol || 0.15, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.start(t);
-    osc.stop(t + duration);
+  function now() {
+    return audioCtx.currentTime;
   }
 
-  function playSweep(startFreq, endFreq, duration, type, vol, delay) {
-    if (!soundEnabled || !audioCtx) return;
-    const t = audioCtx.currentTime + (delay || 0);
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = type || "sine";
-    osc.frequency.setValueAtTime(startFreq, t);
-    osc.frequency.linearRampToValueAtTime(endFreq, t + duration);
-    gain.gain.setValueAtTime(vol || 0.15, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.start(t);
-    osc.stop(t + duration);
-  }
-
-  function playNoise(duration, vol, filterFreq, filterType, delay) {
-    if (!soundEnabled || !audioCtx) return;
-    const t = audioCtx.currentTime + (delay || 0);
-    const bufSize = Math.ceil(audioCtx.sampleRate * duration);
-    const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
-    const src = audioCtx.createBufferSource();
-    src.buffer = buf;
-    const gain = audioCtx.createGain();
-    gain.gain.setValueAtTime(vol || 0.05, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
-    if (filterFreq) {
-      const filter = audioCtx.createBiquadFilter();
-      filter.type = filterType || "lowpass";
-      filter.frequency.setValueAtTime(filterFreq, t);
-      src.connect(filter);
-      filter.connect(gain);
-    } else {
-      src.connect(gain);
+  function createNoiseBuffer(duration) {
+    const sampleRate = audioCtx.sampleRate;
+    const length = sampleRate * duration;
+    const buffer = audioCtx.createBuffer(1, length, sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) {
+      data[i] = Math.random() * 2 - 1;
     }
-    gain.connect(audioCtx.destination);
-    src.start(t);
-    src.stop(t + duration);
+    return buffer;
+  }
+
+  function createNoise(duration) {
+    const source = audioCtx.createBufferSource();
+    source.buffer = createNoiseBuffer(duration);
+    return source;
+  }
+
+  function createPanner(value) {
+    if (audioCtx.createStereoPanner) {
+      const panner = audioCtx.createStereoPanner();
+      panner.pan.value = value;
+      return panner;
+    }
+    // Fallback: use gain node (no panning, but no error)
+    const gain = audioCtx.createGain();
+    gain.gain.value = 1;
+    return gain;
   }
 
   const SFX = {
+
+    // 1. swap() - Warp sound (~0.2s)
     swap() {
-      playSweep(250, 800, 0.12, "sine", 0.10);
-      playSweep(300, 900, 0.10, "triangle", 0.06, 0.02);
-      playNoise(0.08, 0.03, 2500, "bandpass", 0.02);
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // Sine sweep 200→800Hz
+      const osc1 = audioCtx.createOscillator();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(200, t);
+      osc1.frequency.exponentialRampToValueAtTime(800, t + 0.18);
+      const g1 = audioCtx.createGain();
+      g1.gain.setValueAtTime(0.15, t);
+      g1.gain.linearRampToValueAtTime(0.0, t + 0.2);
+      osc1.connect(g1).connect(masterGain);
+      osc1.start(t);
+      osc1.stop(t + 0.2);
+
+      // Triangle sweep 250→900Hz
+      const osc2 = audioCtx.createOscillator();
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(250, t);
+      osc2.frequency.exponentialRampToValueAtTime(900, t + 0.18);
+      const g2 = audioCtx.createGain();
+      g2.gain.setValueAtTime(0.1, t);
+      g2.gain.linearRampToValueAtTime(0.0, t + 0.2);
+      osc2.connect(g2).connect(masterGain);
+      osc2.start(t);
+      osc2.stop(t + 0.2);
+
+      // Bandpass noise whoosh
+      const noise = createNoise(0.2);
+      const bp = audioCtx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(400, t);
+      bp.frequency.exponentialRampToValueAtTime(1200, t + 0.15);
+      bp.Q.value = 2;
+      const gn = audioCtx.createGain();
+      gn.gain.setValueAtTime(0.08, t);
+      gn.gain.linearRampToValueAtTime(0.0, t + 0.2);
+      noise.connect(bp).connect(gn).connect(masterGain);
+      noise.start(t);
+      noise.stop(t + 0.2);
     },
+
+    // 2. invalidSwap() - Error buzz (~0.25s)
     invalidSwap() {
-      playTone(150, 0.12, "square", 0.07);
-      playTone(140, 0.12, "square", 0.06, 0.03);
-      playTone(130, 0.15, "square", 0.05, 0.08);
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // Two detuned square waves at 150Hz
+      for (let i = 0; i < 2; i++) {
+        const osc = audioCtx.createOscillator();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(150, t);
+        osc.detune.setValueAtTime(i === 0 ? -15 : 15, t);
+
+        // 8Hz LFO vibrato
+        const lfo = audioCtx.createOscillator();
+        lfo.type = 'sine';
+        lfo.frequency.value = 8;
+        const lfoGain = audioCtx.createGain();
+        lfoGain.gain.value = 20;
+        lfo.connect(lfoGain).connect(osc.frequency);
+        lfo.start(t);
+        lfo.stop(t + 0.25);
+
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.12, t);
+        g.gain.setValueAtTime(0.12, t + 0.15);
+        g.gain.linearRampToValueAtTime(0.0, t + 0.25);
+        osc.connect(g).connect(masterGain);
+        osc.start(t);
+        osc.stop(t + 0.25);
+      }
     },
-    clear(chain) {
-      const base = 523 + Math.min(chain - 1, 5) * 80;
-      playTone(base, 0.15, "sine", 0.11);
-      playTone(base + 3, 0.15, "sine", 0.08);
-      playTone(base - 3, 0.15, "sine", 0.08);
-      playTone(base * 1.5, 0.05, "sine", 0.06, 0.05);
-      playTone(3000 + chain * 200, 0.03, "sine", 0.04, 0.02);
-      playTone(3500 + chain * 200, 0.03, "sine", 0.03, 0.05);
-      playTone(base * 0.5, 0.08, "sine", 0.04, 0.04);
-    },
-    bomb() {
-      playNoise(0.6, 0.12, 6000, "lowpass");
-      playSweep(200, 40, 0.5, "sawtooth", 0.15, 0.02);
-      playTone(60, 0.6, "sine", 0.18, 0.05);
-      playTone(55, 0.5, "sine", 0.12, 0.08);
-      playSweep(80, 30, 0.4, "sawtooth", 0.08, 0.1);
-      playTone(200, 0.1, "sine", 0.06, 0.15);
-      playTone(150, 0.15, "sine", 0.04, 0.25);
-    },
-    line() {
-      playSweep(1500, 400, 0.2, "sawtooth", 0.08);
-      playSweep(500, 1200, 0.2, "sawtooth", 0.07, 0.15);
-      playNoise(0.35, 0.05, 2000, "bandpass");
-      playTone(300, 0.05, "sine", 0.04, 0.1);
-    },
-    rainbow() {
-      playTone(80, 0.6, "sine", 0.12);
-      playSweep(1500, 60, 0.5, "sine", 0.10, 0.05);
-      playSweep(1200, 80, 0.4, "triangle", 0.06, 0.08);
-      playTone(120, 0.3, "triangle", 0.08, 0.1);
-      playNoise(0.4, 0.04, 800, "lowpass", 0.1);
-    },
-    combo() {
-      playSweep(200, 1000, 0.15, "sine", 0.10);
-      playSweep(2000, 1000, 0.15, "sawtooth", 0.06);
-      playNoise(0.1, 0.06, 3000, "bandpass", 0.12);
-      playTone(80, 0.15, "sine", 0.10, 0.12);
-      playTone(1200, 0.08, "sine", 0.05, 0.15);
-    },
-    stageClear() {
-      const notes = [523, 659, 784, 1047];
-      notes.forEach((f, i) => {
-        playTone(f, 0.3, "triangle", 0.10, i * 0.1);
-        playTone(f, 0.3, "sine", 0.08, i * 0.1);
-        playTone(f * 0.5, 0.25, "sine", 0.04, i * 0.1);
-      });
-      playTone(1047, 0.5, "sine", 0.06, 0.4);
-      playTone(1047, 0.5, "triangle", 0.04, 0.42);
-    },
-    stageFail() {
-      playTone(400, 0.25, "sine", 0.08);
-      playTone(350, 0.25, "sine", 0.08, 0.18);
-      playTone(280, 0.4, "sine", 0.07, 0.36);
-      playTone(280, 0.3, "triangle", 0.04, 0.38);
-    },
+
+    // 3. drop() - Floating drop (~0.2s)
     drop() {
-      playSweep(400, 220, 0.1, "sine", 0.04);
-      playTone(220, 0.05, "sine", 0.02, 0.06);
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // Sine sweep 400→200Hz (exponential)
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(400, t);
+      osc.frequency.exponentialRampToValueAtTime(200, t + 0.18);
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.15, t);
+      g.gain.linearRampToValueAtTime(0.0, t + 0.2);
+      osc.connect(g).connect(masterGain);
+      osc.start(t);
+      osc.stop(t + 0.2);
+
+      // Delay echo (40ms, -12dB)
+      const osc2 = audioCtx.createOscillator();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(400, t + 0.04);
+      osc2.frequency.exponentialRampToValueAtTime(200, t + 0.22);
+      const g2 = audioCtx.createGain();
+      g2.gain.setValueAtTime(0.0, t);
+      g2.gain.setValueAtTime(0.15 * 0.25, t + 0.04); // -12dB ≈ 0.25
+      g2.gain.linearRampToValueAtTime(0.0, t + 0.24);
+      osc2.connect(g2).connect(masterGain);
+      osc2.start(t + 0.04);
+      osc2.stop(t + 0.24);
     },
+
+    // 4. clear(chain) - Star extinction (~0.35s)
+    clear(chain) {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+      chain = chain || 1;
+      const baseFreq = 523 + (chain - 1) * 80;
+
+      // Three detuned sines
+      for (let i = -1; i <= 1; i++) {
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(baseFreq, t);
+        osc.detune.setValueAtTime(i * 12, t);
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.12, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+        osc.connect(g).connect(masterGain);
+        osc.start(t);
+        osc.stop(t + 0.35);
+      }
+
+      // Sparkle pings (2+chain count, 2000-4000Hz range)
+      const sparkleCount = 2 + chain;
+      for (let i = 0; i < sparkleCount; i++) {
+        const freq = 2000 + Math.random() * 2000;
+        const delay = Math.random() * 0.15;
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t + delay);
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0, t);
+        g.gain.setValueAtTime(0.08, t + delay);
+        g.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.12);
+        osc.connect(g).connect(masterGain);
+        osc.start(t + delay);
+        osc.stop(t + delay + 0.15);
+      }
+
+      // Delay echo (50ms)
+      const echoOsc = audioCtx.createOscillator();
+      echoOsc.type = 'sine';
+      echoOsc.frequency.setValueAtTime(baseFreq * 1.5, t + 0.05);
+      const eg = audioCtx.createGain();
+      eg.gain.setValueAtTime(0.0, t);
+      eg.gain.setValueAtTime(0.06, t + 0.05);
+      eg.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      echoOsc.connect(eg).connect(masterGain);
+      echoOsc.start(t + 0.05);
+      echoOsc.stop(t + 0.35);
+    },
+
+    // 5. line() - Comet pass (~0.5s)
+    line() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // Sawtooth Doppler sweep 1500→400→1200Hz with synced lowpass
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(1500, t);
+      osc.frequency.exponentialRampToValueAtTime(400, t + 0.25);
+      osc.frequency.exponentialRampToValueAtTime(1200, t + 0.48);
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(3000, t);
+      lp.frequency.exponentialRampToValueAtTime(600, t + 0.25);
+      lp.frequency.exponentialRampToValueAtTime(2500, t + 0.48);
+      lp.Q.value = 3;
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.1, t);
+      g.gain.setValueAtTime(0.1, t + 0.35);
+      g.gain.linearRampToValueAtTime(0.0, t + 0.5);
+
+      // Stereo pan left→right
+      const panner = createPanner(-1);
+      if (panner.pan) {
+        panner.pan.setValueAtTime(-1, t);
+        panner.pan.linearRampToValueAtTime(1, t + 0.5);
+      }
+      osc.connect(lp).connect(g).connect(panner).connect(masterGain);
+      osc.start(t);
+      osc.stop(t + 0.5);
+
+      // Bandpass noise whoosh
+      const noise = createNoise(0.5);
+      const bp = audioCtx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(2000, t);
+      bp.frequency.exponentialRampToValueAtTime(500, t + 0.25);
+      bp.frequency.exponentialRampToValueAtTime(1500, t + 0.5);
+      bp.Q.value = 1.5;
+      const gn = audioCtx.createGain();
+      gn.gain.setValueAtTime(0.06, t);
+      gn.gain.linearRampToValueAtTime(0.0, t + 0.5);
+      const panner2 = createPanner(-1);
+      if (panner2.pan) {
+        panner2.pan.setValueAtTime(-1, t);
+        panner2.pan.linearRampToValueAtTime(1, t + 0.5);
+      }
+      noise.connect(bp).connect(gn).connect(panner2).connect(masterGain);
+      noise.start(t);
+      noise.stop(t + 0.5);
+    },
+
+    // 6. bomb() - Supernova (~0.8s)
+    bomb() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // Noise burst through sweeping lowpass 8k→200Hz
+      const noise = createNoise(0.8);
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(8000, t);
+      lp.frequency.exponentialRampToValueAtTime(200, t + 0.6);
+      lp.Q.value = 2;
+      const gn = audioCtx.createGain();
+      gn.gain.setValueAtTime(0.2, t);
+      gn.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+      noise.connect(lp).connect(gn).connect(masterGain);
+      noise.start(t);
+      noise.stop(t + 0.8);
+
+      // Sub-bass 60Hz
+      const sub = audioCtx.createOscillator();
+      sub.type = 'sine';
+      sub.frequency.value = 60;
+      const gs = audioCtx.createGain();
+      gs.gain.setValueAtTime(0.2, t);
+      gs.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      sub.connect(gs).connect(masterGain);
+      sub.start(t);
+      sub.stop(t + 0.7);
+
+      // 3 detuned sawtooth rumble 40/55/75Hz through lowpass 150Hz
+      [40, 55, 75].forEach(freq => {
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.value = freq;
+        const lp2 = audioCtx.createBiquadFilter();
+        lp2.type = 'lowpass';
+        lp2.frequency.value = 150;
+        lp2.Q.value = 1;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.1, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
+        osc.connect(lp2).connect(g).connect(masterGain);
+        osc.start(t);
+        osc.stop(t + 0.8);
+      });
+
+      // Shockwave ping 200Hz with delay echo
+      const ping = audioCtx.createOscillator();
+      ping.type = 'sine';
+      ping.frequency.setValueAtTime(200, t);
+      ping.frequency.exponentialRampToValueAtTime(80, t + 0.3);
+      const gp = audioCtx.createGain();
+      gp.gain.setValueAtTime(0.15, t);
+      gp.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      ping.connect(gp).connect(masterGain);
+      ping.start(t);
+      ping.stop(t + 0.3);
+
+      // Delay echo of shockwave
+      const ping2 = audioCtx.createOscillator();
+      ping2.type = 'sine';
+      ping2.frequency.setValueAtTime(200, t + 0.08);
+      ping2.frequency.exponentialRampToValueAtTime(80, t + 0.38);
+      const gp2 = audioCtx.createGain();
+      gp2.gain.setValueAtTime(0.0, t);
+      gp2.gain.setValueAtTime(0.07, t + 0.08);
+      gp2.gain.exponentialRampToValueAtTime(0.001, t + 0.38);
+      ping2.connect(gp2).connect(masterGain);
+      ping2.start(t + 0.08);
+      ping2.stop(t + 0.4);
+    },
+
+    // 7. rainbow() - Black hole (~0.8s)
+    rainbow() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // Low sine 80Hz drone with 3Hz LFO vibrato, REVERSED envelope
+      const drone = audioCtx.createOscillator();
+      drone.type = 'sine';
+      drone.frequency.value = 80;
+      const lfo = audioCtx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.value = 3;
+      const lfoGain = audioCtx.createGain();
+      lfoGain.gain.value = 15;
+      lfo.connect(lfoGain).connect(drone.frequency);
+      lfo.start(t);
+      lfo.stop(t + 0.8);
+      // Reversed envelope: quiet→swell→peak→cut
+      const gd = audioCtx.createGain();
+      gd.gain.setValueAtTime(0.02, t);
+      gd.gain.linearRampToValueAtTime(0.18, t + 0.55);
+      gd.gain.setValueAtTime(0.18, t + 0.65);
+      gd.gain.linearRampToValueAtTime(0.0, t + 0.72);
+      drone.connect(gd).connect(masterGain);
+      drone.start(t);
+      drone.stop(t + 0.8);
+
+      // 3 sawtooth sweep 1500/1600/1700→60Hz through closing lowpass
+      [1500, 1600, 1700].forEach(startFreq => {
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(startFreq, t);
+        osc.frequency.exponentialRampToValueAtTime(60, t + 0.7);
+        const lp = audioCtx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(4000, t);
+        lp.frequency.exponentialRampToValueAtTime(100, t + 0.7);
+        lp.Q.value = 4;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.01, t);
+        g.gain.linearRampToValueAtTime(0.08, t + 0.5);
+        g.gain.linearRampToValueAtTime(0.0, t + 0.75);
+        osc.connect(lp).connect(g).connect(masterGain);
+        osc.start(t);
+        osc.stop(t + 0.8);
+      });
+
+      // Eerie triangle harmonics at 120/160Hz
+      [120, 160].forEach(freq => {
+        const osc = audioCtx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.value = freq;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.01, t);
+        g.gain.linearRampToValueAtTime(0.1, t + 0.5);
+        g.gain.linearRampToValueAtTime(0.0, t + 0.75);
+        osc.connect(g).connect(masterGain);
+        osc.start(t);
+        osc.stop(t + 0.8);
+      });
+    },
+
+    // 8. diagonal() - Meteor shower (~0.4s)
+    diagonal() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // 5 sequential descending sine pings, spaced 60ms
+      for (let i = 0; i < 5; i++) {
+        const startTime = t + i * 0.06;
+        const startFreq = 1200 + (Math.random() * 200 - 100);
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(startFreq, startTime);
+        osc.frequency.exponentialRampToValueAtTime(startFreq - 600, startTime + 0.08);
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0, t);
+        g.gain.setValueAtTime(0.12, startTime);
+        g.gain.exponentialRampToValueAtTime(0.001, startTime + 0.1);
+        osc.connect(g).connect(masterGain);
+        osc.start(startTime);
+        osc.stop(startTime + 0.12);
+
+        // Highpass noise sparkle tail
+        const noise = createNoise(0.1);
+        const hp = audioCtx.createBiquadFilter();
+        hp.type = 'highpass';
+        hp.frequency.value = 4000 + i * 400;
+        hp.Q.value = 1;
+        const gn = audioCtx.createGain();
+        gn.gain.setValueAtTime(0.0, t);
+        gn.gain.setValueAtTime(0.05, startTime);
+        gn.gain.exponentialRampToValueAtTime(0.001, startTime + 0.08);
+        noise.connect(hp).connect(gn).connect(masterGain);
+        noise.start(startTime);
+        noise.stop(startTime + 0.1);
+      }
+    },
+
+    // 9. cross() - Comet collision (~0.5s)
+    cross() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // Ascending sawtooth sweep 200→1000Hz
+      const osc1 = audioCtx.createOscillator();
+      osc1.type = 'sawtooth';
+      osc1.frequency.setValueAtTime(200, t);
+      osc1.frequency.exponentialRampToValueAtTime(1000, t + 0.25);
+      const lp1 = audioCtx.createBiquadFilter();
+      lp1.type = 'lowpass';
+      lp1.frequency.value = 2000;
+      lp1.Q.value = 2;
+      const g1 = audioCtx.createGain();
+      g1.gain.setValueAtTime(0.1, t);
+      g1.gain.linearRampToValueAtTime(0.15, t + 0.24);
+      g1.gain.linearRampToValueAtTime(0.0, t + 0.35);
+      osc1.connect(lp1).connect(g1).connect(masterGain);
+      osc1.start(t);
+      osc1.stop(t + 0.35);
+
+      // Descending sawtooth sweep 2000→1000Hz
+      const osc2 = audioCtx.createOscillator();
+      osc2.type = 'sawtooth';
+      osc2.frequency.setValueAtTime(2000, t);
+      osc2.frequency.exponentialRampToValueAtTime(1000, t + 0.25);
+      const lp2 = audioCtx.createBiquadFilter();
+      lp2.type = 'lowpass';
+      lp2.frequency.value = 3000;
+      lp2.Q.value = 2;
+      const g2 = audioCtx.createGain();
+      g2.gain.setValueAtTime(0.1, t);
+      g2.gain.linearRampToValueAtTime(0.15, t + 0.24);
+      g2.gain.linearRampToValueAtTime(0.0, t + 0.35);
+      osc2.connect(lp2).connect(g2).connect(masterGain);
+      osc2.start(t);
+      osc2.stop(t + 0.35);
+
+      // Impact: noise burst at convergence
+      const noise = createNoise(0.3);
+      const lp3 = audioCtx.createBiquadFilter();
+      lp3.type = 'lowpass';
+      lp3.frequency.setValueAtTime(6000, t + 0.25);
+      lp3.frequency.exponentialRampToValueAtTime(200, t + 0.5);
+      lp3.Q.value = 1;
+      const gn = audioCtx.createGain();
+      gn.gain.setValueAtTime(0.0, t);
+      gn.gain.setValueAtTime(0.18, t + 0.25);
+      gn.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      noise.connect(lp3).connect(gn).connect(masterGain);
+      noise.start(t + 0.2);
+      noise.stop(t + 0.5);
+
+      // Sub-bass 80Hz thump at impact
+      const sub = audioCtx.createOscillator();
+      sub.type = 'sine';
+      sub.frequency.value = 80;
+      const gs = audioCtx.createGain();
+      gs.gain.setValueAtTime(0.0, t);
+      gs.gain.setValueAtTime(0.2, t + 0.25);
+      gs.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      sub.connect(gs).connect(masterGain);
+      sub.start(t + 0.25);
+      sub.stop(t + 0.5);
+    },
+
+    // 10. starCross() - Meteor storm (~0.6s)
+    starCross() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // 4 directional sweeps converging to 800Hz
+      const starts = [200, 2000, 400, 1600];
+      starts.forEach((startFreq, i) => {
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(startFreq, t);
+        osc.frequency.exponentialRampToValueAtTime(800, t + 0.3);
+        const lp = audioCtx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = 2500;
+        lp.Q.value = 2;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.08, t);
+        g.gain.linearRampToValueAtTime(0.12, t + 0.28);
+        g.gain.linearRampToValueAtTime(0.0, t + 0.4);
+        // Pan each sweep to a different position
+        const panVal = [-0.8, 0.8, -0.4, 0.4][i];
+        const panner = createPanner(panVal);
+        if (panner.pan) {
+          panner.pan.setValueAtTime(panVal, t);
+          panner.pan.linearRampToValueAtTime(0, t + 0.3);
+        }
+        osc.connect(lp).connect(g).connect(panner).connect(masterGain);
+        osc.start(t);
+        osc.stop(t + 0.4);
+      });
+
+      // Impact noise burst
+      const noise = createNoise(0.3);
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(8000, t + 0.3);
+      lp.frequency.exponentialRampToValueAtTime(300, t + 0.6);
+      lp.Q.value = 1;
+      const gn = audioCtx.createGain();
+      gn.gain.setValueAtTime(0.0, t);
+      gn.gain.setValueAtTime(0.15, t + 0.3);
+      gn.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+      noise.connect(lp).connect(gn).connect(masterGain);
+      noise.start(t + 0.25);
+      noise.stop(t + 0.6);
+
+      // 3 shimmer pings
+      for (let i = 0; i < 3; i++) {
+        const freq = 1800 + i * 600;
+        const delay = 0.3 + i * 0.04;
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t + delay);
+        osc.frequency.exponentialRampToValueAtTime(freq * 0.7, t + delay + 0.15);
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0, t);
+        g.gain.setValueAtTime(0.1, t + delay);
+        g.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.15);
+        osc.connect(g).connect(masterGain);
+        osc.start(t + delay);
+        osc.stop(t + delay + 0.18);
+      }
+    },
+
+    // 11. tripleLine() - Comet swarm (~0.6s)
+    tripleLine() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // 3 detuned sawtooth sweeps with V-shaped Doppler curves
+      [-100, 0, 100].forEach((detuneCents, i) => {
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.detune.setValueAtTime(detuneCents, t);
+        // V-shaped Doppler: high → low → high
+        osc.frequency.setValueAtTime(1400 + i * 50, t);
+        osc.frequency.exponentialRampToValueAtTime(350, t + 0.3);
+        osc.frequency.exponentialRampToValueAtTime(1200 + i * 50, t + 0.58);
+        const lp = audioCtx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(3000, t);
+        lp.frequency.exponentialRampToValueAtTime(600, t + 0.3);
+        lp.frequency.exponentialRampToValueAtTime(2500, t + 0.58);
+        lp.Q.value = 3;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.08, t);
+        g.gain.setValueAtTime(0.08, t + 0.45);
+        g.gain.linearRampToValueAtTime(0.0, t + 0.6);
+        const panVal = (i - 1) * 0.6;
+        const panner = createPanner(panVal);
+        osc.connect(lp).connect(g).connect(panner).connect(masterGain);
+        osc.start(t);
+        osc.stop(t + 0.6);
+      });
+
+      // Heavy bandpass noise
+      const noise = createNoise(0.6);
+      const bp = audioCtx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(1800, t);
+      bp.frequency.exponentialRampToValueAtTime(400, t + 0.3);
+      bp.frequency.exponentialRampToValueAtTime(1500, t + 0.6);
+      bp.Q.value = 2;
+      const gn = audioCtx.createGain();
+      gn.gain.setValueAtTime(0.1, t);
+      gn.gain.linearRampToValueAtTime(0.0, t + 0.6);
+      noise.connect(bp).connect(gn).connect(masterGain);
+      noise.start(t);
+      noise.stop(t + 0.6);
+    },
+
+    // 12. bigBomb() - Big bang (~1.2s)
+    bigBomb() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+      const onset = t + 0.02; // 20ms silence
+
+      // Massive noise burst (lowpass 12k→100Hz)
+      const noise = createNoise(1.2);
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(12000, onset);
+      lp.frequency.exponentialRampToValueAtTime(100, onset + 0.9);
+      lp.Q.value = 2;
+      const gn = audioCtx.createGain();
+      gn.gain.setValueAtTime(0.0, t);
+      gn.gain.setValueAtTime(0.5, onset);
+      gn.gain.exponentialRampToValueAtTime(0.001, onset + 1.1);
+      noise.connect(lp).connect(gn).connect(masterGain);
+      noise.start(onset);
+      noise.stop(onset + 1.18);
+
+      // Deep sub-bass 45Hz
+      const sub = audioCtx.createOscillator();
+      sub.type = 'sine';
+      sub.frequency.value = 45;
+      const gs = audioCtx.createGain();
+      gs.gain.setValueAtTime(0.0, t);
+      gs.gain.setValueAtTime(0.25, onset);
+      gs.gain.exponentialRampToValueAtTime(0.001, onset + 1.0);
+      sub.connect(gs).connect(masterGain);
+      sub.start(onset);
+      sub.stop(onset + 1.0);
+
+      // 4 detuned rumble 35/50/65/80Hz
+      [35, 50, 65, 80].forEach(freq => {
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.value = freq;
+        const lpR = audioCtx.createBiquadFilter();
+        lpR.type = 'lowpass';
+        lpR.frequency.value = 180;
+        lpR.Q.value = 1;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0, t);
+        g.gain.setValueAtTime(0.08, onset);
+        g.gain.exponentialRampToValueAtTime(0.001, onset + 1.0);
+        osc.connect(lpR).connect(g).connect(masterGain);
+        osc.start(onset);
+        osc.stop(onset + 1.0);
+      });
+
+      // 3 shockwave pings with delays
+      for (let i = 0; i < 3; i++) {
+        const delay = i * 0.12;
+        const ping = audioCtx.createOscillator();
+        ping.type = 'sine';
+        ping.frequency.setValueAtTime(250 - i * 40, onset + delay);
+        ping.frequency.exponentialRampToValueAtTime(60, onset + delay + 0.3);
+        const gp = audioCtx.createGain();
+        gp.gain.setValueAtTime(0.0, t);
+        gp.gain.setValueAtTime(0.12 - i * 0.03, onset + delay);
+        gp.gain.exponentialRampToValueAtTime(0.001, onset + delay + 0.3);
+        ping.connect(gp).connect(masterGain);
+        ping.start(onset + delay);
+        ping.stop(onset + delay + 0.35);
+      }
+
+      // Wide sawtooth sweep 3k→50Hz
+      const sweep = audioCtx.createOscillator();
+      sweep.type = 'sawtooth';
+      sweep.frequency.setValueAtTime(3000, onset);
+      sweep.frequency.exponentialRampToValueAtTime(50, onset + 0.8);
+      const lpS = audioCtx.createBiquadFilter();
+      lpS.type = 'lowpass';
+      lpS.frequency.setValueAtTime(5000, onset);
+      lpS.frequency.exponentialRampToValueAtTime(100, onset + 0.8);
+      lpS.Q.value = 3;
+      const gSweep = audioCtx.createGain();
+      gSweep.gain.setValueAtTime(0.0, t);
+      gSweep.gain.setValueAtTime(0.12, onset);
+      gSweep.gain.exponentialRampToValueAtTime(0.001, onset + 0.9);
+      sweep.connect(lpS).connect(gSweep).connect(masterGain);
+      sweep.start(onset);
+      sweep.stop(onset + 0.9);
+    },
+
+    // 13. rainbowLine() - Gravitational catapult (~0.77s)
+    rainbowLine() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // Phase 1: Short black hole drone + descending vortex sweep (~0.22s)
+      const drone = audioCtx.createOscillator();
+      drone.type = 'sine';
+      drone.frequency.value = 80;
+      const lfo = audioCtx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.value = 5;
+      const lfoG = audioCtx.createGain();
+      lfoG.gain.value = 20;
+      lfo.connect(lfoG).connect(drone.frequency);
+      lfo.start(t);
+      lfo.stop(t + 0.22);
+      const gd = audioCtx.createGain();
+      gd.gain.setValueAtTime(0.12, t);
+      gd.gain.linearRampToValueAtTime(0.0, t + 0.22);
+      drone.connect(gd).connect(masterGain);
+      drone.start(t);
+      drone.stop(t + 0.22);
+
+      // Descending vortex sweep
+      const vortex = audioCtx.createOscillator();
+      vortex.type = 'sawtooth';
+      vortex.frequency.setValueAtTime(2000, t);
+      vortex.frequency.exponentialRampToValueAtTime(100, t + 0.22);
+      const lpV = audioCtx.createBiquadFilter();
+      lpV.type = 'lowpass';
+      lpV.frequency.setValueAtTime(4000, t);
+      lpV.frequency.exponentialRampToValueAtTime(200, t + 0.22);
+      lpV.Q.value = 5;
+      const gv = audioCtx.createGain();
+      gv.gain.setValueAtTime(0.1, t);
+      gv.gain.linearRampToValueAtTime(0.0, t + 0.22);
+      vortex.connect(lpV).connect(gv).connect(masterGain);
+      vortex.start(t);
+      vortex.stop(t + 0.22);
+
+      // Phase 2: 5 rapid comet whooshes 110ms apart with increasing pitch
+      for (let i = 0; i < 5; i++) {
+        const st = t + 0.22 + i * 0.11;
+        const baseFreq = 400 + i * 150;
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(baseFreq, st);
+        osc.frequency.exponentialRampToValueAtTime(baseFreq * 2.5, st + 0.08);
+        const lp = audioCtx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(baseFreq * 3, st);
+        lp.frequency.exponentialRampToValueAtTime(baseFreq, st + 0.09);
+        lp.Q.value = 2;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0, t);
+        g.gain.setValueAtTime(0.1, st);
+        g.gain.exponentialRampToValueAtTime(0.001, st + 0.1);
+
+        const panVal = -0.6 + i * 0.3;
+        const panner = createPanner(panVal);
+        osc.connect(lp).connect(g).connect(panner).connect(masterGain);
+        osc.start(st);
+        osc.stop(st + 0.11);
+
+        // Noise tail per whoosh
+        const n = createNoise(0.08);
+        const bp = audioCtx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = baseFreq * 2;
+        bp.Q.value = 1;
+        const gn = audioCtx.createGain();
+        gn.gain.setValueAtTime(0.0, t);
+        gn.gain.setValueAtTime(0.05, st);
+        gn.gain.exponentialRampToValueAtTime(0.001, st + 0.08);
+        n.connect(bp).connect(gn).connect(panner).connect(masterGain);
+        n.start(st);
+        n.stop(st + 0.08);
+      }
+    },
+
+    // 14. rainbowBomb() - Quasar (~1.0s)
+    rainbowBomb() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // Sustained energy beam: bandpass noise Q=10, sweeping 500→4k→1kHz
+      const beam = createNoise(0.7);
+      const bp = audioCtx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(500, t);
+      bp.frequency.exponentialRampToValueAtTime(4000, t + 0.35);
+      bp.frequency.exponentialRampToValueAtTime(1000, t + 0.65);
+      bp.Q.value = 10;
+      const gb = audioCtx.createGain();
+      gb.gain.setValueAtTime(0.15, t);
+      gb.gain.setValueAtTime(0.15, t + 0.5);
+      gb.gain.linearRampToValueAtTime(0.0, t + 0.7);
+      beam.connect(bp).connect(gb).connect(masterGain);
+      beam.start(t);
+      beam.stop(t + 0.7);
+
+      // Sub-bass 50Hz
+      const sub = audioCtx.createOscillator();
+      sub.type = 'sine';
+      sub.frequency.value = 50;
+      const gs = audioCtx.createGain();
+      gs.gain.setValueAtTime(0.18, t);
+      gs.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+      sub.connect(gs).connect(masterGain);
+      sub.start(t);
+      sub.stop(t + 0.8);
+
+      // 3 explosion aftershocks (noise + lowpass + bass thump)
+      for (let i = 0; i < 3; i++) {
+        const st = t + 0.3 + i * 0.22;
+
+        // Noise
+        const n = createNoise(0.2);
+        const lp = audioCtx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(6000 - i * 1500, st);
+        lp.frequency.exponentialRampToValueAtTime(200, st + 0.18);
+        lp.Q.value = 1;
+        const gn = audioCtx.createGain();
+        gn.gain.setValueAtTime(0.0, t);
+        gn.gain.setValueAtTime(0.15 - i * 0.04, st);
+        gn.gain.exponentialRampToValueAtTime(0.001, st + 0.18);
+        n.connect(lp).connect(gn).connect(masterGain);
+        n.start(st);
+        n.stop(st + 0.2);
+
+        // Bass thump
+        const bass = audioCtx.createOscillator();
+        bass.type = 'sine';
+        bass.frequency.setValueAtTime(80 - i * 10, st);
+        bass.frequency.exponentialRampToValueAtTime(30, st + 0.15);
+        const gBass = audioCtx.createGain();
+        gBass.gain.setValueAtTime(0.0, t);
+        gBass.gain.setValueAtTime(0.15 - i * 0.04, st);
+        gBass.gain.exponentialRampToValueAtTime(0.001, st + 0.15);
+        bass.connect(gBass).connect(masterGain);
+        bass.start(st);
+        bass.stop(st + 0.18);
+      }
+    },
+
+    // 15. boardClear() - Galaxy collision (~1.5s)
+    boardClear() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // 4-oscillator harmonic build-up (root/3rd/5th/octave) sweeping 200→2000Hz through opening lowpass
+      const intervals = [1, 1.25, 1.5, 2]; // root, major 3rd, 5th, octave
+      intervals.forEach((ratio, i) => {
+        const osc = audioCtx.createOscillator();
+        osc.type = i % 2 === 0 ? 'sawtooth' : 'triangle';
+        osc.frequency.setValueAtTime(200 * ratio, t);
+        osc.frequency.exponentialRampToValueAtTime(2000 * ratio, t + 0.7);
+        const lp = audioCtx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(400, t);
+        lp.frequency.exponentialRampToValueAtTime(6000, t + 0.7);
+        lp.Q.value = 3;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.03, t);
+        g.gain.linearRampToValueAtTime(0.1, t + 0.65);
+        g.gain.linearRampToValueAtTime(0.0, t + 0.8);
+        osc.connect(lp).connect(g).connect(masterGain);
+        osc.start(t);
+        osc.stop(t + 0.8);
+      });
+
+      // Climax: massive noise explosion
+      const noise = createNoise(0.8);
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(12000, t + 0.7);
+      lp.frequency.exponentialRampToValueAtTime(150, t + 1.4);
+      lp.Q.value = 1;
+      const gn = audioCtx.createGain();
+      gn.gain.setValueAtTime(0.0, t);
+      gn.gain.setValueAtTime(0.35, t + 0.7);
+      gn.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
+      noise.connect(lp).connect(gn).connect(masterGain);
+      noise.start(t + 0.65);
+      noise.stop(t + 1.45);
+
+      // Bass drop 200→30Hz
+      const bass = audioCtx.createOscillator();
+      bass.type = 'sine';
+      bass.frequency.setValueAtTime(200, t + 0.7);
+      bass.frequency.exponentialRampToValueAtTime(30, t + 1.4);
+      const gBass = audioCtx.createGain();
+      gBass.gain.setValueAtTime(0.0, t);
+      gBass.gain.setValueAtTime(0.25, t + 0.7);
+      gBass.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
+      bass.connect(gBass).connect(masterGain);
+      bass.start(t + 0.7);
+      bass.stop(t + 1.45);
+
+      // 5 shimmer harmonics
+      for (let i = 0; i < 5; i++) {
+        const freq = 1200 + i * 400;
+        const delay = 0.7 + i * 0.05;
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t + delay);
+        osc.frequency.exponentialRampToValueAtTime(freq * 0.5, t + delay + 0.4);
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0, t);
+        g.gain.setValueAtTime(0.08, t + delay);
+        g.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.4);
+        osc.connect(g).connect(masterGain);
+        osc.start(t + delay);
+        osc.stop(t + delay + 0.45);
+      }
+
+      // Sub-rumble
+      const rumble = audioCtx.createOscillator();
+      rumble.type = 'sawtooth';
+      rumble.frequency.value = 35;
+      const lpR = audioCtx.createBiquadFilter();
+      lpR.type = 'lowpass';
+      lpR.frequency.value = 100;
+      const gR = audioCtx.createGain();
+      gR.gain.setValueAtTime(0.0, t);
+      gR.gain.setValueAtTime(0.1, t + 0.7);
+      gR.gain.exponentialRampToValueAtTime(0.001, t + 1.5);
+      rumble.connect(lpR).connect(gR).connect(masterGain);
+      rumble.start(t + 0.7);
+      rumble.stop(t + 1.5);
+    },
+
+    // 16. stageClear() - Mission complete (~1.1s)
+    stageClear() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // 4-note ascending major chord C5/E5/G5/C6
+      const notes = [523.25, 659.25, 783.99, 1046.5]; // C5, E5, G5, C6
+      notes.forEach((freq, i) => {
+        const startTime = t + i * 0.08;
+
+        // Triangle + sine blend
+        const tri = audioCtx.createOscillator();
+        tri.type = 'triangle';
+        tri.frequency.value = freq;
+        const sine = audioCtx.createOscillator();
+        sine.type = 'sine';
+        sine.frequency.value = freq;
+
+        const gTri = audioCtx.createGain();
+        gTri.gain.setValueAtTime(0.0, t);
+        gTri.gain.setValueAtTime(0.12, startTime);
+        if (i < 3) {
+          gTri.gain.exponentialRampToValueAtTime(0.001, startTime + 0.5);
+        } else {
+          // Last note sustained
+          gTri.gain.setValueAtTime(0.12, startTime + 0.4);
+          gTri.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
+        }
+        const gSine = audioCtx.createGain();
+        gSine.gain.setValueAtTime(0.0, t);
+        gSine.gain.setValueAtTime(0.08, startTime);
+        if (i < 3) {
+          gSine.gain.exponentialRampToValueAtTime(0.001, startTime + 0.5);
+        } else {
+          gSine.gain.setValueAtTime(0.08, startTime + 0.4);
+          gSine.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
+        }
+
+        tri.connect(gTri).connect(masterGain);
+        sine.connect(gSine).connect(masterGain);
+        tri.start(startTime);
+        sine.start(startTime);
+        const endTime = i < 3 ? startTime + 0.55 : t + 1.1;
+        tri.stop(endTime);
+        sine.stop(endTime);
+
+        // Delay reverb echo per note
+        const echoTri = audioCtx.createOscillator();
+        echoTri.type = 'triangle';
+        echoTri.frequency.value = freq;
+        const echoG = audioCtx.createGain();
+        echoG.gain.setValueAtTime(0.0, t);
+        echoG.gain.setValueAtTime(0.05, startTime + 0.06);
+        echoG.gain.exponentialRampToValueAtTime(0.001, startTime + 0.4);
+        echoTri.connect(echoG).connect(masterGain);
+        echoTri.start(startTime + 0.06);
+        echoTri.stop(startTime + 0.45);
+
+        // Second echo, quieter
+        const echo2 = audioCtx.createOscillator();
+        echo2.type = 'sine';
+        echo2.frequency.value = freq;
+        const echoG2 = audioCtx.createGain();
+        echoG2.gain.setValueAtTime(0.0, t);
+        echoG2.gain.setValueAtTime(0.025, startTime + 0.12);
+        echoG2.gain.exponentialRampToValueAtTime(0.001, startTime + 0.35);
+        echo2.connect(echoG2).connect(masterGain);
+        echo2.start(startTime + 0.12);
+        echo2.stop(startTime + 0.4);
+      });
+    },
+
+    // 17. stageFail() - Mission failed (~1.0s)
+    stageFail() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // 3 descending notes E4/C4/A3, staggered 200ms
+      const notes = [329.63, 261.63, 220.0]; // E4, C4, A3
+      const closingLP = audioCtx.createBiquadFilter();
+      closingLP.type = 'lowpass';
+      closingLP.frequency.setValueAtTime(2000, t);
+      closingLP.frequency.exponentialRampToValueAtTime(200, t + 1.0);
+      closingLP.Q.value = 1;
+      closingLP.connect(masterGain);
+
+      notes.forEach((freq, i) => {
+        const startTime = t + i * 0.2;
+
+        const osc = audioCtx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.value = freq;
+
+        // Slow 2Hz LFO vibrato
+        const lfo = audioCtx.createOscillator();
+        lfo.type = 'sine';
+        lfo.frequency.value = 2;
+        const lfoG = audioCtx.createGain();
+        lfoG.gain.value = 8;
+        lfo.connect(lfoG).connect(osc.frequency);
+        lfo.start(startTime);
+        lfo.stop(startTime + 0.6);
+
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0, t);
+        g.gain.setValueAtTime(0.15, startTime);
+        g.gain.exponentialRampToValueAtTime(0.001, startTime + 0.6);
+        osc.connect(g).connect(closingLP);
+        osc.start(startTime);
+        osc.stop(startTime + 0.65);
+
+        // Sine layer
+        const sine = audioCtx.createOscillator();
+        sine.type = 'sine';
+        sine.frequency.value = freq;
+        const lfo2 = audioCtx.createOscillator();
+        lfo2.type = 'sine';
+        lfo2.frequency.value = 2;
+        const lfoG2 = audioCtx.createGain();
+        lfoG2.gain.value = 6;
+        lfo2.connect(lfoG2).connect(sine.frequency);
+        lfo2.start(startTime);
+        lfo2.stop(startTime + 0.6);
+        const gS = audioCtx.createGain();
+        gS.gain.setValueAtTime(0.0, t);
+        gS.gain.setValueAtTime(0.1, startTime);
+        gS.gain.exponentialRampToValueAtTime(0.001, startTime + 0.55);
+        sine.connect(gS).connect(closingLP);
+        sine.start(startTime);
+        sine.stop(startTime + 0.6);
+      });
+    },
+
+    // 18. countdown() - Meteor alert (~0.4s)
     countdown() {
-      playTone(440, 0.08, "square", 0.06);
-      playTone(880, 0.06, "square", 0.04);
-      playTone(440, 0.08, "square", 0.06, 0.12);
-      playTone(880, 0.06, "square", 0.04, 0.12);
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // Square 440Hz with 4Hz AM modulation
+      const osc1 = audioCtx.createOscillator();
+      osc1.type = 'square';
+      osc1.frequency.value = 440;
+      const g1 = audioCtx.createGain();
+      g1.gain.setValueAtTime(0.12, t);
+      g1.gain.linearRampToValueAtTime(0.0, t + 0.4);
+      // 4Hz AM modulation
+      const am1 = audioCtx.createOscillator();
+      am1.type = 'sine';
+      am1.frequency.value = 4;
+      const amG1 = audioCtx.createGain();
+      amG1.gain.value = 0.06;
+      am1.connect(amG1).connect(g1.gain);
+      am1.start(t);
+      am1.stop(t + 0.4);
+      osc1.connect(g1).connect(masterGain);
+      osc1.start(t);
+      osc1.stop(t + 0.4);
+
+      // Higher harmonic 880Hz also AM-modulated
+      const osc2 = audioCtx.createOscillator();
+      osc2.type = 'square';
+      osc2.frequency.value = 880;
+      const g2 = audioCtx.createGain();
+      g2.gain.setValueAtTime(0.08, t);
+      g2.gain.linearRampToValueAtTime(0.0, t + 0.4);
+      const am2 = audioCtx.createOscillator();
+      am2.type = 'sine';
+      am2.frequency.value = 4;
+      const amG2 = audioCtx.createGain();
+      amG2.gain.value = 0.04;
+      am2.connect(amG2).connect(g2.gain);
+      am2.start(t);
+      am2.stop(t + 0.4);
+      osc2.connect(g2).connect(masterGain);
+      osc2.start(t);
+      osc2.stop(t + 0.4);
     },
+
+    // 19. iceCrack() - Ice shatter (~0.3s)
     iceCrack() {
-      playNoise(0.12, 0.06, 4000, "highpass");
-      playTone(3000, 0.04, "triangle", 0.05);
-      playTone(2500, 0.03, "triangle", 0.03, 0.03);
-      playTone(3500, 0.03, "triangle", 0.03, 0.05);
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+
+      // Highpass noise 3kHz
+      const noise = createNoise(0.25);
+      const hp = audioCtx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 3000;
+      hp.Q.value = 1;
+      const gn = audioCtx.createGain();
+      gn.gain.setValueAtTime(0.15, t);
+      gn.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+      noise.connect(hp).connect(gn).connect(masterGain);
+      noise.start(t);
+      noise.stop(t + 0.25);
+
+      // Glass triangle ping 3kHz
+      const glass = audioCtx.createOscillator();
+      glass.type = 'triangle';
+      glass.frequency.setValueAtTime(3000, t);
+      glass.frequency.exponentialRampToValueAtTime(2000, t + 0.2);
+      const gg = audioCtx.createGain();
+      gg.gain.setValueAtTime(0.12, t);
+      gg.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+      glass.connect(gg).connect(masterGain);
+      glass.start(t);
+      glass.stop(t + 0.3);
+
+      // 4 random tinkle pings 3500-6500Hz
+      for (let i = 0; i < 4; i++) {
+        const freq = 3500 + Math.random() * 3000;
+        const delay = 0.02 + Math.random() * 0.1;
+        const ping = audioCtx.createOscillator();
+        ping.type = 'sine';
+        ping.frequency.setValueAtTime(freq, t + delay);
+        ping.frequency.exponentialRampToValueAtTime(freq * 0.6, t + delay + 0.1);
+        const gp = audioCtx.createGain();
+        gp.gain.setValueAtTime(0.0, t);
+        gp.gain.setValueAtTime(0.08, t + delay);
+        gp.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.1);
+        ping.connect(gp).connect(masterGain);
+        ping.start(t + delay);
+        ping.stop(t + delay + 0.12);
+      }
     },
+
+    // Combo dispatcher
+    combo(type) {
+      switch (type) {
+        case "cross": this.cross(); break;
+        case "star_cross": this.starCross(); break;
+        case "triple_line": this.tripleLine(); break;
+        case "big_bomb": this.bigBomb(); break;
+        case "rainbow_line": this.rainbowLine(); break;
+        case "rainbow_bomb": this.rainbowBomb(); break;
+        case "board_clear": this.boardClear(); break;
+      }
+    }
   };
 
-  const canvas = document.getElementById("game-canvas");
+  // ============================================================
+  //  VFX Infrastructure — Variables & State
+  // ============================================================
+
+  let vfxParticles = [];
+  let vfxShockwaves = [];
+  let vfxFlashes = [];
+  let vfxComets = [];
+  let vfxTexts = [];
+  let shakeX = 0, shakeY = 0, shakeIntensity = 0;
+
+  // ============================================================
+  //  Easing Functions
+  // ============================================================
+
+  function easeOutQuad(t) { return t * (2 - t); }
+  function easeInQuad(t)  { return t * t; }
+
+  // ============================================================
+  //  Helper: Cell Pixel Center
+  // ============================================================
+
+  function cellCenter(r, c) {
+    return {
+      x: c * cellSize + cellSize / 2,
+      y: r * cellSize + cellSize / 2
+    };
+  }
+
+  // ============================================================
+  //  addParticle — Single Star-Shaped Particle
+  // ============================================================
+  //  Shape: 4-point star (two overlapping rotated diamonds).
+  //  Each particle carries its own velocity, color, size, and
+  //  a life value that drains by `decay` per frame.
+
+  function addParticle(x, y, color, opts = {}) {
+    vfxParticles.push({
+      x,
+      y,
+      vx:        opts.vx        || 0,
+      vy:        opts.vy        || 0,
+      color:     color,
+      life:      1,
+      decay:     opts.decay     || 0.03,
+      size:      opts.size      || 4,
+      sizeDecay: opts.sizeDecay || 0.05,
+      alpha:     1,
+      rotation:  Math.random() * Math.PI * 2
+    });
+  }
+
+  // ============================================================
+  //  addBurstParticles — Radial Burst of N Particles
+  // ============================================================
+  //  Distributes `count` particles evenly around a circle with
+  //  some random angular jitter and speed variance.
+
+  function addBurstParticles(x, y, color, count, opts = {}) {
+    const speed     = opts.speed     || 3;
+    const size      = opts.size      || 4;
+    const decay     = opts.decay     || 0.03;
+    const sizeDecay = opts.sizeDecay || 0.05;
+
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i / count) + (Math.random() - 0.5) * 0.4;
+      const spd   = speed * (0.6 + Math.random() * 0.8);
+      addParticle(x, y, color, {
+        vx: Math.cos(angle) * spd,
+        vy: Math.sin(angle) * spd,
+        size,
+        decay,
+        sizeDecay
+      });
+    }
+  }
+
+  // ============================================================
+  //  addShockwave — Expanding Ring
+  // ============================================================
+
+  function addShockwave(x, y, maxR, duration, color) {
+    vfxShockwaves.push({
+      x, y,
+      r:        0,
+      maxR:     maxR     || 60,
+      frame:    0,
+      duration: duration || 20,
+      color:    color    || '#ffffff'
+    });
+  }
+
+  // ============================================================
+  //  addFlash — Expanding Filled Circle
+  // ============================================================
+
+  function addFlash(x, y, maxR, color, duration) {
+    vfxFlashes.push({
+      x, y,
+      r:        0,
+      maxR:     maxR     || 50,
+      frame:    0,
+      duration: duration || 15,
+      color:    color    || '#ffffff'
+    });
+  }
+
+  // ============================================================
+  //  addComet — Moving Projectile with Trail
+  // ============================================================
+  //  Stores the last `trailLength` positions. Head is drawn as
+  //  a white circle with a colored glow; trail is a series of
+  //  shrinking, fading dots. Auto-removed when far out of bounds.
+
+  function addComet(x, y, dx, dy, color, speed, trailLength) {
+    speed       = speed       || 8;
+    trailLength = trailLength || 12;
+    vfxComets.push({
+      x, y,
+      dx, dy,          // unit direction
+      speed,
+      color,
+      trail:       [],
+      trailLength,
+      life:        1,
+      active:      true
+    });
+  }
+
+  // ============================================================
+  //  addScreenShake — Trigger Screen Shake
+  // ============================================================
+
+  function addScreenShake(intensity) {
+    shakeIntensity = Math.max(shakeIntensity, intensity);
+  }
+
+  // ============================================================
+  //  addFloatingText — Rising, Fading Text
+  // ============================================================
+
+  function addFloatingText(text, x, y, color, size) {
+    vfxTexts.push({
+      text,
+      x, y,
+      color:    color || '#ffffff',
+      size:     size  || 24,
+      life:     1,
+      decay:    0.02,
+      vy:       -1.5        // drifts upward
+    });
+  }
+
+  // ============================================================
+  //  updateVFX — Per-Frame Update for All VFX
+  // ============================================================
+
+  function updateVFX() {
+    // --- Particles ---
+    for (let i = vfxParticles.length - 1; i >= 0; i--) {
+      const p = vfxParticles[i];
+      p.x    += p.vx;
+      p.y    += p.vy;
+      p.vy   += 0.04;          // slight gravity
+      p.life -= p.decay;
+      p.size  = Math.max(0, p.size - p.sizeDecay);
+      p.alpha = Math.max(0, p.life);
+      if (p.life <= 0 || p.size <= 0) vfxParticles.splice(i, 1);
+    }
+
+    // --- Shockwaves ---
+    for (let i = vfxShockwaves.length - 1; i >= 0; i--) {
+      const s = vfxShockwaves[i];
+      s.frame++;
+      const t = s.frame / s.duration;
+      s.r = s.maxR * easeOutQuad(Math.min(t, 1));
+      if (s.frame >= s.duration) vfxShockwaves.splice(i, 1);
+    }
+
+    // --- Flashes ---
+    for (let i = vfxFlashes.length - 1; i >= 0; i--) {
+      const f = vfxFlashes[i];
+      f.frame++;
+      const t = f.frame / f.duration;
+      f.r = f.maxR * easeOutQuad(Math.min(t, 1));
+      if (f.frame >= f.duration) vfxFlashes.splice(i, 1);
+    }
+
+    // --- Comets ---
+    const margin = cellSize * 3;
+    const bLeft   = 0 - margin;
+    const bRight  = cols * cellSize + margin;
+    const bTop    = 0 - margin;
+    const bBottom = rows * cellSize + margin;
+
+    for (let i = vfxComets.length - 1; i >= 0; i--) {
+      const c = vfxComets[i];
+      // store current position in trail
+      c.trail.push({ x: c.x, y: c.y });
+      if (c.trail.length > c.trailLength) c.trail.shift();
+      // advance
+      c.x += c.dx * c.speed;
+      c.y += c.dy * c.speed;
+      // out of bounds?
+      if (c.x < bLeft || c.x > bRight || c.y < bTop || c.y > bBottom) {
+        vfxComets.splice(i, 1);
+      }
+    }
+
+    // --- Screen Shake ---
+    if (shakeIntensity > 0.5) {
+      shakeX = (Math.random() - 0.5) * shakeIntensity * 2;
+      shakeY = (Math.random() - 0.5) * shakeIntensity * 2;
+      shakeIntensity *= 0.85;
+    } else {
+      shakeX = 0;
+      shakeY = 0;
+      shakeIntensity = 0;
+    }
+
+    // --- Floating Texts ---
+    for (let i = vfxTexts.length - 1; i >= 0; i--) {
+      const t = vfxTexts[i];
+      t.y    += t.vy;
+      t.life -= t.decay;
+      if (t.life <= 0) vfxTexts.splice(i, 1);
+    }
+  }
+
+  // ============================================================
+  //  drawVFX — Render All Active VFX onto ctx
+  // ============================================================
+
+  function drawVFX() {
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
+
+    // --- Flashes (drawn first — behind everything else) ---
+    for (const f of vfxFlashes) {
+      const t     = f.frame / f.duration;
+      const alpha = 0.6 * (1 - t);
+      if (alpha <= 0) continue;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle   = f.color;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // --- Shockwaves ---
+    for (const s of vfxShockwaves) {
+      const t         = s.frame / s.duration;
+      const alpha     = 1 - t;
+      const lineWidth = Math.max(1, (1 - t) * 4);
+      if (alpha <= 0) continue;
+      ctx.save();
+      ctx.globalAlpha   = alpha;
+      ctx.strokeStyle   = s.color;
+      ctx.lineWidth     = lineWidth;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // --- Particles (4-point star) ---
+    for (const p of vfxParticles) {
+      if (p.alpha <= 0 || p.size <= 0) continue;
+      ctx.save();
+      ctx.globalAlpha = p.alpha;
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rotation);
+      ctx.fillStyle = p.color;
+      // 4-point star: two overlapping diamonds
+      const s  = p.size;
+      const sn = s * 0.38;   // narrow half-width
+      ctx.beginPath();
+      // vertical diamond
+      ctx.moveTo(0,  -s);
+      ctx.lineTo(sn,  0);
+      ctx.moveTo(0,  -s);
+      ctx.lineTo(-sn, 0);
+      ctx.lineTo(0,   s);
+      ctx.lineTo(sn,  0);
+      ctx.closePath();
+      ctx.fill();
+      // horizontal diamond
+      ctx.beginPath();
+      ctx.moveTo(-s,  0);
+      ctx.lineTo(0,  -sn);
+      ctx.lineTo(s,   0);
+      ctx.lineTo(0,   sn);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // --- Comets ---
+    for (const c of vfxComets) {
+      // trail
+      for (let i = 0; i < c.trail.length; i++) {
+        const t     = i / c.trail.length;          // 0 = oldest, 1 = newest
+        const alpha = t * 0.7;
+        const r     = Math.max(1, t * 4);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle   = c.color;
+        ctx.beginPath();
+        ctx.arc(c.trail[i].x, c.trail[i].y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      // head: colored glow
+      ctx.save();
+      ctx.globalAlpha = 0.9;
+      ctx.shadowColor = c.color;
+      ctx.shadowBlur  = 14;
+      ctx.fillStyle   = c.color;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      // white core
+      ctx.shadowBlur  = 0;
+      ctx.fillStyle   = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // --- Floating Texts ---
+    for (const t of vfxTexts) {
+      if (t.life <= 0) continue;
+      ctx.save();
+      ctx.globalAlpha    = Math.min(1, t.life * 2);   // fade near end
+      ctx.fillStyle      = t.color;
+      ctx.font           = `bold ${t.size}px sans-serif`;
+      ctx.textAlign      = 'center';
+      ctx.textBaseline   = 'middle';
+      ctx.shadowColor    = t.color;
+      ctx.shadowBlur     = 8;
+      ctx.fillText(t.text, t.x, t.y);
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  // ============================================================
+  //  hasActiveVFX — Are Any VFX Still Alive?
+  // ============================================================
+
+  function hasActiveVFX() {
+    return vfxParticles.length > 0
+        || vfxShockwaves.length > 0
+        || vfxFlashes.length > 0
+        || vfxComets.length > 0
+        || vfxTexts.length > 0
+        || shakeIntensity > 0.5;
+  }
+
+
+    const canvas = document.getElementById("game-canvas");
   const ctx = canvas.getContext("2d");
 
   let cellSize = 48;
@@ -1092,7 +2484,7 @@
     if (p1 && p2 && p1.special && p2.special) {
       const comboType = getComboType(p1.special, p2.special);
       if (comboType) {
-        SFX.combo();
+        SFX.combo(comboType);
         track("special_combo", { combo_type: comboType, stage: STAGES[currentStage].name });
         movesLeft--;
         chainCount = 1;
@@ -1125,7 +2517,7 @@
         });
         score += clearList.length * 10 * chainCount;
 
-        await animateClear(clearList);
+        await animateClear(clearList, specialInfos);
         clearList.forEach(([r, c]) => { board[r][c] = null; });
         damageAdjacentIce(clearList);
 
@@ -1178,13 +2570,16 @@
       matches.forEach(([r, c]) => cleared.add(r * cols + c));
 
       let hasSpecialActivation = false;
+      const specialInfos = [];
       matches.forEach(([r, c]) => {
         if (board[r][c] && board[r][c].special) {
           hasSpecialActivation = true;
           const sp = board[r][c].special;
           if (sp === "bomb" || sp === "countdown") SFX.bomb();
-          else if (sp === "line_h" || sp === "line_v" || sp === "line_d") SFX.line();
+          else if (sp === "line_h" || sp === "line_v") SFX.line();
+          else if (sp === "line_d") { SFX.line(); SFX.diagonal(); }
           else if (sp === "rainbow") SFX.rainbow();
+          specialInfos.push({ r, c, type: sp, color: board[r][c].color });
           const extra = activateSpecial(r, c, cleared);
           extra.forEach(([er, ec]) => {
             cleared.add(er * cols + ec);
@@ -1471,113 +2866,444 @@
         drawPieceAt(p2, x, y);
       }
 
+      ctx.restore();
       await sleep(ANIM.SWAP_FRAME_MS);
     }
   }
 
-  async function animateClear(cells) {
-    const clearSet = new Set(cells.map(([r, c]) => r * cols + c));
-    const pieceSnapshots = cells.map(([r, c]) => ({
-      r, c,
-      color: board[r][c] ? PIECE_COLORS[board[r][c].color] : "#fff",
-      piece: board[r][c],
-    }));
-    const totalFrames = ANIM.CLEAR_FRAMES;
+  async function animateClear(cells, specialInfos) {
+    cells = cells.map(cell => Array.isArray(cell) ? { r: cell[0], c: cell[1] } : cell);
+    specialInfos = specialInfos || [];
 
-    for (let frame = 0; frame < totalFrames; frame++) {
-      const t = frame / totalFrames;
-
-      drawBoardBase();
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          if (clearSet.has(r * cols + c)) continue;
-          if (board[r][c]) {
-            drawPieceAt(board[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
-          }
-          if (isIce(r, c)) drawIceOverlay(r, c);
+    if (specialInfos.length > 0) {
+      const types = specialInfos.map(s => s.type);
+      if (types.includes("galaxy")) { await animateGalaxyCollision(cells, specialInfos); return; }
+      if (types.includes("big_bomb")) { await animateBigBomb(cells, specialInfos); return; }
+      if (types.includes("cross") || types.includes("star_cross")) { await animateCrossCombo(cells, specialInfos); return; }
+      for (const info of specialInfos) {
+        switch (info.type) {
+          case "line_h": case "line_v": case "line_d":
+            await animateLineSpecial(cells, info); break;
+          case "bomb":
+            await animateBombSpecial(cells, info); break;
+          case "rainbow":
+            await animateRainbow(cells, info); break;
         }
       }
+      return;
+    }
 
-      ctx.save();
+    await animateStandardClear(cells);
+  }
 
-      pieceSnapshots.forEach((snap, idx) => {
-        const x = snap.c * cellSize + cellSize / 2;
-        const y = snap.r * cellSize + cellSize / 2;
-        const baseR = cellSize * 0.36;
+  async function animateStandardClear(cells) {
+    const totalFrames = 22;
+    const phase1End = Math.floor(totalFrames * 0.3);
+    let frame = 0;
 
-        // Phase 1: Glow brightening (planet shines before dying)
-        if (t < 0.3) {
-          const fadeT = t / 0.3;
-          ctx.globalAlpha = 1 - fadeT * 0.2;
-          if (snap.piece) drawPieceAt(snap.piece, x, y);
-          // Expanding white glow
-          ctx.globalAlpha = 0.6 * (1 - fadeT);
-          ctx.shadowColor = snap.color;
-          ctx.shadowBlur = baseR * fadeT * 0.8;
-          ctx.fillStyle = "#fff";
-          ctx.beginPath();
-          ctx.arc(x, y, baseR * (0.6 + fadeT * 0.3), 0, Math.PI * 2);
-          ctx.fill();
-          ctx.shadowBlur = 0;
+    await new Promise(resolve => {
+      function step() {
+        frame++;
+        updateVFX();
+
+        drawBoard((overlayCtx) => {
+          if (frame <= phase1End) {
+            const gp = frame / phase1End;
+            for (const { r, c } of cells) {
+              const pos = cellCenter(r, c);
+              overlayCtx.save();
+              overlayCtx.globalAlpha = gp * 0.5;
+              overlayCtx.shadowColor = "#ffffff";
+              overlayCtx.shadowBlur = 10 + gp * 15;
+              overlayCtx.fillStyle = "rgba(255,255,255,0.3)";
+              overlayCtx.beginPath();
+              overlayCtx.arc(pos.x, pos.y, cellSize * 0.4 * (1 + gp * 0.3), 0, Math.PI * 2);
+              overlayCtx.fill();
+              overlayCtx.restore();
+            }
+          }
+          if (frame > phase1End) {
+            const sp = (frame - phase1End) / (totalFrames - phase1End);
+            const shrink = 1 - sp * sp;
+            for (const { r, c } of cells) {
+              const pos = cellCenter(r, c);
+              overlayCtx.save();
+              overlayCtx.globalAlpha = (1 - sp) * 0.35;
+              overlayCtx.fillStyle = "#ffffff";
+              overlayCtx.beginPath();
+              overlayCtx.arc(pos.x, pos.y, cellSize * 0.35 * shrink, 0, Math.PI * 2);
+              overlayCtx.fill();
+              overlayCtx.restore();
+            }
+            if (frame === phase1End + 1) {
+              for (const { r, c } of cells) {
+                const pos = cellCenter(r, c);
+                const color = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || "#ffffff") : "#ffffff";
+                addBurstParticles(pos.x, pos.y, color, 8, { speed: 2.5, size: 3.5, decay: 0.04, sizeDecay: 0.06 });
+                addShockwave(pos.x, pos.y, cellSize * 0.6, 10, "#ffffff");
+              }
+            }
+          }
+        });
+        drawVFX();
+
+        if (frame < totalFrames) requestAnimationFrame(step);
+        else resolve();
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  async function animateLineSpecial(cells, info) {
+    const origin = cellCenter(info.r, info.c);
+    const color = PIECE_COLORS[info.color] || "#ffffff";
+    const dissolved = new Set();
+
+    await animateFrames(8, (frame, t) => {
+      drawBoard((oc) => {
+        oc.save();
+        oc.shadowColor = color;
+        oc.shadowBlur = 10 + t * 20;
+        oc.fillStyle = color;
+        oc.globalAlpha = 0.3 + t * 0.4;
+        oc.beginPath();
+        oc.arc(origin.x, origin.y, cellSize * 0.4, 0, Math.PI * 2);
+        oc.fill();
+        oc.restore();
+      });
+      drawVFX();
+    });
+
+    addShockwave(origin.x, origin.y, cellSize * 1.5, 15, color);
+    addScreenShake(2);
+
+    const cometDirs = [];
+    if (info.type === "line_h") {
+      cometDirs.push({ dx: 1, dy: 0 }, { dx: -1, dy: 0 });
+    } else if (info.type === "line_v") {
+      cometDirs.push({ dx: 0, dy: 1 }, { dx: 0, dy: -1 });
+    } else if (info.type === "line_d") {
+      const inv = Math.SQRT1_2;
+      cometDirs.push({ dx: inv, dy: inv }, { dx: -inv, dy: -inv }, { dx: inv, dy: -inv }, { dx: -inv, dy: inv });
+    }
+    for (const d of cometDirs) {
+      addComet(origin.x, origin.y, d.dx, d.dy, color, cellSize * 0.35, 14);
+    }
+
+    await animateFrames(25, (frame, t) => {
+      for (const { r, c } of cells) {
+        const key = r + "," + c;
+        if (dissolved.has(key)) continue;
+        const cc = cellCenter(r, c);
+        for (const comet of vfxComets) {
+          if (Math.hypot(comet.x - cc.x, comet.y - cc.y) < cellSize * 0.7) {
+            dissolved.add(key);
+            addBurstParticles(cc.x, cc.y, color, 6, { speed: 2, size: 3, decay: 0.05, sizeDecay: 0.06 });
+            break;
+          }
         }
+      }
+      drawBoard(() => {});
+      drawVFX();
+    });
 
-        // Phase 2: Shrink + star-shaped particle burst
-        if (t >= 0.2) {
-          const shrinkT = Math.min((t - 0.2) / 0.8, 1);
-          const ease = 1 - (1 - shrinkT) * (1 - shrinkT);
-          const scale = 1 - ease;
-          const alpha = 1 - ease;
+    for (const { r, c } of cells) {
+      if (!dissolved.has(r + "," + c)) {
+        const cc = cellCenter(r, c);
+        addBurstParticles(cc.x, cc.y, color, 5, { speed: 1.5, size: 2.5, decay: 0.05, sizeDecay: 0.05 });
+      }
+    }
+  }
 
-          // Shrinking planet
-          ctx.globalAlpha = alpha;
-          ctx.fillStyle = snap.color;
-          ctx.beginPath();
-          ctx.arc(x, y, baseR * scale, 0, Math.PI * 2);
-          ctx.fill();
+  async function animateBombSpecial(cells, info) {
+    const origin = cellCenter(info.r, info.c);
+    const color = PIECE_COLORS[info.color] || "#ff8800";
 
-          // White flash ring at moment of death
-          if (shrinkT > 0.1 && shrinkT < 0.4) {
-            const flashT = (shrinkT - 0.1) / 0.3;
-            ctx.globalAlpha = 0.5 * (1 - flashT);
-            ctx.strokeStyle = "#fff";
-            ctx.lineWidth = 2 * (1 - flashT);
-            ctx.beginPath();
-            ctx.arc(x, y, baseR * (0.5 + flashT * 0.8), 0, Math.PI * 2);
-            ctx.stroke();
-          }
+    await animateFrames(6, (frame, t) => {
+      drawBoard((oc) => {
+        oc.save();
+        oc.shadowColor = color;
+        oc.shadowBlur = 8 + t * 22;
+        oc.fillStyle = color;
+        oc.globalAlpha = 0.4 + t * 0.4;
+        oc.beginPath();
+        oc.arc(origin.x, origin.y, cellSize * 0.4, 0, Math.PI * 2);
+        oc.fill();
+        oc.restore();
+      });
+      drawVFX();
+    });
 
-          // Star-dust particles bursting outward
-          const numParticles = 6;
-          for (let p = 0; p < numParticles; p++) {
-            const angle = (p / numParticles) * Math.PI * 2 + idx * 0.7;
-            const dist = baseR * 0.3 + ease * cellSize * 0.7;
-            const px = x + Math.cos(angle) * dist;
-            const py = y + Math.sin(angle) * dist;
-            const pSize = baseR * 0.15 * (1 - ease);
-            ctx.globalAlpha = alpha * 0.7;
-            ctx.fillStyle = snap.color;
-            // Draw tiny 4-point star shape
-            ctx.beginPath();
-            ctx.moveTo(px, py - pSize);
-            ctx.lineTo(px + pSize * 0.3, py);
-            ctx.lineTo(px, py + pSize);
-            ctx.lineTo(px - pSize * 0.3, py);
-            ctx.closePath();
-            ctx.fill();
-            ctx.beginPath();
-            ctx.moveTo(px - pSize, py);
-            ctx.lineTo(px, py + pSize * 0.3);
-            ctx.lineTo(px + pSize, py);
-            ctx.lineTo(px, py - pSize * 0.3);
-            ctx.closePath();
-            ctx.fill();
-          }
+    await animateFrames(4, (frame, t) => {
+      const scale = 1 - t * 0.8;
+      drawBoard((oc) => {
+        oc.save();
+        oc.globalAlpha = 0.6;
+        oc.fillStyle = "#ffffff";
+        oc.beginPath();
+        oc.arc(origin.x, origin.y, cellSize * 0.35 * scale, 0, Math.PI * 2);
+        oc.fill();
+        oc.restore();
+      });
+      drawVFX();
+    });
+
+    addScreenShake(6);
+    addShockwave(origin.x, origin.y, cellSize * 5, 25, "#ffffff");
+    addFlash(origin.x, origin.y, cellSize * 3, "#ffffff", 15);
+    addBurstParticles(origin.x, origin.y, "#ffffff", 20, { speed: 5, size: 5, decay: 0.03, sizeDecay: 0.08 });
+    addBurstParticles(origin.x, origin.y, color, 20, { speed: 3.5, size: 4, decay: 0.025, sizeDecay: 0.06 });
+
+    const cellDistances = cells.map(({ r, c }) => ({
+      r, c, dist: Math.abs(r - info.r) + Math.abs(c - info.c)
+    }));
+
+    await animateFrames(20, (frame, t) => {
+      for (const { r, c, dist } of cellDistances) {
+        if (frame === dist * 2 + 1) {
+          const cc = cellCenter(r, c);
+          const pColor = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || color) : color;
+          addBurstParticles(cc.x, cc.y, pColor, 6, { speed: 2, size: 3, decay: 0.04, sizeDecay: 0.05 });
+        }
+      }
+      drawBoard(() => {});
+      drawVFX();
+    });
+  }
+
+  async function animateRainbow(cells, info) {
+    const origin = cellCenter(info.r, info.c);
+    const color = PIECE_COLORS[info.color] || "#aa44ff";
+
+    await animateFrames(10, (frame, t) => {
+      drawBoard((oc) => {
+        oc.save();
+        oc.translate(origin.x, origin.y);
+        oc.globalAlpha = 0.3 + t * 0.3;
+        const grad = oc.createRadialGradient(0, 0, 0, 0, 0, cellSize);
+        grad.addColorStop(0, "rgba(20, 0, 40, 0.8)");
+        grad.addColorStop(1, "rgba(20, 0, 40, 0)");
+        oc.fillStyle = grad;
+        oc.beginPath();
+        oc.arc(0, 0, cellSize * (0.5 + t * 0.8), 0, Math.PI * 2);
+        oc.fill();
+        const arcCount = 3;
+        const baseAngle = frame * 0.3;
+        oc.strokeStyle = color;
+        oc.lineWidth = 2;
+        oc.globalAlpha = 0.5 + t * 0.3;
+        for (let i = 0; i < arcCount; i++) {
+          const a = baseAngle + (Math.PI * 2 * i / arcCount);
+          oc.beginPath();
+          oc.arc(0, 0, cellSize * (0.3 + t * 0.4), a, a + Math.PI * 0.5);
+          oc.stroke();
+        }
+        oc.restore();
+      });
+      drawVFX();
+    });
+
+    const cellSnaps = cells.map(({ r, c }) => {
+      const cc = cellCenter(r, c);
+      return { r, c, startX: cc.x, startY: cc.y };
+    });
+
+    await animateFrames(30, (frame, t) => {
+      const pullT = t * t;
+      drawBoard((oc) => {
+        for (const snap of cellSnaps) {
+          const cx = snap.startX + (origin.x - snap.startX) * pullT;
+          const cy = snap.startY + (origin.y - snap.startY) * pullT;
+          const scale = 1 - pullT * 0.8;
+          const alpha = 1 - pullT;
+          if (alpha <= 0 || scale <= 0) continue;
+          oc.save();
+          oc.globalAlpha = alpha * 0.5;
+          oc.fillStyle = color;
+          oc.beginPath();
+          oc.arc(cx, cy, cellSize * 0.3 * scale, 0, Math.PI * 2);
+          oc.fill();
+          oc.restore();
+        }
+        if (frame % 3 === 0) {
+          const sparkColor = PIECE_COLORS[Math.floor(Math.random() * PIECE_COLORS.length)] || color;
+          addParticle(
+            origin.x + (Math.random() - 0.5) * cellSize * 0.5,
+            origin.y + (Math.random() - 0.5) * cellSize * 0.5,
+            sparkColor,
+            { vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2, size: 3, decay: 0.06, sizeDecay: 0.05 }
+          );
         }
       });
+      drawVFX();
+    });
 
-      ctx.restore();
-      await sleep(ANIM.CLEAR_FRAME_MS);
+    addBurstParticles(origin.x, origin.y, color, 15, { speed: 4, size: 5, decay: 0.03, sizeDecay: 0.07 });
+    addShockwave(origin.x, origin.y, cellSize * 3, 18, color);
+  }
+
+  async function animateCrossCombo(cells, specialInfos) {
+    const info = specialInfos.find(s => s.type === "cross" || s.type === "star_cross") || specialInfos[0];
+    const origin = cellCenter(info.r, info.c);
+    const color = PIECE_COLORS[info.color] || "#ffffff";
+
+    await animateFrames(6, (frame, t) => {
+      drawBoard((oc) => {
+        oc.save();
+        oc.shadowColor = "#ffff00";
+        oc.shadowBlur = 15 + t * 20;
+        oc.fillStyle = "#ffff00";
+        oc.globalAlpha = 0.3 + t * 0.5;
+        oc.beginPath();
+        oc.arc(origin.x, origin.y, cellSize * 0.4, 0, Math.PI * 2);
+        oc.fill();
+        oc.restore();
+      });
+      drawVFX();
+    });
+
+    addComet(origin.x, origin.y, 1, 0, "#ff4444", cellSize * 0.35, 14);
+    addComet(origin.x, origin.y, -1, 0, "#ff4444", cellSize * 0.35, 14);
+    addComet(origin.x, origin.y, 0, 1, "#4488ff", cellSize * 0.35, 14);
+    addComet(origin.x, origin.y, 0, -1, "#4488ff", cellSize * 0.35, 14);
+    if (info.type === "star_cross") {
+      const inv = Math.SQRT1_2;
+      addComet(origin.x, origin.y, inv, inv, "#44ff88", cellSize * 0.35, 14);
+      addComet(origin.x, origin.y, -inv, -inv, "#44ff88", cellSize * 0.35, 14);
+      addComet(origin.x, origin.y, inv, -inv, "#ff44ff", cellSize * 0.35, 14);
+      addComet(origin.x, origin.y, -inv, inv, "#ff44ff", cellSize * 0.35, 14);
     }
+    addScreenShake(3);
+
+    await animateFrames(25, (frame, t) => {
+      if (frame === 12) {
+        addShockwave(origin.x, origin.y, cellSize * 4, 18, "#ffff44");
+        addBurstParticles(origin.x, origin.y, "#ffff00", 15, { speed: 4, size: 4.5, decay: 0.03, sizeDecay: 0.06 });
+        addScreenShake(4);
+      }
+      for (const { r, c } of cells) {
+        const cc = cellCenter(r, c);
+        for (const comet of vfxComets) {
+          if (Math.hypot(comet.x - cc.x, comet.y - cc.y) < cellSize * 0.7) {
+            const pColor = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || "#ffffff") : "#ffffff";
+            addBurstParticles(cc.x, cc.y, pColor, 4, { speed: 1.5, size: 2.5, decay: 0.05, sizeDecay: 0.05 });
+            break;
+          }
+        }
+      }
+      drawBoard(() => {});
+      drawVFX();
+    });
+  }
+
+  async function animateBigBomb(cells, specialInfos) {
+    const info = specialInfos.find(s => s.type === "big_bomb") || specialInfos[0];
+    const origin = cellCenter(info.r, info.c);
+    const color = PIECE_COLORS[info.color] || "#ff6600";
+
+    const cellSnaps = cells.map(({ r, c }) => {
+      const cc = cellCenter(r, c);
+      return { r, c, sx: cc.x, sy: cc.y };
+    });
+
+    await animateFrames(8, (frame, t) => {
+      drawBoard((oc) => {
+        for (const snap of cellSnaps) {
+          const pullX = snap.sx + (origin.x - snap.sx) * t * 0.15;
+          const pullY = snap.sy + (origin.y - snap.sy) * t * 0.15;
+          const scale = 1 - t * 0.1;
+          oc.save();
+          oc.globalAlpha = 0.3;
+          oc.fillStyle = "#ffffff";
+          oc.beginPath();
+          oc.arc(pullX, pullY, cellSize * 0.35 * scale, 0, Math.PI * 2);
+          oc.fill();
+          oc.restore();
+        }
+      });
+      drawVFX();
+    });
+
+    addScreenShake(8);
+    addShockwave(origin.x, origin.y, cellSize * 7, 30, "#ffffff");
+    addFlash(origin.x, origin.y, cellSize * 5, "#ffffff", 18);
+    addBurstParticles(origin.x, origin.y, "#ffffff", 30, { speed: 6, size: 6, decay: 0.025, sizeDecay: 0.08 });
+    addBurstParticles(origin.x, origin.y, color, 20, { speed: 4, size: 5, decay: 0.02, sizeDecay: 0.06 });
+
+    const cellDists = cells.map(({ r, c }) => ({
+      r, c, dist: Math.abs(r - info.r) + Math.abs(c - info.c)
+    }));
+
+    await animateFrames(28, (frame, t) => {
+      if (frame === 8) addShockwave(origin.x, origin.y, cellSize * 5, 20, color);
+      if (frame === 14) addShockwave(origin.x, origin.y, cellSize * 4, 18, "#ffaa00");
+      for (const { r, c, dist } of cellDists) {
+        if (frame === dist * 3 + 1) {
+          const cc = cellCenter(r, c);
+          const pColor = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || color) : color;
+          addBurstParticles(cc.x, cc.y, pColor, 8, { speed: 2.5, size: 3.5, decay: 0.04, sizeDecay: 0.05 });
+          addScreenShake(1.5);
+        }
+      }
+      drawBoard(() => {});
+      drawVFX();
+    });
+  }
+
+  async function animateGalaxyCollision(cells, specialInfos) {
+    const info = specialInfos.find(s => s.type === "galaxy") || specialInfos[0];
+    const boardCX = (cols * cellSize) / 2;
+    const boardCY = (rows * cellSize) / 2;
+
+    addScreenShake(8);
+    addFlash(boardCX, boardCY, cellSize * 8, "#ffffff", 20);
+    addShockwave(boardCX, boardCY, cellSize * 10, 30, "#ffffff");
+    addBurstParticles(boardCX, boardCY, "#ffffff", 40, { speed: 7, size: 6, decay: 0.02, sizeDecay: 0.07 });
+
+    const cellDists = cells.map(({ r, c }) => {
+      const cc = cellCenter(r, c);
+      const dist = Math.hypot(cc.x - boardCX, cc.y - boardCY) / cellSize;
+      return { r, c, dist };
+    });
+
+    await animateFrames(35, (frame, t) => {
+      if (frame === 10) {
+        addShockwave(boardCX, boardCY, cellSize * 6, 22, "#ffff44");
+        addScreenShake(4);
+      }
+      for (const { r, c, dist } of cellDists) {
+        if (frame === Math.floor(dist * 2) + 1) {
+          const cc = cellCenter(r, c);
+          const pColor = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || "#ffffff") : "#ffffff";
+          addBurstParticles(cc.x, cc.y, pColor, 6, { speed: 3, size: 3.5, decay: 0.035, sizeDecay: 0.05 });
+        }
+      }
+      drawBoard((oc) => {
+        if (t < 0.6) {
+          const overlayAlpha = (1 - t / 0.6) * 0.25;
+          oc.save();
+          oc.globalAlpha = overlayAlpha;
+          oc.fillStyle = "#ffffff";
+          oc.fillRect(0, 0, cols * cellSize, rows * cellSize);
+          oc.restore();
+        }
+      });
+      drawVFX();
+    });
+  }
+
+  function animateFrames(totalFrames, callback) {
+    return new Promise(resolve => {
+      let frame = 0;
+      function step() {
+        frame++;
+        updateVFX();
+        callback(frame, frame / totalFrames);
+        if (frame < totalFrames) requestAnimationFrame(step);
+        else resolve();
+      }
+      requestAnimationFrame(step);
+    });
   }
 
   async function animateDrop(fallMap) {
@@ -1624,6 +3350,8 @@
           drawPieceAt(fall.piece, x, y);
         }
       }
+
+      ctx.restore();
 
       if (frame < totalFrames) {
         await sleep(ANIM.DROP_FRAME_MS);
@@ -1688,6 +3416,8 @@
   // --- Drawing ---
   function drawBoardBase() {
     ctx.clearRect(0, 0, boardPixelW, boardPixelH);
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
 
     // Animated space background
     drawSpaceBackground();
@@ -1805,7 +3535,8 @@
       }
     }
 
-    if (overlay) overlay();
+    if (overlay) overlay(ctx);
+    ctx.restore();
   }
 
   // --- Color utility functions for planet gradients ---
@@ -2277,8 +4008,12 @@
     stopBgAnim();
     function tick() {
       if (!screens.game.classList.contains("active")) return;
+      updateVFX();
       if (!animating && !hintData) {
         drawBoard();
+      }
+      if (hasActiveVFX()) {
+        drawVFX();
       }
       bgAnimId = requestAnimationFrame(tick);
     }
@@ -3031,6 +4766,7 @@
     chainCount = 0;
     selected = null;
     animating = false;
+    vfxParticles = []; vfxShockwaves = []; vfxFlashes = []; vfxComets = []; vfxTexts = []; shakeX = shakeY = shakeIntensity = 0;
     itemMode = null;
     coinsEarned = 0;
     canvas.classList.remove("item-targeting");
