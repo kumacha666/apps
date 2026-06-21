@@ -55,7 +55,71 @@ body {
   display: flex;
 }
 
+/* Splash */
+#screen-splash {
+  position: relative;
+  cursor: pointer;
+}
+
+#splash-bg-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+#screen-splash > *:not(#splash-bg-canvas) {
+  position: relative;
+  z-index: 1;
+}
+
+.splash-logo {
+  font-size: 3.5rem;
+  font-weight: 900;
+  margin-bottom: 60px;
+}
+
+.splash-logo .t-accent {
+  color: var(--accent);
+}
+
+.splash-logo .t-accent2 {
+  color: var(--gold);
+}
+
+.splash-tap {
+  font-size: 1.1rem;
+  color: rgba(255, 255, 255, 0.6);
+  letter-spacing: 0.3em;
+  animation: tapPulse 2s ease-in-out infinite;
+}
+
+@keyframes tapPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
 /* Title */
+#screen-title {
+  position: relative;
+}
+
+#title-bg-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+#screen-title > *:not(#title-bg-canvas) {
+  position: relative;
+  z-index: 1;
+}
+
 .title-logo {
   font-size: 3rem;
   font-weight: 900;
@@ -226,10 +290,14 @@ body {
 #stage-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
+  gap: 6px;
   max-height: 55vh;
   overflow-y: auto;
   padding: 8px;
+}
+
+.stage-btn span:first-child {
+  font-size: 0.7rem;
 }
 
 .stage-gate {
@@ -368,6 +436,27 @@ body {
   padding: 10px;
   font-size: 0.9rem;
   min-width: auto;
+}
+
+#btn-debug-open {
+  min-width: auto;
+  padding: 10px 14px;
+  font-size: 1rem;
+}
+
+#spawn-indicator {
+  background: var(--gold);
+  color: #000;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: center;
+  padding: 4px 8px;
+  border-radius: 6px;
+  width: 100%;
+}
+
+#spawn-indicator.hidden {
+  display: none;
 }
 
 /* Result */
@@ -531,53 +620,6 @@ body {
 .btn-debug.danger {
   background: #8b0000;
   color: #faa;
-}
-
-.debug-spawn-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.btn-spawn {
-  background: #1a3a5c;
-  color: var(--gold);
-  border: 1px solid var(--gold);
-  border-radius: 6px;
-  padding: 6px 8px;
-  font-size: 0.75rem;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.btn-spawn.active {
-  background: var(--gold);
-  color: #000;
-}
-
-#btn-debug-open {
-  min-width: auto;
-  padding: 10px 14px;
-  font-size: 1rem;
-}
-
-#btn-debug-open.hidden {
-  display: none;
-}
-
-#spawn-indicator {
-  background: var(--gold);
-  color: #000;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-align: center;
-  padding: 4px 8px;
-  border-radius: 6px;
-  width: 100%;
-}
-
-#spawn-indicator.hidden {
-  display: none;
 }
 
 /* Update Toast */
@@ -753,15 +795,6 @@ body {
   transform: scale(0.93);
 }
 
-.item-btn:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.item-btn:disabled:active {
-  transform: none;
-}
-
 .item-icon {
   font-size: 1.2rem;
   line-height: 1;
@@ -828,6 +861,29 @@ body {
 
 .color-pick-btn:active {
   transform: scale(0.9);
+}
+
+/* Special Spawner */
+.debug-spawn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.btn-spawn {
+  background: #1a3a5c;
+  color: var(--gold);
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-spawn.active {
+  background: var(--gold);
+  color: #000;
 }
 
 @media (max-height: 700px) {

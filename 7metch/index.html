@@ -19,7 +19,14 @@
 </head>
 <body>
   <div id="app">
-    <div id="screen-title" class="screen active">
+    <div id="screen-splash" class="screen active">
+      <canvas id="splash-bg-canvas"></canvas>
+      <div class="splash-logo"><span class="t-accent">ナナメ</span><span class="t-accent2">ッチ</span></div>
+      <div class="splash-tap">TAP TO START</div>
+    </div>
+
+    <div id="screen-title" class="screen">
+      <canvas id="title-bg-canvas"></canvas>
       <div class="title-logo"><span class="t-accent">ナナメ</span><span class="t-accent2">ッチ</span></div>
       <p class="title-sub"><span class="t-accent">ナナメ</span>に動かせる3<span class="t-accent2">マッチ</span>パズル</p>
       <button id="btn-start" class="btn-primary">はじめる</button>
@@ -32,7 +39,7 @@
       </div>
       <button id="btn-feedback" class="btn-link">ご意見・フィードバック</button>
       <button id="btn-sound-toggle" class="btn-sound">🔊</button>
-      <div id="version-info">v4.1.0</div>
+      <div id="version-info">v5.0.0</div>
       <div id="credits">Produced by kumacha. Special Thanks to Sakon.</div>
     </div>
 
@@ -138,11 +145,6 @@
               <td>タテ1列を消す</td>
             </tr>
             <tr>
-              <td class="help-icon">╲ ╱</td>
-              <td>2×2正方形消し</td>
-              <td>ナナメ両方向を消す</td>
-            </tr>
-            <tr>
               <td class="help-icon">◎</td>
               <td>T字・L字消し</td>
               <td>周囲を爆破</td>
@@ -151,6 +153,11 @@
               <td class="help-icon">✦</td>
               <td>5つ以上消し</td>
               <td>指定色を全消し</td>
+            </tr>
+            <tr>
+              <td class="help-icon">╲ ╱</td>
+              <td>2×2正方形消し</td>
+              <td>ナナメ両方向を消す</td>
             </tr>
           </table>
         </div>
@@ -171,15 +178,33 @@
         </div>
 
         <div class="help-section">
-          <h3>ナナメラインピース</h3>
+          <h3>ナナメラインピース（7×8〜）</h3>
           <p>同じ色が<strong>2×2の正方形</strong>に揃うとマッチ！消えた跡にナナメラインピースが出現します。</p>
           <p>起動するとナナメ両方向を一気に消す、ナナメッチならではのスペシャルピース！</p>
         </div>
 
         <div class="help-section">
-          <h3>先のステージでは…</h3>
-          <p>ステージを進めていくと、<strong>新しいギミック</strong>が続々登場！</p>
-          <p>障害物や新しいピースなど、戦略の幅がどんどん広がります。お楽しみに！</p>
+          <h3>障害物セル（8×9〜）</h3>
+          <table class="help-table">
+            <tr><th>タイプ</th><th>特徴</th></tr>
+            <tr><td class="help-icon">❄️ 氷</td><td>隣接マッチ2回で解除。ピースは通常通り操作可能。</td></tr>
+            <tr><td class="help-icon">🪨 岩</td><td>動かせず消せない永久ブロッカー。</td></tr>
+          </table>
+        </div>
+
+        <div class="help-section">
+          <h3>8色目ピース（9×10〜）</h3>
+          <p>オクタゴン型の黄緑ピースが追加。色が増えてマッチ難易度UP！</p>
+        </div>
+
+        <div class="help-section">
+          <h3>穴あき盤面（10×11〜）</h3>
+          <p>ステージごとに異なる穴パターン。使えないセルを避けて戦略を立てよう。</p>
+        </div>
+
+        <div class="help-section">
+          <h3>カウントダウンボム（11×12〜）</h3>
+          <p>数字が毎ターン減少。0になると自動爆発！巻き込まれる前にマッチで消そう。</p>
         </div>
 
         <div class="help-section">
