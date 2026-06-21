@@ -5721,5 +5721,16 @@
     }
   });
 
+  document.addEventListener("pointerdown", function firstTouch() {
+    document.removeEventListener("pointerdown", firstTouch);
+    initAudio();
+    if (bgmInitialized && soundEnabled) {
+      const activeScreen = Object.keys(screens).find(k => screens[k].classList.contains("active"));
+      if (activeScreen === "title" || activeScreen === "help") switchBgm("title");
+      else if (activeScreen === "stageSelect") switchBgm("select");
+      else if (activeScreen === "game") switchBgm("ingame");
+    }
+  }, { once: true });
+
   showScreen("title");
 })();
