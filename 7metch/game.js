@@ -2042,7 +2042,7 @@
       : "";
     let details = `スコア: ${score}`;
     if (win && coinsEarned > 0) {
-      details += `<br>🪙 +${coinsEarned} コイン（所持: ${saveData.coins || 0}）`;
+      details += `<br><span class="coin-icon"></span> +${coinsEarned} コイン（所持: ${saveData.coins || 0}）`;
     }
     document.getElementById("result-details").innerHTML = details;
 
@@ -2304,7 +2304,7 @@
     grid.innerHTML = "";
     const total = getTotalStars();
 
-    document.getElementById("total-stars-display").innerHTML = `★ ${total}　<span style="color:#4ecdc4">🪙 ${saveData.coins || 0}</span>`;
+    document.getElementById("total-stars-display").innerHTML = `★ ${total}　<span style="color:#4ecdc4"><span class="coin-icon"></span> ${saveData.coins || 0}</span>`;
 
     const lastClearedIdx = Object.keys(saveData.cleared)
       .map(Number)
