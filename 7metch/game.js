@@ -2848,12 +2848,17 @@
         for (const [hr, hc] of h.line) {
           for (const [vr, vc] of v.line) {
             if (hr === vr && hc === vc) {
-              const key = hr * cols + hc;
+              const allCells = [...h.line, ...v.line];
+              let sr = hr, sc = hc;
+              if (lastSwapTarget && allCells.some(([cr, cc]) => cr === lastSwapTarget.r && cc === lastSwapTarget.c)) {
+                sr = lastSwapTarget.r;
+                sc = lastSwapTarget.c;
+              }
+              const key = sr * cols + sc;
               if (!usedCells.has(key)) {
-                specials.push({ r: hr, c: hc, type: "bomb", color: h.color });
+                specials.push({ r: sr, c: sc, type: "bomb", color: h.color });
                 usedCells.add(key);
-                h.line.forEach(([lr, lc]) => usedCells.add(lr * cols + lc));
-                v.line.forEach(([lr, lc]) => usedCells.add(lr * cols + lc));
+                allCells.forEach(([lr, lc]) => usedCells.add(lr * cols + lc));
               }
             }
           }
@@ -2873,14 +2878,26 @@
       if (usedCells.has(midKey)) continue;
 
       if (line.length >= 5) {
-        specials.push({ r: mid[0], c: mid[1], type: "rainbow", color });
-        usedCells.add(midKey);
+        let sr = mid[0], sc = mid[1], sk = midKey;
+        if (lastSwapTarget && line.some(([lr, lc]) => lr === lastSwapTarget.r && lc === lastSwapTarget.c)) {
+          sr = lastSwapTarget.r;
+          sc = lastSwapTarget.c;
+          sk = sr * cols + sc;
+        }
+        if (!usedCells.has(sk)) {
+          specials.push({ r: sr, c: sc, type: "rainbow", color });
+          usedCells.add(sk);
+        }
       } else if (line.length === 4) {
-        const pos = line[1];
-        const type = dir === "h" ? "line_v" : "line_h";
-        const posKey = pos[0] * cols + pos[1];
+        const type = dir === "h" ? "line_h" : "line_v";
+        let sr = line[1][0], sc = line[1][1];
+        if (lastSwapTarget && line.some(([lr, lc]) => lr === lastSwapTarget.r && lc === lastSwapTarget.c)) {
+          sr = lastSwapTarget.r;
+          sc = lastSwapTarget.c;
+        }
+        const posKey = sr * cols + sc;
         if (!usedCells.has(posKey)) {
-          specials.push({ r: pos[0], c: pos[1], type, color });
+          specials.push({ r: sr, c: sc, type, color });
           usedCells.add(posKey);
         }
       }
