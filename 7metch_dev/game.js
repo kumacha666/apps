@@ -426,9 +426,9 @@
       case "clear": return `${m.count}個 けそう`;
       case "color":
         if (html) {
-          return `<span style="color:${PIECE_COLORS[m.colorIndex]};font-size:1.4em;vertical-align:-0.1em;text-shadow:0 0 4px ${PIECE_COLORS[m.colorIndex]}80">${PIECE_SYMBOLS[m.colorIndex]}</span>を${m.count}個けそう`;
+          return `<span style="color:${PIECE_COLORS[m.colorIndex]};font-weight:bold;text-shadow:0 0 6px ${PIECE_COLORS[m.colorIndex]}80">${PIECE_NAMES_JA[m.colorIndex]}</span>を${m.count}個けそう`;
         }
-        return `${PIECE_SYMBOLS[m.colorIndex]}を${m.count}個けそう`;
+        return `${PIECE_NAMES_JA[m.colorIndex]}を${m.count}個けそう`;
     }
   }
 
@@ -1500,7 +1500,7 @@
       pieceSnapshots.forEach((snap, idx) => {
         const x = snap.c * cellSize + cellSize / 2;
         const y = snap.r * cellSize + cellSize / 2;
-        const baseR = cellSize / 2 - 2;
+        const baseR = cellSize * 0.36;
 
         // Phase 1: Glow brightening (planet shines before dying)
         if (t < 0.3) {
@@ -1732,7 +1732,7 @@
 
   function drawPieceAt(piece, cx, cy) {
     if (!piece) return;
-    const radius = cellSize / 2 - 4;
+    const radius = cellSize * 0.36;
 
     if (pieceCacheSize === cellSize && pieceCache[piece.color]) {
       const cached = pieceCache[piece.color];
@@ -1838,7 +1838,7 @@
 
     // Outer glow
     ctx.shadowColor = color;
-    ctx.shadowBlur = r * 0.4;
+    ctx.shadowBlur = r * 0.6;
 
     // Base sphere with radial gradient (3D effect)
     const grad = ctx.createRadialGradient(cx - r * 0.25, cy - r * 0.25, r * 0.1, cx, cy, r);
@@ -1973,19 +1973,19 @@
     ctx.restore();
   }
 
-  // Mercury: Heavily cratered
+  // Mercury: Bold craters with rim highlights
   function drawMercury(ctx, cx, cy, r, color) {
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.clip();
     const craters = [
-      { x: 0.15, y: -0.2, s: 0.15 },
-      { x: -0.25, y: 0.1, s: 0.2 },
-      { x: 0.3, y: 0.25, s: 0.12 },
-      { x: -0.1, y: -0.35, s: 0.1 },
-      { x: 0.0, y: 0.3, s: 0.14 },
-      { x: -0.35, y: -0.15, s: 0.1 },
+      { x: 0.15, y: -0.2, s: 0.2 },
+      { x: -0.25, y: 0.1, s: 0.25 },
+      { x: 0.3, y: 0.25, s: 0.16 },
+      { x: -0.1, y: -0.38, s: 0.14 },
+      { x: 0.0, y: 0.32, s: 0.18 },
+      { x: -0.38, y: -0.15, s: 0.13 },
     ];
     for (const c of craters) {
       const px = cx + c.x * r;
@@ -1993,8 +1993,13 @@
       const cr = c.s * r;
       ctx.beginPath();
       ctx.arc(px, py, cr, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(0,0,0,0.2)";
+      ctx.fillStyle = "rgba(0,0,0,0.3)";
       ctx.fill();
+      ctx.beginPath();
+      ctx.arc(px - cr * 0.15, py - cr * 0.15, cr * 0.85, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255,255,255,0.2)";
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
     }
     ctx.restore();
   }
@@ -2155,7 +2160,7 @@
 
       const cx = size / 2;
       const cy = size / 2;
-      const radius = cellSize / 2 - 4;
+      const radius = cellSize * 0.36;
 
       drawPlanet(offCtx, colorIdx, cx, cy, radius);
       pieceCache[colorIdx] = offCanvas;
