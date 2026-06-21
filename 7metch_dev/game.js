@@ -2379,6 +2379,7 @@
   let cellState = [];
 
   const screens = {
+    splash: document.getElementById("screen-splash"),
     title: document.getElementById("screen-title"),
     stageSelect: document.getElementById("screen-stage-select"),
     help: document.getElementById("screen-help"),
@@ -2388,18 +2389,19 @@
 
   function showScreen(name) {
     if (name !== "game") { clearHint(); stopBgAnim(); }
-    if (name !== "title") stopTitleBgAnim();
+    if (name !== "title" && name !== "splash") stopTitleBgAnim();
+    if (name === "splash") stopSplashBgAnim();
     Object.values(screens).forEach((s) => s.classList.remove("active"));
     screens[name].classList.add("active");
     if (name === "game") startBgAnim();
     if (name === "title") startTitleBgAnim();
-    // BGM
+    if (name === "splash") startSplashBgAnim();
     if (bgmInitialized) {
       switch (name) {
         case "title": case "help": switchBgm("title"); break;
         case "stageSelect": switchBgm("select"); break;
         case "game": switchBgm("ingame"); break;
-        case "result": stopAllBgm(); break;
+        case "result": case "splash": stopAllBgm(); break;
       }
     }
   }
@@ -4892,6 +4894,69 @@
     if (titleBgAnimId) { cancelAnimationFrame(titleBgAnimId); titleBgAnimId = null; }
   }
 
+  let splashBgStars = [];
+  let splashBgAnimId = null;
+
+  function startSplashBgAnim() {
+    stopSplashBgAnim();
+    const canvas = document.getElementById("splash-bg-canvas");
+    if (!canvas) return;
+    const sCtx = canvas.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+
+    function resize() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      sCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (splashBgStars.length === 0) {
+        splashBgStars = [];
+        const w = rect.width, h = rect.height;
+        for (let i = 0; i < 150; i++) {
+          splashBgStars.push({
+            x: Math.random() * w, y: Math.random() * h,
+            size: 0.5 + Math.random() * 2,
+            speed: 0.04 + Math.random() * 0.15,
+            alpha: 0.4 + Math.random() * 0.5,
+            twinkle: Math.random() * Math.PI * 2,
+          });
+        }
+      }
+    }
+    resize();
+
+    function tick() {
+      if (!screens.splash.classList.contains("active")) return;
+      const w = canvas.width / dpr;
+      const h = canvas.height / dpr;
+      const grad = sCtx.createLinearGradient(0, 0, w * 0.3, h);
+      grad.addColorStop(0, "#0a0a2e");
+      grad.addColorStop(0.5, "#0d1030");
+      grad.addColorStop(1, "#150a30");
+      sCtx.fillStyle = grad;
+      sCtx.fillRect(0, 0, w, h);
+      for (const star of splashBgStars) {
+        star.y += star.speed;
+        star.x += star.speed * 0.1;
+        if (star.y > h) { star.y = -2; star.x = Math.random() * w; }
+        if (star.x > w) star.x -= w;
+        star.twinkle += 0.02;
+        sCtx.globalAlpha = star.alpha * (0.7 + 0.3 * Math.sin(star.twinkle));
+        sCtx.fillStyle = "#fff";
+        sCtx.beginPath();
+        sCtx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+        sCtx.fill();
+      }
+      sCtx.globalAlpha = 1;
+      splashBgAnimId = requestAnimationFrame(tick);
+    }
+    splashBgAnimId = requestAnimationFrame(tick);
+  }
+
+  function stopSplashBgAnim() {
+    if (splashBgAnimId) { cancelAnimationFrame(splashBgAnimId); splashBgAnimId = null; }
+  }
+
   function drawSpecialIndicator(ctx, type, cx, cy, r, piece) {
     ctx.save();
     const s = r * 0.55;
@@ -5721,16 +5786,10 @@
     }
   });
 
-  document.addEventListener("pointerdown", function firstTouch() {
-    document.removeEventListener("pointerdown", firstTouch);
+  document.getElementById("screen-splash").addEventListener("click", () => {
     initAudio();
-    if (bgmInitialized && soundEnabled) {
-      const activeScreen = Object.keys(screens).find(k => screens[k].classList.contains("active"));
-      if (activeScreen === "title" || activeScreen === "help") switchBgm("title");
-      else if (activeScreen === "stageSelect") switchBgm("select");
-      else if (activeScreen === "game") switchBgm("ingame");
-    }
-  }, { once: true });
+    showScreen("title");
+  });
 
-  showScreen("title");
+  showScreen("splash");
 })();
