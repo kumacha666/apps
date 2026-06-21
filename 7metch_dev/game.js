@@ -2189,9 +2189,9 @@
     bgStars = [];
     const w = boardPixelW, h = boardPixelH;
     const layers = [
-      { count: 80, speed: 0.08, sizeMin: 0.6, sizeMax: 1.5, alpha: 0.5 },
-      { count: 45, speed: 0.22, sizeMin: 1.0, sizeMax: 2.2, alpha: 0.7 },
-      { count: 20, speed: 0.45, sizeMin: 1.5, sizeMax: 3.0, alpha: 0.9 },
+      { count: 100, speed: 0.08, sizeMin: 0.8, sizeMax: 1.8, alpha: 0.7 },
+      { count: 55, speed: 0.22, sizeMin: 1.2, sizeMax: 2.5, alpha: 0.85 },
+      { count: 25, speed: 0.45, sizeMin: 1.8, sizeMax: 3.2, alpha: 1.0 },
     ];
     for (const layer of layers) {
       for (let i = 0; i < layer.count; i++) {
