@@ -86,6 +86,7 @@
       }
     }
     if (audioCtx.state === "suspended") audioCtx.resume();
+    initBgm();
   }
 
   function now() {
@@ -120,6 +121,746 @@
     gain.gain.value = 1;
     return gain;
   }
+
+  // --- BGM System ---
+  const BGM_MASTER = 0.20;
+  const BGM_CROSSFADE_MS = 500;
+
+  const BGM_SCALE = {
+    D2: 73.42, F2: 87.31, G2: 98.00, A2: 110.00, C3: 130.81,
+    D3: 146.83, F3: 174.61, G3: 196.00, A3: 220.00, C4: 261.63,
+    D4: 293.66, F4: 349.23, G4: 392.00, A4: 440.00, C5: 523.25,
+    D5: 587.33, F5: 698.46, G5: 783.99, A5: 880.00, C6: 1046.50,
+    D6: 1174.66, F6: 1396.91, G6: 1567.98, A6: 1760.00, C7: 2093.00,
+  };
+
+  const BGM_ARP_MID  = [BGM_SCALE.D4, BGM_SCALE.F4, BGM_SCALE.G4, BGM_SCALE.A4, BGM_SCALE.C5];
+  const BGM_ARP_HIGH = [BGM_SCALE.D5, BGM_SCALE.F5, BGM_SCALE.G5, BGM_SCALE.A5, BGM_SCALE.C6];
+  const BGM_TWINKLE  = [BGM_SCALE.D6, BGM_SCALE.F6, BGM_SCALE.G6, BGM_SCALE.A6, BGM_SCALE.C7];
+
+  const GAME_BASS_NOTES = [110.00, 130.81, 146.83, 164.81, 196.00];
+  const GAME_MID_NOTES  = [220.00, 261.63, 293.66, 329.63, 392.00];
+  const GAME_HIGH_NOTES = [440.00, 523.25, 587.33, 659.25, 783.99];
+  const GAME_SPARKLE_NOTES = [880.00, 1046.50, 1174.66, 1318.51, 1567.98];
+
+  const bgmTracks = {
+    title:  { gain: null, volume: 0.70, nodes: [], playing: false, fadeGain: null, timers: [] },
+    select: { gain: null, volume: 0.70, nodes: [], playing: false, fadeGain: null, timers: [] },
+    ingame: { gain: null, volume: 0.70, nodes: [], playing: false, fadeGain: null, timers: [] },
+  };
+
+  let bgmGain = null;
+  let currentBgm = null;
+  let bgmInitialized = false;
+
+  function initBgm() {
+    if (bgmInitialized || !audioCtx) return;
+    bgmGain = audioCtx.createGain();
+    bgmGain.gain.value = BGM_MASTER;
+    bgmGain.connect(masterGain);
+    for (const key in bgmTracks) {
+      const trackGain = audioCtx.createGain();
+      trackGain.gain.value = bgmTracks[key].volume;
+      const fadeGain = audioCtx.createGain();
+      fadeGain.gain.value = 0;
+      trackGain.connect(fadeGain).connect(bgmGain);
+      bgmTracks[key].gain = trackGain;
+      bgmTracks[key].fadeGain = fadeGain;
+    }
+    bgmInitialized = true;
+  }
+
+  function bgmReg(name, node) {
+    bgmTracks[name].nodes.push(node);
+    return node;
+  }
+
+  function bgmRegTimer(name, id) {
+    bgmTracks[name].timers.push(id);
+  }
+
+  function bgmPickNote(arr, avoid) {
+    let note, attempts = 0;
+    do {
+      note = arr[Math.floor(Math.random() * arr.length)];
+      attempts++;
+    } while (note === avoid && attempts < 5);
+    return note;
+  }
+
+  function bgmCreateLoopingNoise(name, duration) {
+    const source = audioCtx.createBufferSource();
+    source.buffer = createNoiseBuffer(duration);
+    source.loop = true;
+    bgmReg(name, source);
+    return source;
+  }
+
+  function stopBgmTrack(name) {
+    const track = bgmTracks[name];
+    track.nodes.forEach(node => {
+      try { if (node.stop) node.stop(); if (node.disconnect) node.disconnect(); } catch (e) {}
+    });
+    track.nodes = [];
+    track.playing = false;
+    track.timers.forEach(id => clearTimeout(id));
+    track.timers = [];
+  }
+
+  function bgmFadeIn(name) {
+    const track = bgmTracks[name];
+    const t = audioCtx.currentTime;
+    track.fadeGain.gain.cancelScheduledValues(t);
+    track.fadeGain.gain.setValueAtTime(track.fadeGain.gain.value, t);
+    track.fadeGain.gain.linearRampToValueAtTime(1.0, t + BGM_CROSSFADE_MS / 1000);
+  }
+
+  function bgmFadeOut(name) {
+    const track = bgmTracks[name];
+    const t = audioCtx.currentTime;
+    track.fadeGain.gain.cancelScheduledValues(t);
+    track.fadeGain.gain.setValueAtTime(track.fadeGain.gain.value, t);
+    track.fadeGain.gain.linearRampToValueAtTime(0.0, t + BGM_CROSSFADE_MS / 1000);
+    setTimeout(() => {
+      if (currentBgm !== name) stopBgmTrack(name);
+    }, BGM_CROSSFADE_MS + 100);
+  }
+
+  function switchBgm(name) {
+    if (!soundEnabled || !audioCtx || !bgmInitialized) return;
+    if (currentBgm === name) return;
+    if (currentBgm) bgmFadeOut(currentBgm);
+    if (name === null) { currentBgm = null; return; }
+    currentBgm = name;
+    bgmTracks[name].playing = true;
+    stopBgmTrack(name);
+    bgmTracks[name].playing = true;
+    startBgmTrack(name);
+    bgmFadeIn(name);
+  }
+
+  function stopAllBgm() {
+    if (currentBgm) bgmFadeOut(currentBgm);
+    currentBgm = null;
+  }
+
+  function startBgmTrack(name) {
+    stopBgmTrack(name);
+    bgmTracks[name].playing = true;
+    switch (name) {
+      case 'title': bgmStartTitle(); break;
+      case 'select': bgmStartSelect(); break;
+      case 'ingame': bgmStartIngame(); break;
+    }
+  }
+
+  // --- BGM Track: Title ---
+  function bgmStartTitle() {
+    const name = 'title';
+    const dest = bgmTracks[name].gain;
+    const t = audioCtx.currentTime;
+
+    // --- Sub-bass drone: D2 with slow pitch oscillation ---
+    const drone = audioCtx.createOscillator();
+    drone.type = 'sine';
+    drone.frequency.value = BGM_SCALE.D2;
+    const droneLfo = audioCtx.createOscillator();
+    droneLfo.type = 'sine';
+    droneLfo.frequency.value = 0.08;
+    const droneLfoGain = audioCtx.createGain();
+    droneLfoGain.gain.value = 2.5;
+    droneLfo.connect(droneLfoGain).connect(drone.frequency);
+    const droneGain = audioCtx.createGain();
+    droneGain.gain.value = 0.35;
+    drone.connect(droneGain).connect(dest);
+    drone.start(t);
+    droneLfo.start(t);
+    bgmReg(name, drone);
+    bgmReg(name, droneLfo);
+    bgmReg(name, droneLfoGain);
+    bgmReg(name, droneGain);
+
+    // --- Warm pad: D3 + A3 (perfect 5th) through low-pass filtered sawtooth ---
+    [BGM_SCALE.D3, BGM_SCALE.A3].forEach((freq, i) => {
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = freq;
+      osc.detune.value = i === 0 ? -5 : 5;
+
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 400;
+      lp.Q.value = 1.5;
+
+      const filterLfo = audioCtx.createOscillator();
+      filterLfo.type = 'sine';
+      filterLfo.frequency.value = 0.06 + i * 0.02;
+      const filterLfoGain = audioCtx.createGain();
+      filterLfoGain.gain.value = 120;
+      filterLfo.connect(filterLfoGain).connect(lp.frequency);
+      filterLfo.start(t);
+
+      const padGain = audioCtx.createGain();
+      padGain.gain.value = 0.25;
+
+      const ampLfo = audioCtx.createOscillator();
+      ampLfo.type = 'sine';
+      ampLfo.frequency.value = 0.04 + i * 0.015;
+      const ampLfoGain = audioCtx.createGain();
+      ampLfoGain.gain.value = 0.07;
+      ampLfo.connect(ampLfoGain).connect(padGain.gain);
+      ampLfo.start(t);
+
+      osc.connect(lp).connect(padGain).connect(dest);
+      osc.start(t);
+      bgmReg(name, osc);
+      bgmReg(name, lp);
+      bgmReg(name, filterLfo);
+      bgmReg(name, filterLfoGain);
+      bgmReg(name, padGain);
+      bgmReg(name, ampLfo);
+      bgmReg(name, ampLfoGain);
+    });
+
+    // --- Additional pad layer: triangle wave on D3 for body ---
+    const triPad = audioCtx.createOscillator();
+    triPad.type = 'triangle';
+    triPad.frequency.value = BGM_SCALE.D3;
+    const triLp = audioCtx.createBiquadFilter();
+    triLp.type = 'lowpass';
+    triLp.frequency.value = 350;
+    triLp.Q.value = 0.7;
+    const triGain = audioCtx.createGain();
+    triGain.gain.value = 0.15;
+    triPad.connect(triLp).connect(triGain).connect(dest);
+    triPad.start(t);
+    bgmReg(name, triPad);
+    bgmReg(name, triLp);
+    bgmReg(name, triGain);
+
+    // --- Sparse arpeggio: pentatonic notes, sine/triangle, every ~4-6s ---
+    let lastArpNote = null;
+    function scheduleArpTitle() {
+      if (!bgmTracks[name].playing && currentBgm !== name) return;
+      const delay = 4000 + Math.random() * 3000;
+      const timerId = setTimeout(() => {
+        if (!bgmTracks[name].playing && currentBgm !== name) return;
+        const ct = audioCtx.currentTime;
+
+        const note = bgmPickNote(BGM_ARP_MID, lastArpNote);
+        lastArpNote = note;
+
+        const osc = audioCtx.createOscillator();
+        osc.type = Math.random() > 0.5 ? 'sine' : 'triangle';
+        osc.frequency.value = note;
+
+        const arpGain = audioCtx.createGain();
+        arpGain.gain.value = 0;
+        arpGain.gain.setValueAtTime(0, ct);
+        arpGain.gain.linearRampToValueAtTime(0.12, ct + 0.3);
+        arpGain.gain.exponentialRampToValueAtTime(0.001, ct + 3.0);
+
+        const arpLp = audioCtx.createBiquadFilter();
+        arpLp.type = 'lowpass';
+        arpLp.frequency.value = 1200;
+        arpLp.Q.value = 0.5;
+
+        osc.connect(arpLp).connect(arpGain).connect(dest);
+        osc.start(ct);
+        osc.stop(ct + 3.5);
+
+        if (Math.random() > 0.6) {
+          const idx = BGM_ARP_MID.indexOf(note);
+          const harmNote = BGM_ARP_MID[(idx + 2) % BGM_ARP_MID.length];
+          const osc2 = audioCtx.createOscillator();
+          osc2.type = 'sine';
+          osc2.frequency.value = harmNote;
+          const hGain = audioCtx.createGain();
+          hGain.gain.value = 0;
+          hGain.gain.setValueAtTime(0, ct + 0.15);
+          hGain.gain.linearRampToValueAtTime(0.07, ct + 0.45);
+          hGain.gain.exponentialRampToValueAtTime(0.001, ct + 2.5);
+          osc2.connect(arpLp).connect(hGain).connect(dest);
+          osc2.start(ct + 0.15);
+          osc2.stop(ct + 3.0);
+        }
+
+        scheduleArpTitle();
+      }, delay);
+      bgmRegTimer(name, timerId);
+    }
+    const initTimer = setTimeout(() => scheduleArpTitle(), 2000);
+    bgmRegTimer(name, initTimer);
+
+    // --- Twinkle layer: distant star sparkles ---
+    function scheduleTwinkle() {
+      if (!bgmTracks[name].playing && currentBgm !== name) return;
+      const delay = 3000 + Math.random() * 5000;
+      const timerId = setTimeout(() => {
+        if (!bgmTracks[name].playing && currentBgm !== name) return;
+        const ct = audioCtx.currentTime;
+        const note = bgmPickNote(BGM_TWINKLE);
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = note;
+        const tGain = audioCtx.createGain();
+        tGain.gain.value = 0;
+        tGain.gain.setValueAtTime(0, ct);
+        tGain.gain.linearRampToValueAtTime(0.06, ct + 0.05);
+        tGain.gain.exponentialRampToValueAtTime(0.001, ct + 1.5);
+        osc.connect(tGain).connect(dest);
+        osc.start(ct);
+        osc.stop(ct + 2.0);
+
+        scheduleTwinkle();
+      }, delay);
+      bgmRegTimer(name, timerId);
+    }
+    const twinkleInit = setTimeout(() => scheduleTwinkle(), 1500);
+    bgmRegTimer(name, twinkleInit);
+  }
+
+  // --- BGM Track: Select ---
+  function bgmStartSelect() {
+    const name = 'select';
+    const dest = bgmTracks[name].gain;
+    const t = audioCtx.currentTime;
+
+    // --- Brighter pad: D3 + A3, pulled back to make room for motif ---
+    [BGM_SCALE.D3, BGM_SCALE.A3].forEach((freq, i) => {
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = freq;
+      osc.detune.value = i === 0 ? -6 : 6;
+
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 700 + i * 100;
+      lp.Q.value = 1.5;
+
+      const fLfo = audioCtx.createOscillator();
+      fLfo.type = 'sine';
+      fLfo.frequency.value = 0.06 + i * 0.02;
+      const fLfoG = audioCtx.createGain();
+      fLfoG.gain.value = 150;
+      fLfo.connect(fLfoG).connect(lp.frequency);
+      fLfo.start(t);
+
+      const g = audioCtx.createGain();
+      g.gain.value = 0.12;
+
+      osc.connect(lp).connect(g).connect(dest);
+      osc.start(t);
+      bgmReg(name, osc); bgmReg(name, lp); bgmReg(name, fLfo); bgmReg(name, fLfoG); bgmReg(name, g);
+    });
+
+    // --- Sub drone ---
+    const subDrone = audioCtx.createOscillator();
+    subDrone.type = 'sine';
+    subDrone.frequency.value = BGM_SCALE.D2;
+    const subG = audioCtx.createGain();
+    subG.gain.value = 0.2;
+    subDrone.connect(subG).connect(dest);
+    subDrone.start(t);
+    bgmReg(name, subDrone); bgmReg(name, subG);
+
+    // --- Strong shimmer: constant, louder ---
+    const shimmerNoise = bgmCreateLoopingNoise(name, 2);
+    const shimmerHp = audioCtx.createBiquadFilter();
+    shimmerHp.type = 'highpass';
+    shimmerHp.frequency.value = 5000;
+    const shimmerLp = audioCtx.createBiquadFilter();
+    shimmerLp.type = 'lowpass';
+    shimmerLp.frequency.value = 12000;
+    const shimmerLfo = audioCtx.createOscillator();
+    shimmerLfo.type = 'sine';
+    shimmerLfo.frequency.value = 0.2;
+    const shimmerLfoG = audioCtx.createGain();
+    shimmerLfoG.gain.value = 0.025;
+    shimmerLfo.connect(shimmerLfoG);
+    const shimmerGain = audioCtx.createGain();
+    shimmerGain.gain.value = 0.04;
+    shimmerLfoG.connect(shimmerGain.gain);
+    shimmerNoise.connect(shimmerHp).connect(shimmerLp).connect(shimmerGain).connect(dest);
+    shimmerNoise.start(t);
+    shimmerLfo.start(t);
+    bgmReg(name, shimmerHp); bgmReg(name, shimmerLp);
+    bgmReg(name, shimmerLfo); bgmReg(name, shimmerLfoG); bgmReg(name, shimmerGain);
+
+    // --- Repeating melodic motif: 4-note loop ---
+    const motifNotes = [BGM_SCALE.D5, BGM_SCALE.A4, BGM_SCALE.G4, BGM_SCALE.F4];
+    const motifInterval = 0.8;
+    let motifIdx = 0;
+
+    function playMotifNote(freq, startTime) {
+      const osc = audioCtx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+
+      const g = audioCtx.createGain();
+      g.gain.value = 0;
+      g.gain.setValueAtTime(0, startTime);
+      g.gain.linearRampToValueAtTime(0.38, startTime + 0.04);
+      g.gain.linearRampToValueAtTime(0.28, startTime + 0.25);
+      g.gain.exponentialRampToValueAtTime(0.001, startTime + motifInterval * 0.9);
+
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 3500;
+      lp.Q.value = 0.8;
+
+      osc.connect(lp).connect(g).connect(dest);
+      osc.start(startTime);
+      osc.stop(startTime + motifInterval);
+    }
+
+    function scheduleMotif() {
+      if (!bgmTracks[name].playing && currentBgm !== name) return;
+      const timerId = setTimeout(() => {
+        if (!bgmTracks[name].playing && currentBgm !== name) return;
+        const ct = audioCtx.currentTime;
+        const freq = motifNotes[motifIdx % motifNotes.length];
+        motifIdx++;
+        playMotifNote(freq, ct);
+        scheduleMotif();
+      }, motifInterval * 1000);
+      bgmRegTimer(name, timerId);
+    }
+    playMotifNote(motifNotes[0], t);
+    motifIdx = 1;
+    scheduleMotif();
+
+    // --- Rhythmic pulse: clear heartbeat ---
+    const pulseOsc = audioCtx.createOscillator();
+    pulseOsc.type = 'sine';
+    pulseOsc.frequency.value = BGM_SCALE.D2;
+    const pulseLfo = audioCtx.createOscillator();
+    pulseLfo.type = 'sine';
+    pulseLfo.frequency.value = 1.0;
+    const pulseShaper = audioCtx.createWaveShaper();
+    const shapeLen = 256;
+    const shapeCurve = new Float32Array(shapeLen);
+    for (let i = 0; i < shapeLen; i++) {
+      const x = (i / (shapeLen - 1)) * 2 - 1;
+      shapeCurve[i] = x > 0 ? x * x : 0;
+    }
+    pulseShaper.curve = shapeCurve;
+    const pulseLfoGain = audioCtx.createGain();
+    pulseLfoGain.gain.value = 0.28;
+    pulseLfo.connect(pulseShaper).connect(pulseLfoGain);
+    const pulseAmpGain = audioCtx.createGain();
+    pulseAmpGain.gain.value = 0;
+    pulseLfoGain.connect(pulseAmpGain.gain);
+    const pulseLp = audioCtx.createBiquadFilter();
+    pulseLp.type = 'lowpass';
+    pulseLp.frequency.value = 250;
+    pulseLp.Q.value = 3;
+    pulseOsc.connect(pulseLp).connect(pulseAmpGain).connect(dest);
+    pulseOsc.start(t);
+    pulseLfo.start(t);
+    bgmReg(name, pulseOsc); bgmReg(name, pulseLfo); bgmReg(name, pulseShaper);
+    bgmReg(name, pulseLfoGain); bgmReg(name, pulseAmpGain); bgmReg(name, pulseLp);
+
+    // --- Additional random arpeggios in high register ---
+    let lastArpNote = null;
+    function scheduleArpSelect() {
+      if (!bgmTracks[name].playing && currentBgm !== name) return;
+      const delay = 2000 + Math.random() * 2000;
+      const timerId = setTimeout(() => {
+        if (!bgmTracks[name].playing && currentBgm !== name) return;
+        const ct = audioCtx.currentTime;
+        const note = bgmPickNote(BGM_ARP_HIGH, lastArpNote);
+        lastArpNote = note;
+
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = note;
+        const g = audioCtx.createGain();
+        g.gain.value = 0;
+        g.gain.setValueAtTime(0, ct);
+        g.gain.linearRampToValueAtTime(0.08, ct + 0.05);
+        g.gain.exponentialRampToValueAtTime(0.001, ct + 1.5);
+        osc.connect(g).connect(dest);
+        osc.start(ct);
+        osc.stop(ct + 1.8);
+
+        scheduleArpSelect();
+      }, delay);
+      bgmRegTimer(name, timerId);
+    }
+    scheduleArpSelect();
+
+    // --- Twinkle ---
+    function scheduleTwinkleSelect() {
+      if (!bgmTracks[name].playing && currentBgm !== name) return;
+      const delay = 3000 + Math.random() * 4000;
+      const timerId = setTimeout(() => {
+        if (!bgmTracks[name].playing && currentBgm !== name) return;
+        const ct = audioCtx.currentTime;
+        const note = bgmPickNote(BGM_TWINKLE);
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = note;
+        const g = audioCtx.createGain();
+        g.gain.value = 0;
+        g.gain.setValueAtTime(0, ct);
+        g.gain.linearRampToValueAtTime(0.06, ct + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, ct + 1.0);
+        osc.connect(g).connect(dest);
+        osc.start(ct);
+        osc.stop(ct + 1.3);
+        scheduleTwinkleSelect();
+      }, delay);
+      bgmRegTimer(name, timerId);
+    }
+    scheduleTwinkleSelect();
+  }
+
+  // --- BGM Track: Ingame ---
+  function bgmStartIngame() {
+    const name = 'ingame';
+    const dest = bgmTracks[name].gain;
+    const t = audioCtx.currentTime;
+    const BPM = 120;
+    const beatSec = 60 / BPM;
+    const sixteenth = beatSec / 4;
+
+    // --- Synth pad: A3 + E4 (5th), sawtooth + LP400Hz ---
+    [220.00, 329.63].forEach((freq, i) => {
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = freq;
+      osc.detune.value = i === 0 ? -6 : 6;
+
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 400;
+      lp.Q.value = 1.5;
+
+      const fLfo = audioCtx.createOscillator();
+      fLfo.type = 'sine';
+      fLfo.frequency.value = 0.08 + i * 0.03;
+      const fLfoG = audioCtx.createGain();
+      fLfoG.gain.value = 250;
+      fLfo.connect(fLfoG).connect(lp.frequency);
+      fLfo.start(t);
+
+      const g = audioCtx.createGain();
+      g.gain.value = 0.115;
+
+      osc.connect(lp).connect(g).connect(dest);
+      osc.start(t);
+      bgmReg(name, osc); bgmReg(name, lp); bgmReg(name, fLfo); bgmReg(name, fLfoG); bgmReg(name, g);
+    });
+
+    // --- Driving bass pattern: eighth notes, syncopated ---
+    let bassIdx = 0;
+    const bassPattern = [0, -1, 4, 0, -1, 3, 0, 2];
+
+    function playBassNote(freq, startTime) {
+      const osc = audioCtx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 350;
+      lp.Q.value = 1.5;
+      const g = audioCtx.createGain();
+      g.gain.value = 0;
+      g.gain.setValueAtTime(0, startTime);
+      g.gain.linearRampToValueAtTime(0.05, startTime + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.004, startTime + beatSec * 0.4);
+      g.gain.linearRampToValueAtTime(0, startTime + beatSec * 0.45);
+      osc.connect(lp).connect(g).connect(dest);
+      osc.start(startTime);
+      osc.stop(startTime + beatSec * 0.5);
+    }
+
+    function scheduleBass() {
+      if (!bgmTracks[name].playing && currentBgm !== name) return;
+      const delay = beatSec * 500;
+      const timerId = setTimeout(() => {
+        if (!bgmTracks[name].playing && currentBgm !== name) return;
+        const ct = audioCtx.currentTime;
+        const patIdx = bassPattern[bassIdx % bassPattern.length];
+        bassIdx++;
+        if (patIdx === -1) { scheduleBass(); return; }
+        playBassNote(GAME_BASS_NOTES[patIdx], ct);
+        scheduleBass();
+      }, delay);
+      bgmRegTimer(name, timerId);
+    }
+    playBassNote(GAME_BASS_NOTES[0], t);
+    bassIdx = 1;
+    scheduleBass();
+
+    // --- Kick drum: four-on-the-floor ---
+    let kickCount = 0;
+    function playKick(startTime) {
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(150, startTime);
+      osc.frequency.exponentialRampToValueAtTime(50, startTime + 0.08);
+      const g = audioCtx.createGain();
+      g.gain.value = 0;
+      g.gain.setValueAtTime(0.21, startTime);
+      g.gain.exponentialRampToValueAtTime(0.001, startTime + 0.18);
+      osc.connect(g).connect(dest);
+      osc.start(startTime);
+      osc.stop(startTime + 0.22);
+    }
+
+    function scheduleKick() {
+      if (!bgmTracks[name].playing && currentBgm !== name) return;
+      const delay = beatSec * 1000;
+      const timerId = setTimeout(() => {
+        if (!bgmTracks[name].playing && currentBgm !== name) return;
+        kickCount++;
+        playKick(audioCtx.currentTime);
+        scheduleKick();
+      }, delay);
+      bgmRegTimer(name, timerId);
+    }
+    playKick(t);
+    scheduleKick();
+
+    // --- Delay effect for arpeggios ---
+    const delayNode = audioCtx.createDelay(1.0);
+    delayNode.delayTime.value = beatSec * 0.75;
+    const delayFeedback = audioCtx.createGain();
+    delayFeedback.gain.value = 0.35;
+    const delayFilter = audioCtx.createBiquadFilter();
+    delayFilter.type = 'lowpass';
+    delayFilter.frequency.value = 2500;
+    delayNode.connect(delayFeedback).connect(delayFilter).connect(delayNode);
+    delayNode.connect(dest);
+    bgmReg(name, delayNode); bgmReg(name, delayFeedback); bgmReg(name, delayFilter);
+
+    // --- Bright arpeggios: frequent, short, punchy with echo ---
+    let arpStep = 0;
+    let lastGameArp = null;
+
+    function scheduleGameArp() {
+      if (!bgmTracks[name].playing && currentBgm !== name) return;
+      const delay = beatSec * (0.75 + Math.random() * 1.25) * 1000;
+      const timerId = setTimeout(() => {
+        if (!bgmTracks[name].playing && currentBgm !== name) return;
+        const ct = audioCtx.currentTime;
+        arpStep++;
+
+        const noteArr = arpStep % 3 === 0 ? GAME_HIGH_NOTES : GAME_MID_NOTES;
+        const isHigh = arpStep % 3 === 0;
+        const note = bgmPickNote(noteArr, lastGameArp);
+        lastGameArp = note;
+
+        const osc = audioCtx.createOscillator();
+        const waveType = arpStep % 5 === 0 ? 'square' : (isHigh ? 'triangle' : 'sine');
+        osc.type = waveType;
+        osc.frequency.value = note;
+
+        const lp = audioCtx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = isHigh ? 2500 : 3500;
+        lp.Q.value = 1.2;
+
+        const peakGain = isHigh ? 0.07 : (waveType === 'square' ? 0.08 : 0.13);
+        const sustainGain = isHigh ? 0.043 : (waveType === 'square' ? 0.05 : 0.085);
+        const g = audioCtx.createGain();
+        g.gain.value = 0;
+        g.gain.setValueAtTime(0, ct);
+        g.gain.linearRampToValueAtTime(peakGain, ct + 0.015);
+        g.gain.linearRampToValueAtTime(sustainGain, ct + 0.15);
+        g.gain.exponentialRampToValueAtTime(0.0005, ct + 0.7);
+
+        osc.connect(lp).connect(g);
+        g.connect(dest);
+        g.connect(delayNode);
+        osc.start(ct);
+        osc.stop(ct + 0.8);
+
+        if (arpStep % 2 === 0) {
+          const idx = noteArr.indexOf(note);
+          const next = noteArr[(idx + 2) % noteArr.length];
+          const osc2 = audioCtx.createOscillator();
+          osc2.type = 'sine';
+          osc2.frequency.value = next;
+          const g2 = audioCtx.createGain();
+          g2.gain.value = 0;
+          const offset = beatSec * 0.25;
+          const followGain = isHigh ? 0.05 : 0.10;
+          g2.gain.setValueAtTime(0, ct + offset);
+          g2.gain.linearRampToValueAtTime(followGain, ct + offset + 0.015);
+          g2.gain.exponentialRampToValueAtTime(0.0005, ct + offset + 0.5);
+          osc2.connect(lp).connect(g2);
+          g2.connect(dest);
+          g2.connect(delayNode);
+          osc2.start(ct + offset);
+          osc2.stop(ct + offset + 0.7);
+        }
+
+        scheduleGameArp();
+      }, delay);
+      bgmRegTimer(name, timerId);
+    }
+    scheduleGameArp();
+
+    // --- Hi-hat pattern: eighth notes with accent variation ---
+    let hatBeat = 0;
+    function scheduleHat() {
+      if (!bgmTracks[name].playing && currentBgm !== name) return;
+      const delay = beatSec * 500;
+      const timerId = setTimeout(() => {
+        if (!bgmTracks[name].playing && currentBgm !== name) return;
+        const ct = audioCtx.currentTime;
+        hatBeat++;
+
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = createNoiseBuffer(0.08);
+        const hp = audioCtx.createBiquadFilter();
+        hp.type = 'highpass';
+        hp.frequency.value = 7000;
+        const g = audioCtx.createGain();
+        g.gain.value = 0;
+        const accent = hatBeat % 4 === 0 ? 0.10 : (hatBeat % 2 === 0 ? 0.07 : 0.05);
+        const duration = hatBeat % 4 === 0 ? 0.09 : 0.05;
+        g.gain.setValueAtTime(accent, ct);
+        g.gain.exponentialRampToValueAtTime(0.001, ct + duration);
+        noise.connect(hp).connect(g).connect(dest);
+        noise.start(ct);
+
+        scheduleHat();
+      }, delay);
+      bgmRegTimer(name, timerId);
+    }
+    scheduleHat();
+
+    // --- Sparkle accents ---
+    function scheduleSparkle() {
+      if (!bgmTracks[name].playing && currentBgm !== name) return;
+      const delay = 3000 + Math.random() * 4000;
+      const timerId = setTimeout(() => {
+        if (!bgmTracks[name].playing && currentBgm !== name) return;
+        const ct = audioCtx.currentTime;
+        const note = bgmPickNote(GAME_SPARKLE_NOTES);
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = note;
+        const g = audioCtx.createGain();
+        g.gain.value = 0;
+        g.gain.setValueAtTime(0, ct);
+        g.gain.linearRampToValueAtTime(0.14, ct + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.001, ct + 0.8);
+        osc.connect(g).connect(dest);
+        osc.start(ct);
+        osc.stop(ct + 0.8);
+        scheduleSparkle();
+      }, delay);
+      bgmRegTimer(name, timerId);
+    }
+    scheduleSparkle();
+  }
+
+  // --- End BGM System ---
 
   const SFX = {
 
@@ -1652,6 +2393,15 @@
     screens[name].classList.add("active");
     if (name === "game") startBgAnim();
     if (name === "title") startTitleBgAnim();
+    // BGM
+    if (bgmInitialized) {
+      switch (name) {
+        case "title": case "help": switchBgm("title"); break;
+        case "stageSelect": switchBgm("select"); break;
+        case "game": switchBgm("ingame"); break;
+        case "result": stopAllBgm(); break;
+      }
+    }
   }
 
   // --- Save / Load ---
@@ -4576,6 +5326,14 @@
   document.getElementById("btn-sound-toggle").addEventListener("click", () => {
     soundEnabled = !soundEnabled;
     document.getElementById("btn-sound-toggle").textContent = soundEnabled ? "🔊" : "🔇";
+    if (!soundEnabled) {
+      stopAllBgm();
+    } else if (bgmInitialized) {
+      const activeScreen = Object.keys(screens).find(k => screens[k].classList.contains("active"));
+      if (activeScreen === "title" || activeScreen === "help") switchBgm("title");
+      else if (activeScreen === "stageSelect") switchBgm("select");
+      else if (activeScreen === "game") switchBgm("ingame");
+    }
   });
 
   document.getElementById("btn-start").addEventListener("click", () => {
