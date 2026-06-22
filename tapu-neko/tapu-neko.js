@@ -331,18 +331,18 @@
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
 
-    // Very wide spread: affects ~half the body for a big round bulge
-    const spread = 1.2;
+    // Moderate spread for a local but rounded bulge
+    const spread = 0.65;
     const rawInfluence = Math.exp(-(diff * diff) / (2 * spread * spread)) * outwardFactor;
     if (rawInfluence < 0.001) return null;
 
-    // Flat-top profile: pow(x, 0.3) keeps influence high across a wide arc
-    const influence = Math.pow(rawInfluence, 0.3);
+    // Flat-top profile so the bulge is round, not pointy
+    const influence = Math.pow(rawInfluence, 0.35);
 
-    // Push outward along each point's own radial direction (keeps roundness)
+    // Push outward along drag direction, scaled down for control
     const bx = cx + Math.cos(angle) * baseR;
     const by = cy + Math.sin(angle) * baseR;
-    const pushDist = dist * influence;
+    const pushDist = dist * influence * 0.7;
     const px = bx + Math.cos(dragAngle) * pushDist;
     const py = by + Math.sin(dragAngle) * pushDist;
 
@@ -578,7 +578,7 @@
     ctx.fillStyle = '#d4c0a0';
     ctx.font = `${Math.min(W, H) * 0.018}px -apple-system, sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText('v2025.06.22f', W - 10, H - 10);
+    ctx.fillText('v2025.06.22g', W - 10, H - 10);
     ctx.textAlign = 'center';
   }
 
