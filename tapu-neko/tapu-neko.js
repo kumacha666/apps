@@ -312,20 +312,18 @@
     return d;
   }
 
-  // Drag: body surface pulled toward finger, with finger-width spread
+  // Drag: body surface pulled toward finger, with wide rounded spread
   function getDragPoint(angle, cx, cy, baseR) {
     if (!dragging || !dragInside) return null;
     const dx = dragX - dragStartX, dy = dragY - dragStartY;
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist < 3) return null;
 
-    // Only allow outward pulls: check drag direction vs grab angle
     const grabAngle = angleTo(dragStartX, dragStartY);
     const dragAngle = Math.atan2(dy, dx);
     let outwardCheck = dragAngle - grabAngle;
     while (outwardCheck > Math.PI) outwardCheck -= Math.PI * 2;
     while (outwardCheck < -Math.PI) outwardCheck += Math.PI * 2;
-    // If pulling inward (>90° from outward direction), reduce effect
     const outwardFactor = Math.max(0, Math.cos(outwardCheck));
     if (outwardFactor < 0.05) return null;
 
@@ -333,22 +331,33 @@
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
 
-    // Finger-width spread (wider = rounder tip)
-    const spread = 0.55;
-    const influence = Math.exp(-(diff * diff) / (2 * spread * spread)) * outwardFactor;
-
-    if (influence < 0.001) return null;
+    // Wide spread for round bulge
+    const spread = 0.8;
+    const rawInfluence = Math.exp(-(diff * diff) / (2 * spread * spread)) * outwardFactor;
+    if (rawInfluence < 0.001) return null;
 
     const bx = cx + Math.cos(angle) * baseR;
     const by = cy + Math.sin(angle) * baseR;
 
-    // Pull toward finger, but with reduced influence for a rounder shape
-    // Use sqrt to make the falloff gentler (fatter bulge, not pointy)
-    const softInfluence = Math.sqrt(influence) * influence;
-    const px = bx + (dragX - bx) * softInfluence;
-    const py = by + (dragY - by) * softInfluence;
+    // Pow 0.4 makes the bulge very round (flat top, steep sides)
+    const influence = Math.pow(rawInfluence, 0.4) * rawInfluence;
+    const px = bx + (dragX - bx) * influence;
+    const py = by + (dragY - by) * influence;
 
     return { x: px, y: py };
+  }
+
+  // Get the deformed body surface point at a given angle
+  function getBodySurfacePoint(angle, cx, cy, r) {
+    const baseR = catRadius(angle, r) * pinchScale;
+    const pinchD = getPinchDeform();
+    const deform = getDeformAt(angle) + pinchD + getTiltDeform(angle);
+    const rr = Math.max(baseR * 0.4, baseR + deform);
+    let x = cx + Math.cos(angle) * rr;
+    let y = cy + Math.sin(angle) * rr;
+    const dragPt = getDragPoint(angle, cx, cy, rr);
+    if (dragPt) { x = dragPt.x; y = dragPt.y; }
+    return { x, y };
   }
 
   function getPinchDeform() {
@@ -379,8 +388,11 @@
   }
 
   function drawTail(cx, cy, r) {
-    const bx = cx + r * 0.7;
-    const by = cy - r * 0.3;
+    // Attach tail to body surface at ~-0.6 rad (upper right)
+    const tailAngle = -0.5;
+    const sp = getBodySurfacePoint(tailAngle, cx, cy, r);
+    const bx = sp.x;
+    const by = sp.y;
     ctx.strokeStyle = '#f0a860';
     ctx.lineWidth = r * 0.08;
     ctx.lineCap = 'round';
@@ -395,10 +407,14 @@
   }
 
   function drawEar(cx, cy, r, side) {
+    // Attach ears to body surface at top
+    const earAngle = -Math.PI / 2 + side * 0.45;
+    const sp = getBodySurfacePoint(earAngle, cx, cy, r);
+
     const earW = r * 0.18;
     const earH = r * 0.28;
-    const baseX = cx + side * r * 0.32;
-    const baseY = cy - r * 0.95;
+    const baseX = sp.x;
+    const baseY = sp.y;
     const tipX = baseX + side * earW * 0.3;
     const tipY = baseY - earH;
 
@@ -424,16 +440,17 @@
     ctx.fill();
   }
 
-  // Small paws at bottom
   function drawPaws(cx, cy, r) {
-    const pawY = cy + r * 1.12;
+    // Attach paws to body surface at bottom
+    const lpaw = getBodySurfacePoint(Math.PI / 2 - 0.3, cx, cy, r);
+    const rpaw = getBodySurfacePoint(Math.PI / 2 + 0.3, cx, cy, r);
     const pawR = r * 0.08;
     ctx.fillStyle = '#f0a860';
     ctx.beginPath();
-    ctx.ellipse(cx - r * 0.25, pawY, pawR * 1.2, pawR, 0, 0, Math.PI * 2);
+    ctx.ellipse(lpaw.x, lpaw.y, pawR * 1.2, pawR, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.ellipse(cx + r * 0.25, pawY, pawR * 1.2, pawR, 0, 0, Math.PI * 2);
+    ctx.ellipse(rpaw.x, rpaw.y, pawR * 1.2, pawR, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -555,7 +572,7 @@
     ctx.fillStyle = '#d4c0a0';
     ctx.font = `${Math.min(W, H) * 0.018}px -apple-system, sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText('v2025.06.22c', W - 10, H - 10);
+    ctx.fillText('v2025.06.22d', W - 10, H - 10);
     ctx.textAlign = 'center';
   }
 
