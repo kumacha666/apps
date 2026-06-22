@@ -312,7 +312,7 @@
     return d;
   }
 
-  // Drag: body surface pulled toward finger, with wide rounded spread
+  // Drag: radial outward bulge (water balloon push, not point pull)
   function getDragPoint(angle, cx, cy, baseR) {
     if (!dragging || !dragInside) return null;
     const dx = dragX - dragStartX, dy = dragY - dragStartY;
@@ -331,18 +331,20 @@
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
 
-    // Wide spread for round bulge
-    const spread = 0.8;
+    // Very wide spread: affects ~half the body for a big round bulge
+    const spread = 1.2;
     const rawInfluence = Math.exp(-(diff * diff) / (2 * spread * spread)) * outwardFactor;
     if (rawInfluence < 0.001) return null;
 
+    // Flat-top profile: pow(x, 0.3) keeps influence high across a wide arc
+    const influence = Math.pow(rawInfluence, 0.3);
+
+    // Push outward along each point's own radial direction (keeps roundness)
     const bx = cx + Math.cos(angle) * baseR;
     const by = cy + Math.sin(angle) * baseR;
-
-    // Pow 0.4 makes the bulge very round (flat top, steep sides)
-    const influence = Math.pow(rawInfluence, 0.4) * rawInfluence;
-    const px = bx + (dragX - bx) * influence;
-    const py = by + (dragY - by) * influence;
+    const pushDist = dist * influence;
+    const px = bx + Math.cos(dragAngle) * pushDist;
+    const py = by + Math.sin(dragAngle) * pushDist;
 
     return { x: px, y: py };
   }
@@ -572,7 +574,7 @@
     ctx.fillStyle = '#d4c0a0';
     ctx.font = `${Math.min(W, H) * 0.018}px -apple-system, sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText('v2025.06.22d', W - 10, H - 10);
+    ctx.fillText('v2025.06.22e', W - 10, H - 10);
     ctx.textAlign = 'center';
   }
 
