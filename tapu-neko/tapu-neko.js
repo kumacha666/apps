@@ -15,14 +15,26 @@
   window.addEventListener('resize', resize);
   resize();
 
-  // Physics: position offset + squash/stretch
+  // Physics
   let ox = 0, oy = 0, vx = 0, vy = 0;
   let scaleX = 1, scaleY = 1, svx = 0, svy = 0;
-  let rotation = 0, rv = 0;
+  let rot = 0, rv = 0;
 
+  // Drag stretch
+  let dragging = false, dragInside = false;
+  let dragStartX = 0, dragStartY = 0;
+  let dragX = 0, dragY = 0;
+  let stretchX = 0, stretchY = 0;
+
+  // Face
   let eyeSquint = 0, targetSquint = 0;
   let blushAlpha = 0, targetBlush = 0;
   let tailWag = 0;
+
+  // Device motion
+  let accelX = 0, accelY = 0;
+  let shakeAccum = 0;
+  let motionPermission = false;
 
   function getCat() {
     const r = Math.min(W, H) * 0.25;
@@ -31,23 +43,14 @@
 
   function isInside(px, py) {
     const c = getCat();
-    const dx = px - c.cx, dy = py - c.cy;
+    const dx = px - (c.cx + ox), dy = py - (c.cy + oy);
     return dx * dx + dy * dy < (c.r * 1.3) ** 2;
   }
 
-  function poke(px, py) {
-    const c = getCat();
-    const dx = (px - c.cx) / c.r;
-    const dy = (py - c.cy) / c.r;
-
-    vx += dx * 2.5;
-    vy += dy * 2.5;
-
-    // Squash in the direction of the poke
-    svx += Math.abs(dx) * 0.04 + 0.02;
-    svy += Math.abs(dy) * 0.04 + 0.02;
-
-    rv += dx * 0.02;
+  function poke(strength) {
+    svx += 0.06 * strength;
+    svy -= 0.04 * strength;
+    rv += (Math.random() - 0.5) * 0.03 * strength;
 
     targetSquint = 1;
     targetBlush = 1;
@@ -55,77 +58,138 @@
     setTimeout(() => { targetBlush = 0; }, 1000);
   }
 
-  let dragging = false, lastPX = 0, lastPY = 0;
-
   canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     dragging = true;
-    lastPX = e.clientX;
-    lastPY = e.clientY;
-    if (isInside(e.clientX, e.clientY)) poke(e.clientX, e.clientY);
+    dragStartX = dragX = e.clientX;
+    dragStartY = dragY = e.clientY;
+    dragInside = isInside(e.clientX, e.clientY);
+    if (dragInside) poke(1);
+    requestMotionPermission();
   });
 
   canvas.addEventListener('pointermove', (e) => {
     e.preventDefault();
     if (!dragging) return;
-    if (isInside(e.clientX, e.clientY)) {
-      const dx = e.clientX - lastPX;
-      const dy = e.clientY - lastPY;
-      const speed = Math.sqrt(dx * dx + dy * dy);
-      if (speed > 2) {
-        vx += dx * 0.06;
-        vy += dy * 0.06;
-        svx += speed * 0.001;
-        svy += speed * 0.001;
-        targetSquint = 0.5;
-      }
-    }
-    lastPX = e.clientX;
-    lastPY = e.clientY;
+    dragX = e.clientX;
+    dragY = e.clientY;
   });
 
-  canvas.addEventListener('pointerup', () => {
+  canvas.addEventListener('pointerup', (e) => {
+    e.preventDefault();
+    if (dragging && dragInside) {
+      const dx = dragX - dragStartX;
+      const dy = dragY - dragStartY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 10) {
+        vx += dx * 0.12;
+        vy += dy * 0.12;
+        svx += Math.abs(dx) * 0.002;
+        svy += Math.abs(dy) * 0.002;
+        rv += dx * 0.0008;
+        poke(Math.min(dist / 50, 2));
+      }
+    }
     dragging = false;
-    targetSquint = 0;
+    dragInside = false;
+    stretchX = 0;
+    stretchY = 0;
   });
+
+  // Device motion
+  function requestMotionPermission() {
+    if (motionPermission) return;
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      DeviceMotionEvent.requestPermission().then((state) => {
+        if (state === 'granted') setupMotion();
+      }).catch(() => {});
+    } else {
+      setupMotion();
+    }
+    motionPermission = true;
+  }
+
+  function setupMotion() {
+    let lastAx = 0, lastAy = 0, lastAz = 0;
+    window.addEventListener('devicemotion', (e) => {
+      const a = e.accelerationIncludingGravity;
+      if (!a) return;
+
+      // Tilt: use gravity component
+      accelX = (a.x || 0) * 0.3;
+      accelY = (a.y || 0) * -0.3;
+
+      // Shake detection
+      const dx = Math.abs((a.x || 0) - lastAx);
+      const dy = Math.abs((a.y || 0) - lastAy);
+      const dz = Math.abs((a.z || 0) - lastAz);
+      const jerk = dx + dy + dz;
+      if (jerk > 15) {
+        shakeAccum = Math.min(shakeAccum + jerk * 0.5, 30);
+      }
+      lastAx = a.x || 0;
+      lastAy = a.y || 0;
+      lastAz = a.z || 0;
+    });
+  }
 
   function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
   function physics() {
-    // Position spring (bouncy return to center)
-    vx -= ox * 0.05;
-    vy -= oy * 0.05;
-    vx *= 0.9;
-    vy *= 0.9;
-    ox = clamp(ox + vx, -50, 50);
-    oy = clamp(oy + vy, -50, 50);
+    // Apply device tilt as gentle force
+    vx += accelX * 0.08;
+    vy += accelY * 0.08;
 
-    // Scale spring (squash & stretch)
-    svx -= (scaleX - 1) * 0.06;
-    svy -= (scaleY - 1) * 0.06;
-    // Coupling: when X stretches, Y squashes (volume preservation)
-    const coupling = 0.3;
-    svx -= (scaleY - 1) * 0.02 * coupling;
-    svy -= (scaleX - 1) * 0.02 * coupling;
-    svx *= 0.88;
-    svy *= 0.88;
-    scaleX = clamp(scaleX + svx, 0.8, 1.2);
-    scaleY = clamp(scaleY + svy, 0.8, 1.2);
+    // Apply shake
+    if (shakeAccum > 1) {
+      svx += shakeAccum * 0.003;
+      svy += shakeAccum * 0.002;
+      rv += (Math.random() - 0.5) * shakeAccum * 0.003;
+      shakeAccum *= 0.85;
+    }
+
+    // Compute live stretch from drag
+    if (dragging && dragInside) {
+      const c = getCat();
+      stretchX = (dragX - dragStartX) / c.r;
+      stretchY = (dragY - dragStartY) / c.r;
+    }
+
+    // Position spring - softer for more wobble
+    vx -= ox * 0.035;
+    vy -= oy * 0.035;
+    vx *= 0.92;
+    vy *= 0.92;
+    ox = clamp(ox + vx, -80, 80);
+    oy = clamp(oy + vy, -80, 80);
+
+    // Scale spring - softer, more oscillation
+    svx -= (scaleX - 1) * 0.04;
+    svy -= (scaleY - 1) * 0.04;
+    // Volume preservation coupling
+    svx -= (scaleY - 1) * 0.015;
+    svy -= (scaleX - 1) * 0.015;
+    svx *= 0.92;
+    svy *= 0.92;
+    scaleX = clamp(scaleX + svx, 0.7, 1.35);
+    scaleY = clamp(scaleY + svy, 0.7, 1.35);
 
     // Rotation spring
-    rv -= rotation * 0.06;
-    rv *= 0.9;
-    rotation = clamp(rotation + rv, -0.15, 0.15);
+    rv -= rot * 0.04;
+    rv *= 0.92;
+    rot = clamp(rot + rv, -0.2, 0.2);
 
-    eyeSquint += (targetSquint - eyeSquint) * 0.15;
-    blushAlpha += (targetBlush - blushAlpha) * 0.08;
+    eyeSquint += (targetSquint - eyeSquint) * 0.12;
+    blushAlpha += (targetBlush - blushAlpha) * 0.06;
     tailWag += 0.05;
   }
 
   function drawShadow(cx, cy, r) {
+    const sw = r * 0.75 * scaleX;
     ctx.fillStyle = 'rgba(0,0,0,0.06)';
     ctx.beginPath();
-    ctx.ellipse(cx, cy + r * 1.05, r * 0.75 * scaleX, r * 0.06, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy + r * 1.05, sw, r * 0.06, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -173,15 +237,26 @@
   }
 
   function drawBody(cx, cy, r) {
-    // Simple ellipse with squash/stretch - no wobble harmonics
+    // Live stretch from drag
+    const sx = scaleX + Math.abs(stretchX) * 0.15;
+    const sy = scaleY + Math.abs(stretchY) * 0.15;
+    // Volume compensation: if stretching X, squash Y
+    const volSx = sx * (1 / Math.sqrt(1 + Math.abs(stretchY) * 0.15));
+    const volSy = sy * (1 / Math.sqrt(1 + Math.abs(stretchX) * 0.15));
+
+    const pullX = stretchX * r * 0.35;
+    const pullY = stretchY * r * 0.35;
+
+    ctx.save();
+    ctx.translate(cx + pullX * 0.5, cy + pullY * 0.5);
+    ctx.rotate(rot);
+    ctx.scale(volSx, volSy);
+
     ctx.beginPath();
-    ctx.ellipse(cx, cy, r * scaleX, r * scaleY, rotation, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, r, r, 0, 0, Math.PI * 2);
     ctx.closePath();
 
-    const grad = ctx.createRadialGradient(
-      cx - r * 0.15, cy - r * 0.25, r * 0.1,
-      cx, cy, r
-    );
+    const grad = ctx.createRadialGradient(-r * 0.15, -r * 0.25, r * 0.1, 0, 0, r);
     grad.addColorStop(0, '#fff5ee');
     grad.addColorStop(0.5, '#ffd4a8');
     grad.addColorStop(1, '#f0a860');
@@ -190,51 +265,58 @@
     ctx.strokeStyle = '#d4915a';
     ctx.lineWidth = 2.5;
     ctx.stroke();
+
+    ctx.restore();
   }
 
   function drawFace(cx, cy, r) {
+    const pullX = stretchX * r * 0.35 * 0.5;
+    const pullY = stretchY * r * 0.35 * 0.5;
+    const fx = cx + pullX;
+    const fy = cy + pullY;
+
     if (blushAlpha > 0.01) {
       ctx.globalAlpha = blushAlpha * 0.4;
       ctx.fillStyle = '#ff9999';
       ctx.beginPath();
-      ctx.ellipse(cx - r * 0.35, cy + r * 0.15, r * 0.12, r * 0.07, 0, 0, Math.PI * 2);
+      ctx.ellipse(fx - r * 0.35, fy + r * 0.15, r * 0.12, r * 0.07, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.beginPath();
-      ctx.ellipse(cx + r * 0.35, cy + r * 0.15, r * 0.12, r * 0.07, 0, 0, Math.PI * 2);
+      ctx.ellipse(fx + r * 0.35, fy + r * 0.15, r * 0.12, r * 0.07, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
     }
 
     const eyeSpacing = r * 0.22;
-    const eyeY = cy - r * 0.08;
+    const eyeY = fy - r * 0.08;
     const eyeRx = r * 0.09;
     const eyeRy = r * 0.11 * Math.max(0.25, 1 - eyeSquint * 0.75);
 
     ctx.fillStyle = '#3a2a1a';
     ctx.beginPath();
-    ctx.ellipse(cx - eyeSpacing, eyeY, eyeRx, eyeRy, 0, 0, Math.PI * 2);
+    ctx.ellipse(fx - eyeSpacing, eyeY, eyeRx, eyeRy, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.ellipse(cx + eyeSpacing, eyeY, eyeRx, eyeRy, 0, 0, Math.PI * 2);
+    ctx.ellipse(fx + eyeSpacing, eyeY, eyeRx, eyeRy, 0, 0, Math.PI * 2);
     ctx.fill();
 
     if (eyeSquint < 0.5) {
       ctx.fillStyle = '#fff';
       const hl = eyeRx * 0.35;
       ctx.beginPath();
-      ctx.ellipse(cx - eyeSpacing + eyeRx * 0.25, eyeY - eyeRy * 0.2, hl, hl, 0, 0, Math.PI * 2);
+      ctx.ellipse(fx - eyeSpacing + eyeRx * 0.25, eyeY - eyeRy * 0.2, hl, hl, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.beginPath();
-      ctx.ellipse(cx + eyeSpacing + eyeRx * 0.25, eyeY - eyeRy * 0.2, hl, hl, 0, 0, Math.PI * 2);
+      ctx.ellipse(fx + eyeSpacing + eyeRx * 0.25, eyeY - eyeRy * 0.2, hl, hl, 0, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    const noseY = cy + r * 0.07;
+    const noseY = fy + r * 0.07;
     ctx.fillStyle = '#e8907a';
     ctx.beginPath();
-    ctx.moveTo(cx, noseY - r * 0.02);
-    ctx.lineTo(cx - r * 0.035, noseY + r * 0.02);
-    ctx.lineTo(cx + r * 0.035, noseY + r * 0.02);
+    ctx.moveTo(fx, noseY - r * 0.02);
+    ctx.lineTo(fx - r * 0.035, noseY + r * 0.02);
+    ctx.lineTo(fx + r * 0.035, noseY + r * 0.02);
     ctx.closePath();
     ctx.fill();
 
@@ -243,22 +325,22 @@
     ctx.lineWidth = 1.8;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(cx, mouthY);
-    ctx.quadraticCurveTo(cx - r * 0.05, mouthY + r * 0.04, cx - r * 0.09, mouthY + r * 0.015);
+    ctx.moveTo(fx, mouthY);
+    ctx.quadraticCurveTo(fx - r * 0.05, mouthY + r * 0.04, fx - r * 0.09, mouthY + r * 0.015);
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(cx, mouthY);
-    ctx.quadraticCurveTo(cx + r * 0.05, mouthY + r * 0.04, cx + r * 0.09, mouthY + r * 0.015);
+    ctx.moveTo(fx, mouthY);
+    ctx.quadraticCurveTo(fx + r * 0.05, mouthY + r * 0.04, fx + r * 0.09, mouthY + r * 0.015);
     ctx.stroke();
 
     ctx.strokeStyle = '#c8a080';
     ctx.lineWidth = 1.5;
     for (let side = -1; side <= 1; side += 2) {
       for (let i = -1; i <= 1; i++) {
-        const wy = cy + r * 0.12 + i * r * 0.04;
+        const wy = fy + r * 0.12 + i * r * 0.04;
         ctx.beginPath();
-        ctx.moveTo(cx + side * r * 0.13, wy);
-        ctx.lineTo(cx + side * r * 0.5, wy + i * r * 0.025);
+        ctx.moveTo(fx + side * r * 0.13, wy);
+        ctx.lineTo(fx + side * r * 0.5, wy + i * r * 0.025);
         ctx.stroke();
       }
     }
