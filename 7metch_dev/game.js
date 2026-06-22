@@ -4266,7 +4266,7 @@
 
         if (frame <= fallFrames) {
           const t = Math.min(frame / fallFrames, 1);
-          const accel = t * t;
+          const accel = t * t * t;
           currentR = fall.fromR + dist * accel;
         } else {
           const bt = (frame - fallFrames) / bounceFrames;
@@ -4293,22 +4293,27 @@
 
   async function showChainLabel(chain) {
     const label = `${chain} Chain!`;
-    const totalFrames = 20;
+    const totalFrames = 25;
 
     for (let f = 0; f < totalFrames; f++) {
       drawBoard();
       ctx.save();
 
       const t = f / totalFrames;
-      const yOffset = -t * cellSize * 0.5;
-      const alpha = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
-      const scale = t < 0.2 ? 0.5 + (t / 0.2) * 0.5 : 1;
+      const popT = Math.min(t / 0.15, 1);
+      const scale = popT < 1 ? 0.3 + popT * 1.0 : 1.3 - (t - 0.15) * 0.35;
+      const yOffset = -t * cellSize * 0.6;
+      const alpha = t < 0.65 ? 1 : 1 - (t - 0.65) / 0.35;
+
+      const chainColor = chain >= 5 ? "#ff4444" : chain >= 3 ? "#ff8800" : "#ffd700";
 
       ctx.globalAlpha = alpha;
-      ctx.fillStyle = "#ffd700";
+      ctx.fillStyle = chainColor;
       ctx.strokeStyle = "#000";
-      ctx.lineWidth = 3;
-      ctx.font = `bold ${cellSize * 0.7 * scale}px sans-serif`;
+      ctx.lineWidth = 4;
+      ctx.shadowColor = chainColor;
+      ctx.shadowBlur = 8 + chain * 3;
+      ctx.font = `bold ${cellSize * (0.7 + chain * 0.05) * scale}px sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
 
@@ -4318,8 +4323,12 @@
       ctx.strokeText(label, x, y);
       ctx.fillText(label, x, y);
 
+      if (f === 0 && chain >= 3) {
+        addScreenShake(Math.min(chain * 0.8, 4));
+      }
+
       ctx.restore();
-      await sleep(25);
+      await sleep(22);
     }
   }
 
