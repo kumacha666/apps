@@ -20,20 +20,19 @@
     return { cx: W / 2, cy: H * 0.50, r };
   }
 
-  // Local deformations - each is a dent/bulge at a specific angle
+  // Local deformations
   const dents = [];
-  const MAX_DENTS = 12;
+  const MAX_DENTS = 16;
 
   class Dent {
-    constructor(angle, depth) {
+    constructor(angle, depth, width) {
       this.angle = angle;
       this.depth = depth;
       this.vel = 0;
-      this.width = 0.8; // gaussian spread in radians
+      this.width = width || 0.6;
       this.dead = false;
     }
     update() {
-      // Spring back to 0 - soft and wobbly
       this.vel -= this.depth * 0.045;
       this.vel *= 0.93;
       this.depth += this.vel;
@@ -43,18 +42,23 @@
     }
   }
 
-  // Overall body sway (subtle)
+  // Minimal sway (almost none for poke, only for tilt/shake)
   let swayX = 0, swayY = 0, swayVX = 0, swayVY = 0;
+
+  // Pinch state
+  let pinchScale = 1, pinchVel = 0;
+  let pinching = false;
+  let pinchStartDist = 0;
+  let pinchLiveDist = 0;
 
   // Face
   let eyeSquint = 0, targetSquint = 0;
   let blushAlpha = 0, targetBlush = 0;
   let tailWag = 0;
 
-  // Drag state
+  // Single-finger drag
   let dragging = false, dragInside = false;
   let dragStartX = 0, dragStartY = 0, dragX = 0, dragY = 0;
-  let dragAngle = 0;
 
   // Device motion
   let motionInited = false;
@@ -62,12 +66,12 @@
 
   function angleTo(px, py) {
     const c = getCat();
-    return Math.atan2(py - (c.cy + swayY), px - (c.cx + swayX));
+    return Math.atan2(py - c.cy, px - c.cx);
   }
 
   function distTo(px, py) {
     const c = getCat();
-    const dx = px - (c.cx + swayX), dy = py - (c.cy + swayY);
+    const dx = px - c.cx, dy = py - c.cy;
     return Math.sqrt(dx * dx + dy * dy);
   }
 
@@ -75,24 +79,15 @@
     return distTo(px, py) < getCat().r * 1.3;
   }
 
-  function addDent(angle, depth) {
-    if (dents.length >= MAX_DENTS) {
-      dents.shift();
-    }
-    dents.push(new Dent(angle, depth));
+  function addDent(angle, depth, width) {
+    if (dents.length >= MAX_DENTS) dents.shift();
+    dents.push(new Dent(angle, depth, width));
   }
 
   function pokeAt(px, py, strength) {
     const angle = angleTo(px, py);
-    const dist = distTo(px, py);
     const c = getCat();
-    const normalizedDist = Math.min(dist / c.r, 1.2);
-    const depthScale = strength * (0.5 + normalizedDist * 0.5);
-    addDent(angle, -c.r * 0.18 * depthScale);
-
-    // Subtle sway away from poke
-    swayVX += Math.cos(angle) * 0.8 * strength;
-    swayVY += Math.sin(angle) * 0.8 * strength;
+    addDent(angle, -c.r * 0.2 * strength, 0.5);
 
     targetSquint = Math.min(strength, 1);
     targetBlush = Math.min(strength, 1);
@@ -100,50 +95,122 @@
     setTimeout(() => { targetBlush = 0; }, 800);
   }
 
+  // Touch handling - support both single and multi-touch
+  const activeTouches = new Map();
+
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      activeTouches.set(t.identifier, { x: t.clientX, y: t.clientY, sx: t.clientX, sy: t.clientY });
+    }
+
+    if (activeTouches.size >= 2) {
+      // Start pinch
+      const pts = [...activeTouches.values()];
+      const dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
+      pinchStartDist = Math.sqrt(dx * dx + dy * dy);
+      pinchLiveDist = pinchStartDist;
+      pinching = true;
+      dragging = false;
+    } else if (activeTouches.size === 1) {
+      const t = e.changedTouches[0];
+      dragging = true;
+      dragInside = isInside(t.clientX, t.clientY);
+      dragStartX = dragX = t.clientX;
+      dragStartY = dragY = t.clientY;
+      if (dragInside) pokeAt(t.clientX, t.clientY, 1);
+    }
+    initMotion();
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      const existing = activeTouches.get(t.identifier);
+      if (existing) { existing.x = t.clientX; existing.y = t.clientY; }
+    }
+
+    if (pinching && activeTouches.size >= 2) {
+      const pts = [...activeTouches.values()];
+      const dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
+      pinchLiveDist = Math.sqrt(dx * dx + dy * dy);
+    } else if (dragging) {
+      const t = e.changedTouches[0];
+      dragX = t.clientX;
+      dragY = t.clientY;
+      if (dragInside) targetSquint = 0.4;
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      activeTouches.delete(t.identifier);
+    }
+
+    if (pinching && activeTouches.size < 2) {
+      // Release pinch -> bounce
+      const ratio = pinchStartDist > 0 ? pinchLiveDist / pinchStartDist : 1;
+      pinchVel += (ratio - 1) * 0.15;
+      pinching = false;
+      targetSquint = 0;
+    }
+
+    if (activeTouches.size === 0) {
+      if (dragging && dragInside) {
+        const dx = dragX - dragStartX;
+        const dy = dragY - dragStartY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 15) {
+          const angle = Math.atan2(dy, dx);
+          const c = getCat();
+          const strength = Math.min(dist / c.r, 1.5);
+          addDent(angle, c.r * 0.25 * strength, 0.6);
+          addDent(angle + Math.PI, -c.r * 0.1 * strength, 0.7);
+          pokeAt(dragX, dragY, strength * 0.5);
+        }
+      }
+      dragging = false;
+      dragInside = false;
+      targetSquint = 0;
+    }
+  }, { passive: false });
+
+  // Mouse fallback for desktop
   canvas.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch') return;
     e.preventDefault();
     dragging = true;
     dragStartX = dragX = e.clientX;
     dragStartY = dragY = e.clientY;
     dragInside = isInside(e.clientX, e.clientY);
-    if (dragInside) {
-      dragAngle = angleTo(e.clientX, e.clientY);
-      pokeAt(e.clientX, e.clientY, 1);
-    }
+    if (dragInside) pokeAt(e.clientX, e.clientY, 1);
     initMotion();
   });
 
   canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch') return;
     e.preventDefault();
     if (!dragging) return;
     dragX = e.clientX;
     dragY = e.clientY;
-    if (dragInside) {
-      const dx = e.clientX - dragStartX;
-      const dy = e.clientY - dragStartY;
-      const speed = Math.sqrt(dx * dx + dy * dy);
-      if (speed > 5) {
-        targetSquint = 0.5;
-      }
-    }
+    if (dragInside) targetSquint = 0.4;
   });
 
   canvas.addEventListener('pointerup', (e) => {
+    if (e.pointerType === 'touch') return;
     e.preventDefault();
     if (dragging && dragInside) {
       const dx = dragX - dragStartX;
       const dy = dragY - dragStartY;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist > 15) {
-        // Release stretch -> bounce back creates ripple dents
         const angle = Math.atan2(dy, dx);
         const c = getCat();
         const strength = Math.min(dist / c.r, 1.5);
-        addDent(angle, c.r * 0.2 * strength);
-        addDent(angle + Math.PI, -c.r * 0.12 * strength);
-        swayVX += dx * 0.06;
-        swayVY += dy * 0.06;
-        pokeAt(dragX, dragY, strength);
+        addDent(angle, c.r * 0.25 * strength, 0.6);
+        addDent(angle + Math.PI, -c.r * 0.1 * strength, 0.7);
+        pokeAt(dragX, dragY, strength * 0.5);
       }
     }
     dragging = false;
@@ -172,21 +239,19 @@
       if (!a) return;
       const ax = a.x || 0, ay = a.y || 0, az = a.z || 0;
 
-      // Tilt -> gentle sway force
       accelX = ax;
       accelY = ay;
 
-      // Shake detection
       const jerk = Math.abs(ax - prevAx) + Math.abs(ay - prevAy) + Math.abs(az - prevAz);
       if (jerk > 12) {
         const shakeAngle = Math.atan2(ay - prevAy, ax - prevAx);
-        const shakeStrength = Math.min(jerk / 20, 2);
-        addDent(shakeAngle, -getCat().r * 0.12 * shakeStrength);
-        addDent(shakeAngle + Math.PI * 0.7, -getCat().r * 0.08 * shakeStrength);
-        swayVX += (ax - prevAx) * 0.4;
-        swayVY -= (ay - prevAy) * 0.4;
-        targetSquint = Math.min(shakeStrength * 0.5, 1);
-        targetBlush = Math.min(shakeStrength * 0.3, 1);
+        const shakeStr = Math.min(jerk / 20, 2);
+        addDent(shakeAngle, -getCat().r * 0.15 * shakeStr, 0.7);
+        addDent(shakeAngle + Math.PI * 0.7, -getCat().r * 0.1 * shakeStr, 0.6);
+        swayVX += (ax - prevAx) * 0.3;
+        swayVY -= (ay - prevAy) * 0.3;
+        targetSquint = Math.min(shakeStr * 0.5, 1);
+        targetBlush = Math.min(shakeStr * 0.3, 1);
         setTimeout(() => { targetSquint = 0; targetBlush = 0; }, 300);
       }
       prevAx = ax; prevAy = ay; prevAz = az;
@@ -196,44 +261,43 @@
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
   function physics() {
-    // Update dents
     for (let i = dents.length - 1; i >= 0; i--) {
       dents[i].update();
       if (dents[i].dead) dents.splice(i, 1);
     }
 
-    // Tilt force
-    swayVX += accelX * 0.06;
-    swayVY -= accelY * 0.06;
+    // Pinch scale spring
+    pinchVel -= (pinchScale - 1) * 0.05;
+    pinchVel *= 0.9;
+    pinchScale = clamp(pinchScale + pinchVel, 0.7, 1.5);
 
-    // Sway spring
-    swayVX -= swayX * 0.03;
-    swayVY -= swayY * 0.03;
-    swayVX *= 0.93;
-    swayVY *= 0.93;
-    swayX = clamp(swayX + swayVX, -50, 50);
-    swayY = clamp(swayY + swayVY, -50, 50);
+    // Tilt force (only tilt moves the whole body, not pokes)
+    swayVX += accelX * 0.05;
+    swayVY -= accelY * 0.05;
+
+    swayVX -= swayX * 0.04;
+    swayVY -= swayY * 0.04;
+    swayVX *= 0.92;
+    swayVY *= 0.92;
+    swayX = clamp(swayX + swayVX, -40, 40);
+    swayY = clamp(swayY + swayVY, -40, 40);
 
     eyeSquint += (targetSquint - eyeSquint) * 0.15;
     blushAlpha += (targetBlush - blushAlpha) * 0.08;
     tailWag += 0.05;
   }
 
-  // Get deformation at a given angle
   function getDeformAt(angle) {
     let d = 0;
     for (const dent of dents) {
       let diff = angle - dent.angle;
-      // Wrap to [-PI, PI]
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
-      const gaussian = Math.exp(-(diff * diff) / (2 * dent.width * dent.width));
-      d += dent.depth * gaussian;
+      d += dent.depth * Math.exp(-(diff * diff) / (2 * dent.width * dent.width));
     }
     return d;
   }
 
-  // Live drag stretch
   function getDragDeform(angle) {
     if (!dragging || !dragInside) return 0;
     const dx = dragX - dragStartX;
@@ -247,17 +311,14 @@
     while (diff < -Math.PI) diff += Math.PI * 2;
 
     const c = getCat();
-    const strength = Math.min(dist / c.r, 0.8);
-    const gaussian = Math.exp(-(diff * diff) / (2 * 0.5 * 0.5));
-    // Stretch in pull direction, compress opposite
-    const stretch = gaussian * strength * c.r * 0.4;
+    const strength = Math.min(dist / c.r, 1.0);
+    return Math.exp(-(diff * diff) / (2 * 0.4 * 0.4)) * strength * c.r * 0.45;
+  }
 
-    let oppDiff = angle - (pullAngle + Math.PI);
-    while (oppDiff > Math.PI) oppDiff -= Math.PI * 2;
-    while (oppDiff < -Math.PI) oppDiff += Math.PI * 2;
-    const compress = Math.exp(-(oppDiff * oppDiff) / (2 * 0.7 * 0.7)) * strength * c.r * -0.1;
-
-    return stretch + compress;
+  function getPinchDeform() {
+    if (!pinching || pinchStartDist < 10) return 0;
+    const ratio = pinchLiveDist / pinchStartDist;
+    return (ratio - 1) * getCat().r * 0.5;
   }
 
   function drawShadow(cx, cy, r) {
@@ -284,17 +345,18 @@
   }
 
   function drawEar(cx, cy, r, side) {
-    const earW = r * 0.22;
-    const earH = r * 0.32;
-    const earCx = cx + side * r * 0.42;
-    const earCy = cy - r * 0.78;
-    const tipX = earCx + side * earW * 0.25;
-    const tipY = earCy - earH;
+    const earW = r * 0.25;
+    const earH = r * 0.35;
+    const baseX = cx + side * r * 0.38;
+    const baseY = cy - r * 0.82;
+    const tipX = baseX + side * earW * 0.35;
+    const tipY = baseY - earH;
 
+    // Outer ear - symmetric shape
     ctx.beginPath();
-    ctx.moveTo(earCx - earW, earCy);
-    ctx.quadraticCurveTo(tipX - side * earW * 0.1, tipY, tipX, tipY);
-    ctx.quadraticCurveTo(tipX + side * earW * 0.4, tipY + earH * 0.3, earCx + earW, earCy);
+    ctx.moveTo(baseX - side * earW * 0.1, baseY);
+    ctx.quadraticCurveTo(baseX - side * earW * 0.2, tipY + earH * 0.3, tipX, tipY);
+    ctx.quadraticCurveTo(baseX + side * earW * 0.8, tipY + earH * 0.3, baseX + side * earW * 0.6, baseY);
     ctx.closePath();
     ctx.fillStyle = '#ffd4a8';
     ctx.fill();
@@ -302,21 +364,30 @@
     ctx.lineWidth = 2;
     ctx.stroke();
 
+    // Inner ear
+    const innerScale = 0.6;
+    const innerBaseX = baseX + side * earW * 0.25;
+    const innerBaseY = baseY - earH * 0.05;
+    const innerTipX = tipX;
+    const innerTipY = tipY + earH * 0.25;
     ctx.beginPath();
-    ctx.moveTo(earCx - earW * 0.55, earCy - earH * 0.05);
-    ctx.quadraticCurveTo(tipX, tipY + earH * 0.25, earCx + earW * 0.55, earCy - earH * 0.05);
+    ctx.moveTo(innerBaseX - side * earW * 0.05, innerBaseY);
+    ctx.quadraticCurveTo(innerBaseX - side * earW * 0.1, innerTipY + earH * 0.1, innerTipX, innerTipY);
+    ctx.quadraticCurveTo(innerBaseX + side * earW * 0.4, innerTipY + earH * 0.1, innerBaseX + side * earW * 0.3, innerBaseY);
     ctx.closePath();
     ctx.fillStyle = '#ffb8b8';
     ctx.fill();
   }
 
   function drawBody(cx, cy, r) {
+    const liveR = r * pinchScale;
+    const pinchD = getPinchDeform();
     const segments = 80;
     ctx.beginPath();
     for (let i = 0; i <= segments; i++) {
       const a = (i / segments) * Math.PI * 2;
-      const deform = getDeformAt(a) + getDragDeform(a);
-      const rr = r + clamp(deform, -r * 0.35, r * 0.5);
+      const deform = getDeformAt(a) + getDragDeform(a) + pinchD;
+      const rr = liveR + clamp(deform, -r * 0.35, r * 0.5);
       const x = cx + Math.cos(a) * rr;
       const y = cy + Math.sin(a) * rr;
       if (i === 0) ctx.moveTo(x, y);
