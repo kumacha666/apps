@@ -9,6 +9,31 @@
   const PIECE_SYMBOLS = ["☀️", "🌙", "🔴", "💎", "🟠", "💙", "🪐", "🌍"];
   const MATCH_MIN = 3;
 
+  const DEFAULT_OPTIONS = {
+    bgmVol: 70, sfxVol: 100,
+    saturation: 100, brightness: 100,
+    bgAnim: true, screenShake: true,
+  };
+
+  function loadOptions() {
+    try {
+      const d = JSON.parse(localStorage.getItem("7metch_options"));
+      return d ? { ...DEFAULT_OPTIONS, ...d } : { ...DEFAULT_OPTIONS };
+    } catch { return { ...DEFAULT_OPTIONS }; }
+  }
+  function saveOptions() {
+    localStorage.setItem("7metch_options", JSON.stringify(options));
+  }
+
+  let options = loadOptions();
+
+  function applyVisualOptions() {
+    const canvas = document.getElementById("game-canvas");
+    if (canvas) {
+      canvas.style.filter = `saturate(${options.saturation}%) brightness(${options.brightness}%)`;
+    }
+  }
+
   const ANIM = {
     CLEAR_FRAMES: 14,
     CLEAR_FRAME_MS: 35,
@@ -78,7 +103,7 @@
       try {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         masterGain = audioCtx.createGain();
-        masterGain.gain.value = 0.3;
+        masterGain.gain.value = 0.3 * (options.sfxVol / 100);
         masterGain.connect(audioCtx.destination);
       } catch (e) {
         soundEnabled = false;
@@ -87,6 +112,12 @@
     }
     if (audioCtx.state === "suspended") audioCtx.resume();
     initBgm();
+    applyAudioOptions();
+  }
+
+  function applyAudioOptions() {
+    if (masterGain) masterGain.gain.value = 0.3 * (options.sfxVol / 100);
+    if (bgmGain) bgmGain.gain.value = BGM_MASTER * (options.bgmVol / 100);
   }
 
   function now() {
@@ -2120,6 +2151,7 @@
   // ============================================================
 
   function addScreenShake(intensity) {
+    if (!options.screenShake) return;
     shakeIntensity = Math.max(shakeIntensity, intensity);
   }
 
@@ -2381,6 +2413,7 @@
   const screens = {
     splash: document.getElementById("screen-splash"),
     title: document.getElementById("screen-title"),
+    options: document.getElementById("screen-options"),
     stageSelect: document.getElementById("screen-stage-select"),
     help: document.getElementById("screen-help"),
     game: document.getElementById("screen-game"),
@@ -2400,7 +2433,7 @@
     if (name === "result") startResultBgAnim();
     if (bgmInitialized) {
       switch (name) {
-        case "title": case "help": switchBgm("title"); break;
+        case "title": case "help": case "options": switchBgm("title"); break;
         case "stageSelect": switchBgm("select"); break;
         case "game": switchBgm("ingame"); break;
         case "result": case "splash": stopAllBgm(); break;
@@ -4904,11 +4937,13 @@
       tCtx.fillRect(0, 0, w, h);
 
       for (const star of titleBgStars) {
-        star.y += star.speed;
-        star.x += star.speed * 0.12;
-        if (star.y > h) { star.y = -2; star.x = Math.random() * w; }
-        if (star.x > w) star.x -= w;
-        star.twinkle += 0.025;
+        if (options.bgAnim) {
+          star.y += star.speed;
+          star.x += star.speed * 0.12;
+          if (star.y > h) { star.y = -2; star.x = Math.random() * w; }
+          if (star.x > w) star.x -= w;
+          star.twinkle += 0.025;
+        }
         const flicker = 0.7 + 0.3 * Math.sin(star.twinkle);
         tCtx.globalAlpha = star.alpha * flicker;
         tCtx.fillStyle = "#fff";
@@ -4918,7 +4953,7 @@
       }
       tCtx.globalAlpha = 1;
 
-      if (!titleShootingStar && Math.random() < 0.004) {
+      if (options.bgAnim && !titleShootingStar && Math.random() < 0.004) {
         titleShootingStar = {
           x: Math.random() * w * 0.7,
           y: Math.random() * h * 0.4,
@@ -5012,11 +5047,13 @@
       rCtx.fillRect(0, 0, w, h);
 
       for (const star of resultBgStars) {
-        star.y += star.speed;
-        star.x += star.speed * 0.12;
-        if (star.y > h) { star.y = -2; star.x = Math.random() * w; }
-        if (star.x > w) star.x -= w;
-        star.twinkle += 0.025;
+        if (options.bgAnim) {
+          star.y += star.speed;
+          star.x += star.speed * 0.12;
+          if (star.y > h) { star.y = -2; star.x = Math.random() * w; }
+          if (star.x > w) star.x -= w;
+          star.twinkle += 0.025;
+        }
         const flicker = 0.7 + 0.3 * Math.sin(star.twinkle);
         rCtx.globalAlpha = star.alpha * flicker;
         rCtx.fillStyle = "#fff";
@@ -5026,7 +5063,7 @@
       }
       rCtx.globalAlpha = 1;
 
-      if (!resultShootingStar && Math.random() < 0.004) {
+      if (options.bgAnim && !resultShootingStar && Math.random() < 0.004) {
         resultShootingStar = {
           x: Math.random() * w * 0.7, y: Math.random() * h * 0.4,
           vx: 3 + Math.random() * 2, vy: 1.5 + Math.random(), life: 1,
@@ -5670,6 +5707,76 @@
     }
   });
 
+  // --- Options Screen ---
+  document.getElementById("btn-options").addEventListener("click", () => {
+    initAudio();
+    syncOptionsUI();
+    showScreen("options");
+  });
+
+  document.getElementById("btn-options-back").addEventListener("click", () => {
+    showScreen("title");
+  });
+
+  function syncOptionsUI() {
+    document.getElementById("opt-bgm-vol").value = options.bgmVol;
+    document.getElementById("opt-bgm-val").textContent = options.bgmVol;
+    document.getElementById("opt-sfx-vol").value = options.sfxVol;
+    document.getElementById("opt-sfx-val").textContent = options.sfxVol;
+    document.getElementById("opt-saturation").value = options.saturation;
+    document.getElementById("opt-sat-val").textContent = options.saturation;
+    document.getElementById("opt-brightness").value = options.brightness;
+    document.getElementById("opt-brt-val").textContent = options.brightness;
+    document.getElementById("opt-bg-anim").checked = options.bgAnim;
+    document.getElementById("opt-screen-shake").checked = options.screenShake;
+  }
+
+  document.getElementById("opt-bgm-vol").addEventListener("input", (e) => {
+    options.bgmVol = Number(e.target.value);
+    document.getElementById("opt-bgm-val").textContent = options.bgmVol;
+    applyAudioOptions();
+    saveOptions();
+  });
+
+  document.getElementById("opt-sfx-vol").addEventListener("input", (e) => {
+    options.sfxVol = Number(e.target.value);
+    document.getElementById("opt-sfx-val").textContent = options.sfxVol;
+    applyAudioOptions();
+    saveOptions();
+  });
+
+  document.getElementById("opt-saturation").addEventListener("input", (e) => {
+    options.saturation = Number(e.target.value);
+    document.getElementById("opt-sat-val").textContent = options.saturation;
+    applyVisualOptions();
+    saveOptions();
+  });
+
+  document.getElementById("opt-brightness").addEventListener("input", (e) => {
+    options.brightness = Number(e.target.value);
+    document.getElementById("opt-brt-val").textContent = options.brightness;
+    applyVisualOptions();
+    saveOptions();
+  });
+
+  document.getElementById("opt-bg-anim").addEventListener("change", (e) => {
+    options.bgAnim = e.target.checked;
+    saveOptions();
+  });
+
+  document.getElementById("opt-screen-shake").addEventListener("change", (e) => {
+    options.screenShake = e.target.checked;
+    saveOptions();
+  });
+
+  document.getElementById("btn-options-reset").addEventListener("click", () => {
+    options = { ...DEFAULT_OPTIONS };
+    saveOptions();
+    syncOptionsUI();
+    applyAudioOptions();
+    applyVisualOptions();
+  });
+
   document.getElementById("btn-retry").addEventListener("click", () => {
     if (!confirm("リトライしますか？")) return;
     track("stage_retry", { stage: STAGES[currentStage].name });
@@ -5768,6 +5875,7 @@
     canvas.classList.remove("item-targeting");
 
     resizeCanvas();
+    applyVisualOptions();
     initCellState(stg);
     createBoard(stg.colors);
     updateHUD();

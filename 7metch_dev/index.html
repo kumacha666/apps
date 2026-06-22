@@ -32,6 +32,7 @@
         <button id="btn-restore" class="btn-link">復元</button>
       </div>
       <button id="btn-feedback" class="btn-link">ご意見・フィードバック</button>
+      <button id="btn-options" class="btn-link">⚙️ 設定</button>
       <button id="btn-sound-toggle" class="btn-sound">🔊</button>
       <div id="version-info">dev-space</div>
       <div id="credits">Produced by kumacha. Special Thanks to Sakon.</div>
@@ -97,6 +98,48 @@
     <div id="update-toast" class="hidden">
       新しいバージョンがあります
       <button id="btn-update">更新する</button>
+    </div>
+
+    <div id="screen-options" class="screen">
+      <h2>設定</h2>
+      <div id="options-content">
+        <div class="option-group">
+          <h3>サウンド</h3>
+          <div class="option-row">
+            <label for="opt-bgm-vol">BGM音量</label>
+            <input type="range" id="opt-bgm-vol" min="0" max="100" value="70" />
+            <span class="opt-val" id="opt-bgm-val">70</span>
+          </div>
+          <div class="option-row">
+            <label for="opt-sfx-vol">効果音</label>
+            <input type="range" id="opt-sfx-vol" min="0" max="100" value="100" />
+            <span class="opt-val" id="opt-sfx-val">100</span>
+          </div>
+        </div>
+        <div class="option-group">
+          <h3>映像</h3>
+          <div class="option-row">
+            <label for="opt-saturation">彩度</label>
+            <input type="range" id="opt-saturation" min="50" max="150" value="100" />
+            <span class="opt-val" id="opt-sat-val">100</span>
+          </div>
+          <div class="option-row">
+            <label for="opt-brightness">明るさ</label>
+            <input type="range" id="opt-brightness" min="70" max="130" value="100" />
+            <span class="opt-val" id="opt-brt-val">100</span>
+          </div>
+          <div class="option-row">
+            <label for="opt-bg-anim">背景アニメーション</label>
+            <label class="toggle-switch"><input type="checkbox" id="opt-bg-anim" checked /><span class="toggle-slider"></span></label>
+          </div>
+          <div class="option-row">
+            <label for="opt-screen-shake">画面シェイク</label>
+            <label class="toggle-switch"><input type="checkbox" id="opt-screen-shake" checked /><span class="toggle-slider"></span></label>
+          </div>
+        </div>
+        <button id="btn-options-reset" class="btn-link">設定をリセット</button>
+      </div>
+      <button id="btn-options-back" class="btn-secondary">もどる</button>
     </div>
 
     <div id="screen-stage-select" class="screen">
