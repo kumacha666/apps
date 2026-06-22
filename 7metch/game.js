@@ -4275,7 +4275,7 @@
 
     const maxDist = Math.max(...fallMap.map((f) => f.toR - f.fromR));
     const fallFrames = Math.ceil(maxDist / ANIM.DROP_SPEED);
-    const bounceFrames = 6;
+    const bounceFrames = 10;
     const totalFrames = fallFrames + bounceFrames;
 
     const frozen = [];
@@ -4312,7 +4312,8 @@
           currentR = fall.fromR + dist * accel;
         } else {
           const bt = (frame - fallFrames) / bounceFrames;
-          const bounceHeight = dist * 0.08 * Math.sin(bt * Math.PI) * (1 - bt);
+          const bounceAmp = Math.min(0.25 + dist * 0.08, 0.5);
+          const bounceHeight = bounceAmp * Math.sin(bt * Math.PI) * (1 - bt * 0.6);
           currentR = fall.toR - bounceHeight;
         }
 
