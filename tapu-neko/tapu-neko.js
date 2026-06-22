@@ -287,8 +287,8 @@
     pinchScale = clamp(pinchScale + pinchVel, 0.7, 1.5);
 
     // Tilt -> deformation (water balloon feel)
-    const tiltTargetX = accelX * 0.6;
-    const tiltTargetY = -accelY * 0.6;
+    const tiltTargetX = -accelX * 0.6;
+    const tiltTargetY = accelY * 0.6;
     tiltVX += (tiltTargetX - tiltX) * 0.04;
     tiltVY += (tiltTargetY - tiltY) * 0.04;
     tiltVX *= 0.88;
@@ -325,11 +325,9 @@
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
 
-    // Smooth stretch: wide gaussian, proportional to drag distance
-    // Use soft exponential falloff, no hard clamp
-    const maxStretch = c.r * 0.7;
-    const strength = maxStretch * (1 - Math.exp(-dist / (c.r * 0.8)));
-    const spread = 0.5 + Math.min(dist / (c.r * 2), 0.3);
+    // Linear stretch - keeps going the more you pull
+    const strength = Math.min(dist, c.r * 3) * 0.8;
+    const spread = 0.4 + Math.min(dist / (c.r * 2), 0.3);
     const stretch = Math.exp(-(diff * diff) / (2 * spread * spread)) * strength;
 
     // Gentle compression on opposite side
@@ -539,6 +537,12 @@
     ctx.fillStyle = '#c8a080';
     ctx.font = `${Math.min(W, H) * 0.028}px -apple-system, sans-serif`;
     ctx.fillText('つついてぷにぷにしよう！', W / 2, H * 0.04 + Math.min(W, H) * 0.085);
+
+    ctx.fillStyle = '#d4c0a0';
+    ctx.font = `${Math.min(W, H) * 0.018}px -apple-system, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.fillText('v2025.06.22a', W - 10, H - 10);
+    ctx.textAlign = 'center';
   }
 
   function loop() {
