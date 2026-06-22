@@ -4294,22 +4294,21 @@
   let activeChainLabel = null;
 
   function startChainLabel(chain) {
-    activeChainLabel = { chain, label: `${chain} Chain!`, frame: 0, totalFrames: 30 };
+    activeChainLabel = { chain, label: `${chain} Chain!`, startTime: performance.now(), duration: 550 };
     if (chain >= 3) addScreenShake(Math.min(chain * 0.8, 4));
   }
 
   function updateChainLabel() {
     if (!activeChainLabel) return;
-    activeChainLabel.frame++;
-    if (activeChainLabel.frame >= activeChainLabel.totalFrames) {
+    if (performance.now() - activeChainLabel.startTime >= activeChainLabel.duration) {
       activeChainLabel = null;
     }
   }
 
   function drawChainLabel() {
     if (!activeChainLabel) return;
-    const { chain, label, frame, totalFrames } = activeChainLabel;
-    const t = frame / totalFrames;
+    const { chain, label, startTime, duration } = activeChainLabel;
+    const t = (performance.now() - startTime) / duration;
     const popT = Math.min(t / 0.15, 1);
     const scale = popT < 1 ? 0.3 + popT * 1.0 : 1.3 - (t - 0.15) * 0.35;
     const yOffset = -t * cellSize * 0.6;
