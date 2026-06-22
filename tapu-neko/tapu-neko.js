@@ -55,8 +55,8 @@
       this.dead = false;
     }
     update() {
-      this.vel -= this.depth * 0.032;
-      this.vel *= 0.945;
+      this.vel -= this.depth * 0.02;
+      this.vel *= 0.96;
       this.depth += this.vel;
       if (Math.abs(this.depth) < 0.08 && Math.abs(this.vel) < 0.04) {
         this.dead = true;
@@ -107,9 +107,9 @@
   function pokeAt(px, py, strength) {
     const angle = angleTo(px, py);
     const c = getCat();
-    addDent(angle, -c.r * 0.28 * strength, 0.55);
-    addDent(angle + 0.7, c.r * 0.07 * strength, 0.4);
-    addDent(angle - 0.7, c.r * 0.07 * strength, 0.4);
+    addDent(angle, -c.r * 0.38 * strength, 0.6);
+    addDent(angle + 0.6, c.r * 0.12 * strength, 0.5);
+    addDent(angle - 0.6, c.r * 0.12 * strength, 0.5);
 
     targetSquint = Math.min(strength, 1);
     targetBlush = Math.min(strength, 1);
@@ -331,18 +331,19 @@
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
 
-    // Moderate spread for a local but rounded bulge
-    const spread = 0.65;
+    // Local spread: only nearby area stretches
+    const spread = 0.4;
     const rawInfluence = Math.exp(-(diff * diff) / (2 * spread * spread)) * outwardFactor;
-    if (rawInfluence < 0.001) return null;
+    if (rawInfluence < 0.01) return null;
 
-    // Flat-top profile so the bulge is round, not pointy
-    const influence = Math.pow(rawInfluence, 0.35);
+    // Flat-top (pow 0.25) keeps the bump round, not pointy
+    const influence = Math.pow(rawInfluence, 0.25);
 
-    // Push outward along drag direction, scaled down for control
+    // Push outward, capped to prevent opposite-side collapse
     const bx = cx + Math.cos(angle) * baseR;
     const by = cy + Math.sin(angle) * baseR;
-    const pushDist = dist * influence * 0.7;
+    const maxPush = baseR * 2.5;
+    const pushDist = Math.min(dist * influence * 0.55, maxPush * influence);
     const px = bx + Math.cos(dragAngle) * pushDist;
     const py = by + Math.sin(dragAngle) * pushDist;
 
@@ -578,7 +579,7 @@
     ctx.fillStyle = '#d4c0a0';
     ctx.font = `${Math.min(W, H) * 0.018}px -apple-system, sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText('v2025.06.22g', W - 10, H - 10);
+    ctx.fillText('v2025.06.22h', W - 10, H - 10);
     ctx.textAlign = 'center';
   }
 
