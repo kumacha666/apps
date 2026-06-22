@@ -55,8 +55,8 @@
       this.dead = false;
     }
     update() {
-      this.vel -= this.depth * 0.02;
-      this.vel *= 0.96;
+      this.vel -= this.depth * 0.06;
+      this.vel *= 0.88;
       this.depth += this.vel;
       if (Math.abs(this.depth) < 0.08 && Math.abs(this.vel) < 0.04) {
         this.dead = true;
@@ -564,9 +564,9 @@
     ctx.fillText('つついてぷにぷにしよう！', W / 2, H * 0.04 + Math.min(W, H) * 0.085);
 
     ctx.fillStyle = '#d4c0a0';
-    ctx.font = `${Math.min(W, H) * 0.018}px -apple-system, sans-serif`;
+    ctx.font = `${Math.min(W, H) * 0.03}px -apple-system, sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText('v2025.06.22k', W - 10, H - 10);
+    ctx.fillText('v2025.06.22l', W - 10, H - 14);
     ctx.textAlign = 'center';
   }
 
