@@ -312,31 +312,37 @@
     return d;
   }
 
-  // Smooth drag deformation - no hard edges
-  function getDragDeform(angle) {
-    if (!dragging || !dragInside) return 0;
+  // Drag: each body point gets pulled toward finger position
+  // Narrow influence = only the grabbed area stretches
+  function getDragPoint(angle, cx, cy, baseR) {
+    if (!dragging || !dragInside) return null;
     const dx = dragX - dragStartX, dy = dragY - dragStartY;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < 3) return 0;
+    if (dist < 3) return null;
 
-    const c = getCat();
-    const pullAngle = Math.atan2(dy, dx);
-    let diff = angle - pullAngle;
+    // Where on the body was the grab point?
+    const grabAngle = angleTo(dragStartX, dragStartY);
+    let diff = angle - grabAngle;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
 
-    // Linear stretch - keeps going the more you pull
-    const strength = Math.min(dist, c.r * 3) * 0.8;
-    const spread = 0.4 + Math.min(dist / (c.r * 2), 0.3);
-    const stretch = Math.exp(-(diff * diff) / (2 * spread * spread)) * strength;
+    // Very narrow influence - only the touched spot stretches
+    const spread = 0.3;
+    const influence = Math.exp(-(diff * diff) / (2 * spread * spread));
 
-    // Gentle compression on opposite side
-    let oppDiff = angle - (pullAngle + Math.PI);
-    while (oppDiff > Math.PI) oppDiff -= Math.PI * 2;
-    while (oppDiff < -Math.PI) oppDiff += Math.PI * 2;
-    const compress = Math.exp(-(oppDiff * oppDiff) / (2 * 0.8 * 0.8)) * strength * -0.15;
+    if (influence < 0.001) return null;
 
-    return stretch + compress;
+    // Body surface point at this angle
+    const bx = cx + Math.cos(angle) * baseR;
+    const by = cy + Math.sin(angle) * baseR;
+
+    // Pull toward finger position, scaled by influence
+    const targetX = dragX;
+    const targetY = dragY;
+    const px = bx + (targetX - bx) * influence;
+    const py = by + (targetY - by) * influence;
+
+    return { x: px, y: py };
   }
 
   function getPinchDeform() {
@@ -433,13 +439,15 @@
     for (let i = 0; i <= segments; i++) {
       const a = (i / segments) * Math.PI * 2;
       const baseR = catRadius(a, r) * liveScale;
-      const deform = getDeformAt(a) + getDragDeform(a) + pinchD + getTiltDeform(a);
-      // Soft clamp using tanh to avoid hard edges
-      const maxDeform = r * 0.6;
-      const softDeform = Math.tanh(deform / maxDeform) * maxDeform;
-      const rr = Math.max(baseR * 0.4, baseR + softDeform);
-      const x = cx + Math.cos(a) * rr;
-      const y = cy + Math.sin(a) * rr;
+      const deform = getDeformAt(a) + pinchD + getTiltDeform(a);
+      const rr = Math.max(baseR * 0.4, baseR + deform);
+      let x = cx + Math.cos(a) * rr;
+      let y = cy + Math.sin(a) * rr;
+
+      // Apply drag pull (point-based, stretches to finger)
+      const dragPt = getDragPoint(a, cx, cy, rr);
+      if (dragPt) { x = dragPt.x; y = dragPt.y; }
+
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
@@ -541,7 +549,7 @@
     ctx.fillStyle = '#d4c0a0';
     ctx.font = `${Math.min(W, H) * 0.018}px -apple-system, sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText('v2025.06.22a', W - 10, H - 10);
+    ctx.fillText('v2025.06.22b', W - 10, H - 10);
     ctx.textAlign = 'center';
   }
 
