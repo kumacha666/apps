@@ -3811,8 +3811,8 @@
   }
 
   async function animateStandardClear(cells) {
-    const totalFrames = 22;
-    const phase1End = Math.floor(totalFrames * 0.3);
+    const totalFrames = 24;
+    const phase1End = Math.floor(totalFrames * 0.25);
     let frame = 0;
 
     await new Promise(resolve => {
@@ -3825,13 +3825,14 @@
             const gp = frame / phase1End;
             for (const { r, c } of cells) {
               const pos = cellCenter(r, c);
+              const color = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || "#ffffff") : "#ffffff";
               overlayCtx.save();
-              overlayCtx.globalAlpha = gp * 0.5;
-              overlayCtx.shadowColor = "#ffffff";
-              overlayCtx.shadowBlur = 10 + gp * 15;
-              overlayCtx.fillStyle = "rgba(255,255,255,0.3)";
+              overlayCtx.globalAlpha = gp * 0.7;
+              overlayCtx.shadowColor = color;
+              overlayCtx.shadowBlur = 12 + gp * 20;
+              overlayCtx.fillStyle = color;
               overlayCtx.beginPath();
-              overlayCtx.arc(pos.x, pos.y, cellSize * 0.4 * (1 + gp * 0.3), 0, Math.PI * 2);
+              overlayCtx.arc(pos.x, pos.y, cellSize * 0.42 * (1 + gp * 0.4), 0, Math.PI * 2);
               overlayCtx.fill();
               overlayCtx.restore();
             }
@@ -3839,13 +3840,15 @@
           if (frame > phase1End) {
             const sp = (frame - phase1End) / (totalFrames - phase1End);
             const shrink = 1 - sp * sp;
+            const expand = 1 + sp * 0.5;
             for (const { r, c } of cells) {
               const pos = cellCenter(r, c);
+              const color = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || "#ffffff") : "#ffffff";
               overlayCtx.save();
-              overlayCtx.globalAlpha = (1 - sp) * 0.35;
-              overlayCtx.fillStyle = "#ffffff";
+              overlayCtx.globalAlpha = (1 - sp) * 0.5;
+              overlayCtx.fillStyle = color;
               overlayCtx.beginPath();
-              overlayCtx.arc(pos.x, pos.y, cellSize * 0.35 * shrink, 0, Math.PI * 2);
+              overlayCtx.arc(pos.x, pos.y, cellSize * 0.38 * shrink * expand, 0, Math.PI * 2);
               overlayCtx.fill();
               overlayCtx.restore();
             }
@@ -3853,9 +3856,11 @@
               for (const { r, c } of cells) {
                 const pos = cellCenter(r, c);
                 const color = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || "#ffffff") : "#ffffff";
-                addBurstParticles(pos.x, pos.y, color, 8, { speed: 2.5, size: 3.5, decay: 0.04, sizeDecay: 0.06 });
-                addShockwave(pos.x, pos.y, cellSize * 0.6, 10, "#ffffff");
+                addBurstParticles(pos.x, pos.y, color, 12, { speed: 3.5, size: 4.0, decay: 0.035, sizeDecay: 0.055 });
+                addFlash(pos.x, pos.y, cellSize * 0.7, color, 8);
+                addShockwave(pos.x, pos.y, cellSize * 0.8, 12, color);
               }
+              addScreenShake(1.5);
             }
           }
         });
@@ -4227,7 +4232,9 @@
     }
 
     const maxDist = Math.max(...fallMap.map((f) => f.toR - f.fromR));
-    const totalFrames = Math.ceil(maxDist / ANIM.DROP_SPEED);
+    const fallFrames = Math.ceil(maxDist / ANIM.DROP_SPEED);
+    const bounceFrames = 6;
+    const totalFrames = fallFrames + bounceFrames;
 
     const frozen = [];
     for (let r = 0; r < rows; r++) {
@@ -4240,9 +4247,6 @@
     const fallingCells = new Set(fallMap.map((f) => f.toR * cols + f.c));
 
     for (let frame = 0; frame <= totalFrames; frame++) {
-      const t = Math.min(frame / totalFrames, 1);
-      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-
       drawBoardBase();
 
       for (let r = 0; r < rows; r++) {
@@ -4256,10 +4260,21 @@
       }
 
       for (const fall of fallMap) {
-        const currentR = fall.fromR + (fall.toR - fall.fromR) * ease;
+        const dist = fall.toR - fall.fromR;
         const x = fall.c * cellSize + cellSize / 2;
-        const y = currentR * cellSize + cellSize / 2;
+        let currentR;
 
+        if (frame <= fallFrames) {
+          const t = Math.min(frame / fallFrames, 1);
+          const accel = t * t;
+          currentR = fall.fromR + dist * accel;
+        } else {
+          const bt = (frame - fallFrames) / bounceFrames;
+          const bounceHeight = dist * 0.08 * Math.sin(bt * Math.PI) * (1 - bt);
+          currentR = fall.toR - bounceHeight;
+        }
+
+        const y = currentR * cellSize + cellSize / 2;
         if (y + cellSize / 2 > 0) {
           drawPieceAt(fall.piece, x, y);
         }
