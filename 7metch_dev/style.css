@@ -41,6 +41,29 @@ body {
   overflow: hidden;
 }
 
+#dev-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: #e65100;
+  color: #fff;
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  z-index: 9999;
+}
+
+#dev-badge {
+  background: #e65100;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 6px;
+}
+
 .screen {
   display: none;
   flex-direction: column;
