@@ -13,12 +13,13 @@
     const c = getAudioCtx(), t = c.currentTime;
     const o = c.createOscillator(), g = c.createGain();
     o.type = 'sine';
-    o.frequency.setValueAtTime(280, t);
-    o.frequency.exponentialRampToValueAtTime(120, t + 0.12);
-    g.gain.setValueAtTime(0.35, t);
-    g.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+    o.frequency.setValueAtTime(520, t);
+    o.frequency.exponentialRampToValueAtTime(280, t + 0.1);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.2, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.01, t + 0.13);
     o.connect(g); g.connect(c.destination);
-    o.start(t); o.stop(t + 0.15);
+    o.start(t); o.stop(t + 0.13);
   }
 
   let myoonOsc = null, myoonGain = null;
@@ -27,8 +28,8 @@
     sfxMyoonStop();
     const o = c.createOscillator(), g = c.createGain();
     o.type = 'sine';
-    o.frequency.setValueAtTime(150, c.currentTime);
-    g.gain.setValueAtTime(0.2, c.currentTime);
+    o.frequency.setValueAtTime(320, c.currentTime);
+    g.gain.setValueAtTime(0.07, c.currentTime);
     o.connect(g); g.connect(c.destination);
     o.start();
     myoonOsc = o; myoonGain = g;
@@ -36,7 +37,7 @@
   function sfxMyoonUpdate(dist, baseR) {
     if (!myoonOsc) return;
     const ratio = Math.min(dist / baseR, 3);
-    myoonOsc.frequency.setTargetAtTime(150 + ratio * 150, getAudioCtx().currentTime, 0.05);
+    myoonOsc.frequency.setTargetAtTime(320 + ratio * 120, getAudioCtx().currentTime, 0.05);
   }
   function sfxMyoonStop() {
     if (myoonOsc) {
@@ -665,7 +666,7 @@
     ctx.fillStyle = '#d4c0a0';
     ctx.font = `${Math.min(W, H) * 0.03}px -apple-system, sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText('v2025.06.22m', W - 10, H - 14);
+    ctx.fillText('v2025.06.22n', W - 10, H - 14);
     ctx.textAlign = 'center';
   }
 
