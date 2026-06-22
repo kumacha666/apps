@@ -312,35 +312,41 @@
     return d;
   }
 
-  // Drag: each body point gets pulled toward finger position
-  // Narrow influence = only the grabbed area stretches
+  // Drag: body surface pulled toward finger, with finger-width spread
   function getDragPoint(angle, cx, cy, baseR) {
     if (!dragging || !dragInside) return null;
     const dx = dragX - dragStartX, dy = dragY - dragStartY;
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist < 3) return null;
 
-    // Where on the body was the grab point?
+    // Only allow outward pulls: check drag direction vs grab angle
     const grabAngle = angleTo(dragStartX, dragStartY);
+    const dragAngle = Math.atan2(dy, dx);
+    let outwardCheck = dragAngle - grabAngle;
+    while (outwardCheck > Math.PI) outwardCheck -= Math.PI * 2;
+    while (outwardCheck < -Math.PI) outwardCheck += Math.PI * 2;
+    // If pulling inward (>90° from outward direction), reduce effect
+    const outwardFactor = Math.max(0, Math.cos(outwardCheck));
+    if (outwardFactor < 0.05) return null;
+
     let diff = angle - grabAngle;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
 
-    // Very narrow influence - only the touched spot stretches
-    const spread = 0.3;
-    const influence = Math.exp(-(diff * diff) / (2 * spread * spread));
+    // Finger-width spread (wider = rounder tip)
+    const spread = 0.55;
+    const influence = Math.exp(-(diff * diff) / (2 * spread * spread)) * outwardFactor;
 
     if (influence < 0.001) return null;
 
-    // Body surface point at this angle
     const bx = cx + Math.cos(angle) * baseR;
     const by = cy + Math.sin(angle) * baseR;
 
-    // Pull toward finger position, scaled by influence
-    const targetX = dragX;
-    const targetY = dragY;
-    const px = bx + (targetX - bx) * influence;
-    const py = by + (targetY - by) * influence;
+    // Pull toward finger, but with reduced influence for a rounder shape
+    // Use sqrt to make the falloff gentler (fatter bulge, not pointy)
+    const softInfluence = Math.sqrt(influence) * influence;
+    const px = bx + (dragX - bx) * softInfluence;
+    const py = by + (dragY - by) * softInfluence;
 
     return { x: px, y: py };
   }
@@ -549,7 +555,7 @@
     ctx.fillStyle = '#d4c0a0';
     ctx.font = `${Math.min(W, H) * 0.018}px -apple-system, sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText('v2025.06.22b', W - 10, H - 10);
+    ctx.fillText('v2025.06.22c', W - 10, H - 10);
     ctx.textAlign = 'center';
   }
 
