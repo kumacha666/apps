@@ -331,16 +331,15 @@
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
 
-    // Wider gaussian for smooth transitions, no pow flattening
-    const spread = 0.55;
+    // Smooth gaussian, moderate spread
+    const spread = 0.5;
     const influence = Math.exp(-(diff * diff) / (2 * spread * spread)) * outwardFactor;
     if (influence < 0.01) return null;
 
-    // Push outward, capped to prevent opposite-side collapse
+    // Soft, stretchy push - follows finger freely like a water balloon
     const bx = cx + Math.cos(angle) * baseR;
     const by = cy + Math.sin(angle) * baseR;
-    const maxPush = baseR * 2.0;
-    const pushDist = Math.min(dist * influence * 0.65, maxPush * influence);
+    const pushDist = dist * influence;
     const px = bx + Math.cos(dragAngle) * pushDist;
     const py = by + Math.sin(dragAngle) * pushDist;
 
@@ -576,7 +575,7 @@
     ctx.fillStyle = '#d4c0a0';
     ctx.font = `${Math.min(W, H) * 0.018}px -apple-system, sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText('v2025.06.22i', W - 10, H - 10);
+    ctx.fillText('v2025.06.22j', W - 10, H - 10);
     ctx.textAlign = 'center';
   }
 
