@@ -15,10 +15,10 @@
   window.addEventListener('resize', resize);
   resize();
 
-  // Physics state
-  let jx = 0, jy = 0, jvx = 0, jvy = 0;
-  let sq = 0, sqv = 0;
-  let wobbleAmp = 0, wobblePhase = 0;
+  // Physics: position offset + squash/stretch
+  let ox = 0, oy = 0, vx = 0, vy = 0;
+  let scaleX = 1, scaleY = 1, svx = 0, svy = 0;
+  let rotation = 0, rv = 0;
 
   let eyeSquint = 0, targetSquint = 0;
   let blushAlpha = 0, targetBlush = 0;
@@ -32,17 +32,22 @@
   function isInside(px, py) {
     const c = getCat();
     const dx = px - c.cx, dy = py - c.cy;
-    return dx * dx + dy * dy < (c.r * 1.2) ** 2;
+    return dx * dx + dy * dy < (c.r * 1.3) ** 2;
   }
 
   function poke(px, py) {
     const c = getCat();
     const dx = (px - c.cx) / c.r;
     const dy = (py - c.cy) / c.r;
-    jvx += dx * 3;
-    jvy += dy * 3;
-    sqv += 3;
-    wobbleAmp = Math.min(wobbleAmp + 8, 20);
+
+    vx += dx * 2.5;
+    vy += dy * 2.5;
+
+    // Squash in the direction of the poke
+    svx += Math.abs(dx) * 0.04 + 0.02;
+    svy += Math.abs(dy) * 0.04 + 0.02;
+
+    rv += dx * 0.02;
 
     targetSquint = 1;
     targetBlush = 1;
@@ -50,17 +55,15 @@
     setTimeout(() => { targetBlush = 0; }, 1000);
   }
 
+  let dragging = false, lastPX = 0, lastPY = 0;
+
   canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
-    if (isInside(e.clientX, e.clientY)) poke(e.clientX, e.clientY);
-  });
-
-  let lastPX = 0, lastPY = 0, dragging = false;
-  canvas.addEventListener('pointerdown', (e) => {
     dragging = true;
     lastPX = e.clientX;
     lastPY = e.clientY;
-  }, { capture: true });
+    if (isInside(e.clientX, e.clientY)) poke(e.clientX, e.clientY);
+  });
 
   canvas.addEventListener('pointermove', (e) => {
     e.preventDefault();
@@ -70,9 +73,10 @@
       const dy = e.clientY - lastPY;
       const speed = Math.sqrt(dx * dx + dy * dy);
       if (speed > 2) {
-        jvx += dx * 0.08;
-        jvy += dy * 0.08;
-        wobbleAmp = Math.min(wobbleAmp + speed * 0.15, 20);
+        vx += dx * 0.06;
+        vy += dy * 0.06;
+        svx += speed * 0.001;
+        svy += speed * 0.001;
         targetSquint = 0.5;
       }
     }
@@ -85,25 +89,33 @@
     targetSquint = 0;
   });
 
-  function clamp(v, min, max) { return v < min ? min : v > max ? max : v; }
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
   function physics() {
-    jvx -= jx * 0.06;
-    jvy -= jy * 0.06;
-    jvx *= 0.9;
-    jvy *= 0.9;
-    jx += jvx;
-    jy += jvy;
-    jx = clamp(jx, -40, 40);
-    jy = clamp(jy, -40, 40);
+    // Position spring (bouncy return to center)
+    vx -= ox * 0.05;
+    vy -= oy * 0.05;
+    vx *= 0.9;
+    vy *= 0.9;
+    ox = clamp(ox + vx, -50, 50);
+    oy = clamp(oy + vy, -50, 50);
 
-    sqv -= sq * 0.08;
-    sqv *= 0.87;
-    sq += sqv;
-    sq = clamp(sq, -15, 15);
+    // Scale spring (squash & stretch)
+    svx -= (scaleX - 1) * 0.06;
+    svy -= (scaleY - 1) * 0.06;
+    // Coupling: when X stretches, Y squashes (volume preservation)
+    const coupling = 0.3;
+    svx -= (scaleY - 1) * 0.02 * coupling;
+    svy -= (scaleX - 1) * 0.02 * coupling;
+    svx *= 0.88;
+    svy *= 0.88;
+    scaleX = clamp(scaleX + svx, 0.8, 1.2);
+    scaleY = clamp(scaleY + svy, 0.8, 1.2);
 
-    wobbleAmp *= 0.92;
-    wobblePhase += 0.15;
+    // Rotation spring
+    rv -= rotation * 0.06;
+    rv *= 0.9;
+    rotation = clamp(rotation + rv, -0.15, 0.15);
 
     eyeSquint += (targetSquint - eyeSquint) * 0.15;
     blushAlpha += (targetBlush - blushAlpha) * 0.08;
@@ -113,13 +125,13 @@
   function drawShadow(cx, cy, r) {
     ctx.fillStyle = 'rgba(0,0,0,0.06)';
     ctx.beginPath();
-    ctx.ellipse(cx, cy + r * 1.05, r * 0.75, r * 0.06, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy + r * 1.05, r * 0.75 * scaleX, r * 0.06, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 
   function drawTail(cx, cy, r) {
-    const bx = cx + r * 0.8;
-    const by = cy + r * 0.15;
+    const bx = cx + r * 0.75;
+    const by = cy + r * 0.1;
     ctx.strokeStyle = '#f0a860';
     ctx.lineWidth = r * 0.09;
     ctx.lineCap = 'round';
@@ -127,8 +139,8 @@
     ctx.moveTo(bx, by);
     ctx.bezierCurveTo(
       bx + r * 0.35, by - r * 0.25,
-      bx + r * 0.45, by - r * 0.7 + Math.sin(tailWag) * r * 0.1,
-      bx + r * 0.25, by - r * 0.85 + Math.sin(tailWag + 0.8) * r * 0.15
+      bx + r * 0.45, by - r * 0.65 + Math.sin(tailWag) * r * 0.1,
+      bx + r * 0.25, by - r * 0.8 + Math.sin(tailWag + 0.8) * r * 0.15
     );
     ctx.stroke();
   }
@@ -152,7 +164,6 @@
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Inner ear
     ctx.beginPath();
     ctx.moveTo(earCx - earW * 0.55, earCy - earH * 0.05);
     ctx.quadraticCurveTo(tipX, tipY + earH * 0.25, earCx + earW * 0.55, earCy - earH * 0.05);
@@ -162,28 +173,15 @@
   }
 
   function drawBody(cx, cy, r) {
-    const scaleX = 1 + sq * 0.006;
-    const scaleY = 1 - sq * 0.005;
-
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.scale(scaleX, scaleY);
-
-    const segments = 64;
+    // Simple ellipse with squash/stretch - no wobble harmonics
     ctx.beginPath();
-    for (let i = 0; i <= segments; i++) {
-      const a = (i / segments) * Math.PI * 2;
-      const wobble = Math.sin(a * 3 + wobblePhase) * wobbleAmp
-                   + Math.sin(a * 5 + wobblePhase * 1.3) * wobbleAmp * 0.5;
-      const rr = r + wobble * 0.15;
-      const x = Math.cos(a) * rr;
-      const y = Math.sin(a) * rr;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
+    ctx.ellipse(cx, cy, r * scaleX, r * scaleY, rotation, 0, Math.PI * 2);
     ctx.closePath();
 
-    const grad = ctx.createRadialGradient(-r * 0.15, -r * 0.25, r * 0.1, 0, 0, r);
+    const grad = ctx.createRadialGradient(
+      cx - r * 0.15, cy - r * 0.25, r * 0.1,
+      cx, cy, r
+    );
     grad.addColorStop(0, '#fff5ee');
     grad.addColorStop(0.5, '#ffd4a8');
     grad.addColorStop(1, '#f0a860');
@@ -192,12 +190,9 @@
     ctx.strokeStyle = '#d4915a';
     ctx.lineWidth = 2.5;
     ctx.stroke();
-
-    ctx.restore();
   }
 
   function drawFace(cx, cy, r) {
-    // Blush
     if (blushAlpha > 0.01) {
       ctx.globalAlpha = blushAlpha * 0.4;
       ctx.fillStyle = '#ff9999';
@@ -210,7 +205,6 @@
       ctx.globalAlpha = 1;
     }
 
-    // Eyes
     const eyeSpacing = r * 0.22;
     const eyeY = cy - r * 0.08;
     const eyeRx = r * 0.09;
@@ -224,7 +218,6 @@
     ctx.ellipse(cx + eyeSpacing, eyeY, eyeRx, eyeRy, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Eye highlights
     if (eyeSquint < 0.5) {
       ctx.fillStyle = '#fff';
       const hl = eyeRx * 0.35;
@@ -236,7 +229,6 @@
       ctx.fill();
     }
 
-    // Nose
     const noseY = cy + r * 0.07;
     ctx.fillStyle = '#e8907a';
     ctx.beginPath();
@@ -246,7 +238,6 @@
     ctx.closePath();
     ctx.fill();
 
-    // Mouth
     const mouthY = noseY + r * 0.035;
     ctx.strokeStyle = '#c8885a';
     ctx.lineWidth = 1.8;
@@ -260,7 +251,6 @@
     ctx.quadraticCurveTo(cx + r * 0.05, mouthY + r * 0.04, cx + r * 0.09, mouthY + r * 0.015);
     ctx.stroke();
 
-    // Whiskers
     ctx.strokeStyle = '#c8a080';
     ctx.lineWidth = 1.5;
     for (let side = -1; side <= 1; side += 2) {
@@ -291,8 +281,8 @@
     physics();
 
     const cat = getCat();
-    const bx = cat.cx + jx;
-    const by = cat.cy + jy;
+    const bx = cat.cx + ox;
+    const by = cat.cy + oy;
 
     drawShadow(bx, by, cat.r);
     drawTail(bx, by, cat.r);
