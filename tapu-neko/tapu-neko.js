@@ -236,16 +236,7 @@
 
   // Device motion
   function initMotion() {
-    if (motionInited) return;
-    motionInited = true;
-    if (typeof DeviceMotionEvent !== 'undefined' &&
-        typeof DeviceMotionEvent.requestPermission === 'function') {
-      DeviceMotionEvent.requestPermission().then((state) => {
-        if (state === 'granted') listenMotion();
-      }).catch(() => {});
-    } else if (typeof DeviceMotionEvent !== 'undefined') {
-      listenMotion();
-    }
+    // Disabled: tilt/shake detection too aggressive on mobile
   }
 
   function listenMotion() {
@@ -575,7 +566,7 @@
     ctx.fillStyle = '#d4c0a0';
     ctx.font = `${Math.min(W, H) * 0.018}px -apple-system, sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText('v2025.06.22j', W - 10, H - 10);
+    ctx.fillText('v2025.06.22k', W - 10, H - 10);
     ctx.textAlign = 'center';
   }
 
