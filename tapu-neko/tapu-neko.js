@@ -16,27 +16,35 @@
   resize();
 
   function getCat() {
-    const r = Math.min(W, H) * 0.25;
-    return { cx: W / 2, cy: H * 0.48, r };
+    const r = Math.min(W, H) * 0.22;
+    return { cx: W / 2, cy: H * 0.50, r };
   }
 
-  // Pear-shaped body: radius varies by angle
-  // angle=0 is right, PI/2 is bottom, -PI/2 is top
-  function pearRadius(angle, baseR) {
-    // Bottom is wider, top is narrower
-    const sinA = Math.sin(angle);
-    // sinA > 0 means bottom half -> wider
-    // sinA < 0 means top half -> narrower
-    const pear = 1 + sinA * 0.2;
-    // Also slightly wider horizontally at bottom
-    const cosA = Math.cos(angle);
-    const horizontalBulge = (1 + Math.max(0, sinA) * 0.08);
-    return baseR * pear * horizontalBulge;
+  // Cat silhouette: slightly taller than wide, rounded bottom, narrower top
+  function catRadius(angle, baseR) {
+    // angle: 0=right, PI/2=bottom, PI=left, -PI/2=top
+    const s = Math.sin(angle);
+    const c = Math.cos(angle);
+
+    // Vertical stretch (taller than wide)
+    const vertStretch = 1.15;
+    // Bottom is rounder/wider, top narrows
+    const pearFactor = 1 + s * 0.12;
+    // Slight horizontal width at belly
+    const bellyBulge = 1 + Math.max(0, s * 0.05) * Math.abs(c);
+
+    // Compute radius in ellipse terms then apply pear
+    const ex = baseR * pearFactor * bellyBulge;
+    const ey = baseR * vertStretch * pearFactor;
+    // Ellipse radius at angle
+    const ellipseR = (ex * ey) / Math.sqrt((ey * c) ** 2 + (ex * s) ** 2);
+
+    return ellipseR;
   }
 
   // Local deformations
   const dents = [];
-  const MAX_DENTS = 16;
+  const MAX_DENTS = 20;
 
   class Dent {
     constructor(angle, depth, width) {
@@ -47,17 +55,18 @@
       this.dead = false;
     }
     update() {
-      // Softer spring, more wobble
-      this.vel -= this.depth * 0.035;
-      this.vel *= 0.94;
+      this.vel -= this.depth * 0.032;
+      this.vel *= 0.945;
       this.depth += this.vel;
-      if (Math.abs(this.depth) < 0.1 && Math.abs(this.vel) < 0.05) {
+      if (Math.abs(this.depth) < 0.08 && Math.abs(this.vel) < 0.04) {
         this.dead = true;
       }
     }
   }
 
-  let swayX = 0, swayY = 0, swayVX = 0, swayVY = 0;
+  // Tilt deformation (not position sway - shape deformation!)
+  let tiltX = 0, tiltY = 0;
+  let tiltVX = 0, tiltVY = 0;
 
   let pinchScale = 1, pinchVel = 0;
   let pinching = false;
@@ -87,7 +96,7 @@
   function isInside(px, py) {
     const c = getCat();
     const angle = angleTo(px, py);
-    return distTo(px, py) < pearRadius(angle, c.r) * 1.3;
+    return distTo(px, py) < catRadius(angle, c.r) * 1.3;
   }
 
   function addDent(angle, depth, width) {
@@ -98,11 +107,9 @@
   function pokeAt(px, py, strength) {
     const angle = angleTo(px, py);
     const c = getCat();
-    // Bigger deformation for more びよーん
-    addDent(angle, -c.r * 0.3 * strength, 0.55);
-    // Add a secondary wobble ripple nearby
-    addDent(angle + 0.8, c.r * 0.08 * strength, 0.4);
-    addDent(angle - 0.8, c.r * 0.08 * strength, 0.4);
+    addDent(angle, -c.r * 0.28 * strength, 0.55);
+    addDent(angle + 0.7, c.r * 0.07 * strength, 0.4);
+    addDent(angle - 0.7, c.r * 0.07 * strength, 0.4);
 
     targetSquint = Math.min(strength, 1);
     targetBlush = Math.min(strength, 1);
@@ -115,9 +122,8 @@
   canvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
     for (const t of e.changedTouches) {
-      activeTouches.set(t.identifier, { x: t.clientX, y: t.clientY, sx: t.clientX, sy: t.clientY });
+      activeTouches.set(t.identifier, { x: t.clientX, y: t.clientY });
     }
-
     if (activeTouches.size >= 2) {
       const pts = [...activeTouches.values()];
       const dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
@@ -139,27 +145,23 @@
   canvas.addEventListener('touchmove', (e) => {
     e.preventDefault();
     for (const t of e.changedTouches) {
-      const existing = activeTouches.get(t.identifier);
-      if (existing) { existing.x = t.clientX; existing.y = t.clientY; }
+      const ex = activeTouches.get(t.identifier);
+      if (ex) { ex.x = t.clientX; ex.y = t.clientY; }
     }
-
     if (pinching && activeTouches.size >= 2) {
       const pts = [...activeTouches.values()];
       const dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
       pinchLiveDist = Math.sqrt(dx * dx + dy * dy);
     } else if (dragging) {
-      const t = e.changedTouches[0];
-      dragX = t.clientX;
-      dragY = t.clientY;
+      dragX = e.changedTouches[0].clientX;
+      dragY = e.changedTouches[0].clientY;
       if (dragInside) targetSquint = 0.4;
     }
   }, { passive: false });
 
   canvas.addEventListener('touchend', (e) => {
     e.preventDefault();
-    for (const t of e.changedTouches) {
-      activeTouches.delete(t.identifier);
-    }
+    for (const t of e.changedTouches) activeTouches.delete(t.identifier);
 
     if (pinching && activeTouches.size < 2) {
       const ratio = pinchStartDist > 0 ? pinchLiveDist / pinchStartDist : 1;
@@ -167,21 +169,18 @@
       pinching = false;
       targetSquint = 0;
     }
-
     if (activeTouches.size === 0) {
       if (dragging && dragInside) {
-        const dx = dragX - dragStartX;
-        const dy = dragY - dragStartY;
+        const dx = dragX - dragStartX, dy = dragY - dragStartY;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist > 15) {
           const angle = Math.atan2(dy, dx);
           const c = getCat();
           const strength = Math.min(dist / c.r, 2.0);
-          // Big びよーん on release
-          addDent(angle, c.r * 0.35 * strength, 0.5);
-          addDent(angle + Math.PI, -c.r * 0.15 * strength, 0.6);
-          addDent(angle + 0.6, c.r * 0.1 * strength, 0.4);
-          addDent(angle - 0.6, c.r * 0.1 * strength, 0.4);
+          addDent(angle, c.r * 0.35 * strength, 0.55);
+          addDent(angle + Math.PI, -c.r * 0.12 * strength, 0.7);
+          addDent(angle + 0.5, c.r * 0.1 * strength, 0.4);
+          addDent(angle - 0.5, c.r * 0.1 * strength, 0.4);
           targetSquint = 1;
           targetBlush = 1;
           setTimeout(() => { targetSquint = 0; }, 500);
@@ -205,7 +204,6 @@
     if (dragInside) pokeAt(e.clientX, e.clientY, 1);
     initMotion();
   });
-
   canvas.addEventListener('pointermove', (e) => {
     if (e.pointerType === 'touch') return;
     e.preventDefault();
@@ -214,31 +212,26 @@
     dragY = e.clientY;
     if (dragInside) targetSquint = 0.4;
   });
-
   canvas.addEventListener('pointerup', (e) => {
     if (e.pointerType === 'touch') return;
     e.preventDefault();
     if (dragging && dragInside) {
-      const dx = dragX - dragStartX;
-      const dy = dragY - dragStartY;
+      const dx = dragX - dragStartX, dy = dragY - dragStartY;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist > 15) {
         const angle = Math.atan2(dy, dx);
         const c = getCat();
         const strength = Math.min(dist / c.r, 2.0);
-        addDent(angle, c.r * 0.35 * strength, 0.5);
-        addDent(angle + Math.PI, -c.r * 0.15 * strength, 0.6);
-        addDent(angle + 0.6, c.r * 0.1 * strength, 0.4);
-        addDent(angle - 0.6, c.r * 0.1 * strength, 0.4);
-        targetSquint = 1;
-        targetBlush = 1;
+        addDent(angle, c.r * 0.35 * strength, 0.55);
+        addDent(angle + Math.PI, -c.r * 0.12 * strength, 0.7);
+        addDent(angle + 0.5, c.r * 0.1 * strength, 0.4);
+        addDent(angle - 0.5, c.r * 0.1 * strength, 0.4);
+        targetSquint = 1; targetBlush = 1;
         setTimeout(() => { targetSquint = 0; }, 500);
         setTimeout(() => { targetBlush = 0; }, 900);
       }
     }
-    dragging = false;
-    dragInside = false;
-    targetSquint = 0;
+    dragging = false; dragInside = false; targetSquint = 0;
   });
 
   // Device motion
@@ -262,17 +255,17 @@
       if (!a) return;
       const ax = a.x || 0, ay = a.y || 0, az = a.z || 0;
 
+      // Strong tilt response
       accelX = ax;
       accelY = ay;
 
+      // Shake
       const jerk = Math.abs(ax - prevAx) + Math.abs(ay - prevAy) + Math.abs(az - prevAz);
-      if (jerk > 12) {
+      if (jerk > 10) {
         const shakeAngle = Math.atan2(ay - prevAy, ax - prevAx);
-        const shakeStr = Math.min(jerk / 20, 2);
+        const shakeStr = Math.min(jerk / 15, 2.5);
         addDent(shakeAngle, -getCat().r * 0.2 * shakeStr, 0.7);
-        addDent(shakeAngle + Math.PI * 0.7, -getCat().r * 0.12 * shakeStr, 0.6);
-        swayVX += (ax - prevAx) * 0.3;
-        swayVY -= (ay - prevAy) * 0.3;
+        addDent(shakeAngle + Math.PI * 0.6, -getCat().r * 0.12 * shakeStr, 0.6);
         targetSquint = Math.min(shakeStr * 0.5, 1);
         targetBlush = Math.min(shakeStr * 0.3, 1);
         setTimeout(() => { targetSquint = 0; targetBlush = 0; }, 300);
@@ -293,14 +286,15 @@
     pinchVel *= 0.9;
     pinchScale = clamp(pinchScale + pinchVel, 0.7, 1.5);
 
-    swayVX += accelX * 0.05;
-    swayVY -= accelY * 0.05;
-    swayVX -= swayX * 0.04;
-    swayVY -= swayY * 0.04;
-    swayVX *= 0.92;
-    swayVY *= 0.92;
-    swayX = clamp(swayX + swayVX, -40, 40);
-    swayY = clamp(swayY + swayVY, -40, 40);
+    // Tilt -> deformation (water balloon feel)
+    const tiltTargetX = accelX * 0.6;
+    const tiltTargetY = -accelY * 0.6;
+    tiltVX += (tiltTargetX - tiltX) * 0.04;
+    tiltVY += (tiltTargetY - tiltY) * 0.04;
+    tiltVX *= 0.88;
+    tiltVY *= 0.88;
+    tiltX += tiltVX;
+    tiltY += tiltVY;
 
     eyeSquint += (targetSquint - eyeSquint) * 0.15;
     blushAlpha += (targetBlush - blushAlpha) * 0.08;
@@ -318,28 +312,31 @@
     return d;
   }
 
+  // Smooth drag deformation - no hard edges
   function getDragDeform(angle) {
     if (!dragging || !dragInside) return 0;
-    const dx = dragX - dragStartX;
-    const dy = dragY - dragStartY;
+    const dx = dragX - dragStartX, dy = dragY - dragStartY;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < 5) return 0;
+    if (dist < 3) return 0;
 
+    const c = getCat();
     const pullAngle = Math.atan2(dy, dx);
     let diff = angle - pullAngle;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
 
-    const c = getCat();
-    const strength = Math.min(dist / c.r, 1.5);
-    // Bigger stretch for more びよーん
-    const stretch = Math.exp(-(diff * diff) / (2 * 0.35 * 0.35)) * strength * c.r * 0.6;
+    // Smooth stretch: wide gaussian, proportional to drag distance
+    // Use soft exponential falloff, no hard clamp
+    const maxStretch = c.r * 0.7;
+    const strength = maxStretch * (1 - Math.exp(-dist / (c.r * 0.8)));
+    const spread = 0.5 + Math.min(dist / (c.r * 2), 0.3);
+    const stretch = Math.exp(-(diff * diff) / (2 * spread * spread)) * strength;
 
-    // Opposite side compresses
+    // Gentle compression on opposite side
     let oppDiff = angle - (pullAngle + Math.PI);
     while (oppDiff > Math.PI) oppDiff -= Math.PI * 2;
     while (oppDiff < -Math.PI) oppDiff += Math.PI * 2;
-    const compress = Math.exp(-(oppDiff * oppDiff) / (2 * 0.6 * 0.6)) * strength * c.r * -0.12;
+    const compress = Math.exp(-(oppDiff * oppDiff) / (2 * 0.8 * 0.8)) * strength * -0.15;
 
     return stretch + compress;
   }
@@ -350,41 +347,55 @@
     return (ratio - 1) * getCat().r * 0.5;
   }
 
+  // Tilt deformation: shifts weight like water in a balloon
+  function getTiltDeform(angle) {
+    const mag = Math.sqrt(tiltX * tiltX + tiltY * tiltY);
+    if (mag < 0.1) return 0;
+    const tiltAngle = Math.atan2(tiltY, tiltX);
+    let diff = angle - tiltAngle;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    const c = getCat();
+    // Bulge toward tilt direction, compress opposite
+    const bulge = Math.cos(diff) * mag * c.r * 0.08;
+    return bulge;
+  }
+
   function drawShadow(cx, cy, r) {
     ctx.fillStyle = 'rgba(0,0,0,0.06)';
     ctx.beginPath();
-    ctx.ellipse(cx, cy + r * 1.25, r * 0.8, r * 0.06, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy + r * 1.2, r * 0.7, r * 0.05, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 
   function drawTail(cx, cy, r) {
-    const bx = cx + r * 0.8;
-    const by = cy;
+    const bx = cx + r * 0.7;
+    const by = cy - r * 0.3;
     ctx.strokeStyle = '#f0a860';
-    ctx.lineWidth = r * 0.09;
+    ctx.lineWidth = r * 0.08;
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(bx, by);
     ctx.bezierCurveTo(
-      bx + r * 0.35, by - r * 0.25,
-      bx + r * 0.45, by - r * 0.65 + Math.sin(tailWag) * r * 0.1,
-      bx + r * 0.25, by - r * 0.8 + Math.sin(tailWag + 0.8) * r * 0.15
+      bx + r * 0.4, by - r * 0.15,
+      bx + r * 0.5, by - r * 0.55 + Math.sin(tailWag) * r * 0.1,
+      bx + r * 0.3, by - r * 0.7 + Math.sin(tailWag + 0.8) * r * 0.15
     );
     ctx.stroke();
   }
 
   function drawEar(cx, cy, r, side) {
-    const earW = r * 0.22;
-    const earH = r * 0.3;
-    const baseX = cx + side * r * 0.35;
-    const baseY = cy - r * 0.7;
-    const tipX = baseX + side * earW * 0.35;
+    const earW = r * 0.18;
+    const earH = r * 0.28;
+    const baseX = cx + side * r * 0.32;
+    const baseY = cy - r * 0.95;
+    const tipX = baseX + side * earW * 0.3;
     const tipY = baseY - earH;
 
     ctx.beginPath();
     ctx.moveTo(baseX - side * earW * 0.1, baseY);
-    ctx.quadraticCurveTo(baseX - side * earW * 0.2, tipY + earH * 0.3, tipX, tipY);
-    ctx.quadraticCurveTo(baseX + side * earW * 0.8, tipY + earH * 0.3, baseX + side * earW * 0.6, baseY);
+    ctx.quadraticCurveTo(baseX - side * earW * 0.15, tipY + earH * 0.3, tipX, tipY);
+    ctx.quadraticCurveTo(baseX + side * earW * 0.8, tipY + earH * 0.3, baseX + side * earW * 0.55, baseY);
     ctx.closePath();
     ctx.fillStyle = '#ffd4a8';
     ctx.fill();
@@ -392,29 +403,43 @@
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    const innerScale = 0.6;
-    const innerBaseX = baseX + side * earW * 0.25;
+    const innerBaseX = baseX + side * earW * 0.22;
     const innerBaseY = baseY - earH * 0.05;
-    const innerTipY = tipY + earH * 0.25;
     ctx.beginPath();
-    ctx.moveTo(innerBaseX - side * earW * 0.05, innerBaseY);
-    ctx.quadraticCurveTo(innerBaseX - side * earW * 0.1, innerTipY + earH * 0.1, tipX, innerTipY);
-    ctx.quadraticCurveTo(innerBaseX + side * earW * 0.4, innerTipY + earH * 0.1, innerBaseX + side * earW * 0.3, innerBaseY);
+    ctx.moveTo(innerBaseX - side * earW * 0.03, innerBaseY);
+    ctx.quadraticCurveTo(innerBaseX - side * earW * 0.08, tipY + earH * 0.35, tipX, tipY + earH * 0.22);
+    ctx.quadraticCurveTo(innerBaseX + side * earW * 0.35, tipY + earH * 0.35, innerBaseX + side * earW * 0.25, innerBaseY);
     ctx.closePath();
     ctx.fillStyle = '#ffb8b8';
+    ctx.fill();
+  }
+
+  // Small paws at bottom
+  function drawPaws(cx, cy, r) {
+    const pawY = cy + r * 1.12;
+    const pawR = r * 0.08;
+    ctx.fillStyle = '#f0a860';
+    ctx.beginPath();
+    ctx.ellipse(cx - r * 0.25, pawY, pawR * 1.2, pawR, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx + r * 0.25, pawY, pawR * 1.2, pawR, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 
   function drawBody(cx, cy, r) {
     const liveScale = pinchScale;
     const pinchD = getPinchDeform();
-    const segments = 80;
+    const segments = 100;
     ctx.beginPath();
     for (let i = 0; i <= segments; i++) {
       const a = (i / segments) * Math.PI * 2;
-      const baseR = pearRadius(a, r) * liveScale;
-      const deform = getDeformAt(a) + getDragDeform(a) + pinchD;
-      const rr = baseR + clamp(deform, -r * 0.4, r * 0.7);
+      const baseR = catRadius(a, r) * liveScale;
+      const deform = getDeformAt(a) + getDragDeform(a) + pinchD + getTiltDeform(a);
+      // Soft clamp using tanh to avoid hard edges
+      const maxDeform = r * 0.6;
+      const softDeform = Math.tanh(deform / maxDeform) * maxDeform;
+      const rr = Math.max(baseR * 0.4, baseR + softDeform);
       const x = cx + Math.cos(a) * rr;
       const y = cy + Math.sin(a) * rr;
       if (i === 0) ctx.moveTo(x, y);
@@ -422,10 +447,10 @@
     }
     ctx.closePath();
 
-    const grad = ctx.createRadialGradient(cx - r * 0.12, cy - r * 0.2, r * 0.1, cx, cy + r * 0.1, r * 1.1);
+    const grad = ctx.createRadialGradient(cx - r * 0.12, cy - r * 0.25, r * 0.1, cx, cy + r * 0.15, r * 1.2);
     grad.addColorStop(0, '#fff5ee');
-    grad.addColorStop(0.45, '#ffd4a8');
-    grad.addColorStop(1, '#f0a860');
+    grad.addColorStop(0.4, '#ffd4a8');
+    grad.addColorStop(1, '#eda555');
     ctx.fillStyle = grad;
     ctx.fill();
     ctx.strokeStyle = '#d4915a';
@@ -434,25 +459,24 @@
   }
 
   function drawFace(cx, cy, r) {
-    // Face is slightly above center for pear shape
-    const fy = cy - r * 0.08;
+    const fy = cy - r * 0.12;
 
     if (blushAlpha > 0.01) {
       ctx.globalAlpha = blushAlpha * 0.4;
       ctx.fillStyle = '#ff9999';
       ctx.beginPath();
-      ctx.ellipse(cx - r * 0.35, fy + r * 0.18, r * 0.12, r * 0.07, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx - r * 0.33, fy + r * 0.2, r * 0.11, r * 0.065, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.beginPath();
-      ctx.ellipse(cx + r * 0.35, fy + r * 0.18, r * 0.12, r * 0.07, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx + r * 0.33, fy + r * 0.2, r * 0.11, r * 0.065, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
     }
 
-    const eyeSpacing = r * 0.22;
-    const eyeY = fy - r * 0.04;
-    const eyeRx = r * 0.09;
-    const eyeRy = r * 0.11 * Math.max(0.25, 1 - eyeSquint * 0.75);
+    const eyeSpacing = r * 0.2;
+    const eyeY = fy;
+    const eyeRx = r * 0.085;
+    const eyeRy = r * 0.1 * Math.max(0.25, 1 - eyeSquint * 0.75);
 
     ctx.fillStyle = '#3a2a1a';
     ctx.beginPath();
@@ -464,45 +488,42 @@
 
     if (eyeSquint < 0.5) {
       ctx.fillStyle = '#fff';
-      const hl = eyeRx * 0.35;
+      const hl = eyeRx * 0.38;
       ctx.beginPath();
-      ctx.ellipse(cx - eyeSpacing + eyeRx * 0.25, eyeY - eyeRy * 0.2, hl, hl, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx - eyeSpacing + eyeRx * 0.25, eyeY - eyeRy * 0.22, hl, hl, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.beginPath();
-      ctx.ellipse(cx + eyeSpacing + eyeRx * 0.25, eyeY - eyeRy * 0.2, hl, hl, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx + eyeSpacing + eyeRx * 0.25, eyeY - eyeRy * 0.22, hl, hl, 0, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    const noseY = fy + r * 0.1;
+    const noseY = fy + r * 0.12;
     ctx.fillStyle = '#e8907a';
     ctx.beginPath();
-    ctx.moveTo(cx, noseY - r * 0.02);
-    ctx.lineTo(cx - r * 0.035, noseY + r * 0.02);
-    ctx.lineTo(cx + r * 0.035, noseY + r * 0.02);
-    ctx.closePath();
+    ctx.ellipse(cx, noseY, r * 0.03, r * 0.02, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    const mouthY = noseY + r * 0.035;
+    const mouthY = noseY + r * 0.03;
     ctx.strokeStyle = '#c8885a';
     ctx.lineWidth = 1.8;
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(cx, mouthY);
-    ctx.quadraticCurveTo(cx - r * 0.05, mouthY + r * 0.04, cx - r * 0.09, mouthY + r * 0.015);
+    ctx.quadraticCurveTo(cx - r * 0.04, mouthY + r * 0.035, cx - r * 0.08, mouthY + r * 0.01);
     ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(cx, mouthY);
-    ctx.quadraticCurveTo(cx + r * 0.05, mouthY + r * 0.04, cx + r * 0.09, mouthY + r * 0.015);
+    ctx.quadraticCurveTo(cx + r * 0.04, mouthY + r * 0.035, cx + r * 0.08, mouthY + r * 0.01);
     ctx.stroke();
 
     ctx.strokeStyle = '#c8a080';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1.3;
     for (let side = -1; side <= 1; side += 2) {
       for (let i = -1; i <= 1; i++) {
-        const wy = fy + r * 0.15 + i * r * 0.04;
+        const wy = fy + r * 0.16 + i * r * 0.035;
         ctx.beginPath();
-        ctx.moveTo(cx + side * r * 0.13, wy);
-        ctx.lineTo(cx + side * r * 0.5, wy + i * r * 0.025);
+        ctx.moveTo(cx + side * r * 0.12, wy);
+        ctx.lineTo(cx + side * r * 0.45, wy + i * r * 0.02);
         ctx.stroke();
       }
     }
@@ -525,15 +546,14 @@
     physics();
 
     const cat = getCat();
-    const bx = cat.cx + swayX;
-    const by = cat.cy + swayY;
 
-    drawShadow(bx, by, cat.r);
-    drawTail(bx, by, cat.r);
-    drawEar(bx, by, cat.r, -1);
-    drawEar(bx, by, cat.r, 1);
-    drawBody(bx, by, cat.r);
-    drawFace(bx, by, cat.r);
+    drawShadow(cat.cx, cat.cy, cat.r);
+    drawTail(cat.cx, cat.cy, cat.r);
+    drawPaws(cat.cx, cat.cy, cat.r);
+    drawEar(cat.cx, cat.cy, cat.r, -1);
+    drawEar(cat.cx, cat.cy, cat.r, 1);
+    drawBody(cat.cx, cat.cy, cat.r);
+    drawFace(cat.cx, cat.cy, cat.r);
     drawTitle();
 
     requestAnimationFrame(loop);
