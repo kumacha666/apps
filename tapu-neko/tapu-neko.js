@@ -409,21 +409,25 @@
   }
 
   function drawEar(cx, cy, r, side) {
-    // Attach ears to body surface at top
     const earAngle = -Math.PI / 2 + side * 0.45;
     const sp = getBodySurfacePoint(earAngle, cx, cy, r);
 
-    const earW = r * 0.18;
-    const earH = r * 0.28;
-    const baseX = sp.x;
-    const baseY = sp.y;
+    // Sink base into body so ear overlaps with body outline
+    const sinkX = (sp.x - cx) * 0.15;
+    const sinkY = (sp.y - cy) * 0.15;
+    const baseX = sp.x - sinkX;
+    const baseY = sp.y - sinkY;
+
+    const earW = r * 0.22;
+    const earH = r * 0.3;
     const tipX = baseX + side * earW * 0.3;
     const tipY = baseY - earH;
 
+    // Wide base that overlaps body
     ctx.beginPath();
-    ctx.moveTo(baseX - side * earW * 0.1, baseY);
+    ctx.moveTo(baseX - side * earW * 0.35, baseY + earH * 0.08);
     ctx.quadraticCurveTo(baseX - side * earW * 0.15, tipY + earH * 0.3, tipX, tipY);
-    ctx.quadraticCurveTo(baseX + side * earW * 0.8, tipY + earH * 0.3, baseX + side * earW * 0.55, baseY);
+    ctx.quadraticCurveTo(baseX + side * earW * 0.8, tipY + earH * 0.3, baseX + side * earW * 0.7, baseY + earH * 0.08);
     ctx.closePath();
     ctx.fillStyle = '#ffd4a8';
     ctx.fill();
@@ -431,12 +435,12 @@
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    const innerBaseX = baseX + side * earW * 0.22;
-    const innerBaseY = baseY - earH * 0.05;
+    const innerBaseX = baseX + side * earW * 0.18;
+    const innerBaseY = baseY + earH * 0.02;
     ctx.beginPath();
-    ctx.moveTo(innerBaseX - side * earW * 0.03, innerBaseY);
+    ctx.moveTo(innerBaseX - side * earW * 0.05, innerBaseY);
     ctx.quadraticCurveTo(innerBaseX - side * earW * 0.08, tipY + earH * 0.35, tipX, tipY + earH * 0.22);
-    ctx.quadraticCurveTo(innerBaseX + side * earW * 0.35, tipY + earH * 0.35, innerBaseX + side * earW * 0.25, innerBaseY);
+    ctx.quadraticCurveTo(innerBaseX + side * earW * 0.35, tipY + earH * 0.35, innerBaseX + side * earW * 0.28, innerBaseY);
     ctx.closePath();
     ctx.fillStyle = '#ffb8b8';
     ctx.fill();
@@ -574,7 +578,7 @@
     ctx.fillStyle = '#d4c0a0';
     ctx.font = `${Math.min(W, H) * 0.018}px -apple-system, sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText('v2025.06.22e', W - 10, H - 10);
+    ctx.fillText('v2025.06.22f', W - 10, H - 10);
     ctx.textAlign = 'center';
   }
 
