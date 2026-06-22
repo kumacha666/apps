@@ -2516,7 +2516,7 @@
       const star3rate = i < 10 ? 0.45 : 0.35;
 
       const features = {};
-      if (i >= 10) features.diagonalLine = true;
+      features.diagonalLine = true;
       if (i >= 100) features.ice = true;
       if (i >= 150) features.rock = true;
       if (i >= 250) features.holes = true;
