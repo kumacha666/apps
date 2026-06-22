@@ -2421,7 +2421,8 @@
   };
 
   function showScreen(name) {
-    if (name !== "game") { clearHint(); stopBgAnim(); }
+    const fromGame = name === "options" && optionsReturnScreen === "game";
+    if (name !== "game" && !fromGame) { clearHint(); stopBgAnim(); }
     if (name !== "title" && name !== "splash") stopTitleBgAnim();
     if (name === "splash") stopSplashBgAnim();
     if (name !== "result") stopResultBgAnim();
@@ -2433,7 +2434,8 @@
     if (name === "result") startResultBgAnim();
     if (bgmInitialized) {
       switch (name) {
-        case "title": case "help": case "options": switchBgm("title"); break;
+        case "options": if (optionsReturnScreen !== "game") switchBgm("title"); break;
+        case "title": case "help": switchBgm("title"); break;
         case "stageSelect": switchBgm("select"); break;
         case "game": switchBgm("ingame"); break;
         case "result": case "splash": stopAllBgm(); break;
@@ -5708,14 +5710,23 @@
   });
 
   // --- Options Screen ---
+  let optionsReturnScreen = "title";
+
   document.getElementById("btn-options").addEventListener("click", () => {
     initAudio();
+    optionsReturnScreen = "title";
+    syncOptionsUI();
+    showScreen("options");
+  });
+
+  document.getElementById("btn-game-options").addEventListener("click", () => {
+    optionsReturnScreen = "game";
     syncOptionsUI();
     showScreen("options");
   });
 
   document.getElementById("btn-options-back").addEventListener("click", () => {
-    showScreen("title");
+    showScreen(optionsReturnScreen);
   });
 
   function syncOptionsUI() {
