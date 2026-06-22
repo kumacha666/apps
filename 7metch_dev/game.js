@@ -3,7 +3,7 @@
 
   let cols = 7;
   let rows = 8;
-  const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffe66d", "#7b68ee", "#ff8a5c", "#3a86ff", "#ff6bb3", "#88cc44"];
+  const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffd700", "#c0c8d8", "#ff8a5c", "#1e4fff", "#ff6bb3", "#88cc44"];
   const PIECE_SHAPES = ["circle", "diamond", "square", "triangle", "star", "hex", "cross", "octagon"];
   const PIECE_NAMES_JA = ["太陽", "月", "火星", "水星", "木星", "金星", "土星", "地球"];
   const PIECE_SYMBOLS = ["☀️", "🌙", "🔴", "💎", "🟠", "💙", "🪐", "🌍"];
@@ -2391,11 +2391,13 @@
     if (name !== "game") { clearHint(); stopBgAnim(); }
     if (name !== "title" && name !== "splash") stopTitleBgAnim();
     if (name === "splash") stopSplashBgAnim();
+    if (name !== "result") stopResultBgAnim();
     Object.values(screens).forEach((s) => s.classList.remove("active"));
     screens[name].classList.add("active");
     if (name === "game") startBgAnim();
     if (name === "title") startTitleBgAnim();
     if (name === "splash") startSplashBgAnim();
+    if (name === "result") startResultBgAnim();
     if (bgmInitialized) {
       switch (name) {
         case "title": case "help": switchBgm("title"); break;
@@ -2750,18 +2752,26 @@
   }
 
   // --- Match Finding ---
+  const TAP_ACTIVATE_SPECIALS = new Set(["line_h", "line_v", "line_d", "bomb"]);
+
+  function isMatchable(r, c) {
+    if (!board[r][c]) return false;
+    if (isHole(r, c) || isRock(r, c)) return false;
+    if (board[r][c].special && TAP_ACTIVATE_SPECIALS.has(board[r][c].special)) return false;
+    return true;
+  }
+
   function findAllMatches() {
     const matched = new Set();
     const directions = [[0, 1], [1, 0]];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (!board[r][c]) continue;
-        if (isHole(r, c) || isRock(r, c)) continue;
+        if (!isMatchable(r, c)) continue;
         const color = board[r][c].color;
         for (const [dr, dc] of directions) {
           const line = [[r, c]];
           let nr = r + dr, nc = c + dc;
-          while (inBounds(nr, nc) && board[nr][nc] && !isHole(nr, nc) && !isRock(nr, nc) && board[nr][nc].color === color) {
+          while (inBounds(nr, nc) && isMatchable(nr, nc) && board[nr][nc].color === color) {
             line.push([nr, nc]);
             nr += dr;
             nc += dc;
@@ -2776,12 +2786,10 @@
     if (stg && stg.features && stg.features.diagonalLine) {
       for (let r = 0; r < rows - 1; r++) {
         for (let c = 0; c < cols - 1; c++) {
-          if (!board[r][c] || isHole(r, c) || isRock(r, c)) continue;
+          if (!isMatchable(r, c)) continue;
           const color = board[r][c].color;
           const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
-          const allMatch = cells.every(([cr, cc]) =>
-            board[cr][cc] && !isHole(cr, cc) && !isRock(cr, cc) && board[cr][cc].color === color
-          );
+          const allMatch = cells.every(([cr, cc]) => isMatchable(cr, cc) && board[cr][cc].color === color);
           if (allMatch) cells.forEach(([cr, cc]) => matched.add(cr * cols + cc));
         }
       }
@@ -2840,12 +2848,17 @@
         for (const [hr, hc] of h.line) {
           for (const [vr, vc] of v.line) {
             if (hr === vr && hc === vc) {
-              const key = hr * cols + hc;
+              const allCells = [...h.line, ...v.line];
+              let sr = hr, sc = hc;
+              if (lastSwapTarget && allCells.some(([cr, cc]) => cr === lastSwapTarget.r && cc === lastSwapTarget.c)) {
+                sr = lastSwapTarget.r;
+                sc = lastSwapTarget.c;
+              }
+              const key = sr * cols + sc;
               if (!usedCells.has(key)) {
-                specials.push({ r: hr, c: hc, type: "bomb", color: h.color });
+                specials.push({ r: sr, c: sc, type: "bomb", color: h.color });
                 usedCells.add(key);
-                h.line.forEach(([lr, lc]) => usedCells.add(lr * cols + lc));
-                v.line.forEach(([lr, lc]) => usedCells.add(lr * cols + lc));
+                allCells.forEach(([lr, lc]) => usedCells.add(lr * cols + lc));
               }
             }
           }
@@ -2865,14 +2878,26 @@
       if (usedCells.has(midKey)) continue;
 
       if (line.length >= 5) {
-        specials.push({ r: mid[0], c: mid[1], type: "rainbow", color });
-        usedCells.add(midKey);
+        let sr = mid[0], sc = mid[1], sk = midKey;
+        if (lastSwapTarget && line.some(([lr, lc]) => lr === lastSwapTarget.r && lc === lastSwapTarget.c)) {
+          sr = lastSwapTarget.r;
+          sc = lastSwapTarget.c;
+          sk = sr * cols + sc;
+        }
+        if (!usedCells.has(sk)) {
+          specials.push({ r: sr, c: sc, type: "rainbow", color });
+          usedCells.add(sk);
+        }
       } else if (line.length === 4) {
-        const pos = line[1];
-        const type = dir === "h" ? "line_v" : "line_h";
-        const posKey = pos[0] * cols + pos[1];
+        const type = dir === "h" ? "line_h" : "line_v";
+        let sr = line[1][0], sc = line[1][1];
+        if (lastSwapTarget && line.some(([lr, lc]) => lr === lastSwapTarget.r && lc === lastSwapTarget.c)) {
+          sr = lastSwapTarget.r;
+          sc = lastSwapTarget.c;
+        }
+        const posKey = sr * cols + sc;
         if (!usedCells.has(posKey)) {
-          specials.push({ r: pos[0], c: pos[1], type, color });
+          specials.push({ r: sr, c: sc, type, color });
           usedCells.add(posKey);
         }
       }
@@ -3011,6 +3036,68 @@
       hintAnimId = requestAnimationFrame(tick);
     }
     tick();
+  }
+
+  async function activateByTap(r, c) {
+    if (animating) return;
+    const piece = board[r][c];
+    if (!piece || !piece.special || !TAP_ACTIVATE_SPECIALS.has(piece.special)) return;
+    animating = true;
+    clearHint();
+
+    if (piece.special === "bomb") SFX.bomb();
+    else if (piece.special === "line_d") { SFX.line(); SFX.diagonal(); }
+    else if (piece.special === "line_h" || piece.special === "line_v") SFX.line();
+    track("tap_activate", { type: piece.special, stage: STAGES[currentStage].name });
+    movesLeft--;
+    chainCount = 1;
+    updateHUD();
+
+    const cleared = new Set([r * cols + c]);
+    const clearList = [[r, c]];
+    const extra = activateSpecial(r, c, cleared, null);
+    extra.forEach(([er, ec]) => {
+      if (!cleared.has(er * cols + ec)) {
+        cleared.add(er * cols + ec);
+        clearList.push([er, ec]);
+      }
+    });
+
+    clearList.forEach(([cr, cc]) => {
+      if (board[cr][cc] && board[cr][cc].special && !(cr === r && cc === c)) {
+        const ex2 = activateSpecial(cr, cc, cleared, board[cr][cc].special);
+        ex2.forEach(([er, ec]) => {
+          if (!cleared.has(er * cols + ec)) {
+            cleared.add(er * cols + ec);
+            clearList.push([er, ec]);
+          }
+        });
+      }
+    });
+
+    clearList.forEach(([cr, cc]) => {
+      if (board[cr][cc]) {
+        const ci = board[cr][cc].color;
+        colorCleared[ci] = (colorCleared[ci] || 0) + 1;
+        totalCleared++;
+      }
+    });
+    score += clearList.length * 10 * chainCount;
+
+    await animateClear(clearList, [{ r, c, type: piece.special, color: piece.color }]);
+    clearList.forEach(([cr, cc]) => { board[cr][cc] = null; });
+    damageAdjacentIce(clearList);
+
+    const fallMap = applyGravityData();
+    await animateDrop(fallMap);
+    await sleep(ANIM.CHAIN_PAUSE_MS);
+
+    await resolveBoard();
+
+    updateHUD();
+    checkWinLose();
+    animating = false;
+    startHintTimer();
   }
 
   // --- Special Piece Activation ---
@@ -3278,6 +3365,73 @@
         else if (comboType === "rainbow_bomb") comboInfo.push({ r: r2, c: c2, type: "bomb", color: (p2 || p1).color });
         await animateClear(clearList, comboInfo);
         clearList.forEach(([r, c]) => { board[r][c] = null; });
+        damageAdjacentIce(clearList);
+
+        const fallMap = applyGravityData();
+        await animateDrop(fallMap);
+        await sleep(ANIM.CHAIN_PAUSE_MS);
+
+        await resolveBoard();
+
+        updateHUD();
+        checkWinLose();
+        animating = false;
+        startHintTimer();
+        return;
+      }
+    }
+
+    // Rainbow + normal piece swap
+    const rb1 = p1 && p1.special === "rainbow";
+    const rb2 = p2 && p2.special === "rainbow";
+    if ((rb1 || rb2) && !(rb1 && rb2)) {
+      const rainbow = rb1 ? p1 : p2;
+      const other = rb1 ? p2 : p1;
+      const rainbowR = rb1 ? r2 : r1;
+      const rainbowC = rb1 ? c2 : c1;
+      const otherR = rb1 ? r1 : r2;
+      const otherC = rb1 ? c1 : c2;
+      if (!other.special) {
+        const targetColor = other.color;
+        SFX.combo("rainbow_line");
+        track("rainbow_swap", { target_color: targetColor, stage: STAGES[currentStage].name });
+        movesLeft--;
+        chainCount = 1;
+        updateHUD();
+
+        const clearList = [[rainbowR, rainbowC]];
+        const cleared = new Set([rainbowR * cols + rainbowC]);
+        for (let rr = 0; rr < rows; rr++) {
+          for (let cc = 0; cc < cols; cc++) {
+            if (board[rr][cc] && board[rr][cc].color === targetColor && !cleared.has(rr * cols + cc) && isPlayable(rr, cc)) {
+              cleared.add(rr * cols + cc);
+              clearList.push([rr, cc]);
+            }
+          }
+        }
+        clearList.forEach(([cr, cc]) => {
+          if (board[cr][cc] && board[cr][cc].special && !(cr === rainbowR && cc === rainbowC)) {
+            const extra = activateSpecial(cr, cc, cleared, board[cr][cc].special);
+            extra.forEach(([er, ec]) => {
+              if (!cleared.has(er * cols + ec)) {
+                cleared.add(er * cols + ec);
+                clearList.push([er, ec]);
+              }
+            });
+          }
+        });
+
+        clearList.forEach(([cr, cc]) => {
+          if (board[cr][cc]) {
+            const ci = board[cr][cc].color;
+            colorCleared[ci] = (colorCleared[ci] || 0) + 1;
+            totalCleared++;
+          }
+        });
+        score += clearList.length * 10 * chainCount;
+
+        await animateClear(clearList, [{ r: rainbowR, c: rainbowC, type: "rainbow", color: targetColor }]);
+        clearList.forEach(([cr, cc]) => { board[cr][cc] = null; });
         damageAdjacentIce(clearList);
 
         const fallMap = applyGravityData();
@@ -3657,8 +3811,8 @@
   }
 
   async function animateStandardClear(cells) {
-    const totalFrames = 22;
-    const phase1End = Math.floor(totalFrames * 0.3);
+    const totalFrames = 24;
+    const phase1End = Math.floor(totalFrames * 0.25);
     let frame = 0;
 
     await new Promise(resolve => {
@@ -3671,13 +3825,14 @@
             const gp = frame / phase1End;
             for (const { r, c } of cells) {
               const pos = cellCenter(r, c);
+              const color = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || "#ffffff") : "#ffffff";
               overlayCtx.save();
-              overlayCtx.globalAlpha = gp * 0.5;
-              overlayCtx.shadowColor = "#ffffff";
-              overlayCtx.shadowBlur = 10 + gp * 15;
-              overlayCtx.fillStyle = "rgba(255,255,255,0.3)";
+              overlayCtx.globalAlpha = gp * 0.7;
+              overlayCtx.shadowColor = color;
+              overlayCtx.shadowBlur = 12 + gp * 20;
+              overlayCtx.fillStyle = color;
               overlayCtx.beginPath();
-              overlayCtx.arc(pos.x, pos.y, cellSize * 0.4 * (1 + gp * 0.3), 0, Math.PI * 2);
+              overlayCtx.arc(pos.x, pos.y, cellSize * 0.42 * (1 + gp * 0.4), 0, Math.PI * 2);
               overlayCtx.fill();
               overlayCtx.restore();
             }
@@ -3685,13 +3840,15 @@
           if (frame > phase1End) {
             const sp = (frame - phase1End) / (totalFrames - phase1End);
             const shrink = 1 - sp * sp;
+            const expand = 1 + sp * 0.5;
             for (const { r, c } of cells) {
               const pos = cellCenter(r, c);
+              const color = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || "#ffffff") : "#ffffff";
               overlayCtx.save();
-              overlayCtx.globalAlpha = (1 - sp) * 0.35;
-              overlayCtx.fillStyle = "#ffffff";
+              overlayCtx.globalAlpha = (1 - sp) * 0.5;
+              overlayCtx.fillStyle = color;
               overlayCtx.beginPath();
-              overlayCtx.arc(pos.x, pos.y, cellSize * 0.35 * shrink, 0, Math.PI * 2);
+              overlayCtx.arc(pos.x, pos.y, cellSize * 0.38 * shrink * expand, 0, Math.PI * 2);
               overlayCtx.fill();
               overlayCtx.restore();
             }
@@ -3699,9 +3856,11 @@
               for (const { r, c } of cells) {
                 const pos = cellCenter(r, c);
                 const color = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || "#ffffff") : "#ffffff";
-                addBurstParticles(pos.x, pos.y, color, 8, { speed: 2.5, size: 3.5, decay: 0.04, sizeDecay: 0.06 });
-                addShockwave(pos.x, pos.y, cellSize * 0.6, 10, "#ffffff");
+                addBurstParticles(pos.x, pos.y, color, 12, { speed: 3.5, size: 4.0, decay: 0.035, sizeDecay: 0.055 });
+                addFlash(pos.x, pos.y, cellSize * 0.7, color, 8);
+                addShockwave(pos.x, pos.y, cellSize * 0.8, 12, color);
               }
+              addScreenShake(1.5);
             }
           }
         });
@@ -4073,7 +4232,9 @@
     }
 
     const maxDist = Math.max(...fallMap.map((f) => f.toR - f.fromR));
-    const totalFrames = Math.ceil(maxDist / ANIM.DROP_SPEED);
+    const fallFrames = Math.ceil(maxDist / ANIM.DROP_SPEED);
+    const bounceFrames = 10;
+    const totalFrames = fallFrames + bounceFrames;
 
     const frozen = [];
     for (let r = 0; r < rows; r++) {
@@ -4086,9 +4247,6 @@
     const fallingCells = new Set(fallMap.map((f) => f.toR * cols + f.c));
 
     for (let frame = 0; frame <= totalFrames; frame++) {
-      const t = Math.min(frame / totalFrames, 1);
-      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-
       drawBoardBase();
 
       for (let r = 0; r < rows; r++) {
@@ -4102,10 +4260,22 @@
       }
 
       for (const fall of fallMap) {
-        const currentR = fall.fromR + (fall.toR - fall.fromR) * ease;
+        const dist = fall.toR - fall.fromR;
         const x = fall.c * cellSize + cellSize / 2;
-        const y = currentR * cellSize + cellSize / 2;
+        let currentR;
 
+        if (frame <= fallFrames) {
+          const t = Math.min(frame / fallFrames, 1);
+          const accel = t * t;
+          currentR = fall.fromR + dist * accel;
+        } else {
+          const bt = (frame - fallFrames) / bounceFrames;
+          const bounceAmp = Math.min(0.25 + dist * 0.08, 0.5);
+          const bounceHeight = bounceAmp * Math.sin(bt * Math.PI) * (1 - bt * 0.6);
+          currentR = fall.toR - bounceHeight;
+        }
+
+        const y = currentR * cellSize + cellSize / 2;
         if (y + cellSize / 2 > 0) {
           drawPieceAt(fall.piece, x, y);
         }
@@ -4227,17 +4397,17 @@
     if (!piece) return;
     const radius = cellSize * 0.36;
 
-    if (pieceCacheSize === cellSize && pieceCache[piece.color]) {
-      const cached = pieceCache[piece.color];
-      const pad = 1.4;
-      const size = Math.ceil(cellSize * pad);
-      ctx.drawImage(cached, cx - size / 2, cy - size / 2, size, size);
-    } else {
-      drawPlanet(ctx, piece.color, cx, cy, radius);
-    }
-
     if (piece.special) {
-      drawSpecialIndicator(ctx, piece.special, cx, cy, radius, piece);
+      drawSpecialIcon(ctx, piece.special, cx, cy, cellSize * 0.44, piece);
+    } else {
+      if (pieceCacheSize === cellSize && pieceCache[piece.color]) {
+        const cached = pieceCache[piece.color];
+        const pad = 1.4;
+        const size = Math.ceil(cellSize * pad);
+        ctx.drawImage(cached, cx - size / 2, cy - size / 2, size, size);
+      } else {
+        drawPlanet(ctx, piece.color, cx, cy, radius);
+      }
     }
   }
 
@@ -4413,89 +4583,13 @@
     ctx.restore();
   }
 
-  // Moon: Bold craters with shadows
   function drawMoon(ctx, cx, cy, r, color) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.clip();
-    const craters = [
-      { x: 0.2, y: -0.15, s: 0.22 },
-      { x: -0.3, y: 0.25, s: 0.28 },
-      { x: 0.35, y: 0.3, s: 0.18 },
-      { x: -0.1, y: -0.35, s: 0.16 },
-    ];
-    for (const c of craters) {
-      const px = cx + c.x * r;
-      const py = cy + c.y * r;
-      const cr = c.s * r;
-      ctx.beginPath();
-      ctx.arc(px, py, cr, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(0,0,0,0.25)";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(px - cr * 0.2, py - cr * 0.2, cr * 0.8, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(255,255,255,0.2)";
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
-    ctx.restore();
   }
 
-  // Mars: Bold dark patches + prominent polar ice cap
   function drawMars(ctx, cx, cy, r, color) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.clip();
-    const patches = [
-      { x: -0.2, y: 0.1, s: 0.4 },
-      { x: 0.25, y: -0.15, s: 0.3 },
-      { x: 0.05, y: 0.35, s: 0.25 },
-    ];
-    for (const p of patches) {
-      const grad = ctx.createRadialGradient(cx + p.x * r, cy + p.y * r, 0, cx + p.x * r, cy + p.y * r, p.s * r);
-      grad.addColorStop(0, "rgba(100,30,10,0.45)");
-      grad.addColorStop(1, "rgba(100,30,10,0)");
-      ctx.fillStyle = grad;
-      ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
-    }
-    ctx.beginPath();
-    ctx.ellipse(cx, cy - r * 0.72, r * 0.35, r * 0.18, 0, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(255,255,255,0.4)";
-    ctx.fill();
-    ctx.restore();
   }
 
-  // Mercury: Bold craters with rim highlights
   function drawMercury(ctx, cx, cy, r, color) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.clip();
-    const craters = [
-      { x: 0.15, y: -0.2, s: 0.2 },
-      { x: -0.25, y: 0.1, s: 0.25 },
-      { x: 0.3, y: 0.25, s: 0.16 },
-      { x: -0.1, y: -0.38, s: 0.14 },
-      { x: 0.0, y: 0.32, s: 0.18 },
-      { x: -0.38, y: -0.15, s: 0.13 },
-    ];
-    for (const c of craters) {
-      const px = cx + c.x * r;
-      const py = cy + c.y * r;
-      const cr = c.s * r;
-      ctx.beginPath();
-      ctx.arc(px, py, cr, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(0,0,0,0.3)";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(px - cr * 0.15, py - cr * 0.15, cr * 0.85, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(255,255,255,0.2)";
-      ctx.lineWidth = 0.8;
-      ctx.stroke();
-    }
-    ctx.restore();
   }
 
   // Jupiter: Bold cloud bands + prominent Great Red Spot
@@ -4713,14 +4807,7 @@
     ctx.fillStyle = bgGradCache;
     ctx.fillRect(0, 0, w, h);
 
-    // Stars
     for (const star of bgStars) {
-      star.y += star.speed;
-      star.x += star.speed * 0.15;
-      if (star.y > h) { star.y = -2; star.x = Math.random() * w; }
-      if (star.x > w) star.x -= w;
-
-      star.twinkle += 0.03;
       const flicker = 0.7 + 0.3 * Math.sin(star.twinkle);
       ctx.globalAlpha = star.alpha * flicker;
       ctx.fillStyle = "#fff";
@@ -4729,39 +4816,6 @@
       ctx.fill();
     }
     ctx.globalAlpha = 1;
-
-    // Shooting star (occasional)
-    if (!bgShootingStar && Math.random() < 0.003) {
-      bgShootingStar = {
-        x: Math.random() * w * 0.6,
-        y: Math.random() * h * 0.3,
-        vx: 3 + Math.random() * 2,
-        vy: 1.5 + Math.random(),
-        life: 1,
-      };
-    }
-    if (bgShootingStar) {
-      const ss = bgShootingStar;
-      ss.x += ss.vx;
-      ss.y += ss.vy;
-      ss.life -= 0.03;
-      if (ss.life <= 0) { bgShootingStar = null; }
-      else {
-        ctx.save();
-        ctx.globalAlpha = ss.life;
-        const tailLen = 20;
-        const grad = ctx.createLinearGradient(ss.x, ss.y, ss.x - ss.vx * tailLen * 0.3, ss.y - ss.vy * tailLen * 0.3);
-        grad.addColorStop(0, "#fff");
-        grad.addColorStop(1, "rgba(255,255,255,0)");
-        ctx.strokeStyle = grad;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(ss.x, ss.y);
-        ctx.lineTo(ss.x - ss.vx * tailLen * 0.3, ss.y - ss.vy * tailLen * 0.3);
-        ctx.stroke();
-        ctx.restore();
-      }
-    }
   }
 
   function startBgAnim() {
@@ -4894,6 +4948,109 @@
     if (titleBgAnimId) { cancelAnimationFrame(titleBgAnimId); titleBgAnimId = null; }
   }
 
+  let resultBgStars = [];
+  let resultBgAnimId = null;
+  let resultShootingStar = null;
+
+  function initResultBgStars(w, h) {
+    resultBgStars = [];
+    const layers = [
+      { count: 100, speed: 0.06, sizeMin: 0.5, sizeMax: 1.5, alpha: 0.5 },
+      { count: 55, speed: 0.18, sizeMin: 0.8, sizeMax: 2.0, alpha: 0.7 },
+      { count: 25, speed: 0.35, sizeMin: 1.2, sizeMax: 2.8, alpha: 0.9 },
+    ];
+    for (const layer of layers) {
+      for (let i = 0; i < layer.count; i++) {
+        resultBgStars.push({
+          x: Math.random() * w, y: Math.random() * h,
+          size: layer.sizeMin + Math.random() * (layer.sizeMax - layer.sizeMin),
+          speed: layer.speed + Math.random() * layer.speed * 0.3,
+          alpha: layer.alpha * (0.6 + Math.random() * 0.4),
+          twinkle: Math.random() * Math.PI * 2,
+        });
+      }
+    }
+  }
+
+  function startResultBgAnim() {
+    stopResultBgAnim();
+    const canvas = document.getElementById("result-bg-canvas");
+    if (!canvas) return;
+    const rCtx = canvas.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+
+    function resize() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      rCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (resultBgStars.length === 0) initResultBgStars(rect.width, rect.height);
+    }
+    resize();
+
+    function tick() {
+      if (!screens.result.classList.contains("active")) return;
+      const w = canvas.width / dpr;
+      const h = canvas.height / dpr;
+
+      const grad = rCtx.createLinearGradient(0, 0, w * 0.3, h);
+      grad.addColorStop(0, "#0a0a2e");
+      grad.addColorStop(0.5, "#0d1030");
+      grad.addColorStop(1, "#150a30");
+      rCtx.fillStyle = grad;
+      rCtx.fillRect(0, 0, w, h);
+
+      for (const star of resultBgStars) {
+        star.y += star.speed;
+        star.x += star.speed * 0.12;
+        if (star.y > h) { star.y = -2; star.x = Math.random() * w; }
+        if (star.x > w) star.x -= w;
+        star.twinkle += 0.025;
+        const flicker = 0.7 + 0.3 * Math.sin(star.twinkle);
+        rCtx.globalAlpha = star.alpha * flicker;
+        rCtx.fillStyle = "#fff";
+        rCtx.beginPath();
+        rCtx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+        rCtx.fill();
+      }
+      rCtx.globalAlpha = 1;
+
+      if (!resultShootingStar && Math.random() < 0.004) {
+        resultShootingStar = {
+          x: Math.random() * w * 0.7, y: Math.random() * h * 0.4,
+          vx: 3 + Math.random() * 2, vy: 1.5 + Math.random(), life: 1,
+        };
+      }
+      if (resultShootingStar) {
+        const ss = resultShootingStar;
+        ss.x += ss.vx; ss.y += ss.vy; ss.life -= 0.025;
+        if (ss.life <= 0) { resultShootingStar = null; }
+        else {
+          rCtx.save();
+          rCtx.globalAlpha = ss.life;
+          const tailLen = 25;
+          const sg = rCtx.createLinearGradient(ss.x, ss.y, ss.x - ss.vx * tailLen * 0.3, ss.y - ss.vy * tailLen * 0.3);
+          sg.addColorStop(0, "#fff");
+          sg.addColorStop(1, "rgba(255,255,255,0)");
+          rCtx.strokeStyle = sg;
+          rCtx.lineWidth = 1.5;
+          rCtx.beginPath();
+          rCtx.moveTo(ss.x, ss.y);
+          rCtx.lineTo(ss.x - ss.vx * tailLen * 0.3, ss.y - ss.vy * tailLen * 0.3);
+          rCtx.stroke();
+          rCtx.restore();
+        }
+      }
+
+      resultBgAnimId = requestAnimationFrame(tick);
+    }
+    resultBgAnimId = requestAnimationFrame(tick);
+  }
+
+  function stopResultBgAnim() {
+    if (resultBgAnimId) { cancelAnimationFrame(resultBgAnimId); resultBgAnimId = null; }
+  }
+
   let splashBgStars = [];
   let splashBgAnimId = null;
 
@@ -4957,208 +5114,182 @@
     if (splashBgAnimId) { cancelAnimationFrame(splashBgAnimId); splashBgAnimId = null; }
   }
 
-  function drawSpecialIndicator(ctx, type, cx, cy, r, piece) {
-    ctx.save();
-    const s = r * 0.55;
-    ctx.lineCap = "round";
-
+  function drawStar5(ctx, cx, cy, r) {
     ctx.beginPath();
-    ctx.arc(cx, cy, s + 2, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    for (let i = 0; i < 5; i++) {
+      const a = (i * 2 * Math.PI / 5) - Math.PI / 2;
+      const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      const a2 = a + Math.PI / 5;
+      ctx.lineTo(cx + Math.cos(a2) * r * 0.4, cy + Math.sin(a2) * r * 0.4);
+    }
+    ctx.closePath();
     ctx.fill();
+  }
 
+  function drawShootingStar(ctx, cx, cy, r, angle) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    const s = r;
+    ctx.shadowColor = "#ffd700";
+    ctx.shadowBlur = r * 0.3;
+    const tg = ctx.createLinearGradient(0, s * 0.8, 0, -s * 0.3);
+    tg.addColorStop(0, "rgba(255,215,0,0)");
+    tg.addColorStop(0.5, "rgba(255,215,0,0.4)");
+    tg.addColorStop(1, "#ffd700");
+    ctx.fillStyle = tg;
+    ctx.beginPath();
+    ctx.moveTo(0, -s * 0.4);
+    ctx.lineTo(-s * 0.15, s * 0.8);
+    ctx.lineTo(s * 0.15, s * 0.8);
+    ctx.fill();
+    ctx.shadowBlur = r * 0.4;
+    ctx.fillStyle = "#fff";
+    drawStar5(ctx, 0, -s * 0.45, s * 0.25);
+    ctx.restore();
+  }
+
+  function drawSpecialIcon(ctx, type, cx, cy, r, piece) {
+    ctx.save();
     switch (type) {
       case "line_h": {
-        // Comet tail horizontal
-        const grad = ctx.createLinearGradient(cx - s, cy, cx + s, cy);
-        grad.addColorStop(0, "rgba(255,255,200,0.1)");
-        grad.addColorStop(0.4, "rgba(255,255,200,0.8)");
-        grad.addColorStop(0.5, "#fff");
-        grad.addColorStop(0.6, "rgba(255,255,200,0.8)");
-        grad.addColorStop(1, "rgba(255,255,200,0.1)");
-        ctx.strokeStyle = grad;
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(cx - s, cy);
-        ctx.lineTo(cx + s, cy);
-        ctx.stroke();
-        // Comet heads at both ends
-        ctx.fillStyle = "#fff";
-        ctx.shadowColor = "#ffe080";
-        ctx.shadowBlur = 4;
-        ctx.beginPath();
-        ctx.arc(cx - s * 0.85, cy, s * 0.15, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(cx + s * 0.85, cy, s * 0.15, 0, Math.PI * 2);
-        ctx.fill();
+        drawShootingStar(ctx, cx, cy, r, Math.PI / 2);
         break;
       }
       case "line_v": {
-        const grad = ctx.createLinearGradient(cx, cy - s, cx, cy + s);
-        grad.addColorStop(0, "rgba(255,255,200,0.1)");
-        grad.addColorStop(0.4, "rgba(255,255,200,0.8)");
-        grad.addColorStop(0.5, "#fff");
-        grad.addColorStop(0.6, "rgba(255,255,200,0.8)");
-        grad.addColorStop(1, "rgba(255,255,200,0.1)");
-        ctx.strokeStyle = grad;
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - s);
-        ctx.lineTo(cx, cy + s);
-        ctx.stroke();
-        ctx.fillStyle = "#fff";
-        ctx.shadowColor = "#ffe080";
-        ctx.shadowBlur = 4;
-        ctx.beginPath();
-        ctx.arc(cx, cy - s * 0.85, s * 0.15, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(cx, cy + s * 0.85, s * 0.15, 0, Math.PI * 2);
-        ctx.fill();
+        drawShootingStar(ctx, cx, cy, r, 0);
         break;
       }
       case "line_d": {
-        // Meteor shower — X-shaped golden trails
-        const ds = s * 0.75;
-        ctx.shadowColor = "#ffd700";
-        ctx.shadowBlur = 3;
-        ctx.lineWidth = 2;
-        // Trail 1
-        const g1 = ctx.createLinearGradient(cx - ds, cy - ds, cx + ds, cy + ds);
-        g1.addColorStop(0, "rgba(255,215,0,0.2)");
-        g1.addColorStop(0.5, "#ffd700");
-        g1.addColorStop(1, "rgba(255,215,0,0.2)");
-        ctx.strokeStyle = g1;
-        ctx.beginPath();
-        ctx.moveTo(cx - ds, cy - ds);
-        ctx.lineTo(cx + ds, cy + ds);
-        ctx.stroke();
-        // Trail 2
-        const g2 = ctx.createLinearGradient(cx + ds, cy - ds, cx - ds, cy + ds);
-        g2.addColorStop(0, "rgba(255,215,0,0.2)");
-        g2.addColorStop(0.5, "#ffd700");
-        g2.addColorStop(1, "rgba(255,215,0,0.2)");
-        ctx.strokeStyle = g2;
-        ctx.beginPath();
-        ctx.moveTo(cx + ds, cy - ds);
-        ctx.lineTo(cx - ds, cy + ds);
-        ctx.stroke();
-        // Meteor heads at corners
-        ctx.fillStyle = "#ffe880";
-        const mhs = s * 0.1;
-        [[cx - ds, cy - ds], [cx + ds, cy + ds], [cx + ds, cy - ds], [cx - ds, cy + ds]].forEach(([mx, my]) => {
+        ctx.save();
+        ctx.translate(cx, cy);
+        const s = r;
+        [-Math.PI / 4, Math.PI / 4].forEach(a => {
+          ctx.save();
+          ctx.rotate(a);
+          ctx.shadowColor = "#ffd700";
+          ctx.shadowBlur = r * 0.3;
+          const tg = ctx.createLinearGradient(0, s * 0.8, 0, -s * 0.3);
+          tg.addColorStop(0, "rgba(255,215,0,0)");
+          tg.addColorStop(0.5, "rgba(255,215,0,0.4)");
+          tg.addColorStop(1, "#ffd700");
+          ctx.fillStyle = tg;
           ctx.beginPath();
-          ctx.arc(mx, my, mhs, 0, Math.PI * 2);
+          ctx.moveTo(0, -s * 0.4);
+          ctx.lineTo(-s * 0.15, s * 0.8);
+          ctx.lineTo(s * 0.15, s * 0.8);
           ctx.fill();
+          ctx.shadowBlur = r * 0.4;
+          ctx.fillStyle = "#fff";
+          drawStar5(ctx, 0, -s * 0.45, s * 0.25);
+          ctx.restore();
         });
+        ctx.restore();
         break;
       }
       case "bomb": {
-        // Supernova — pulsing light rings + radial rays
-        ctx.shadowColor = "#fff";
-        ctx.shadowBlur = 4;
-        // Outer ring
-        ctx.strokeStyle = "rgba(255,255,255,0.6)";
-        ctx.lineWidth = 1.5;
+        const s = r;
+        ctx.shadowColor = "#ff6600";
+        ctx.shadowBlur = r * 0.3;
+        const bg = ctx.createRadialGradient(cx - s * 0.15, cy - s * 0.1, s * 0.05, cx, cy + s * 0.05, s * 0.5);
+        bg.addColorStop(0, "#555");
+        bg.addColorStop(0.8, "#222");
+        bg.addColorStop(1, "#111");
+        ctx.fillStyle = bg;
         ctx.beginPath();
-        ctx.arc(cx, cy, s * 0.7, 0, Math.PI * 2);
-        ctx.stroke();
-        // Inner ring
-        ctx.strokeStyle = "rgba(255,200,100,0.8)";
-        ctx.lineWidth = 1;
+        ctx.arc(cx, cy + s * 0.05, s * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.15)";
         ctx.beginPath();
-        ctx.arc(cx, cy, s * 0.4, 0, Math.PI * 2);
+        ctx.arc(cx - s * 0.15, cy - s * 0.1, s * 0.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#aaa";
+        ctx.lineWidth = 2;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - s * 0.45);
+        ctx.quadraticCurveTo(cx + s * 0.2, cy - s * 0.65, cx + s * 0.1, cy - s * 0.75);
         ctx.stroke();
-        // Radial rays
-        ctx.shadowBlur = 0;
-        for (let i = 0; i < 8; i++) {
-          const angle = (i / 8) * Math.PI * 2;
-          const x1 = cx + Math.cos(angle) * s * 0.25;
-          const y1 = cy + Math.sin(angle) * s * 0.25;
-          const x2 = cx + Math.cos(angle) * s * 0.75;
-          const y2 = cy + Math.sin(angle) * s * 0.75;
-          const rg = ctx.createLinearGradient(x1, y1, x2, y2);
-          rg.addColorStop(0, "rgba(255,220,150,0.7)");
-          rg.addColorStop(1, "rgba(255,220,150,0)");
-          ctx.strokeStyle = rg;
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(x1, y1);
-          ctx.lineTo(x2, y2);
-          ctx.stroke();
-        }
-        // Bright center
+        ctx.shadowColor = "#ffd700";
+        ctx.shadowBlur = r * 0.5;
+        ctx.fillStyle = "#ffd700";
+        drawStar5(ctx, cx + s * 0.1, cy - s * 0.78, s * 0.15);
         ctx.fillStyle = "#fff";
-        ctx.shadowColor = "#ffe080";
-        ctx.shadowBlur = 5;
         ctx.beginPath();
-        ctx.arc(cx, cy, s * 0.15, 0, Math.PI * 2);
+        ctx.arc(cx + s * 0.1, cy - s * 0.78, s * 0.05, 0, Math.PI * 2);
         ctx.fill();
         break;
       }
       case "rainbow": {
-        // Black hole — swirling accretion disk with rainbow gravity lens
-        const colors = ["#ff4444", "#ffaa00", "#44ff44", "#4488ff", "#ff44ff", "#44ffff"];
-        // Accretion disk arcs
-        for (let i = 0; i < colors.length; i++) {
-          const angle = (i / colors.length) * Math.PI * 2;
+        const s = r;
+        const cs = ["#ff4444", "#ffaa00", "#44ff44", "#4488ff", "#ff44ff", "#44ffff"];
+        for (let i = 5; i >= 0; i--) {
+          const rr = s * (0.15 + i * 0.14);
+          ctx.strokeStyle = cs[i % cs.length];
+          ctx.lineWidth = 3;
+          ctx.globalAlpha = 0.5 + (5 - i) * 0.1;
+          ctx.shadowColor = cs[i % cs.length];
+          ctx.shadowBlur = 4;
           ctx.beginPath();
-          ctx.arc(cx, cy, s * 0.6, angle, angle + Math.PI * 0.5);
-          ctx.strokeStyle = colors[i];
-          ctx.lineWidth = 2;
-          ctx.globalAlpha = 0.6;
+          ctx.arc(cx, cy, rr, 0, Math.PI * 2);
           ctx.stroke();
         }
         ctx.globalAlpha = 1;
-        // Dark center vortex
-        const vGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, s * 0.3);
-        vGrad.addColorStop(0, "#000");
-        vGrad.addColorStop(0.7, "rgba(30,0,50,0.9)");
-        vGrad.addColorStop(1, "rgba(30,0,50,0)");
-        ctx.fillStyle = vGrad;
-        ctx.beginPath();
-        ctx.arc(cx, cy, s * 0.3, 0, Math.PI * 2);
-        ctx.fill();
-        // Bright event horizon ring
-        ctx.strokeStyle = "rgba(255,255,255,0.5)";
-        ctx.lineWidth = 1;
+        const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, s * 0.2);
+        cg.addColorStop(0, "#fff");
+        cg.addColorStop(0.5, "rgba(255,255,255,0.5)");
+        cg.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = cg;
         ctx.shadowColor = "#fff";
-        ctx.shadowBlur = 3;
+        ctx.shadowBlur = r * 0.5;
         ctx.beginPath();
         ctx.arc(cx, cy, s * 0.2, 0, Math.PI * 2);
-        ctx.stroke();
+        ctx.fill();
         break;
       }
       case "countdown": {
-        // Meteor — cracked rock with glowing countdown
+        const s = r;
         const count = piece ? piece.countdown : 0;
         const urgency = count <= 3;
-        // Rock texture
-        ctx.fillStyle = urgency ? "rgba(120,30,20,0.7)" : "rgba(80,70,60,0.7)";
+        ctx.shadowColor = urgency ? "#ff4444" : "#ff6600";
+        ctx.shadowBlur = r * 0.3;
+        const bg = ctx.createRadialGradient(cx - s * 0.1, cy, s * 0.05, cx, cy + s * 0.05, s * 0.45);
+        bg.addColorStop(0, "#555");
+        bg.addColorStop(0.8, "#222");
+        bg.addColorStop(1, "#111");
+        ctx.fillStyle = bg;
         ctx.beginPath();
-        ctx.arc(cx, cy, s * 0.6, 0, Math.PI * 2);
+        ctx.arc(cx, cy + s * 0.05, s * 0.45, 0, Math.PI * 2);
         ctx.fill();
-        // Cracks
-        ctx.strokeStyle = urgency ? "rgba(255,80,40,0.7)" : "rgba(255,200,100,0.4)";
+        ctx.strokeStyle = "#aaa";
+        ctx.lineWidth = 2;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - s * 0.4);
+        ctx.quadraticCurveTo(cx + s * 0.15, cy - s * 0.55, cx + s * 0.08, cy - s * 0.65);
+        ctx.stroke();
+        ctx.fillStyle = urgency ? "#ff4444" : "#ff4444";
+        ctx.shadowColor = urgency ? "#ff0000" : "#ff0000";
+        ctx.shadowBlur = r * 0.4;
+        ctx.beginPath();
+        ctx.arc(cx + s * 0.08, cy - s * 0.68, s * 0.08, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "rgba(0,0,0,0.6)";
+        const dw = s * 0.5, dh = s * 0.35;
+        ctx.fillRect(cx - dw / 2, cy - dh / 2 + s * 0.05, dw, dh);
+        ctx.strokeStyle = "#333";
         ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(cx - s * 0.2, cy - s * 0.5);
-        ctx.lineTo(cx + s * 0.1, cy);
-        ctx.lineTo(cx + s * 0.3, cy + s * 0.4);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(cx + s * 0.1, cy);
-        ctx.lineTo(cx - s * 0.3, cy + s * 0.2);
-        ctx.stroke();
-        // Countdown number
+        ctx.strokeRect(cx - dw / 2, cy - dh / 2 + s * 0.05, dw, dh);
         ctx.fillStyle = urgency ? "#ff4444" : "#ffd700";
         ctx.shadowColor = urgency ? "#ff0000" : "#ffd700";
-        ctx.shadowBlur = urgency ? 6 : 3;
-        ctx.font = `bold ${s * 1.2}px sans-serif`;
+        ctx.shadowBlur = r * 0.2;
+        ctx.font = `bold ${s * 0.55}px monospace`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(count.toString(), cx, cy);
+        const countStr = count < 10 ? "0" + count : count.toString();
+        ctx.fillText(countStr, cx, cy + s * 0.08);
         break;
       }
     }
@@ -5345,6 +5476,14 @@
     }
 
     if (selected) {
+      if (selected.r === cell.r && selected.c === cell.c) {
+        const p = board[cell.r][cell.c];
+        if (p && p.special && TAP_ACTIVATE_SPECIALS.has(p.special)) {
+          selected = null;
+          activateByTap(cell.r, cell.c);
+          return;
+        }
+      }
       if (isAdjacent(selected.r, selected.c, cell.r, cell.c)) {
         doMove(selected.r, selected.c, cell.r, cell.c);
         selected = null;
@@ -5426,8 +5565,23 @@
     showScreen("title");
   });
 
+  function renderHelpPieceIcons() {
+    document.querySelectorAll(".help-piece-canvas").forEach(cv => {
+      const type = cv.dataset.special;
+      const dpr = window.devicePixelRatio || 1;
+      const size = 48 * dpr;
+      cv.width = size;
+      cv.height = size;
+      const ctx = cv.getContext("2d");
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, 48, 48);
+      drawSpecialIcon(ctx, type, 24, 24, 20, null);
+    });
+  }
+
   document.getElementById("btn-help").addEventListener("click", () => {
     showScreen("help");
+    renderHelpPieceIcons();
   });
 
   document.getElementById("btn-back-help").addEventListener("click", () => {
