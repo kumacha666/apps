@@ -1,7 +1,7 @@
 {
-  "name": "たぷネコ",
-  "short_name": "たぷネコ",
-  "description": "たぷたぷネコをタップして遊ぼう！",
+  "name": "ぷよネコ",
+  "short_name": "ぷよネコ",
+  "description": "ぷよぷよネコをつついてぷにぷにしよう！",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#ffeedd",
