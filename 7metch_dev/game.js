@@ -3520,7 +3520,7 @@
       if (!hasSpecialActivation) SFX.clear(chainCount);
 
       if (chainCount > 1) {
-        await showChainLabel(chainCount);
+        startChainLabel(chainCount);
       }
 
       await animateClear(clearList, specialInfos);
@@ -4291,45 +4291,46 @@
     drawBoard();
   }
 
-  async function showChainLabel(chain) {
-    const label = `${chain} Chain!`;
-    const totalFrames = 25;
+  let activeChainLabel = null;
 
-    for (let f = 0; f < totalFrames; f++) {
-      drawBoard();
-      ctx.save();
+  function startChainLabel(chain) {
+    activeChainLabel = { chain, label: `${chain} Chain!`, frame: 0, totalFrames: 30 };
+    if (chain >= 3) addScreenShake(Math.min(chain * 0.8, 4));
+  }
 
-      const t = f / totalFrames;
-      const popT = Math.min(t / 0.15, 1);
-      const scale = popT < 1 ? 0.3 + popT * 1.0 : 1.3 - (t - 0.15) * 0.35;
-      const yOffset = -t * cellSize * 0.6;
-      const alpha = t < 0.65 ? 1 : 1 - (t - 0.65) / 0.35;
-
-      const chainColor = chain >= 5 ? "#ff4444" : chain >= 3 ? "#ff8800" : "#ffd700";
-
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = chainColor;
-      ctx.strokeStyle = "#000";
-      ctx.lineWidth = 4;
-      ctx.shadowColor = chainColor;
-      ctx.shadowBlur = 8 + chain * 3;
-      ctx.font = `bold ${cellSize * (0.7 + chain * 0.05) * scale}px sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-
-      const x = boardPixelW / 2;
-      const y = boardPixelH / 2 + yOffset;
-
-      ctx.strokeText(label, x, y);
-      ctx.fillText(label, x, y);
-
-      if (f === 0 && chain >= 3) {
-        addScreenShake(Math.min(chain * 0.8, 4));
-      }
-
-      ctx.restore();
-      await sleep(22);
+  function updateChainLabel() {
+    if (!activeChainLabel) return;
+    activeChainLabel.frame++;
+    if (activeChainLabel.frame >= activeChainLabel.totalFrames) {
+      activeChainLabel = null;
     }
+  }
+
+  function drawChainLabel() {
+    if (!activeChainLabel) return;
+    const { chain, label, frame, totalFrames } = activeChainLabel;
+    const t = frame / totalFrames;
+    const popT = Math.min(t / 0.15, 1);
+    const scale = popT < 1 ? 0.3 + popT * 1.0 : 1.3 - (t - 0.15) * 0.35;
+    const yOffset = -t * cellSize * 0.6;
+    const alpha = t < 0.65 ? 1 : 1 - (t - 0.65) / 0.35;
+    const chainColor = chain >= 5 ? "#ff4444" : chain >= 3 ? "#ff8800" : "#ffd700";
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = chainColor;
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 4;
+    ctx.shadowColor = chainColor;
+    ctx.shadowBlur = 8 + chain * 3;
+    ctx.font = `bold ${cellSize * (0.7 + chain * 0.05) * scale}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const x = boardPixelW / 2;
+    const y = boardPixelH / 2 + yOffset;
+    ctx.strokeText(label, x, y);
+    ctx.fillText(label, x, y);
+    ctx.restore();
   }
 
   async function flashInvalid(r1, c1, r2, c2) {
@@ -4475,6 +4476,8 @@
     }
 
     if (overlay) overlay(ctx);
+    updateChainLabel();
+    drawChainLabel();
     ctx.restore();
   }
 
