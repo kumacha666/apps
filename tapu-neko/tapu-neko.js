@@ -2,6 +2,90 @@
   const canvas = document.getElementById('canvas');
   const ctx = canvas.getContext('2d');
 
+  // === Sound effects (Web Audio API) ===
+  let actx;
+  function getAudioCtx() {
+    if (!actx) actx = new AudioContext();
+    return actx;
+  }
+
+  function sfxPuni() {
+    const c = getAudioCtx(), t = c.currentTime;
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(280, t);
+    o.frequency.exponentialRampToValueAtTime(120, t + 0.12);
+    g.gain.setValueAtTime(0.35, t);
+    g.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+    o.connect(g); g.connect(c.destination);
+    o.start(t); o.stop(t + 0.15);
+  }
+
+  let myoonOsc = null, myoonGain = null;
+  function sfxMyoonStart() {
+    const c = getAudioCtx();
+    sfxMyoonStop();
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(150, c.currentTime);
+    g.gain.setValueAtTime(0.2, c.currentTime);
+    o.connect(g); g.connect(c.destination);
+    o.start();
+    myoonOsc = o; myoonGain = g;
+  }
+  function sfxMyoonUpdate(dist, baseR) {
+    if (!myoonOsc) return;
+    const ratio = Math.min(dist / baseR, 3);
+    myoonOsc.frequency.setTargetAtTime(150 + ratio * 150, getAudioCtx().currentTime, 0.05);
+  }
+  function sfxMyoonStop() {
+    if (myoonOsc) {
+      const c = getAudioCtx();
+      myoonGain.gain.setTargetAtTime(0.01, c.currentTime, 0.05);
+      myoonOsc.stop(c.currentTime + 0.15);
+      myoonOsc = null; myoonGain = null;
+    }
+  }
+
+  function sfxPoyon() {
+    const c = getAudioCtx(), t = c.currentTime;
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(600, t);
+    o.frequency.exponentialRampToValueAtTime(200, t + 0.06);
+    o.frequency.exponentialRampToValueAtTime(400, t + 0.12);
+    o.frequency.exponentialRampToValueAtTime(180, t + 0.22);
+    g.gain.setValueAtTime(0.25, t);
+    g.gain.exponentialRampToValueAtTime(0.01, t + 0.25);
+    o.connect(g); g.connect(c.destination);
+    o.start(t); o.stop(t + 0.25);
+  }
+
+  function sfxPuwa() {
+    const c = getAudioCtx(), t = c.currentTime;
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(180, t);
+    o.frequency.exponentialRampToValueAtTime(400, t + 0.3);
+    o.frequency.exponentialRampToValueAtTime(250, t + 0.5);
+    g.gain.setValueAtTime(0.25, t);
+    g.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
+    o.connect(g); g.connect(c.destination);
+    o.start(t); o.stop(t + 0.5);
+  }
+
+  function sfxKyu() {
+    const c = getAudioCtx(), t = c.currentTime;
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(500, t);
+    o.frequency.exponentialRampToValueAtTime(150, t + 0.08);
+    g.gain.setValueAtTime(0.3, t);
+    g.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+    o.connect(g); g.connect(c.destination);
+    o.start(t); o.stop(t + 0.1);
+  }
+
   let W, H;
 
   function resize() {
@@ -137,7 +221,7 @@
       dragInside = isInside(t.clientX, t.clientY);
       dragStartX = dragX = t.clientX;
       dragStartY = dragY = t.clientY;
-      if (dragInside) pokeAt(t.clientX, t.clientY, 1);
+      if (dragInside) { pokeAt(t.clientX, t.clientY, 1); sfxPuni(); sfxMyoonStart(); }
     }
     initMotion();
   }, { passive: false });
@@ -152,10 +236,15 @@
       const pts = [...activeTouches.values()];
       const dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
       pinchLiveDist = Math.sqrt(dx * dx + dy * dy);
+    } else if (dragging && dragInside) {
+      dragX = e.changedTouches[0].clientX;
+      dragY = e.changedTouches[0].clientY;
+      targetSquint = 0.4;
+      const ddx = dragX - dragStartX, ddy = dragY - dragStartY;
+      sfxMyoonUpdate(Math.sqrt(ddx * ddx + ddy * ddy), getCat().r);
     } else if (dragging) {
       dragX = e.changedTouches[0].clientX;
       dragY = e.changedTouches[0].clientY;
-      if (dragInside) targetSquint = 0.4;
     }
   }, { passive: false });
 
@@ -166,14 +255,18 @@
     if (pinching && activeTouches.size < 2) {
       const ratio = pinchStartDist > 0 ? pinchLiveDist / pinchStartDist : 1;
       pinchVel += (ratio - 1) * 0.15;
+      if (ratio > 1.05) sfxPuwa();
+      else if (ratio < 0.95) sfxKyu();
       pinching = false;
       targetSquint = 0;
     }
     if (activeTouches.size === 0) {
+      sfxMyoonStop();
       if (dragging && dragInside) {
         const dx = dragX - dragStartX, dy = dragY - dragStartY;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist > 15) {
+          sfxPoyon();
           const angle = Math.atan2(dy, dx);
           const c = getCat();
           const strength = Math.min(dist / c.r, 2.0);
@@ -201,7 +294,7 @@
     dragStartX = dragX = e.clientX;
     dragStartY = dragY = e.clientY;
     dragInside = isInside(e.clientX, e.clientY);
-    if (dragInside) pokeAt(e.clientX, e.clientY, 1);
+    if (dragInside) { pokeAt(e.clientX, e.clientY, 1); sfxPuni(); sfxMyoonStart(); }
     initMotion();
   });
   canvas.addEventListener('pointermove', (e) => {
@@ -210,15 +303,21 @@
     if (!dragging) return;
     dragX = e.clientX;
     dragY = e.clientY;
-    if (dragInside) targetSquint = 0.4;
+    if (dragInside) {
+      targetSquint = 0.4;
+      const ddx = dragX - dragStartX, ddy = dragY - dragStartY;
+      sfxMyoonUpdate(Math.sqrt(ddx * ddx + ddy * ddy), getCat().r);
+    }
   });
   canvas.addEventListener('pointerup', (e) => {
     if (e.pointerType === 'touch') return;
     e.preventDefault();
+    sfxMyoonStop();
     if (dragging && dragInside) {
       const dx = dragX - dragStartX, dy = dragY - dragStartY;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist > 15) {
+        sfxPoyon();
         const angle = Math.atan2(dy, dx);
         const c = getCat();
         const strength = Math.min(dist / c.r, 2.0);
@@ -566,7 +665,7 @@
     ctx.fillStyle = '#d4c0a0';
     ctx.font = `${Math.min(W, H) * 0.03}px -apple-system, sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText('v2025.06.22l', W - 10, H - 14);
+    ctx.fillText('v2025.06.22m', W - 10, H - 14);
     ctx.textAlign = 'center';
   }
 
