@@ -1,0 +1,10 @@
+{
+  "name": "たぷネコ",
+  "short_name": "たぷネコ",
+  "description": "たぷたぷネコをタップして遊ぼう！",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffeedd",
+  "theme_color": "#ffeedd",
+  "icons": []
+}
