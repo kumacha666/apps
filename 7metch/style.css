@@ -96,6 +96,14 @@ body {
   animation: tapPulse 2s ease-in-out infinite;
 }
 
+.splash-brand {
+  position: absolute;
+  bottom: 28px;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.35);
+  letter-spacing: 0.15em;
+}
+
 @keyframes tapPulse {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
