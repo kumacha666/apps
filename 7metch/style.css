@@ -59,6 +59,7 @@ body {
 #screen-splash {
   position: relative;
   cursor: pointer;
+  justify-content: space-evenly;
 }
 
 #splash-bg-canvas {
@@ -78,7 +79,6 @@ body {
 .splash-logo {
   font-size: 3.5rem;
   font-weight: 900;
-  margin-bottom: 60px;
 }
 
 .splash-logo .t-accent {
@@ -97,8 +97,6 @@ body {
 }
 
 .splash-brand {
-  position: absolute;
-  bottom: 28px;
   font-size: 0.7rem;
   color: rgba(255, 255, 255, 0.35);
   letter-spacing: 0.15em;
