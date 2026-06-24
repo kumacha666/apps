@@ -54,6 +54,8 @@
     { stage: 250, stars: 490 },
     { stage: 300, stars: 590 },
     { stage: 350, stars: 690 },
+    { stage: 400, stars: 790 },
+    { stage: 450, stars: 890 },
   ];
 
   const STAGES = buildStages();
@@ -2535,27 +2537,37 @@
 
   function buildStages() {
     const stages = [];
-    for (let i = 0; i < 350; i++) {
-      const size = boardSizeForStage(i);
-      const tier = Math.floor(i / 10);
-      const baseMoves = Math.max(12, 20 - tier * 2);
-      let moves;
-      if (i < 10) moves = 20;
-      else if (size.cols >= 9) moves = Math.max(16, baseMoves);
-      else if (size.cols >= 8) moves = Math.max(14, baseMoves);
-      else moves = baseMoves;
+    for (let i = 0; i < 500; i++) {
+      const isBreak = i >= 350 && i % 10 === 9;
 
-      const baseColors = Math.min(7, 5 + Math.floor(i / 10));
-      const colors = (i >= 200) ? 8 : baseColors;
+      let size, moves, colors;
+      if (isBreak) {
+        size = { cols: 7, rows: 8 };
+        moves = 22 + (i % 4);
+        colors = 6;
+      } else {
+        size = boardSizeForStage(i);
+        const tier = Math.floor(i / 10);
+        const baseMoves = Math.max(12, 20 - tier * 2);
+        if (i < 10) moves = 20;
+        else if (size.cols >= 9) moves = Math.max(16, baseMoves);
+        else if (size.cols >= 8) moves = Math.max(14, baseMoves);
+        else moves = baseMoves;
+        const baseColors = Math.min(7, 5 + Math.floor(i / 10));
+        colors = (i >= 200) ? 8 : baseColors;
+      }
+
       const star2rate = i < 10 ? 0.65 : 0.6;
       const star3rate = i < 10 ? 0.45 : 0.35;
 
       const features = {};
       features.diagonalLine = true;
-      if (i >= 100) features.ice = true;
-      if (i >= 150) features.rock = true;
-      if (i >= 250) features.holes = true;
-      if (i >= 300) features.countdown = true;
+      if (!isBreak) {
+        if (i >= 100) features.ice = true;
+        if (i >= 150) features.rock = true;
+        if (i >= 250) features.holes = true;
+        if (i >= 300) features.countdown = true;
+      }
 
       let iceCells = 0, rockCells = 0, holePattern = null, countdownBombs = 0;
       if (features.ice) {
@@ -2575,7 +2587,34 @@
       }
 
       let mission;
-      if (i % 5 === 0 && i > 0) {
+      if (isBreak) {
+        const slot = Math.floor((i - 350) / 10) % 3;
+        if (slot === 0) {
+          mission = { type: "clear", count: Math.floor(moves * 3.5) };
+        } else if (slot === 1) {
+          mission = { type: "score", target: Math.floor(moves * 55) };
+        } else {
+          mission = { type: "special", count: 3 };
+        }
+      } else if (i >= 350) {
+        const slot = i % 7;
+        if (slot === 0) {
+          const targetColor = i % colors;
+          mission = { type: "color", colorIndex: targetColor, count: Math.floor(moves * 1.0) };
+        } else if (slot === 1) {
+          mission = { type: "special", count: 3 + Math.floor((i - 350) / 50) };
+        } else if (slot === 2) {
+          mission = { type: "chain", count: 3 + Math.floor((i - 350) / 75) };
+        } else if (slot === 3) {
+          mission = { type: "score", target: Math.floor(moves * Math.min(100, 50 + i * 1.0)) };
+        } else if (slot === 4) {
+          mission = { type: "clear", count: Math.floor(moves * Math.min(8, 3.0 + i * 0.04)) };
+        } else if (slot === 5) {
+          mission = { type: "special", count: 4 + Math.floor((i - 350) / 60) };
+        } else {
+          mission = { type: "chain", count: 4 + Math.floor((i - 350) / 100) };
+        }
+      } else if (i % 5 === 0 && i > 0) {
         const targetColor = i % colors;
         mission = { type: "color", colorIndex: targetColor, count: Math.floor(moves * Math.min(1.0, 0.5 + i * 0.008)) };
       } else if (i % 3 === 0) {
@@ -2613,6 +2652,8 @@
           return `<img src="${url}" style="width:1.3em;height:1.3em;vertical-align:middle;margin:-2px 2px 0 0" alt="${PIECE_NAMES_JA[m.colorIndex]}">を${m.count}個けそう`;
         }
         return `${PIECE_NAMES_JA[m.colorIndex]}を${m.count}個けそう`;
+      case "special": return `特殊ピースを${m.count}個つくろう`;
+      case "chain": return `${m.count}チェインしよう`;
     }
   }
 
@@ -3285,6 +3326,8 @@
   let totalCleared = 0;
   let colorCleared = [];
   let chainCount = 0;
+  let specialsCreated = 0;
+  let maxChain = 0;
   let lastSwapTarget = null;
   let debugSpawnType = null;
   let hintTimer = null;
@@ -3560,6 +3603,7 @@
     let matches = findAllMatches();
     while (matches.length > 0) {
       chainCount++;
+      if (chainCount > maxChain) maxChain = chainCount;
       const specials = findSpecialCreations(matches);
       lastSwapTarget = null;
 
@@ -3621,8 +3665,10 @@
       specials.forEach((sp) => {
         if (board[sp.r] && board[sp.r][sp.c] === null) {
           board[sp.r][sp.c] = { color: sp.color, special: sp.type };
+          specialsCreated++;
         } else if (board[sp.r] && board[sp.r][sp.c]) {
           board[sp.r][sp.c].special = sp.type;
+          specialsCreated++;
         }
       });
 
@@ -5434,6 +5480,16 @@
         target = m.count;
         document.getElementById("hud-mission-progress").textContent = `${current} / ${target} 個`;
         break;
+      case "special":
+        current = specialsCreated;
+        target = m.count;
+        document.getElementById("hud-mission-progress").textContent = `${current} / ${target} 個`;
+        break;
+      case "chain":
+        current = maxChain;
+        target = m.count;
+        document.getElementById("hud-mission-progress").textContent = `${current} / ${target} チェイン`;
+        break;
     }
 
     const progressEl = document.getElementById("hud-mission-progress");
@@ -5473,6 +5529,12 @@
         break;
       case "color":
         cleared = (colorCleared[m.colorIndex] || 0) >= m.count;
+        break;
+      case "special":
+        cleared = specialsCreated >= m.count;
+        break;
+      case "chain":
+        cleared = maxChain >= m.count;
         break;
     }
 
@@ -5943,6 +6005,8 @@
     totalCleared = 0;
     colorCleared = [];
     chainCount = 0;
+    specialsCreated = 0;
+    maxChain = 0;
     selected = null;
     animating = false;
     vfxParticles = []; vfxShockwaves = []; vfxFlashes = []; vfxComets = []; vfxTexts = []; shakeX = shakeY = shakeIntensity = 0;
