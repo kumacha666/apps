@@ -12,6 +12,10 @@
   --text: #eee;
   --text-dim: #aaa;
   --gold: #ffd700;
+  --star3: #ffd700;
+  --star2: #c0c0c0;
+  --star1: #cd7f32;
+  --star0: #445;
   --cell-size: 48px;
   --grid-gap: 2px;
 }
@@ -447,10 +451,19 @@ body {
 }
 
 .stage-btn .stage-stars {
-  font-size: 0.5rem;
-  color: var(--gold);
-  height: 10px;
+  font-size: 0.7rem;
+  letter-spacing: 1px;
+  height: 14px;
+  line-height: 14px;
 }
+.stage-btn .stage-num { font-size: 0.75rem; }
+.stage-btn.star3 { border-color: var(--star3); background: linear-gradient(135deg, var(--bg-light) 40%, #ffd70040); }
+.stage-btn.star3 .stage-stars { color: var(--star3); }
+.stage-btn.star2 { border-color: var(--star2); background: linear-gradient(135deg, var(--bg-light) 40%, #c0c0c035); }
+.stage-btn.star2 .stage-stars { color: var(--star2); }
+.stage-btn.star1 { border-color: var(--star1); background: linear-gradient(135deg, var(--bg-light) 40%, #cd7f3235); }
+.stage-btn.star1 .stage-stars { color: var(--star1); }
+.stage-btn.star0 .stage-stars { color: var(--star0); }
 
 /* Game HUD */
 #screen-game {
