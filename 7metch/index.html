@@ -41,7 +41,7 @@
       <button id="btn-feedback" class="btn-link">ご意見・フィードバック</button>
       <button id="btn-options" class="btn-link">⚙️ 設定</button>
       <button id="btn-sound-toggle" class="btn-sound">🔊</button>
-      <div id="version-info">v6.8.0</div>
+      <div id="version-info">v6.8.5</div>
       <div id="credits">Honeypaw Lab. by kumacha. Special Thanks to Sakon.</div>
     </div>
 
@@ -352,11 +352,12 @@
   <script src="game.js"></script>
   <script>
     if ("serviceWorker" in navigator) {
+      const hadController = !!navigator.serviceWorker.controller;
       navigator.serviceWorker.register("sw.js").then((reg) => {
         reg.addEventListener("updatefound", () => {
           const newSW = reg.installing;
           newSW.addEventListener("statechange", () => {
-            if (newSW.state === "activated" && navigator.serviceWorker.controller) {
+            if (newSW.state === "activated" && hadController) {
               const toast = document.getElementById("update-toast");
               toast.classList.remove("hidden");
               document.getElementById("btn-update").addEventListener("click", () => {
