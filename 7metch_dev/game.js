@@ -3098,7 +3098,8 @@
       }
     });
 
-    clearList.forEach(([cr, cc]) => {
+    for (let i = 0; i < clearList.length; i++) {
+      const [cr, cc] = clearList[i];
       if (board[cr][cc] && board[cr][cc].special && !(cr === r && cc === c)) {
         const ex2 = activateSpecial(cr, cc, cleared, board[cr][cc].special);
         ex2.forEach(([er, ec]) => {
@@ -3108,7 +3109,7 @@
           }
         });
       }
-    });
+    }
 
     clearList.forEach(([cr, cc]) => {
       if (board[cr][cc]) {
@@ -3528,14 +3529,17 @@
           else if (sp === "line_d") { SFX.line(); SFX.diagonal(); }
           else if (sp === "rainbow") SFX.rainbow();
           specialInfos.push({ r, c, type: sp, color: board[r][c].color });
-          const extra = activateSpecial(r, c, cleared);
-          extra.forEach(([er, ec]) => {
+          const queue = activateSpecial(r, c, cleared);
+          for (let qi = 0; qi < queue.length; qi++) {
+            const [er, ec] = queue[qi];
             cleared.add(er * cols + ec);
             if (board[er][ec] && board[er][ec].special) {
-              const extra2 = activateSpecial(er, ec, cleared, sp);
-              extra2.forEach(([er2, ec2]) => cleared.add(er2 * cols + ec2));
+              activateSpecial(er, ec, cleared, sp).forEach(([er2, ec2]) => {
+                cleared.add(er2 * cols + ec2);
+                queue.push([er2, ec2]);
+              });
             }
-          });
+          }
         }
       });
 
@@ -3627,14 +3631,17 @@
       if (sp === "bomb" || sp === "countdown") SFX.bomb();
       else if (sp === "line_h" || sp === "line_v" || sp === "line_d") SFX.line();
       else if (sp === "rainbow") SFX.rainbow();
-      const extra = activateSpecial(r, c, cleared);
-      extra.forEach(([er, ec]) => {
+      const queue = activateSpecial(r, c, cleared);
+      for (let qi = 0; qi < queue.length; qi++) {
+        const [er, ec] = queue[qi];
         cleared.add(er * cols + ec);
         if (board[er][ec] && board[er][ec].special) {
-          const extra2 = activateSpecial(er, ec, cleared, sp);
-          extra2.forEach(([er2, ec2]) => cleared.add(er2 * cols + ec2));
+          activateSpecial(er, ec, cleared, sp).forEach(([er2, ec2]) => {
+            cleared.add(er2 * cols + ec2);
+            queue.push([er2, ec2]);
+          });
         }
-      });
+      }
     }
 
     const clearList = [...cleared].map(v => [Math.floor(v / cols), v % cols]);
