@@ -2755,9 +2755,18 @@
     SFX.bomb();
     const cleared = new Set();
     for (const [r, c] of exploded) {
-      const extra = activateSpecial(r, c, cleared, "countdown");
       cleared.add(r * cols + c);
-      extra.forEach(([er, ec]) => cleared.add(er * cols + ec));
+      const queue = activateSpecial(r, c, cleared, "countdown");
+      for (let qi = 0; qi < queue.length; qi++) {
+        const [er, ec] = queue[qi];
+        cleared.add(er * cols + ec);
+        if (board[er][ec] && board[er][ec].special) {
+          activateSpecial(er, ec, cleared, "countdown").forEach(([er2, ec2]) => {
+            cleared.add(er2 * cols + ec2);
+            queue.push([er2, ec2]);
+          });
+        }
+      }
     }
     const clearList = [...cleared].map((v) => [Math.floor(v / cols), v % cols]);
     clearList.forEach(([r, c]) => {
@@ -3508,7 +3517,7 @@
     startHintTimer();
   }
 
-  async function resolveBoard() {
+  async function resolveMatches() {
     let matches = findAllMatches();
     while (matches.length > 0) {
       chainCount++;
@@ -3588,8 +3597,15 @@
 
       matches = findAllMatches();
     }
+  }
+
+  async function resolveBoard() {
+    await resolveMatches();
     const exploded = tickCountdowns();
-    await handleCountdownExplosions(exploded);
+    if (exploded.length > 0) {
+      await handleCountdownExplosions(exploded);
+      await resolveMatches();
+    }
   }
 
   // --- Items ---
@@ -5863,7 +5879,10 @@
       if (!unlocked) btn.classList.add("locked");
 
       const stars = saveData.bestStars[i] || 0;
-      btn.innerHTML = `<span>${stg.name}</span><span class="stage-stars">${"★".repeat(stars)}</span>`;
+      btn.classList.add(`star${stars}`);
+      const filled = "★".repeat(stars);
+      const empty = "☆".repeat(3 - stars);
+      btn.innerHTML = `<span class="stage-num">${stg.name}</span><span class="stage-stars">${filled}${empty}</span>`;
 
       if (unlocked) {
         btn.addEventListener("click", () => {
