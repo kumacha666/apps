@@ -2630,25 +2630,47 @@
   }
 
   function createBoard(numColors) {
-    board = [];
-    for (let r = 0; r < rows; r++) {
-      board[r] = [];
-      for (let c = 0; c < cols; c++) {
-        if (isHole(r, c) || isRock(r, c)) {
-          board[r][c] = null;
-        } else {
-          board[r][c] = randomPiece(numColors);
-        }
-      }
-    }
-    while (findAllMatches().length > 0 || hasSquare()) {
+    const maxMoves = Math.max(10, Math.floor(rows * cols * 0.15));
+    const minMoves = 2;
+    const target = Math.floor((minMoves + maxMoves) / 2);
+    let bestBoard = null;
+    let bestDiff = Infinity;
+
+    for (let attempt = 0; attempt < 20; attempt++) {
+      board = [];
       for (let r = 0; r < rows; r++) {
+        board[r] = [];
         for (let c = 0; c < cols; c++) {
-          if (isHole(r, c) || isRock(r, c)) continue;
-          board[r][c] = randomPiece(numColors);
+          if (isHole(r, c) || isRock(r, c)) {
+            board[r][c] = null;
+          } else {
+            board[r][c] = randomPiece(numColors);
+          }
         }
       }
+      while (findAllMatches().length > 0 || hasSquare()) {
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            if (isHole(r, c) || isRock(r, c)) continue;
+            board[r][c] = randomPiece(numColors);
+          }
+        }
+      }
+
+      const moves = countAvailableMoves();
+      if (moves >= minMoves && moves <= maxMoves) {
+        bestBoard = null;
+        break;
+      }
+      const diff = Math.abs(moves - target);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestBoard = board.map(row => row.map(cell => cell ? {...cell} : null));
+      }
     }
+
+    if (bestBoard) board = bestBoard;
+
     const stg = STAGES[currentStage];
     if (stg.countdownBombs > 0) {
       let placed = 0, attempts = 0;
@@ -2667,6 +2689,23 @@
 
   function randomPiece(numColors) {
     return { color: Math.floor(Math.random() * numColors), special: null };
+  }
+
+  function countAvailableMoves() {
+    let count = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (!board[r][c] || !isPlayable(r, c)) continue;
+        const fwd = [[r, c+1], [r+1, c-1], [r+1, c], [r+1, c+1]];
+        for (const [nr, nc] of fwd) {
+          if (!inBounds(nr, nc) || !board[nr][nc] || !isPlayable(nr, nc)) continue;
+          swapPieces(r, c, nr, nc);
+          if (findAllMatches().length > 0) count++;
+          swapPieces(r, c, nr, nc);
+        }
+      }
+    }
+    return count;
   }
 
   function initCellState(stg) {
