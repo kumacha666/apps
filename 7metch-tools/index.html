@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ナナメッチ ステージ分析ツール</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --card: #0f3460;
+      --accent: #e94560;
+      --text: #eee;
+      --text2: #aab;
+      --border: #2a2a4a;
+      --easy: #4caf50;
+      --normal: #8bc34a;
+      --hard: #ff9800;
+      --vhard: #f44336;
+      --extreme: #9c27b0;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "Hiragino Sans", "Meiryo", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      text-align: center;
+      font-size: 1.4em;
+      margin-bottom: 16px;
+      color: var(--accent);
+    }
+    h2 {
+      font-size: 1.1em;
+      margin: 20px 0 10px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid var(--border);
+      color: var(--accent);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .tab {
+      padding: 8px 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px 8px 0 0;
+      cursor: pointer;
+      font-size: 0.9em;
+      color: var(--text2);
+      transition: all 0.15s;
+    }
+    .tab.active {
+      background: var(--card);
+      color: var(--text);
+      border-bottom-color: var(--card);
+    }
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    .chart-container {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+      position: relative;
+    }
+    .chart-wrapper {
+      height: 400px;
+      position: relative;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82em;
+      background: var(--surface);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th {
+      background: var(--card);
+      padding: 8px 6px;
+      text-align: left;
+      font-weight: 600;
+      position: sticky;
+      top: 0;
+      white-space: nowrap;
+    }
+    td {
+      padding: 6px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    tr:hover td { background: rgba(233,69,96,0.07); }
+    .table-scroll {
+      max-height: 500px;
+      overflow-y: auto;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .rank-easy { color: var(--easy); }
+    .rank-normal { color: var(--normal); }
+    .rank-hard { color: var(--hard); }
+    .rank-vhard { color: var(--vhard); }
+    .rank-extreme { color: var(--extreme); }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .summary-card {
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 12px;
+      border: 1px solid var(--border);
+    }
+    .summary-card h3 {
+      font-size: 0.9em;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+
+    .dist-bar {
+      display: flex;
+      align-items: center;
+      margin: 4px 0;
+      font-size: 0.85em;
+    }
+    .dist-label { width: 120px; flex-shrink: 0; }
+    .dist-fill {
+      height: 20px;
+      border-radius: 4px;
+      min-width: 2px;
+      transition: width 0.3s;
+    }
+    .dist-count { margin-left: 8px; color: var(--text2); font-size: 0.85em; }
+
+    .gate-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 0.85em; }
+    .gate-label { width: 80px; font-weight: 600; }
+    .gate-bar-bg { flex: 1; height: 16px; background: var(--border); border-radius: 8px; overflow: hidden; }
+    .gate-bar-fill { height: 100%; border-radius: 8px; transition: width 0.3s; }
+    .gate-pct { width: 45px; text-align: right; }
+    .gate-detail { width: 140px; font-size: 0.8em; color: var(--text2); }
+
+    .filter-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      font-size: 0.85em;
+    }
+    .filter-row label { color: var(--text2); }
+    .filter-row select, .filter-row input {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 8px;
+    }
+
+    @media (max-width: 600px) {
+      body { padding: 8px; }
+      .chart-wrapper { height: 280px; }
+      th, td { padding: 4px 3px; font-size: 0.75em; }
+    }
+  </style>
+</head>
+<body>
+  <h1>ナナメッチ ステージ分析ツール</h1>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="chart">難易度グラフ</div>
+    <div class="tab" data-tab="summary">区間サマリ</div>
+    <div class="tab" data-tab="gates">★ゲート分析</div>
+    <div class="tab" data-tab="list">全ステージ一覧</div>
+  </div>
+
+  <div id="panel-chart" class="panel active">
+    <div class="chart-container">
+      <div class="filter-row">
+        <label>表示範囲:</label>
+        <input type="number" id="chart-from" value="1" min="1" style="width:60px">
+        <span>〜</span>
+        <input type="number" id="chart-to" value="350" min="1" style="width:60px">
+        <label><input type="checkbox" id="show-moving-avg" checked> 移動平均(10)</label>
+      </div>
+      <div class="chart-wrapper">
+        <canvas id="difficultyChart"></canvas>
+      </div>
+    </div>
+    <div class="summary-grid">
+      <div class="summary-card">
+        <h3>難易度分布</h3>
+        <div id="dist-bars"></div>
+      </div>
+      <div class="summary-card">
+        <h3>統計情報</h3>
+        <div id="stats-info"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="panel-summary" class="panel">
+    <div class="chart-container">
+      <div class="chart-wrapper">
+        <canvas id="summaryChart"></canvas>
+      </div>
+    </div>
+    <div class="table-scroll" id="summary-table"></div>
+  </div>
+
+  <div id="panel-gates" class="panel">
+    <h2>★ゲート通過率</h2>
+    <div id="gate-bars"></div>
+    <h2>★獲得シミュレーション</h2>
+    <div class="summary-grid">
+      <div class="summary-card">
+        <h3>全ステージ★2想定</h3>
+        <div id="sim-star2"></div>
+      </div>
+      <div class="summary-card">
+        <h3>★1:50% ★2:30% ★3:20% 想定</h3>
+        <div id="sim-mixed"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="panel-list" class="panel">
+    <div class="filter-row">
+      <label>範囲:</label>
+      <input type="number" id="list-from" value="1" min="1" style="width:60px">
+      <span>〜</span>
+      <input type="number" id="list-to" value="350" min="1" style="width:60px">
+      <label>ミッション:</label>
+      <select id="list-mission">
+        <option value="all">すべて</option>
+        <option value="clear">消しミッション</option>
+        <option value="score">スコアミッション</option>
+        <option value="color">色ミッション</option>
+      </select>
+    </div>
+    <div class="table-scroll" id="stage-table"></div>
+  </div>
+
+  <script>
+    // === ステージ生成ロジック (game.js同等) ===
+
+    const PIECE_NAMES = ["まる","ダイヤ","しかく","さんかく","ほし","ヘキサ","クロス","オクタ"];
+
+    const STAR_GATES = [
+      { stage: 25, stars: 30 },
+      { stage: 50, stars: 80 },
+      { stage: 75, stars: 140 },
+      { stage: 100, stars: 190 },
+      { stage: 150, stars: 290 },
+      { stage: 200, stars: 390 },
+      { stage: 250, stars: 490 },
+      { stage: 300, stars: 590 },
+      { stage: 350, stars: 690 },
+    ];
+
+    const TOTAL_STAGES = 350;
+
+    function boardSizeForStage(i) {
+      if (i < 10) return { cols: 6, rows: 7 };
+      if (i < 100) return { cols: 7, rows: 8 };
+      if (i < 250) return { cols: 8, rows: 9 };
+      return { cols: 9, rows: 10 };
+    }
+
+    function buildStage(i) {
+      const size = boardSizeForStage(i);
+      const tier = Math.floor(i / 10);
+      const baseMoves = Math.max(12, 20 - tier * 2);
+      let moves;
+      if (i < 10) moves = 20;
+      else if (size.cols >= 9) moves = Math.max(16, baseMoves);
+      else if (size.cols >= 8) moves = Math.max(14, baseMoves);
+      else moves = baseMoves;
+
+      const baseColors = Math.min(7, 5 + Math.floor(i / 10));
+      const colors = (i >= 200) ? 8 : baseColors;
+      const star2rate = i < 10 ? 0.65 : 0.6;
+      const star3rate = i < 10 ? 0.45 : 0.35;
+      const area = size.cols * size.rows;
+
+      const features = [];
+      features.push("斜Line");
+      if (i >= 100) features.push("氷");
+      if (i >= 150) features.push("岩");
+      if (i >= 200) features.push("8色");
+      if (i >= 250) features.push("穴");
+      if (i >= 300) features.push("💣");
+
+      let iceCells = 0, rockCells = 0, countdownBombs = 0;
+      if (i >= 100) iceCells = 2 + Math.floor(Math.min(1, (i - 100) / 100) * 4);
+      if (i >= 150) rockCells = 1 + Math.floor(Math.min(1, (i - 150) / 100) * 2);
+      if (i >= 300) countdownBombs = 1 + Math.floor(Math.min(1, (i - 300) / 50) * 2);
+
+      let mission;
+      if (i % 5 === 0 && i > 0) {
+        const targetColor = i % colors;
+        mission = { type: "color", colorIndex: targetColor, colorName: PIECE_NAMES[targetColor],
+                    count: Math.floor(moves * Math.min(1.0, 0.5 + i * 0.008)) };
+      } else if (i % 3 === 0) {
+        mission = { type: "score", target: Math.floor(moves * Math.min(100, 50 + i * 1.0)) };
+      } else {
+        mission = { type: "clear", count: Math.floor(moves * Math.min(8, 3.0 + i * 0.04)) };
+      }
+
+      const difficulty = calcDifficulty(i, moves, colors, size, area, mission, features);
+
+      return {
+        index: i, name: i + 1, moves, colors,
+        cols: size.cols, rows: size.rows, area,
+        mission, features,
+        star2moves: Math.floor(moves * star2rate),
+        star3moves: Math.floor(moves * star3rate),
+        iceCells, rockCells, countdownBombs,
+        difficulty,
+      };
+    }
+
+    function calcDifficulty(i, moves, colors, size, area, mission, features) {
+      const matchDifficulty = colors / 5;
+      let movesEfficiency;
+      switch (mission.type) {
+        case "clear": movesEfficiency = mission.count / moves / area * 10; break;
+        case "score": movesEfficiency = mission.target / moves / 100; break;
+        case "color": movesEfficiency = mission.count / moves / (area / colors) * 5; break;
+      }
+
+      let gimmickFactor = 1.0;
+      if (features.includes("氷")) gimmickFactor += 0.15;
+      if (features.includes("岩")) gimmickFactor += 0.2;
+      if (features.includes("8色")) gimmickFactor += 0.15;
+      if (features.includes("穴")) gimmickFactor += 0.2;
+      if (features.includes("💣")) gimmickFactor += 0.25;
+      if (features.includes("斜Line")) gimmickFactor -= 0.1;
+
+      const raw = matchDifficulty * movesEfficiency * gimmickFactor;
+      const score = Math.round(raw * 100) / 100;
+
+      let rank;
+      if (score < 0.8) rank = "Easy";
+      else if (score < 1.2) rank = "Normal";
+      else if (score < 1.8) rank = "Hard";
+      else if (score < 2.5) rank = "Very Hard";
+      else rank = "Extreme";
+
+      return { score, rank, matchDifficulty: Math.round(matchDifficulty * 100) / 100,
+               movesEfficiency: Math.round(movesEfficiency * 100) / 100,
+               gimmickFactor: Math.round(gimmickFactor * 100) / 100 };
+    }
+
+    const RANK_COLORS = {
+      Easy: "#4caf50", Normal: "#8bc34a", Hard: "#ff9800", "Very Hard": "#f44336", Extreme: "#9c27b0"
+    };
+    const RANK_CLASS = {
+      Easy: "rank-easy", Normal: "rank-normal", Hard: "rank-hard", "Very Hard": "rank-vhard", Extreme: "rank-extreme"
+    };
+
+    // === 全ステージ生成 ===
+    const ALL_STAGES = [];
+    for (let i = 0; i < TOTAL_STAGES; i++) ALL_STAGES.push(buildStage(i));
+
+    // === タブ切り替え ===
+    document.querySelectorAll(".tab").forEach(tab => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+        tab.classList.add("active");
+        document.getElementById("panel-" + tab.dataset.tab).classList.add("active");
+      });
+    });
+
+    // === 難易度グラフ ===
+    let diffChart = null;
+
+    function renderDifficultyChart() {
+      const from = Math.max(1, parseInt(document.getElementById("chart-from").value) || 1);
+      const to = Math.min(TOTAL_STAGES, parseInt(document.getElementById("chart-to").value) || TOTAL_STAGES);
+      const showMA = document.getElementById("show-moving-avg").checked;
+      const stages = ALL_STAGES.slice(from - 1, to);
+
+      const labels = stages.map(s => s.name);
+      const scores = stages.map(s => s.difficulty.score);
+      const bgColors = stages.map(s => RANK_COLORS[s.difficulty.rank] + "88");
+      const borderColors = stages.map(s => RANK_COLORS[s.difficulty.rank]);
+
+      const datasets = [
+        {
+          label: "難易度スコア",
+          data: scores,
+          backgroundColor: bgColors,
+          borderColor: borderColors,
+          borderWidth: 1,
+          pointRadius: stages.length > 100 ? 1 : 3,
+          pointHoverRadius: 5,
+          type: "bar",
+          order: 2,
+        }
+      ];
+
+      if (showMA && stages.length >= 10) {
+        const ma = [];
+        for (let i = 0; i < scores.length; i++) {
+          if (i < 9) { ma.push(null); continue; }
+          let sum = 0;
+          for (let j = i - 9; j <= i; j++) sum += scores[j];
+          ma.push(Math.round(sum / 10 * 100) / 100);
+        }
+        datasets.push({
+          label: "移動平均(10)",
+          data: ma,
+          borderColor: "#e94560",
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.3,
+          type: "line",
+          order: 1,
+        });
+      }
+
+      const annotations = {};
+      const featureUnlocks = [
+        { stage: 101, label: "氷", color: "#64b5f6" },
+        { stage: 151, label: "岩", color: "#90a4ae" },
+        { stage: 201, label: "8色", color: "#ce93d8" },
+        { stage: 251, label: "穴", color: "#a1887f" },
+        { stage: 301, label: "💣", color: "#ef5350" },
+      ];
+      featureUnlocks.forEach((f, idx) => {
+        if (f.stage >= from && f.stage <= to) {
+          annotations["feat" + idx] = {
+            type: "line", xMin: f.stage - from, xMax: f.stage - from,
+            borderColor: f.color, borderWidth: 2, borderDash: [4, 4],
+            label: { content: f.label, display: true, position: "start",
+                     backgroundColor: f.color + "cc", color: "#fff", font: { size: 11 } }
+          };
+        }
+      });
+      STAR_GATES.forEach((g, idx) => {
+        if (g.stage >= from && g.stage <= to) {
+          annotations["gate" + idx] = {
+            type: "line", xMin: g.stage - from, xMax: g.stage - from,
+            borderColor: "#ffd70066", borderWidth: 1, borderDash: [2, 2],
+            label: { content: "★" + g.stars, display: true, position: "end",
+                     backgroundColor: "#ffd700cc", color: "#000", font: { size: 9 } }
+          };
+        }
+      });
+
+      if (diffChart) diffChart.destroy();
+      diffChart = new Chart(document.getElementById("difficultyChart"), {
+        type: "bar",
+        data: { labels, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: { labels: { color: "#eee" } },
+            annotation: { annotations },
+            tooltip: {
+              callbacks: {
+                afterBody(ctx) {
+                  const i = ctx[0].dataIndex + from - 1;
+                  const s = ALL_STAGES[i];
+                  const m = s.mission;
+                  let mStr;
+                  switch (m.type) {
+                    case "clear": mStr = `${m.count}個消し`; break;
+                    case "score": mStr = `${m.target}点`; break;
+                    case "color": mStr = `${m.colorName}${m.count}個`; break;
+                  }
+                  return [
+                    `盤面: ${s.cols}×${s.rows}  色: ${s.colors}  手数: ${s.moves}`,
+                    `ミッション: ${mStr}`,
+                    `ランク: ${s.difficulty.rank}`,
+                    `機能: ${s.features.join(", ")}`,
+                  ];
+                }
+              }
+            }
+          },
+          scales: {
+            x: { ticks: { color: "#aab", maxTicksLimit: 30 }, grid: { color: "#2a2a4a" } },
+            y: { ticks: { color: "#aab" }, grid: { color: "#2a2a4a" },
+                 title: { display: true, text: "難易度スコア", color: "#aab" } }
+          }
+        }
+      });
+
+      renderDistribution(stages);
+      renderStats(stages);
+    }
+
+    function renderDistribution(stages) {
+      const buckets = { Easy: 0, Normal: 0, Hard: 0, "Very Hard": 0, Extreme: 0 };
+      stages.forEach(s => buckets[s.difficulty.rank]++);
+      const max = Math.max(...Object.values(buckets));
+
+      let html = "";
+      for (const [rank, count] of Object.entries(buckets)) {
+        const pct = stages.length ? Math.round(count / stages.length * 100) : 0;
+        const w = max ? Math.round(count / max * 100) : 0;
+        html += `<div class="dist-bar">
+          <span class="dist-label ${RANK_CLASS[rank]}">${rank}</span>
+          <div class="dist-fill" style="width:${w}%;background:${RANK_COLORS[rank]}"></div>
+          <span class="dist-count">${count} (${pct}%)</span>
+        </div>`;
+      }
+      document.getElementById("dist-bars").innerHTML = html;
+    }
+
+    function renderStats(stages) {
+      if (!stages.length) { document.getElementById("stats-info").innerHTML = ""; return; }
+      const scores = stages.map(s => s.difficulty.score);
+      const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+      const min = Math.min(...scores);
+      const max = Math.max(...scores);
+      const movesArr = stages.map(s => s.moves);
+
+      document.getElementById("stats-info").innerHTML = `
+        <div style="font-size:0.85em;line-height:1.8">
+          <div>ステージ数: <b>${stages.length}</b></div>
+          <div>難易度 平均: <b>${avg.toFixed(2)}</b> / 最小: <b>${min}</b> / 最大: <b>${max}</b></div>
+          <div>手数: <b>${Math.min(...movesArr)}〜${Math.max(...movesArr)}</b></div>
+          <div>色数: <b>${Math.min(...stages.map(s => s.colors))}〜${Math.max(...stages.map(s => s.colors))}</b></div>
+        </div>`;
+    }
+
+    document.getElementById("chart-from").addEventListener("change", renderDifficultyChart);
+    document.getElementById("chart-to").addEventListener("change", renderDifficultyChart);
+    document.getElementById("show-moving-avg").addEventListener("change", renderDifficultyChart);
+
+    // === 区間サマリ ===
+    function renderSummary() {
+      const ranges = [
+        { label: "1-10", s: 0, e: 10 }, { label: "11-25", s: 10, e: 25 },
+        { label: "26-50", s: 25, e: 50 }, { label: "51-75", s: 50, e: 75 },
+        { label: "76-100", s: 75, e: 100 }, { label: "101-150", s: 100, e: 150 },
+        { label: "151-200", s: 150, e: 200 }, { label: "201-250", s: 200, e: 250 },
+        { label: "251-300", s: 250, e: 300 }, { label: "301-350", s: 300, e: 350 },
+      ];
+
+      const avgScores = [];
+      const maxScores = [];
+      const labels = [];
+      let html = "<table><thead><tr><th>区間</th><th>盤面</th><th>色</th><th>手数</th>" +
+                 "<th>難易度(平均)</th><th>難易度(最大)</th><th>ppm(平均)</th><th>機能</th></tr></thead><tbody>";
+
+      for (const r of ranges) {
+        const sl = ALL_STAGES.slice(r.s, r.e);
+        if (!sl.length) continue;
+        const avg = sl.reduce((s, st) => s + st.difficulty.score, 0) / sl.length;
+        const mx = Math.max(...sl.map(s => s.difficulty.score));
+        const minM = Math.min(...sl.map(s => s.moves));
+        const maxM = Math.max(...sl.map(s => s.moves));
+        const minC = Math.min(...sl.map(s => s.colors));
+        const maxC = Math.max(...sl.map(s => s.colors));
+        const clears = sl.filter(s => s.mission.type === "clear");
+        const ppm = clears.length ? clears.reduce((s, st) => s + st.mission.count / st.moves, 0) / clears.length : 0;
+        const feats = [...new Set(sl.flatMap(s => s.features))];
+
+        avgScores.push(Math.round(avg * 100) / 100);
+        maxScores.push(Math.round(mx * 100) / 100);
+        labels.push(r.label);
+
+        html += `<tr>
+          <td>Stage ${r.label}</td>
+          <td>${sl[0].cols}×${sl[0].rows}</td>
+          <td>${minC === maxC ? minC : minC + "-" + maxC}</td>
+          <td>${minM === maxM ? minM : minM + "-" + maxM}</td>
+          <td>${avg.toFixed(2)}</td>
+          <td>${mx.toFixed(2)}</td>
+          <td>${ppm.toFixed(1)}/手</td>
+          <td>${feats.join(", ") || "-"}</td>
+        </tr>`;
+      }
+      html += "</tbody></table>";
+      document.getElementById("summary-table").innerHTML = html;
+
+      new Chart(document.getElementById("summaryChart"), {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            { label: "平均難易度", data: avgScores, backgroundColor: "#e9456088", borderColor: "#e94560", borderWidth: 1 },
+            { label: "最大難易度", data: maxScores, backgroundColor: "#9c27b044", borderColor: "#9c27b0", borderWidth: 1 },
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: "#eee" } } },
+          scales: {
+            x: { ticks: { color: "#aab" }, grid: { color: "#2a2a4a" } },
+            y: { ticks: { color: "#aab" }, grid: { color: "#2a2a4a" } }
+          }
+        }
+      });
+    }
+
+    // === ★ゲート分析 ===
+    function renderGates() {
+      let html = "";
+      STAR_GATES.forEach(g => {
+        if (g.stage > TOTAL_STAGES) return;
+        const maxStars = (g.stage - 1) * 3;
+        const pct = Math.round(g.stars / maxStars * 100);
+        const color = pct > 70 ? "#f44336" : pct > 60 ? "#ff9800" : "#4caf50";
+        html += `<div class="gate-row">
+          <span class="gate-label">Stage ${g.stage}</span>
+          <div class="gate-bar-bg"><div class="gate-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+          <span class="gate-pct">${pct}%</span>
+          <span class="gate-detail">★${g.stars} / 最大${maxStars}</span>
+        </div>`;
+      });
+      document.getElementById("gate-bars").innerHTML = html;
+
+      // シミュレーション
+      let sim2 = "", simM = "";
+      STAR_GATES.forEach(g => {
+        if (g.stage > TOTAL_STAGES) return;
+        const star2total = (g.stage - 1) * 2;
+        const diff2 = star2total - g.stars;
+        const ok2 = diff2 >= 0;
+        sim2 += `<div style="font-size:0.85em;padding:3px 0;color:${ok2 ? "#4caf50" : "#f44336"}">
+          ${ok2 ? "✅" : "❌"} Stage ${g.stage}: ★${star2total} / 必要★${g.stars} (${diff2 >= 0 ? "+" : ""}${diff2})</div>`;
+
+        const mixedTotal = Math.floor((g.stage - 1) * (1 * 0.5 + 2 * 0.3 + 3 * 0.2));
+        const diffM = mixedTotal - g.stars;
+        const okM = diffM >= 0;
+        simM += `<div style="font-size:0.85em;padding:3px 0;color:${okM ? "#4caf50" : "#f44336"}">
+          ${okM ? "✅" : "❌"} Stage ${g.stage}: ★${mixedTotal} / 必要★${g.stars} (${diffM >= 0 ? "+" : ""}${diffM})</div>`;
+      });
+      document.getElementById("sim-star2").innerHTML = sim2;
+      document.getElementById("sim-mixed").innerHTML = simM;
+    }
+
+    // === 全ステージ一覧 ===
+    function renderStageList() {
+      const from = Math.max(1, parseInt(document.getElementById("list-from").value) || 1);
+      const to = Math.min(TOTAL_STAGES, parseInt(document.getElementById("list-to").value) || TOTAL_STAGES);
+      const mFilter = document.getElementById("list-mission").value;
+
+      let stages = ALL_STAGES.slice(from - 1, to);
+      if (mFilter !== "all") stages = stages.filter(s => s.mission.type === mFilter);
+
+      let html = "<table><thead><tr><th>Stage</th><th>盤面</th><th>色</th><th>手数</th>" +
+                 "<th>ミッション</th><th>★2</th><th>★3</th><th>難易度</th><th>ランク</th><th>機能</th></tr></thead><tbody>";
+
+      for (const s of stages) {
+        const m = s.mission;
+        let mStr;
+        switch (m.type) {
+          case "clear": mStr = `消 ${m.count}`; break;
+          case "score": mStr = `点 ${m.target}`; break;
+          case "color": mStr = `色 ${m.colorName}${m.count}`; break;
+        }
+        html += `<tr>
+          <td>${s.name}</td>
+          <td>${s.cols}×${s.rows}</td>
+          <td>${s.colors}</td>
+          <td>${s.moves}</td>
+          <td>${mStr}</td>
+          <td>${s.star2moves}</td>
+          <td>${s.star3moves}</td>
+          <td>${s.difficulty.score}</td>
+          <td class="${RANK_CLASS[s.difficulty.rank]}">${s.difficulty.rank}</td>
+          <td>${s.features.join(", ")}</td>
+        </tr>`;
+      }
+      html += "</tbody></table>";
+      document.getElementById("stage-table").innerHTML = html;
+    }
+
+    document.getElementById("list-from").addEventListener("change", renderStageList);
+    document.getElementById("list-to").addEventListener("change", renderStageList);
+    document.getElementById("list-mission").addEventListener("change", renderStageList);
+
+    // === 初期表示 ===
+    renderDifficultyChart();
+    renderSummary();
+    renderGates();
+    renderStageList();
+  </script>
+</body>
+</html>
