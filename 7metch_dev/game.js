@@ -2538,36 +2538,26 @@
   function buildStages() {
     const stages = [];
     for (let i = 0; i < 500; i++) {
-      const isBreak = i >= 350 && i % 10 === 9;
-
-      let size, moves, colors;
-      if (isBreak) {
-        size = { cols: 7, rows: 8 };
-        moves = 22 + (i % 4);
-        colors = 6;
-      } else {
-        size = boardSizeForStage(i);
-        const tier = Math.floor(i / 10);
-        const baseMoves = Math.max(12, 20 - tier * 2);
-        if (i < 10) moves = 20;
-        else if (size.cols >= 9) moves = Math.max(16, baseMoves);
-        else if (size.cols >= 8) moves = Math.max(14, baseMoves);
-        else moves = baseMoves;
-        const baseColors = Math.min(7, 5 + Math.floor(i / 10));
-        colors = (i >= 200) ? 8 : baseColors;
-      }
+      const size = boardSizeForStage(i);
+      const tier = Math.floor(i / 10);
+      const baseMoves = Math.max(12, 20 - tier * 2);
+      let moves;
+      if (i < 10) moves = 20;
+      else if (size.cols >= 9) moves = Math.max(16, baseMoves);
+      else if (size.cols >= 8) moves = Math.max(14, baseMoves);
+      else moves = baseMoves;
+      const baseColors = Math.min(7, 5 + Math.floor(i / 10));
+      const colors = (i >= 200) ? 8 : baseColors;
 
       const star2rate = i < 10 ? 0.65 : 0.6;
       const star3rate = i < 10 ? 0.45 : 0.35;
 
       const features = {};
       features.diagonalLine = true;
-      if (!isBreak) {
-        if (i >= 100) features.ice = true;
-        if (i >= 150) features.rock = true;
-        if (i >= 250) features.holes = true;
-        if (i >= 300) features.countdown = true;
-      }
+      if (i >= 100) features.ice = true;
+      if (i >= 150) features.rock = true;
+      if (i >= 250) features.holes = true;
+      if (i >= 300) features.countdown = true;
 
       let iceCells = 0, rockCells = 0, holePattern = null, countdownBombs = 0;
       if (features.ice) {
@@ -2587,16 +2577,7 @@
       }
 
       let mission;
-      if (isBreak) {
-        const slot = Math.floor((i - 350) / 10) % 3;
-        if (slot === 0) {
-          mission = { type: "clear", count: Math.floor(moves * 3.5) };
-        } else if (slot === 1) {
-          mission = { type: "score", target: Math.floor(moves * 55) };
-        } else {
-          mission = { type: "special", count: 3 };
-        }
-      } else if (i >= 350) {
+      if (i >= 350) {
         const slot = i % 7;
         if (slot === 0) {
           const targetColor = i % colors;
