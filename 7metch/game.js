@@ -3101,7 +3101,7 @@
     for (let i = 0; i < clearList.length; i++) {
       const [cr, cc] = clearList[i];
       if (board[cr][cc] && board[cr][cc].special && !(cr === r && cc === c)) {
-        const ex2 = activateSpecial(cr, cc, cleared, board[cr][cc].special);
+        const ex2 = activateSpecial(cr, cc, cleared, piece.special);
         ex2.forEach(([er, ec]) => {
           if (!cleared.has(er * cols + ec)) {
             cleared.add(er * cols + ec);
@@ -3372,7 +3372,7 @@
         const cleared = new Set(comboCells.map(([r, c]) => r * cols + c));
         comboCells.forEach(([cr, cc]) => {
           if (board[cr][cc] && board[cr][cc].special && !(cr === r1 && cc === c1) && !(cr === r2 && cc === c2)) {
-            const extra = activateSpecial(cr, cc, cleared, board[cr][cc].special);
+            const extra = activateSpecial(cr, cc, cleared, null);
             extra.forEach(([er, ec]) => {
               if (!cleared.has(er * cols + ec)) {
                 cleared.add(er * cols + ec);
@@ -3447,7 +3447,7 @@
         }
         clearList.forEach(([cr, cc]) => {
           if (board[cr][cc] && board[cr][cc].special && !(cr === rainbowR && cc === rainbowC)) {
-            const extra = activateSpecial(cr, cc, cleared, board[cr][cc].special);
+            const extra = activateSpecial(cr, cc, cleared, null);
             extra.forEach(([er, ec]) => {
               if (!cleared.has(er * cols + ec)) {
                 cleared.add(er * cols + ec);
