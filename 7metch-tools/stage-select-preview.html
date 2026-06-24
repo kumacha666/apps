@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ステージセレクト UI プレビュー</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --bg-light: #16213e;
+      --accent: #e94560;
+      --accent2: #0f3460;
+      --text: #eee;
+      --text-dim: #aaa;
+      --gold: #ffd700;
+      --star3: #ffd700;
+      --star2: #c0c0c0;
+      --star1: #cd7f32;
+      --star0: #445;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "Hiragino Sans", "Meiryo", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    h1 { text-align: center; font-size: 1.2em; margin-bottom: 16px; color: var(--accent); }
+    h2 { font-size: 1em; margin: 24px 0 12px; color: var(--accent); border-bottom: 1px solid var(--accent2); padding-bottom: 4px; }
+    .desc { font-size: 0.8em; color: var(--text-dim); margin-bottom: 16px; }
+
+    .preview-box {
+      background: var(--bg-light);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+    .preview-label {
+      font-size: 0.85em;
+      color: var(--accent);
+      margin-bottom: 10px;
+      font-weight: 700;
+    }
+
+    /* === 現行デザイン === */
+    .grid-current {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+      padding: 8px;
+    }
+    .grid-current .stage-btn {
+      width: 56px;
+      height: 56px;
+      border: 2px solid var(--accent2);
+      border-radius: 10px;
+      background: var(--bg-light);
+      color: var(--text);
+      font-size: 1.1rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+    }
+    .grid-current .stage-btn span:first-child { font-size: 0.7rem; }
+    .grid-current .stage-btn .stage-stars {
+      font-size: 0.5rem;
+      color: var(--gold);
+      height: 10px;
+    }
+    .grid-current .stage-btn.locked { opacity: 0.4; }
+
+    /* === 案A: 色分け★ + サイズアップ === */
+    .grid-a {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+      padding: 8px;
+    }
+    .grid-a .stage-btn {
+      width: 56px;
+      height: 56px;
+      border: 2px solid var(--accent2);
+      border-radius: 10px;
+      background: var(--bg-light);
+      color: var(--text);
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1px;
+    }
+    .grid-a .stage-btn .stage-num { font-size: 0.75rem; }
+    .grid-a .stage-btn .stage-stars {
+      font-size: 0.7rem;
+      letter-spacing: 1px;
+      height: 14px;
+      line-height: 14px;
+    }
+    .grid-a .stage-btn.star3 .stage-stars { color: var(--star3); }
+    .grid-a .stage-btn.star2 .stage-stars { color: var(--star2); }
+    .grid-a .stage-btn.star1 .stage-stars { color: var(--star1); }
+    .grid-a .stage-btn.star0 .stage-stars { color: var(--star0); }
+    .grid-a .stage-btn.locked { opacity: 0.4; }
+
+    /* === 案B: 色分け★ + 枠色変化 === */
+    .grid-b {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+      padding: 8px;
+    }
+    .grid-b .stage-btn {
+      width: 56px;
+      height: 56px;
+      border: 2px solid var(--accent2);
+      border-radius: 10px;
+      background: var(--bg-light);
+      color: var(--text);
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1px;
+    }
+    .grid-b .stage-btn .stage-num { font-size: 0.75rem; }
+    .grid-b .stage-btn .stage-stars {
+      font-size: 0.7rem;
+      letter-spacing: 1px;
+      height: 14px;
+      line-height: 14px;
+    }
+    .grid-b .stage-btn.star3 { border-color: var(--star3); }
+    .grid-b .stage-btn.star3 .stage-stars { color: var(--star3); }
+    .grid-b .stage-btn.star2 { border-color: var(--star2); }
+    .grid-b .stage-btn.star2 .stage-stars { color: var(--star2); }
+    .grid-b .stage-btn.star1 { border-color: var(--star1); }
+    .grid-b .stage-btn.star1 .stage-stars { color: var(--star1); }
+    .grid-b .stage-btn.star0 .stage-stars { color: var(--star0); }
+    .grid-b .stage-btn.locked { opacity: 0.4; }
+
+    /* === 案C: 色分け★ + 枠色 + 背景グラデ === */
+    .grid-c {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+      padding: 8px;
+    }
+    .grid-c .stage-btn {
+      width: 56px;
+      height: 56px;
+      border: 2px solid var(--accent2);
+      border-radius: 10px;
+      background: var(--bg-light);
+      color: var(--text);
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1px;
+    }
+    .grid-c .stage-btn .stage-num { font-size: 0.75rem; }
+    .grid-c .stage-btn .stage-stars {
+      font-size: 0.7rem;
+      letter-spacing: 1px;
+      height: 14px;
+      line-height: 14px;
+    }
+    .grid-c .stage-btn.star3 {
+      border-color: var(--star3);
+      background: linear-gradient(135deg, var(--bg-light) 60%, #ffd70018);
+    }
+    .grid-c .stage-btn.star3 .stage-stars { color: var(--star3); }
+    .grid-c .stage-btn.star2 {
+      border-color: var(--star2);
+      background: linear-gradient(135deg, var(--bg-light) 60%, #c0c0c018);
+    }
+    .grid-c .stage-btn.star2 .stage-stars { color: var(--star2); }
+    .grid-c .stage-btn.star1 {
+      border-color: var(--star1);
+      background: linear-gradient(135deg, var(--bg-light) 60%, #cd7f3218);
+    }
+    .grid-c .stage-btn.star1 .stage-stars { color: var(--star1); }
+    .grid-c .stage-btn.star0 .stage-stars { color: var(--star0); }
+    .grid-c .stage-btn.locked { opacity: 0.4; }
+
+    /* === 案D: ドット表示 === */
+    .grid-d {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+      padding: 8px;
+    }
+    .grid-d .stage-btn {
+      width: 56px;
+      height: 56px;
+      border: 2px solid var(--accent2);
+      border-radius: 10px;
+      background: var(--bg-light);
+      color: var(--text);
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+    }
+    .grid-d .stage-btn .stage-num { font-size: 0.85rem; }
+    .grid-d .stage-btn .stage-dots {
+      display: flex;
+      gap: 3px;
+    }
+    .grid-d .stage-btn .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--star0);
+    }
+    .grid-d .stage-btn .dot.filled-3 { background: var(--star3); box-shadow: 0 0 4px var(--star3); }
+    .grid-d .stage-btn .dot.filled-2 { background: var(--star2); box-shadow: 0 0 3px var(--star2); }
+    .grid-d .stage-btn .dot.filled-1 { background: var(--star1); box-shadow: 0 0 3px var(--star1); }
+    .grid-d .stage-btn.locked { opacity: 0.4; }
+  </style>
+</head>
+<body>
+  <h1>ステージセレクト UI プレビュー</h1>
+  <p class="desc">★3=金, ★2=銀, ★1=銅, 未クリア=グレー。さまざまな★状態が混在する想定で表示しています。</p>
+
+  <div id="previews"></div>
+
+  <script>
+    const sampleStages = [
+      { num: 291, stars: 3 }, { num: 292, stars: 3 }, { num: 293, stars: 2 },
+      { num: 294, stars: 3 }, { num: 295, stars: 1 }, { num: 296, stars: 3 },
+      { num: 297, stars: 2 }, { num: 298, stars: 3 }, { num: 299, stars: 1 },
+      { num: 300, stars: 3 }, { num: 301, stars: 2 }, { num: 302, stars: 1 },
+      { num: 303, stars: 3 }, { num: 304, stars: 0 }, { num: 305, stars: 0, locked: true },
+    ];
+
+    function buildCurrentGrid() {
+      let html = '';
+      for (const s of sampleStages) {
+        const cls = s.locked ? ' locked' : '';
+        const starsStr = '★'.repeat(s.stars);
+        html += `<button class="stage-btn${cls}">
+          <span>${s.num}</span>
+          <span class="stage-stars">${starsStr}</span>
+        </button>`;
+      }
+      return html;
+    }
+
+    function buildGridA() {
+      let html = '';
+      for (const s of sampleStages) {
+        const cls = s.locked ? ' locked' : '';
+        const starCls = ` star${s.stars}`;
+        const filled = '★'.repeat(s.stars);
+        const empty = '☆'.repeat(3 - s.stars);
+        html += `<button class="stage-btn${cls}${starCls}">
+          <span class="stage-num">${s.num}</span>
+          <span class="stage-stars">${filled}${empty}</span>
+        </button>`;
+      }
+      return html;
+    }
+
+    function buildGridB() {
+      let html = '';
+      for (const s of sampleStages) {
+        const cls = s.locked ? ' locked' : '';
+        const starCls = ` star${s.stars}`;
+        const filled = '★'.repeat(s.stars);
+        const empty = '☆'.repeat(3 - s.stars);
+        html += `<button class="stage-btn${cls}${starCls}">
+          <span class="stage-num">${s.num}</span>
+          <span class="stage-stars">${filled}${empty}</span>
+        </button>`;
+      }
+      return html;
+    }
+
+    function buildGridC() {
+      let html = '';
+      for (const s of sampleStages) {
+        const cls = s.locked ? ' locked' : '';
+        const starCls = ` star${s.stars}`;
+        const filled = '★'.repeat(s.stars);
+        const empty = '☆'.repeat(3 - s.stars);
+        html += `<button class="stage-btn${cls}${starCls}">
+          <span class="stage-num">${s.num}</span>
+          <span class="stage-stars">${filled}${empty}</span>
+        </button>`;
+      }
+      return html;
+    }
+
+    function buildGridD() {
+      let html = '';
+      for (const s of sampleStages) {
+        const cls = s.locked ? ' locked' : '';
+        let dots = '';
+        for (let d = 0; d < 3; d++) {
+          const fillCls = d < s.stars ? ` filled-${s.stars}` : '';
+          dots += `<span class="dot${fillCls}"></span>`;
+        }
+        html += `<button class="stage-btn${cls}">
+          <span class="stage-num">${s.num}</span>
+          <span class="stage-dots">${dots}</span>
+        </button>`;
+      }
+      return html;
+    }
+
+    const previews = [
+      { id: 'current', label: '現行デザイン', desc: '★が小さく全て金色。★数の違いが見分けにくい', gridClass: 'grid-current', builder: buildCurrentGrid },
+      { id: 'a', label: '案A: 色分け★ + サイズアップ', desc: '★を大きくし、★3=金/★2=銀/★1=銅/未取得=グレーで色分け。☆で未取得を明示', gridClass: 'grid-a', builder: buildGridA },
+      { id: 'b', label: '案B: 色分け★ + 枠色変化', desc: '案Aに加えてボタンの枠色も★数で変化。★1-2の「稼ぎどころ」ステージが目立つ', gridClass: 'grid-b', builder: buildGridB },
+      { id: 'c', label: '案C: 色分け★ + 枠色 + 背景グラデ', desc: '案Bに加えて背景にうっすら色付き。★3の達成感が強い', gridClass: 'grid-c', builder: buildGridC },
+      { id: 'd', label: '案D: ドット表示', desc: '★をドット(●)に変更。コンパクトで視認性が高い。色はドットの数で判断', gridClass: 'grid-d', builder: buildGridD },
+    ];
+
+    let html = '';
+    for (const p of previews) {
+      html += `
+        <div class="preview-box">
+          <div class="preview-label">${p.label}</div>
+          <p class="desc">${p.desc}</p>
+          <div class="${p.gridClass}">${p.builder()}</div>
+        </div>`;
+    }
+    document.getElementById('previews').innerHTML = html;
+  </script>
+</body>
+</html>
