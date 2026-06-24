@@ -510,6 +510,7 @@
         case "score": movesEfficiency = mission.target / moves / 100; break;
         case "color": movesEfficiency = mission.count / moves / (area / colors) * 5; break;
       }
+      const movesPressure = 20 / moves;
       let gimmickFactor = 1.0;
       if (features.includes("氷")) gimmickFactor += 0.15;
       if (features.includes("岩")) gimmickFactor += 0.2;
@@ -517,16 +518,17 @@
       if (features.includes("穴")) gimmickFactor += 0.2;
       if (features.includes("💣")) gimmickFactor += 0.25;
       if (features.includes("斜Line")) gimmickFactor -= 0.1;
-      const raw = matchDifficulty * movesEfficiency * gimmickFactor;
+      const raw = matchDifficulty * movesEfficiency * movesPressure * gimmickFactor;
       const score = Math.round(raw * 100) / 100;
       let rank;
-      if (score < 0.8) rank = "Easy";
-      else if (score < 1.2) rank = "Normal";
-      else if (score < 1.8) rank = "Hard";
-      else if (score < 2.5) rank = "Very Hard";
+      if (score < 1.0) rank = "Easy";
+      else if (score < 1.6) rank = "Normal";
+      else if (score < 2.4) rank = "Hard";
+      else if (score < 3.2) rank = "Very Hard";
       else rank = "Extreme";
       return { score, rank, matchDifficulty: Math.round(matchDifficulty * 100) / 100,
                movesEfficiency: Math.round(movesEfficiency * 100) / 100,
+               movesPressure: Math.round(movesPressure * 100) / 100,
                gimmickFactor: Math.round(gimmickFactor * 100) / 100 };
     }
 
