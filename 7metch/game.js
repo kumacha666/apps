@@ -3120,10 +3120,22 @@
               }
             }
             if (!hasSpecial) {
-              const pattern = matches.map(([mr, mc]) => ({ r: mr, c: mc }));
-              const pos1in = pattern.some(p => p.r === r && p.c === c);
-              const mover = pos1in ? { r: nr, c: nc } : { r, c };
-              normalList.push({ mover, pattern: pattern.filter(p => !(p.r === mover.r && p.c === mover.c)) });
+              const matchSet = new Set(matches.map(([mr, mc]) => mr * cols + mc));
+              let targetColor = -1;
+              if (matchSet.has(nr * cols + nc) && board[nr][nc]) targetColor = board[nr][nc].color;
+              else if (matchSet.has(r * cols + c) && board[r][c]) targetColor = board[r][c].color;
+              if (targetColor >= 0) {
+                const colorMatches = matches.filter(([mr, mc]) =>
+                  board[mr][mc] && board[mr][mc].color === targetColor);
+                const colorSet = new Set(colorMatches.map(([mr, mc]) => mr * cols + mc));
+                const pos1in = colorSet.has(r * cols + c);
+                const mover = pos1in ? { r: nr, c: nc } : { r, c };
+                const swapDest = pos1in ? { r, c } : { r: nr, c: nc };
+                const pattern = colorMatches
+                  .filter(([mr, mc]) => !(mr === swapDest.r && mc === swapDest.c))
+                  .map(([mr, mc]) => ({ r: mr, c: mc }));
+                normalList.push({ mover, pattern });
+              }
             }
           }
           swapPieces(r, c, nr, nc);

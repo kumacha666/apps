@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ナナメッチ 特殊ピース図鑑</title>
+  <style>
+    :root {
+      --bg: #0f0e17;
+      --surface: #1a1a2e;
+      --card: #16213e;
+      --accent: #e94560;
+      --gold: #ffd700;
+      --text: #eee;
+      --text2: #99a;
+      --border: #2a2a4a;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "Hiragino Sans", "Meiryo", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    h1 {
+      text-align: center;
+      font-size: 1.4rem;
+      margin-bottom: 8px;
+      color: var(--gold);
+    }
+    .subtitle {
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--text2);
+      margin-bottom: 24px;
+    }
+    h2 {
+      font-size: 1.1rem;
+      color: var(--gold);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 6px;
+      margin: 28px 0 14px;
+    }
+    .card {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+      border: 1px solid var(--border);
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .card-header canvas {
+      border-radius: 8px;
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .card-title {
+      font-size: 1rem;
+      font-weight: bold;
+    }
+    .card-tag {
+      display: inline-block;
+      font-size: 0.65rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .tag-single { background: #2a5; color: #fff; }
+    .tag-combo { background: #e94560; color: #fff; }
+    .tag-super { background: #9c27b0; color: #fff; }
+    .card-create {
+      font-size: 0.8rem;
+      color: var(--text2);
+      margin-bottom: 6px;
+    }
+    .card-create b { color: var(--gold); font-weight: 600; }
+    .card-effect {
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+    .card-effect b { color: #4ecdc4; }
+    .demo-area {
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .demo-area canvas {
+      border-radius: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+    }
+    .btn-demo {
+      padding: 6px 14px;
+      border: none;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.8rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-demo:active { opacity: 0.7; }
+    .pattern-row {
+      display: flex;
+      gap: 2px;
+      justify-content: center;
+    }
+    .pattern-cell {
+      width: 20px; height: 20px;
+      border-radius: 4px;
+      border: 1px solid #333;
+    }
+    .pattern-grid {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 2px;
+      margin: 8px 0;
+    }
+    .cell-empty { background: #111; }
+    .cell-match { background: var(--accent); }
+    .cell-special { background: var(--gold); border-color: var(--gold); }
+    .cell-clear { background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.3); }
+    .legend {
+      font-size: 0.7rem;
+      color: var(--text2);
+      margin-top: 4px;
+    }
+    .legend span { margin-right: 10px; }
+    .back-link {
+      display: block;
+      text-align: center;
+      color: var(--accent);
+      text-decoration: none;
+      margin-top: 20px;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+
+<h1>特殊ピース図鑑</h1>
+<p class="subtitle">ナナメッチの特殊ピースとコンボの全パターン</p>
+
+<h2>単体特殊ピース</h2>
+
+<div class="card" id="card-line-h">
+  <div class="card-header">
+    <canvas id="icon-line-h" width="48" height="48"></canvas>
+    <div>
+      <span class="card-title">横ライン</span>
+      <span class="card-tag tag-single">単体</span>
+    </div>
+  </div>
+  <div class="card-create">生成: <b>横方向に4個マッチ</b></div>
+  <div class="card-effect">効果: <b>横一列</b>のピースを全て消去</div>
+  <div class="demo-area">
+    <canvas id="demo-line-h" width="200" height="40"></canvas>
+    <button class="btn-demo" onclick="playDemo('line_h')">再生</button>
+  </div>
+</div>
+
+<div class="card" id="card-line-v">
+  <div class="card-header">
+    <canvas id="icon-line-v" width="48" height="48"></canvas>
+    <div>
+      <span class="card-title">縦ライン</span>
+      <span class="card-tag tag-single">単体</span>
+    </div>
+  </div>
+  <div class="card-create">生成: <b>縦方向に4個マッチ</b></div>
+  <div class="card-effect">効果: <b>縦一列</b>のピースを全て消去</div>
+  <div class="demo-area">
+    <canvas id="demo-line-v" width="40" height="200"></canvas>
+    <button class="btn-demo" onclick="playDemo('line_v')">再生</button>
+  </div>
+</div>
+
+<div class="card" id="card-line-d">
+  <div class="card-header">
+    <canvas id="icon-line-d" width="48" height="48"></canvas>
+    <div>
+      <span class="card-title">斜めライン</span>
+      <span class="card-tag tag-single">単体</span>
+    </div>
+  </div>
+  <div class="card-create">生成: <b>2×2正方形マッチ</b>(斜めステージ)</div>
+  <div class="card-effect">効果: <b>両斜め方向</b>のピースを全て消去</div>
+  <div class="demo-area">
+    <canvas id="demo-line-d" width="200" height="200"></canvas>
+    <button class="btn-demo" onclick="playDemo('line_d')">再生</button>
+  </div>
+</div>
+
+<div class="card" id="card-bomb">
+  <div class="card-header">
+    <canvas id="icon-bomb" width="48" height="48"></canvas>
+    <div>
+      <span class="card-title">爆弾</span>
+      <span class="card-tag tag-single">単体</span>
+    </div>
+  </div>
+  <div class="card-create">生成: <b>L字 / T字マッチ</b>(5個)</div>
+  <div class="card-effect">効果: <b>周囲5×5</b>のピースを消去</div>
+  <div class="demo-area">
+    <canvas id="demo-bomb" width="200" height="200"></canvas>
+    <button class="btn-demo" onclick="playDemo('bomb')">再生</button>
+  </div>
+</div>
+
+<div class="card" id="card-rainbow">
+  <div class="card-header">
+    <canvas id="icon-rainbow" width="48" height="48"></canvas>
+    <div>
+      <span class="card-title">レインボー</span>
+      <span class="card-tag tag-single">単体</span>
+    </div>
+  </div>
+  <div class="card-create">生成: <b>5個以上の直線マッチ</b></div>
+  <div class="card-effect">効果: <b>同色ピース全て</b>を消去</div>
+  <div class="demo-area">
+    <canvas id="demo-rainbow" width="200" height="200"></canvas>
+    <button class="btn-demo" onclick="playDemo('rainbow')">再生</button>
+  </div>
+</div>
+
+<h2>コンボ(特殊×特殊)</h2>
+
+<div class="card">
+  <div class="card-header">
+    <canvas id="icon-cross" width="48" height="48"></canvas>
+    <div>
+      <span class="card-title">十字クロス</span>
+      <span class="card-tag tag-combo">コンボ</span>
+    </div>
+  </div>
+  <div class="card-create">生成: <b>ライン × ライン</b>(横/縦同士)</div>
+  <div class="card-effect">効果: <b>十字方向</b>(横一列+縦一列)を消去</div>
+  <div class="demo-area">
+    <canvas id="demo-cross" width="200" height="200"></canvas>
+    <button class="btn-demo" onclick="playDemo('cross')">再生</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <canvas id="icon-star-cross" width="48" height="48"></canvas>
+    <div>
+      <span class="card-title">星クロス</span>
+      <span class="card-tag tag-combo">コンボ</span>
+    </div>
+  </div>
+  <div class="card-create">生成: <b>ライン × 斜めライン</b>(斜め含む組合せ)</div>
+  <div class="card-effect">効果: <b>8方向</b>(十字+両斜め)を全消去</div>
+  <div class="demo-area">
+    <canvas id="demo-star-cross" width="200" height="200"></canvas>
+    <button class="btn-demo" onclick="playDemo('star_cross')">再生</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <canvas id="icon-triple-line" width="48" height="48"></canvas>
+    <div>
+      <span class="card-title">トリプルライン</span>
+      <span class="card-tag tag-combo">コンボ</span>
+    </div>
+  </div>
+  <div class="card-create">生成: <b>爆弾 × ライン</b></div>
+  <div class="card-effect">効果: <b>太い十字</b>(3列分の横+縦)を消去</div>
+  <div class="demo-area">
+    <canvas id="demo-triple-line" width="200" height="200"></canvas>
+    <button class="btn-demo" onclick="playDemo('triple_line')">再生</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <canvas id="icon-big-bomb" width="48" height="48"></canvas>
+    <div>
+      <span class="card-title">大爆弾</span>
+      <span class="card-tag tag-combo">コンボ</span>
+    </div>
+  </div>
+  <div class="card-create">生成: <b>爆弾 × 爆弾</b></div>
+  <div class="card-effect">効果: <b>周囲7×7</b>の広範囲を消去</div>
+  <div class="demo-area">
+    <canvas id="demo-big-bomb" width="200" height="200"></canvas>
+    <button class="btn-demo" onclick="playDemo('big_bomb')">再生</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <canvas id="icon-rainbow-line" width="48" height="48"></canvas>
+    <div>
+      <span class="card-title">レインボーライン</span>
+      <span class="card-tag tag-super">超コンボ</span>
+    </div>
+  </div>
+  <div class="card-create">生成: <b>レインボー × ライン</b></div>
+  <div class="card-effect">効果: 同色ピースを全て<b>ラインピースに変換</b>してから消去</div>
+  <div class="demo-area">
+    <canvas id="demo-rainbow-line" width="200" height="200"></canvas>
+    <button class="btn-demo" onclick="playDemo('rainbow_line')">再生</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <canvas id="icon-rainbow-bomb" width="48" height="48"></canvas>
+    <div>
+      <span class="card-title">レインボーボム</span>
+      <span class="card-tag tag-super">超コンボ</span>
+    </div>
+  </div>
+  <div class="card-create">生成: <b>レインボー × 爆弾</b></div>
+  <div class="card-effect">効果: 同色ピースを全て<b>爆弾に変換</b>してから消去</div>
+  <div class="demo-area">
+    <canvas id="demo-rainbow-bomb" width="200" height="200"></canvas>
+    <button class="btn-demo" onclick="playDemo('rainbow_bomb')">再生</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <canvas id="icon-galaxy" width="48" height="48"></canvas>
+    <div>
+      <span class="card-title">ギャラクシー</span>
+      <span class="card-tag tag-super">超コンボ</span>
+    </div>
+  </div>
+  <div class="card-create">生成: <b>レインボー × レインボー</b></div>
+  <div class="card-effect">効果: <b>盤面全消し</b></div>
+  <div class="demo-area">
+    <canvas id="demo-galaxy" width="200" height="200"></canvas>
+    <button class="btn-demo" onclick="playDemo('galaxy')">再生</button>
+  </div>
+</div>
+
+<a class="back-link" href="../7metch/">ナナメッチに戻る</a>
+
+<script>
+const COLORS = ["#e94560","#4ecdc4","#ffd700","#c0c8d8","#ff8a5c","#1e4fff","#ff6bb3","#88cc44"];
+const CS = 28;
+
+function drawStar(ctx, cx, cy, r, spikes, outer, inner) {
+  ctx.beginPath();
+  for (let i = 0; i < spikes * 2; i++) {
+    const a = (i * Math.PI / spikes) - Math.PI / 2;
+    const rad = i % 2 === 0 ? outer : inner;
+    const x = cx + Math.cos(a) * rad;
+    const y = cy + Math.sin(a) * rad;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
+function drawShootingStar(ctx, cx, cy, r, angle, color) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  const grad = ctx.createLinearGradient(-r, 0, r * 0.3, 0);
+  grad.addColorStop(0, "transparent");
+  grad.addColorStop(0.7, color);
+  grad.addColorStop(1, "#fff");
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-r, 0);
+  ctx.lineTo(r * 0.3, 0);
+  ctx.stroke();
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(r * 0.3, 0, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawIcon(canvasId, type) {
+  const cv = document.getElementById(canvasId);
+  const ctx = cv.getContext("2d");
+  const cx = 24, cy = 24, r = 18;
+
+  ctx.clearRect(0, 0, 48, 48);
+
+  const color = COLORS[0];
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  const hi = ctx.createRadialGradient(cx - 5, cy - 5, 0, cx, cy, r);
+  hi.addColorStop(0, "rgba(255,255,255,0.35)");
+  hi.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = hi;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  switch (type) {
+    case "line_h":
+      drawShootingStar(ctx, cx, cy, r * 0.9, Math.PI / 2, color);
+      break;
+    case "line_v":
+      drawShootingStar(ctx, cx, cy, r * 0.9, 0, color);
+      break;
+    case "line_d":
+      drawShootingStar(ctx, cx, cy, r * 0.7, Math.PI / 4, color);
+      drawShootingStar(ctx, cx, cy, r * 0.7, -Math.PI / 4, color);
+      break;
+    case "bomb":
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.65, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ffd700";
+      drawStar(ctx, cx, cy, 5, 4, 6, 3);
+      ctx.fill();
+      break;
+    case "rainbow":
+      const rc = ["#e94560","#ff8a5c","#ffd700","#4ecdc4","#1e4fff","#ff6bb3"];
+      rc.forEach((c, i) => {
+        ctx.strokeStyle = c;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r * 0.3 + i * 2, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+  }
+}
+
+function drawComboIcon(canvasId, type) {
+  const cv = document.getElementById(canvasId);
+  const ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, 48, 48);
+
+  const cx = 24, cy = 24;
+  ctx.fillStyle = "#ffd700";
+  ctx.shadowColor = "#ffd700";
+  ctx.shadowBlur = 8;
+  drawStar(ctx, cx, cy, 5, type === "galaxy" ? 8 : 6, 18, 9);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 11px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  const labels = {
+    cross: "✚", star_cross: "✦", triple_line: "≡",
+    big_bomb: "💥", rainbow_line: "🌈", rainbow_bomb: "🌈", galaxy: "🌌"
+  };
+  ctx.fillText(labels[type] || "?", cx, cy);
+}
+
+const demos = {};
+function playDemo(type) {
+  if (demos[type]) return;
+  const cv = document.getElementById("demo-" + type.replace("_", "-"));
+  if (!cv) return;
+  const ctx = cv.getContext("2d");
+  const w = cv.width, h = cv.height;
+  const cx = w / 2, cy = h / 2;
+  let frame = 0;
+  const totalFrames = 60;
+  demos[type] = true;
+
+  function step() {
+    frame++;
+    const t = frame / totalFrames;
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = "rgba(15,14,23,0.6)";
+    ctx.fillRect(0, 0, w, h);
+
+    const gridS = 28;
+
+    switch (type) {
+      case "line_h": {
+        const cols = 7;
+        for (let i = 0; i < cols; i++) {
+          const x = i * gridS + 2;
+          ctx.fillStyle = "#222";
+          ctx.fillRect(x, 4, gridS - 4, gridS - 4);
+          if (t > 0.15) {
+            const reach = Math.min((t - 0.15) * 3, 1);
+            const beamX = cx;
+            if (Math.abs(x + gridS/2 - cx) < reach * w / 2) {
+              ctx.fillStyle = `rgba(233,69,96,${(1-t)*0.7})`;
+              ctx.fillRect(x, 4, gridS - 4, gridS - 4);
+            }
+          }
+        }
+        if (t > 0.1 && t < 0.9) {
+          const reach = Math.min((t - 0.1) * 2.5, 1);
+          const fade = 1 - Math.max(0, (t - 0.6) / 0.3);
+          const bw = gridS * 0.6 * fade;
+          ctx.save();
+          ctx.globalAlpha = fade * 0.7;
+          ctx.strokeStyle = "#e94560";
+          ctx.shadowColor = "#e94560";
+          ctx.shadowBlur = 15;
+          ctx.lineWidth = bw;
+          ctx.lineCap = "round";
+          ctx.beginPath();
+          ctx.moveTo(cx, h / 2);
+          ctx.lineTo(cx + reach * w / 2, h / 2);
+          ctx.moveTo(cx, h / 2);
+          ctx.lineTo(cx - reach * w / 2, h / 2);
+          ctx.stroke();
+          ctx.strokeStyle = "#fff";
+          ctx.shadowBlur = 0;
+          ctx.lineWidth = bw * 0.3;
+          ctx.beginPath();
+          ctx.moveTo(cx, h / 2);
+          ctx.lineTo(cx + reach * w / 2, h / 2);
+          ctx.moveTo(cx, h / 2);
+          ctx.lineTo(cx - reach * w / 2, h / 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+        break;
+      }
+      case "line_v": {
+        const rows = 7;
+        for (let i = 0; i < rows; i++) {
+          const y = i * gridS + 2;
+          ctx.fillStyle = "#222";
+          ctx.fillRect(4, y, gridS - 4, gridS - 4);
+          if (t > 0.15) {
+            const reach = Math.min((t - 0.15) * 3, 1);
+            if (Math.abs(y + gridS/2 - cy) < reach * h / 2) {
+              ctx.fillStyle = `rgba(78,205,196,${(1-t)*0.7})`;
+              ctx.fillRect(4, y, gridS - 4, gridS - 4);
+            }
+          }
+        }
+        if (t > 0.1 && t < 0.9) {
+          const reach = Math.min((t - 0.1) * 2.5, 1);
+          const fade = 1 - Math.max(0, (t - 0.6) / 0.3);
+          const bw = gridS * 0.6 * fade;
+          ctx.save();
+          ctx.globalAlpha = fade * 0.7;
+          ctx.strokeStyle = "#4ecdc4";
+          ctx.shadowColor = "#4ecdc4";
+          ctx.shadowBlur = 15;
+          ctx.lineWidth = bw;
+          ctx.lineCap = "round";
+          ctx.beginPath();
+          ctx.moveTo(w / 2, cy);
+          ctx.lineTo(w / 2, cy - reach * h / 2);
+          ctx.moveTo(w / 2, cy);
+          ctx.lineTo(w / 2, cy + reach * h / 2);
+          ctx.stroke();
+          ctx.strokeStyle = "#fff";
+          ctx.shadowBlur = 0;
+          ctx.lineWidth = bw * 0.3;
+          ctx.beginPath();
+          ctx.moveTo(w / 2, cy);
+          ctx.lineTo(w / 2, cy - reach * h / 2);
+          ctx.moveTo(w / 2, cy);
+          ctx.lineTo(w / 2, cy + reach * h / 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+        break;
+      }
+      case "line_d": {
+        const g = 7;
+        for (let r = 0; r < g; r++) for (let c = 0; c < g; c++) {
+          ctx.fillStyle = "#222";
+          ctx.fillRect(c * gridS + 2, r * gridS + 2, gridS - 4, gridS - 4);
+        }
+        if (t > 0.1 && t < 0.9) {
+          const reach = Math.min((t - 0.1) * 2.5, 1);
+          const fade = 1 - Math.max(0, (t - 0.6) / 0.3);
+          const bw = gridS * 0.5 * fade;
+          const len = w * 0.7 * reach;
+          const inv = Math.SQRT1_2;
+          ctx.save();
+          ctx.globalAlpha = fade * 0.6;
+          ctx.strokeStyle = "#ffd700";
+          ctx.shadowColor = "#ffd700";
+          ctx.shadowBlur = 15;
+          ctx.lineWidth = bw;
+          ctx.lineCap = "round";
+          [[inv,inv],[-inv,-inv],[inv,-inv],[-inv,inv]].forEach(([dx,dy]) => {
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + dx * len, cy + dy * len);
+            ctx.stroke();
+          });
+          ctx.strokeStyle = "#fff";
+          ctx.shadowBlur = 0;
+          ctx.lineWidth = bw * 0.3;
+          [[inv,inv],[-inv,-inv],[inv,-inv],[-inv,inv]].forEach(([dx,dy]) => {
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + dx * len, cy + dy * len);
+            ctx.stroke();
+          });
+          ctx.restore();
+        }
+        break;
+      }
+      case "bomb": {
+        const g = 7;
+        for (let r = 0; r < g; r++) for (let c = 0; c < g; c++) {
+          const inRange = Math.abs(r - 3) <= 2 && Math.abs(c - 3) <= 2;
+          ctx.fillStyle = "#222";
+          ctx.fillRect(c * gridS + 2, r * gridS + 2, gridS - 4, gridS - 4);
+          if (inRange && t > 0.2) {
+            const dist = Math.max(Math.abs(r - 3), Math.abs(c - 3));
+            const delay = dist * 0.1;
+            const localT = Math.max(0, t - 0.2 - delay);
+            if (localT > 0) {
+              ctx.fillStyle = `rgba(255,136,0,${Math.min(localT * 3, 1) * (1-t) * 0.8})`;
+              ctx.fillRect(c * gridS + 2, r * gridS + 2, gridS - 4, gridS - 4);
+            }
+          }
+        }
+        if (t > 0.15 && t < 0.7) {
+          const ringT = (t - 0.15) / 0.55;
+          const ringR = gridS * 3.5 * ringT;
+          ctx.save();
+          ctx.globalAlpha = (1 - ringT) * 0.6;
+          ctx.strokeStyle = "#ff8800";
+          ctx.shadowColor = "#ff8800";
+          ctx.shadowBlur = 15;
+          ctx.lineWidth = gridS * 0.35 * (1 - ringT);
+          ctx.beginPath();
+          ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+        break;
+      }
+      case "rainbow": {
+        const g = 7;
+        const targetColor = 0;
+        for (let r = 0; r < g; r++) for (let c = 0; c < g; c++) {
+          const ci = (r * 3 + c * 7) % 8;
+          const isTarget = ci === targetColor;
+          ctx.fillStyle = isTarget ? COLORS[ci] : "#333";
+          ctx.globalAlpha = isTarget && t > 0.3 ? Math.max(0, 1 - (t - 0.3) * 2) : 1;
+          ctx.fillRect(c * gridS + 2, r * gridS + 2, gridS - 4, gridS - 4);
+          ctx.globalAlpha = 1;
+        }
+        if (t > 0.2 && t < 0.8) {
+          const spinT = (t - 0.2) / 0.6;
+          ctx.save();
+          ctx.translate(cx, cy);
+          const rc = ["#e94560","#ff8a5c","#ffd700","#4ecdc4"];
+          rc.forEach((c, i) => {
+            const a = spinT * Math.PI * 4 + i * Math.PI / 2;
+            ctx.strokeStyle = c;
+            ctx.shadowColor = c;
+            ctx.shadowBlur = 8;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(0, 0, 30 + spinT * 20, a, a + Math.PI * 0.4);
+            ctx.stroke();
+          });
+          ctx.restore();
+        }
+        break;
+      }
+      case "cross": {
+        const g = 7;
+        for (let r = 0; r < g; r++) for (let c = 0; c < g; c++) {
+          ctx.fillStyle = "#222";
+          ctx.fillRect(c * gridS + 2, r * gridS + 2, gridS - 4, gridS - 4);
+        }
+        if (t > 0.1 && t < 0.9) {
+          const reach = Math.min((t - 0.1) * 2.5, 1);
+          const fade = 1 - Math.max(0, (t - 0.6) / 0.3);
+          const bw = gridS * 0.6 * fade;
+          ctx.save();
+          ctx.lineCap = "round";
+          [["#ff4444",1,0],["#ff4444",-1,0],["#4488ff",0,1],["#4488ff",0,-1]].forEach(([col,dx,dy]) => {
+            ctx.globalAlpha = fade * 0.6;
+            ctx.strokeStyle = col;
+            ctx.shadowColor = col;
+            ctx.shadowBlur = 15;
+            ctx.lineWidth = bw;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + dx * w * reach, cy + dy * h * reach);
+            ctx.stroke();
+            ctx.strokeStyle = "#fff";
+            ctx.shadowBlur = 0;
+            ctx.lineWidth = bw * 0.3;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + dx * w * reach, cy + dy * h * reach);
+            ctx.stroke();
+          });
+          ctx.restore();
+        }
+        break;
+      }
+      case "star_cross": {
+        const g = 7;
+        for (let r = 0; r < g; r++) for (let c = 0; c < g; c++) {
+          ctx.fillStyle = "#222";
+          ctx.fillRect(c * gridS + 2, r * gridS + 2, gridS - 4, gridS - 4);
+        }
+        if (t > 0.1 && t < 0.9) {
+          const reach = Math.min((t - 0.1) * 2.5, 1);
+          const fade = 1 - Math.max(0, (t - 0.6) / 0.3);
+          const bw = gridS * 0.5 * fade;
+          const inv = Math.SQRT1_2;
+          const dirs = [
+            ["#ff4444",1,0],["#ff4444",-1,0],["#4488ff",0,1],["#4488ff",0,-1],
+            ["#44ff88",inv,inv],["#44ff88",-inv,-inv],["#ff44ff",inv,-inv],["#ff44ff",-inv,inv]
+          ];
+          ctx.save();
+          ctx.lineCap = "round";
+          dirs.forEach(([col,dx,dy]) => {
+            const len = w * 0.7 * reach;
+            ctx.globalAlpha = fade * 0.5;
+            ctx.strokeStyle = col;
+            ctx.shadowColor = col;
+            ctx.shadowBlur = 12;
+            ctx.lineWidth = bw;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + dx * len, cy + dy * len);
+            ctx.stroke();
+            ctx.strokeStyle = "#fff";
+            ctx.shadowBlur = 0;
+            ctx.lineWidth = bw * 0.3;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + dx * len, cy + dy * len);
+            ctx.stroke();
+          });
+          ctx.restore();
+        }
+        break;
+      }
+      case "triple_line": {
+        const g = 7;
+        for (let r = 0; r < g; r++) for (let c = 0; c < g; c++) {
+          const inRange = r >= 2 && r <= 4 || c >= 2 && c <= 4;
+          ctx.fillStyle = "#222";
+          ctx.fillRect(c * gridS + 2, r * gridS + 2, gridS - 4, gridS - 4);
+          if (inRange && t > 0.15) {
+            const localT = Math.min((t - 0.15) * 2, 1);
+            ctx.fillStyle = `rgba(255,200,0,${localT * (1 - t) * 0.6})`;
+            ctx.fillRect(c * gridS + 2, r * gridS + 2, gridS - 4, gridS - 4);
+          }
+        }
+        if (t > 0.1 && t < 0.8) {
+          const reach = Math.min((t - 0.1) * 3, 1);
+          const fade = 1 - Math.max(0, (t - 0.5) / 0.3);
+          ctx.save();
+          ctx.globalAlpha = fade * 0.4;
+          ctx.strokeStyle = "#ffc800";
+          ctx.shadowColor = "#ffc800";
+          ctx.shadowBlur = 10;
+          ctx.lineCap = "round";
+          for (let d = -1; d <= 1; d++) {
+            ctx.lineWidth = gridS * 0.3 * fade;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy + d * gridS);
+            ctx.lineTo(cx + reach * w, cy + d * gridS);
+            ctx.moveTo(cx, cy + d * gridS);
+            ctx.lineTo(cx - reach * w, cy + d * gridS);
+            ctx.moveTo(cx + d * gridS, cy);
+            ctx.lineTo(cx + d * gridS, cy + reach * h);
+            ctx.moveTo(cx + d * gridS, cy);
+            ctx.lineTo(cx + d * gridS, cy - reach * h);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+        break;
+      }
+      case "big_bomb": {
+        const g = 7;
+        for (let r = 0; r < g; r++) for (let c = 0; c < g; c++) {
+          const inRange = Math.abs(r - 3) <= 3 && Math.abs(c - 3) <= 3;
+          ctx.fillStyle = "#222";
+          ctx.fillRect(c * gridS + 2, r * gridS + 2, gridS - 4, gridS - 4);
+          if (inRange && t > 0.15) {
+            const dist = Math.max(Math.abs(r - 3), Math.abs(c - 3));
+            const delay = dist * 0.06;
+            const localT = Math.max(0, t - 0.15 - delay);
+            if (localT > 0) {
+              ctx.fillStyle = `rgba(255,100,0,${Math.min(localT * 4, 1) * (1-t) * 0.7})`;
+              ctx.fillRect(c * gridS + 2, r * gridS + 2, gridS - 4, gridS - 4);
+            }
+          }
+        }
+        if (t > 0.1 && t < 0.6) {
+          const ringT = (t - 0.1) / 0.5;
+          ctx.save();
+          ctx.globalAlpha = (1 - ringT) * 0.7;
+          ctx.strokeStyle = "#fff";
+          ctx.shadowColor = "#fff";
+          ctx.shadowBlur = 20;
+          ctx.lineWidth = gridS * 0.5 * (1 - ringT);
+          ctx.beginPath();
+          ctx.arc(cx, cy, gridS * 4 * ringT, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+        break;
+      }
+      case "rainbow_line": {
+        const g = 7;
+        const targetColor = 0;
+        for (let r = 0; r < g; r++) for (let c = 0; c < g; c++) {
+          const ci = (r * 3 + c * 7) % 8;
+          const isTarget = ci === targetColor;
+          if (isTarget && t > 0.3) {
+            ctx.fillStyle = "#ffd700";
+            ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t * 20);
+          } else {
+            ctx.fillStyle = isTarget ? COLORS[ci] : "#333";
+            ctx.globalAlpha = 1;
+          }
+          ctx.fillRect(c * gridS + 2, r * gridS + 2, gridS - 4, gridS - 4);
+          ctx.globalAlpha = 1;
+        }
+        break;
+      }
+      case "rainbow_bomb": {
+        const g = 7;
+        const targetColor = 0;
+        for (let r = 0; r < g; r++) for (let c = 0; c < g; c++) {
+          const ci = (r * 3 + c * 7) % 8;
+          const isTarget = ci === targetColor;
+          if (isTarget && t > 0.3) {
+            ctx.fillStyle = "#ff6600";
+            ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t * 20);
+          } else {
+            ctx.fillStyle = isTarget ? COLORS[ci] : "#333";
+            ctx.globalAlpha = 1;
+          }
+          ctx.fillRect(c * gridS + 2, r * gridS + 2, gridS - 4, gridS - 4);
+          ctx.globalAlpha = 1;
+        }
+        break;
+      }
+      case "galaxy": {
+        const g = 7;
+        for (let r = 0; r < g; r++) for (let c = 0; c < g; c++) {
+          const ci = (r * 3 + c * 7) % 8;
+          const fade = t > 0.3 ? Math.max(0, 1 - (t - 0.3) * 2) : 1;
+          ctx.fillStyle = COLORS[ci];
+          ctx.globalAlpha = fade;
+          ctx.fillRect(c * gridS + 2, r * gridS + 2, gridS - 4, gridS - 4);
+          ctx.globalAlpha = 1;
+        }
+        if (t > 0.2 && t < 0.8) {
+          const flashT = (t - 0.2) / 0.6;
+          ctx.save();
+          ctx.globalAlpha = (1 - flashT) * 0.4;
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, w, h);
+          ctx.restore();
+        }
+        break;
+      }
+    }
+
+    if (frame < totalFrames) {
+      requestAnimationFrame(step);
+    } else {
+      demos[type] = false;
+    }
+  }
+  requestAnimationFrame(step);
+}
+
+// Draw all icons
+["line-h","line-v","line-d","bomb","rainbow"].forEach(t => {
+  drawIcon("icon-" + t, t.replace(/-/g, "_"));
+});
+["cross","star-cross","triple-line","big-bomb","rainbow-line","rainbow-bomb","galaxy"].forEach(t => {
+  drawComboIcon("icon-" + t, t.replace(/-/g, "_"));
+});
+</script>
+</body>
+</html>
