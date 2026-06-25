@@ -4591,9 +4591,20 @@
 
         if (selected && selected.r === r && selected.c === c) {
           ctx.save();
-          ctx.strokeStyle = "#fff";
-          ctx.lineWidth = 3;
-          ctx.strokeRect(c * cellSize + 2, r * cellSize + 2, cellSize - 4, cellSize - 4);
+          const isActivatable = piece.special && TAP_ACTIVATE_SPECIALS.has(piece.special);
+          if (isActivatable) {
+            const pulse = 0.4 + Math.sin(performance.now() / 200) * 0.2;
+            ctx.strokeStyle = "#ffd700";
+            ctx.lineWidth = 3;
+            ctx.globalAlpha = pulse;
+            ctx.shadowColor = "#ffd700";
+            ctx.shadowBlur = 10;
+            ctx.strokeRect(c * cellSize + 1, r * cellSize + 1, cellSize - 2, cellSize - 2);
+          } else {
+            ctx.strokeStyle = "#fff";
+            ctx.lineWidth = 3;
+            ctx.strokeRect(c * cellSize + 2, r * cellSize + 2, cellSize - 4, cellSize - 4);
+          }
           ctx.restore();
         }
       }
@@ -5716,6 +5727,11 @@
       .map(Number)
       .sort((a, b) => a - b);
     let next = lastCleared.length > 0 ? Math.min(lastCleared[lastCleared.length - 1] + 1, STAGES.length - 1) : 0;
+    const gate = getGateFor(next);
+    if (gate && getTotalStars() < gate.stars) {
+      showGateBlockMessage(gate);
+      return;
+    }
     if (!isStageUnlocked(next)) {
       buildStageSelect();
       showScreen("stageSelect");
@@ -5908,20 +5924,64 @@
     applyVisualOptions();
   });
 
-  document.getElementById("btn-retry").addEventListener("click", () => {
-    if (!confirm("リトライしますか？")) return;
+  function showGameModal(text, confirmLabel, cancelLabel) {
+    return new Promise((resolve) => {
+      const overlay = document.getElementById("game-modal-overlay");
+      const textEl = document.getElementById("game-modal-text");
+      const buttonsEl = document.getElementById("game-modal-buttons");
+      textEl.textContent = text;
+      buttonsEl.innerHTML = "";
+      const btnConfirm = document.createElement("button");
+      btnConfirm.className = "modal-btn-confirm";
+      btnConfirm.textContent = confirmLabel || "はい";
+      const btnCancel = document.createElement("button");
+      btnCancel.className = "modal-btn-cancel";
+      btnCancel.textContent = cancelLabel || "いいえ";
+      btnCancel.addEventListener("click", () => { overlay.classList.add("hidden"); resolve(false); });
+      btnConfirm.addEventListener("click", () => { overlay.classList.add("hidden"); resolve(true); });
+      buttonsEl.appendChild(btnCancel);
+      buttonsEl.appendChild(btnConfirm);
+      overlay.classList.remove("hidden");
+    });
+  }
+
+  function showGateBlockMessage(gate) {
+    const total = getTotalStars();
+    const need = gate.stars - total;
+    const toast = document.getElementById("gate-toast");
+    toast.textContent = `★ あと${need}個で次のエリア解放！`;
+    toast.classList.remove("hidden");
+    setTimeout(() => { toast.classList.add("hidden"); }, 2500);
+    buildStageSelect();
+    showScreen("stageSelect");
+  }
+
+  document.getElementById("btn-retry").addEventListener("click", async () => {
+    const ok = await showGameModal("リトライしますか？");
+    if (!ok) return;
     track("stage_retry", { stage: STAGES[currentStage].name });
     startStage(currentStage);
   });
 
-  document.getElementById("btn-quit").addEventListener("click", () => {
-    if (!confirm("タイトルに戻りますか？")) return;
+  document.getElementById("btn-quit").addEventListener("click", async () => {
+    const ok = await showGameModal("タイトルに戻りますか？");
+    if (!ok) return;
     showScreen("title");
   });
 
   document.getElementById("btn-next").addEventListener("click", () => {
     const next = currentStage + 1;
-    if (next >= STAGES.length || !isStageUnlocked(next)) {
+    if (next >= STAGES.length) {
+      buildStageSelect();
+      showScreen("stageSelect");
+      return;
+    }
+    const gate = getGateFor(next);
+    if (gate && getTotalStars() < gate.stars) {
+      showGateBlockMessage(gate);
+      return;
+    }
+    if (!isStageUnlocked(next)) {
       buildStageSelect();
       showScreen("stageSelect");
       return;
@@ -5986,6 +6046,13 @@
           currentStage = i;
           startStage(i);
         });
+      }
+
+      if (i === lastClearedIdx + 1 && unlocked) {
+        btn.classList.add("stage-current");
+        requestAnimationFrame(() => btn.scrollIntoView({ behavior: "smooth", block: "center" }));
+      } else if (i === lastClearedIdx && lastClearedIdx === visibleUpTo - 6 + 5) {
+        requestAnimationFrame(() => btn.scrollIntoView({ behavior: "smooth", block: "center" }));
       }
 
       grid.appendChild(btn);
@@ -6087,11 +6154,15 @@
     alert("全ステージを解放しました");
   });
 
-  document.getElementById("btn-debug-reset").addEventListener("click", () => {
-    if (confirm("セーブデータをリセットしますか？")) {
+  document.getElementById("btn-debug-reset").addEventListener("click", async () => {
+    const ok = await showGameModal("セーブデータをリセットしますか？", "リセット", "キャンセル");
+    if (ok) {
       saveData = { cleared: {}, bestStars: {}, coins: 0 };
       writeSave();
-      alert("リセットしました");
+      const toast = document.getElementById("gate-toast");
+      toast.textContent = "リセットしました";
+      toast.classList.remove("hidden");
+      setTimeout(() => { toast.classList.add("hidden"); }, 2000);
     }
   });
 

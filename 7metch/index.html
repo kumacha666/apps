@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>ナナメッチ — 斜めマッチパズル</title>
@@ -106,6 +106,15 @@
       新しいバージョンがあります
       <button id="btn-update">更新する</button>
     </div>
+
+    <div id="game-modal-overlay" class="hidden">
+      <div id="game-modal">
+        <p id="game-modal-text"></p>
+        <div id="game-modal-buttons"></div>
+      </div>
+    </div>
+
+    <div id="gate-toast" class="hidden"></div>
 
     <div id="screen-options" class="screen">
       <h2>設定</h2>
