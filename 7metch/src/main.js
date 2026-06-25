@@ -13,6 +13,19 @@ G.screens = {
   result: document.getElementById("screen-result"),
   options: document.getElementById("screen-options"),
 };
+G.dom = {
+  hudStage: document.getElementById("hud-stage"),
+  hudMoves: document.getElementById("hud-moves"),
+  hudMissionLabel: document.getElementById("hud-mission-label"),
+  hudMissionProgress: document.getElementById("hud-mission-progress"),
+  hudStars: document.getElementById("hud-stars"),
+  resultTitle: document.getElementById("result-title"),
+  resultStars: document.getElementById("result-stars"),
+  resultDetails: document.getElementById("result-details"),
+  btnNext: document.getElementById("btn-next"),
+  btnRescue: document.getElementById("btn-rescue"),
+  itemCoinCount: document.getElementById("item-coin-count"),
+};
 G.STAGES = buildStages();
 G.options = loadOptions();
 G.saveData = loadSave();

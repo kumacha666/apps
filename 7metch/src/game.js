@@ -1,4 +1,4 @@
-import { G, PIECE_COLORS, ANIM, ITEM_COSTS, STAR_GATES, PIECE_NAMES_JA, writeSave } from "./state.js";
+import { G, PIECE_COLORS, ANIM, ITEM_COSTS, STAR_GATES, PIECE_NAMES_JA, SCORE_PER_PIECE, writeSave } from "./state.js";
 import { findAllMatches, findSpecialCreations, activateSpecial, applyGravityData, swapPieces, getComboType, createBoard, countAvailableMoves, damageAdjacentIce, tickCountdowns, startHintTimer, clearHint, isHole, isRock, randomPiece, inBounds, initCellState, TAP_ACTIVATE_SPECIALS } from "./board.js";
 import { animateSwap, animateClear, animateDrop, sleep } from "./animations.js";
 import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, addFloatingText, hasActiveVFX, updateVFX } from "./vfx.js";
@@ -14,6 +14,16 @@ import { showScreen } from "./ui.js";
 
 function isPlayable(r, c) {
   return !isHole(r, c) && !isRock(r, c);
+}
+
+function trackClears(clearList) {
+  clearList.forEach(([r, c]) => {
+    if (G.board[r][c]) {
+      const ci = G.board[r][c].color;
+      G.colorCleared[ci] = (G.colorCleared[ci] || 0) + 1;
+      G.totalCleared++;
+    }
+  });
 }
 
 
@@ -36,14 +46,8 @@ async function handleCountdownExplosions(exploded) {
     }
   }
   const clearList = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols]);
-  clearList.forEach(([r, c]) => {
-    if (G.board[r][c]) {
-      const ci = G.board[r][c].color;
-      G.colorCleared[ci] = (G.colorCleared[ci] || 0) + 1;
-      G.totalCleared++;
-    }
-  });
-  G.score += clearList.length * 10;
+  trackClears(clearList);
+  G.score += clearList.length * SCORE_PER_PIECE;
   await animateClear(clearList);
   clearList.forEach(([r, c]) => { G.board[r][c] = null; });
   damageAdjacentIce(clearList);
@@ -94,14 +98,8 @@ export async function activateByTap(r, c) {
     }
   }
 
-  clearList.forEach(([cr, cc]) => {
-    if (G.board[cr][cc]) {
-      const ci = G.board[cr][cc].color;
-      G.colorCleared[ci] = (G.colorCleared[ci] || 0) + 1;
-      G.totalCleared++;
-    }
-  });
-  G.score += clearList.length * 10 * G.chainCount;
+  trackClears(clearList);
+  G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
 
   await animateClear(clearList, [{ r, c, type: piece.special, color: piece.color }]);
   clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
@@ -243,14 +241,8 @@ export async function doMove(r1, c1, r2, c2) {
       });
 
       const clearList = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols]);
-      clearList.forEach(([r, c]) => {
-        if (G.board[r][c]) {
-          const ci = G.board[r][c].color;
-          G.colorCleared[ci] = (G.colorCleared[ci] || 0) + 1;
-          G.totalCleared++;
-        }
-      });
-      G.score += clearList.length * 10 * G.chainCount;
+      trackClears(clearList);
+      G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
 
       const comboInfo = [];
       if (comboType === "board_clear") comboInfo.push({ r: r2, c: c2, type: "galaxy", color: (p2 || p1).color });
@@ -317,14 +309,8 @@ export async function doMove(r1, c1, r2, c2) {
         }
       });
 
-      clearList.forEach(([cr, cc]) => {
-        if (G.board[cr][cc]) {
-          const ci = G.board[cr][cc].color;
-          G.colorCleared[ci] = (G.colorCleared[ci] || 0) + 1;
-          G.totalCleared++;
-        }
-      });
-      G.score += clearList.length * 10 * G.chainCount;
+      trackClears(clearList);
+      G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
 
       await animateClear(clearList, [{ r: rainbowR, c: rainbowC, type: "rainbow", color: targetColor }]);
       clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
@@ -411,16 +397,8 @@ export async function resolveMatches() {
 
     const clearList = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols]);
 
-    clearList.forEach(([r, c]) => {
-      if (G.board[r][c]) {
-        const ci = G.board[r][c].color;
-        G.colorCleared[ci] = (G.colorCleared[ci] || 0) + 1;
-        G.totalCleared++;
-      }
-    });
-
-    const points = clearList.length * 10 * G.chainCount;
-    G.score += points;
+    trackClears(clearList);
+    G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
 
     if (!hasSpecialActivation) SFX.clear(G.chainCount);
 
@@ -473,7 +451,7 @@ export async function resolveBoard() {
 
 export function updateItemBar() {
   const coins = G.saveData.coins || 0;
-  const el = document.getElementById("item-coin-count");
+  const el = G.dom.itemCoinCount;
   if (G.debugMode) {
     if (el) el.textContent = "∞";
     document.querySelectorAll(".item-btn").forEach(btn => { btn.disabled = false; });
@@ -521,14 +499,8 @@ export async function usePinpoint(r, c) {
   }
 
   const clearList = [...cleared].map(v => [Math.floor(v / G.cols), v % G.cols]);
-  clearList.forEach(([cr, cc]) => {
-    if (G.board[cr][cc]) {
-      const ci = G.board[cr][cc].color;
-      G.colorCleared[ci] = (G.colorCleared[ci] || 0) + 1;
-      G.totalCleared++;
-    }
-  });
-  G.score += clearList.length * 10;
+  trackClears(clearList);
+  G.score += clearList.length * SCORE_PER_PIECE;
 
   if (!G.board[r][c].special) SFX.bomb();
   await animateClear(clearList);
@@ -611,14 +583,8 @@ async function useColorBomb(colorIndex) {
   }
 
   const clearList = [...cleared].map(v => [Math.floor(v / G.cols), v % G.cols]);
-  clearList.forEach(([cr, cc]) => {
-    if (G.board[cr][cc]) {
-      const ci = G.board[cr][cc].color;
-      G.colorCleared[ci] = (G.colorCleared[ci] || 0) + 1;
-      G.totalCleared++;
-    }
-  });
-  G.score += clearList.length * 10;
+  trackClears(clearList);
+  G.score += clearList.length * SCORE_PER_PIECE;
 
   SFX.rainbow();
   await animateClear(clearList);
@@ -671,11 +637,12 @@ export function spawnSpecialAt(r, c, type) {
 // ============================================================
 
 export function updateHUD() {
-  document.getElementById("hud-stage").textContent = `Stage ${G.STAGES[G.currentStage].name}`;
-  document.getElementById("hud-moves").textContent = `のこり ${G.movesLeft} 手`;
+  const d = G.dom;
+  d.hudStage.textContent = `Stage ${G.STAGES[G.currentStage].name}`;
+  d.hudMoves.textContent = `のこり ${G.movesLeft} 手`;
 
   const m = G.STAGES[G.currentStage].mission;
-  document.getElementById("hud-mission-label").innerHTML = getMissionText(m, true);
+  d.hudMissionLabel.innerHTML = getMissionText(m, true);
 
   let current = 0;
   let target = 0;
@@ -683,35 +650,34 @@ export function updateHUD() {
     case "score":
       current = G.score;
       target = m.target;
-      document.getElementById("hud-mission-progress").textContent = `${current} / ${target} 点`;
+      d.hudMissionProgress.textContent = `${current} / ${target} 点`;
       break;
     case "clear":
       current = G.totalCleared;
       target = m.count;
-      document.getElementById("hud-mission-progress").textContent = `${current} / ${target} 個`;
+      d.hudMissionProgress.textContent = `${current} / ${target} 個`;
       break;
     case "color":
       current = G.colorCleared[m.colorIndex] || 0;
       target = m.count;
-      document.getElementById("hud-mission-progress").textContent = `${current} / ${target} 個`;
+      d.hudMissionProgress.textContent = `${current} / ${target} 個`;
       break;
     case "special":
       current = G.specialsCreated;
       target = m.count;
-      document.getElementById("hud-mission-progress").textContent = `${current} / ${target} 個`;
+      d.hudMissionProgress.textContent = `${current} / ${target} 個`;
       break;
     case "chain":
       current = G.maxChain;
       target = m.count;
-      document.getElementById("hud-mission-progress").textContent = `${current} / ${target} チェイン`;
+      d.hudMissionProgress.textContent = `${current} / ${target} チェイン`;
       break;
   }
 
-  const progressEl = document.getElementById("hud-mission-progress");
   if (current >= target) {
-    progressEl.style.color = "#4ecdc4";
+    d.hudMissionProgress.style.color = "#4ecdc4";
   } else {
-    progressEl.style.color = "";
+    d.hudMissionProgress.style.color = "";
   }
 
   const stg = G.STAGES[G.currentStage];
@@ -720,7 +686,6 @@ export function updateHUD() {
   if (usedMoves > stg.star3moves) currentStars = 2;
   if (usedMoves > stg.star2moves) currentStars = 1;
 
-  const starsEl = document.getElementById("hud-stars");
   let html = "";
   for (let s = 0; s < 3; s++) {
     html += s < currentStars
@@ -734,7 +699,7 @@ export function updateHUD() {
     const margin = stg.star2moves - usedMoves;
     if (margin >= 1) html += `<span class="star-hint">あと${margin}手</span>`;
   }
-  starsEl.innerHTML = html;
+  d.hudStars.innerHTML = html;
 }
 
 // ============================================================
@@ -818,10 +783,9 @@ export function getFailureProgress(mission) {
 }
 
 export function showResult(win, stars, failedMission) {
-  document.getElementById("result-title").textContent = win ? "クリア！" : "あと少し…";
-
-  const starsEl = document.getElementById("result-stars");
-  starsEl.innerHTML = "";
+  const d = G.dom;
+  d.resultTitle.textContent = win ? "クリア！" : "あと少し…";
+  d.resultStars.innerHTML = "";
 
   if (win) {
     for (let i = 0; i < 3; i++) {
@@ -832,7 +796,7 @@ export function showResult(win, stars, failedMission) {
       span.style.transition = "opacity 0.3s, transform 0.3s";
       span.style.transform = "scale(0.3)";
       if (i < stars) span.style.color = "#ffd700";
-      starsEl.appendChild(span);
+      d.resultStars.appendChild(span);
       setTimeout(() => {
         span.style.opacity = "1";
         span.style.transform = "scale(1.2)";
@@ -848,16 +812,13 @@ export function showResult(win, stars, failedMission) {
   if (!win && failedMission) {
     details += `<br><span style="color:#4ecdc4">${getFailureProgress(failedMission)}</span>`;
   }
-  document.getElementById("result-details").innerHTML = details;
+  d.resultDetails.innerHTML = details;
+  d.btnNext.style.display = win && G.currentStage < G.STAGES.length - 1 ? "" : "none";
 
-  const nextBtn = document.getElementById("btn-next");
-  nextBtn.style.display = win && G.currentStage < G.STAGES.length - 1 ? "" : "none";
-
-  const rescueBtn = document.getElementById("btn-rescue");
   if (!win && (G.debugMode || (G.saveData.coins || 0) >= ITEM_COSTS.addmoves)) {
-    rescueBtn.style.display = "";
+    d.btnRescue.style.display = "";
   } else {
-    rescueBtn.style.display = "none";
+    d.btnRescue.style.display = "none";
   }
 
   showScreen("result");
