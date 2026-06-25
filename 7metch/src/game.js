@@ -267,6 +267,53 @@ export async function doMove(r1, c1, r2, c2) {
       startHintTimer();
       return;
     }
+
+    // Countdown + special: both activate independently (no combo amplification)
+    if (p1.special === "countdown" || p2.special === "countdown") {
+      SFX.combo("big_bomb");
+      G.movesLeft--;
+      G.chainCount = 1;
+      updateHUD();
+
+      const cleared = new Set([r1 * G.cols + c1, r2 * G.cols + c2]);
+      const extra1 = activateSpecial(r1, c1, cleared, null);
+      extra1.forEach(([r, c]) => cleared.add(r * G.cols + c));
+      const extra2 = activateSpecial(r2, c2, cleared, null);
+      extra2.forEach(([r, c]) => cleared.add(r * G.cols + c));
+
+      const allCells = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols]);
+      allCells.forEach(([cr, cc]) => {
+        if (G.board[cr][cc] && G.board[cr][cc].special && !(cr === r1 && cc === c1) && !(cr === r2 && cc === c2)) {
+          const extra = activateSpecial(cr, cc, cleared, null);
+          extra.forEach(([er, ec]) => {
+            if (!cleared.has(er * G.cols + ec)) {
+              cleared.add(er * G.cols + ec);
+              allCells.push([er, ec]);
+            }
+          });
+        }
+      });
+
+      const clearList = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols]);
+      trackClears(clearList);
+      G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
+
+      await animateClear(clearList, [{ r: r2, c: c2, type: "big_bomb", color: (p2 || p1).color }]);
+      clearList.forEach(([r, c]) => { G.board[r][c] = null; });
+      damageAdjacentIce(clearList);
+
+      const fallMap = applyGravityData();
+      await animateDrop(fallMap);
+      await sleep(ANIM.CHAIN_PAUSE_MS);
+
+      await resolveBoard();
+
+      updateHUD();
+      checkWinLose();
+      G.animating = false;
+      startHintTimer();
+      return;
+    }
   }
 
   // Rainbow + normal piece swap

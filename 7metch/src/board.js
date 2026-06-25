@@ -628,8 +628,8 @@ export function swapPieces(r1, c1, r2, c2) {
 // ---------------------------------------------------------------------------
 
 export function getComboType(s1, s2) {
-  const normalize = (s) => s === "countdown" ? "bomb" : s;
-  const pair = [normalize(s1), normalize(s2)].sort().join("+");
+  if (s1 === "countdown" || s2 === "countdown") return null;
+  const pair = [s1, s2].sort().join("+");
   const combos = {
     "line_h+line_h": "cross",
     "line_h+line_v": "cross",
