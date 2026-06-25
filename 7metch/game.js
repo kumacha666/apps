@@ -4178,7 +4178,7 @@
     const blastRadius = cellSize * 3.5;
     const rayCount = 12;
 
-    await animateFrames(15, (frame, t) => {
+    await animateFrames(22, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         oc.translate(origin.x, origin.y);
@@ -4238,9 +4238,9 @@
       r, c, dist: Math.abs(r - info.r) + Math.abs(c - info.c)
     }));
 
-    await animateFrames(30, (frame, t) => {
+    await animateFrames(42, (frame, t) => {
       for (const { r, c, dist } of cellDistances) {
-        if (frame === dist * 2 + 1) {
+        if (frame === dist * 3 + 1) {
           const cc = cellCenter(r, c);
           const pColor = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || color) : color;
           addBurstParticles(cc.x, cc.y, pColor, 12, { speed: 3.5, size: 4.5, decay: 0.035, sizeDecay: 0.05 });
@@ -4295,7 +4295,7 @@
     const arcColors = PIECE_COLORS.slice(0, 6);
     const arcCount = 6;
 
-    await animateFrames(18, (frame, t) => {
+    await animateFrames(25, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         oc.translate(origin.x, origin.y);
@@ -4357,7 +4357,7 @@
         color: (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || color) : color };
     });
 
-    await animateFrames(35, (frame, t) => {
+    await animateFrames(48, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         oc.lineCap = "round";
@@ -4394,7 +4394,7 @@
           oc.moveTo(origin.x, origin.y);
           oc.lineTo(beamEndX, beamEndY);
           oc.stroke();
-          if (beamT >= 0.95 && fadeT < 0.3 && frame === Math.floor(snap.dist / (cellSize * 0.5)) + 8) {
+          if (beamT >= 0.95 && fadeT < 0.3 && frame === Math.floor(snap.dist / (cellSize * 0.5)) + 11) {
             addBurstParticles(snap.startX, snap.startY, bColor, 10, { speed: 3, size: 4, decay: 0.035, sizeDecay: 0.05 });
             addFlash(snap.startX, snap.startY, cellSize * 0.5, bColor, 6);
           }
@@ -4544,7 +4544,7 @@
     ];
     const offsets = [-cellSize, 0, cellSize];
 
-    await animateFrames(12, (frame, t) => {
+    await animateFrames(16, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         const pulse = 1 + Math.sin(frame * 1.5) * 0.1;
@@ -4577,7 +4577,7 @@
     }
     addBurstParticles(origin.x, origin.y, "#ffffff", 30, { speed: 6, size: 6, decay: 0.02, sizeDecay: 0.06 });
 
-    await animateFrames(40, (frame, t) => {
+    await animateFrames(55, (frame, t) => {
       for (const { r, c } of cells) {
         const key = r + "," + c;
         if (dissolved.has(key)) continue;
@@ -4648,7 +4648,7 @@
     const arcColors = PIECE_COLORS.slice(0, 6);
     const targetCells = info.primaryCells || cells.map(({ r, c }) => [r, c]);
 
-    await animateFrames(15, (frame, t) => {
+    await animateFrames(22, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         oc.translate(origin.x, origin.y);
@@ -4685,7 +4685,7 @@
       return { r, c, x: cc.x, y: cc.y, color: arcColors[i % arcColors.length] };
     });
 
-    await animateFrames(35, (frame, t) => {
+    await animateFrames(48, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         oc.lineCap = "round";
@@ -4722,7 +4722,7 @@
             sc, { vx: (Math.random() - 0.5) * 5, vy: (Math.random() - 0.5) * 5, size: 5, decay: 0.04, sizeDecay: 0.05 });
         }
       }
-      if (frame === 12) {
+      if (frame === 16) {
         for (const snap of cellSnaps) {
           addBurstParticles(snap.x, snap.y, snap.color, 8, { speed: 3, size: 4, decay: 0.035, sizeDecay: 0.05 });
           addFlash(snap.x, snap.y, cellSize * 0.5, snap.color, 5);
@@ -4748,7 +4748,7 @@
     const arcColors = PIECE_COLORS.slice(0, 6);
     const targetCells = info.primaryCells || cells.map(({ r, c }) => [r, c]);
 
-    await animateFrames(15, (frame, t) => {
+    await animateFrames(22, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         oc.translate(origin.x, origin.y);
@@ -4790,7 +4790,7 @@
       return { r, c, x: cc.x, y: cc.y, color: arcColors[i % arcColors.length] };
     });
 
-    await animateFrames(35, (frame, t) => {
+    await animateFrames(48, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         oc.lineCap = "round";
@@ -4814,7 +4814,7 @@
         }
         oc.restore();
       });
-      if (frame === 10) {
+      if (frame === 14) {
         for (const snap of cellSnaps) {
           addBurstParticles(snap.x, snap.y, snap.color, 10, { speed: 3.5, size: 4.5, decay: 0.03, sizeDecay: 0.05 });
           addFlash(snap.x, snap.y, cellSize * 0.6, snap.color, 6);
@@ -4851,7 +4851,7 @@
       return { r, c, sx: cc.x, sy: cc.y };
     });
 
-    await animateFrames(8, (frame, t) => {
+    await animateFrames(12, (frame, t) => {
       drawBoard((oc) => {
         for (const snap of cellSnaps) {
           const pullX = snap.sx + (origin.x - snap.sx) * t * 0.15;
@@ -4879,11 +4879,11 @@
       r, c, dist: Math.abs(r - info.r) + Math.abs(c - info.c)
     }));
 
-    await animateFrames(28, (frame, t) => {
-      if (frame === 8) addShockwave(origin.x, origin.y, cellSize * 5, 20, color);
-      if (frame === 14) addShockwave(origin.x, origin.y, cellSize * 4, 18, "#ffaa00");
+    await animateFrames(40, (frame, t) => {
+      if (frame === 12) addShockwave(origin.x, origin.y, cellSize * 5, 20, color);
+      if (frame === 20) addShockwave(origin.x, origin.y, cellSize * 4, 18, "#ffaa00");
       for (const { r, c, dist } of cellDists) {
-        if (frame === dist * 3 + 1) {
+        if (frame === dist * 4 + 1) {
           const cc = cellCenter(r, c);
           const pColor = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || color) : color;
           addBurstParticles(cc.x, cc.y, pColor, 8, { speed: 2.5, size: 3.5, decay: 0.04, sizeDecay: 0.05 });
@@ -4911,13 +4911,13 @@
       return { r, c, dist };
     });
 
-    await animateFrames(35, (frame, t) => {
-      if (frame === 10) {
+    await animateFrames(48, (frame, t) => {
+      if (frame === 14) {
         addShockwave(boardCX, boardCY, cellSize * 6, 22, "#ffff44");
         addScreenShake(4);
       }
       for (const { r, c, dist } of cellDists) {
-        if (frame === Math.floor(dist * 2) + 1) {
+        if (frame === Math.floor(dist * 2.7) + 1) {
           const cc = cellCenter(r, c);
           const pColor = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || "#ffffff") : "#ffffff";
           addBurstParticles(cc.x, cc.y, pColor, 6, { speed: 3, size: 3.5, decay: 0.035, sizeDecay: 0.05 });
