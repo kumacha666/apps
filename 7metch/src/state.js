@@ -34,6 +34,8 @@ export const STAR_GATES = [
   { stage: 450, stars: 890 },
 ];
 
+export const SCORE_PER_PIECE = 10;
+
 export const DRAG_THRESHOLD_RATIO = 0.15;
 
 export const ITEM_COSTS = { pinpoint: 3, shuffle: 5, addmoves: 8, colorbomb: 12 };
@@ -150,4 +152,5 @@ export const G = {
   shakeIntensity: 0,
   STAGES: null,
   screens: null,
+  dom: null,
 };
