@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "vite build && cp dist/game.js dist/index.html dist/style.css dist/manifest.json . && echo 'Deploy files copied to root'"
+    "deploy": "vite build && cp dist/game.js dist/index.html dist/style.css dist/manifest.json . && echo 'Deploy files copied to root. Run: git checkout index.html  to restore dev mode.'"
   },
   "devDependencies": {
     "terser": "^5.48.0",
