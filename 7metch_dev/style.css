@@ -43,29 +43,10 @@ body {
   flex-direction: column;
   position: relative;
   overflow: hidden;
-}
-
-#dev-banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  background: #e65100;
-  color: #fff;
-  text-align: center;
-  font-size: 0.75rem;
-  font-weight: 700;
-  padding: 2px 8px;
-  z-index: 9999;
-}
-
-#dev-badge {
-  background: #e65100;
-  color: #fff;
-  font-size: 0.7rem;
-  font-weight: 700;
-  padding: 2px 10px;
-  border-radius: 6px;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 
 .screen {
@@ -483,6 +464,15 @@ body {
 .stage-btn .stage-num { font-size: 0.75rem; }
 .stage-btn.star3 { border-color: var(--star3); background: linear-gradient(135deg, var(--bg-light) 40%, #ffd70040); }
 .stage-btn.star0 .stage-stars { color: var(--star0); }
+.stage-btn.stage-current {
+  border-color: var(--accent);
+  box-shadow: 0 0 8px var(--accent), 0 0 16px rgba(233, 69, 96, 0.3);
+  animation: stage-pulse 1.5s ease-in-out infinite;
+}
+@keyframes stage-pulse {
+  0%, 100% { box-shadow: 0 0 8px var(--accent); }
+  50% { box-shadow: 0 0 16px var(--accent), 0 0 24px rgba(233, 69, 96, 0.4); }
+}
 
 /* Game HUD */
 #screen-game {
@@ -940,11 +930,13 @@ body {
   background: var(--accent2);
   border: 2px solid transparent;
   border-radius: 10px;
-  padding: 6px 10px;
+  padding: 8px 12px;
   cursor: pointer;
   color: var(--text);
   transition: transform 0.1s, opacity 0.1s;
-  min-width: 48px;
+  min-width: 52px;
+  min-height: 48px;
+  justify-content: center;
 }
 
 .item-btn:active {
@@ -1040,6 +1032,90 @@ body {
 .btn-spawn.active {
   background: var(--gold);
   color: #000;
+}
+
+/* Custom Modal */
+#game-modal-overlay.hidden {
+  display: none;
+}
+#gate-toast.hidden {
+  display: none;
+}
+
+#game-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+#game-modal {
+  background: var(--bg-light);
+  border: 2px solid var(--accent2);
+  border-radius: 16px;
+  padding: 24px 28px;
+  max-width: 320px;
+  width: 85%;
+  text-align: center;
+}
+
+#game-modal-text {
+  font-size: 1rem;
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+
+#game-modal-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+#game-modal-buttons button {
+  flex: 1;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: none;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.modal-btn-confirm {
+  background: var(--accent);
+  color: #fff;
+}
+
+.modal-btn-cancel {
+  background: var(--accent2);
+  color: var(--text);
+}
+
+/* Gate Toast */
+#gate-toast {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--bg-light);
+  border: 2px solid var(--gold);
+  border-radius: 16px;
+  padding: 20px 28px;
+  z-index: 999;
+  text-align: center;
+  font-size: 1rem;
+  line-height: 1.6;
+  box-shadow: 0 0 30px rgba(255, 215, 0, 0.3);
+  animation: gate-pop 0.3s ease-out;
+}
+
+@keyframes gate-pop {
+  from { transform: translate(-50%, -50%) scale(0.8); opacity: 0; }
+  to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
 }
 
 @media (max-height: 700px) {
