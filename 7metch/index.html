@@ -15,7 +15,7 @@
     gtag('js', new Date());
     gtag('config', 'G-CT956V6Y2V');
   </script>
-  <script type="module" crossorigin src="./game.js"></script>
+  <script type="module" src="./src/main.js"></script>
   <link rel="stylesheet" crossorigin href="./style.css">
 </head>
 <body>
@@ -127,11 +127,13 @@
             <input type="range" id="opt-bgm-vol" min="0" max="100" value="70" />
             <span class="opt-val" id="opt-bgm-val">70</span>
           </div>
+          <div class="option-desc">バックグラウンドミュージックの音量</div>
           <div class="option-row">
             <label for="opt-sfx-vol">効果音</label>
             <input type="range" id="opt-sfx-vol" min="0" max="100" value="100" />
             <span class="opt-val" id="opt-sfx-val">100</span>
           </div>
+          <div class="option-desc">マッチ・アイテム使用時の効果音の音量</div>
         </div>
         <div class="option-group">
           <h3>映像</h3>
@@ -140,19 +142,23 @@
             <input type="range" id="opt-saturation" min="50" max="150" value="100" />
             <span class="opt-val" id="opt-sat-val">100</span>
           </div>
+          <div class="option-desc">ピースの色の鮮やかさ（100が標準）</div>
           <div class="option-row">
             <label for="opt-brightness">明るさ</label>
             <input type="range" id="opt-brightness" min="70" max="130" value="100" />
             <span class="opt-val" id="opt-brt-val">100</span>
           </div>
+          <div class="option-desc">画面全体の明るさ（100が標準）</div>
           <div class="option-row">
             <label for="opt-bg-anim">背景アニメーション</label>
             <label class="toggle-switch"><input type="checkbox" id="opt-bg-anim" checked /><span class="toggle-slider"></span></label>
           </div>
+          <div class="option-desc">タイトル・プレイ中の星のアニメーション</div>
           <div class="option-row">
             <label for="opt-screen-shake">画面シェイク</label>
             <label class="toggle-switch"><input type="checkbox" id="opt-screen-shake" checked /><span class="toggle-slider"></span></label>
           </div>
+          <div class="option-desc">スペシャルピース発動時の画面揺れ演出</div>
         </div>
         <button id="btn-options-reset" class="btn-link">設定をリセット</button>
       </div>
