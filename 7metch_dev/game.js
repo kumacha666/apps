@@ -3503,6 +3503,7 @@
         updateHUD();
 
         const comboCells = activateCombo(comboType, r2, c2, p1, p2);
+        const primaryCells = comboCells.map(([r, c]) => [r, c]);
         comboCells.push([r1, c1], [r2, c2]);
 
         // Activate specials on combo-cleared cells (chain reaction)
@@ -3534,8 +3535,8 @@
         else if (comboType === "big_bomb") comboInfo.push({ r: r2, c: c2, type: "big_bomb", color: (p2 || p1).color });
         else if (comboType === "cross" || comboType === "star_cross") comboInfo.push({ r: r2, c: c2, type: comboType, color: (p2 || p1).color });
         else if (comboType === "triple_line") comboInfo.push({ r: r2, c: c2, type: "triple_line", color: (p2 || p1).color });
-        else if (comboType === "rainbow_line") comboInfo.push({ r: r2, c: c2, type: "rainbow_line", color: (p2 || p1).color });
-        else if (comboType === "rainbow_bomb") comboInfo.push({ r: r2, c: c2, type: "rainbow_bomb", color: (p2 || p1).color });
+        else if (comboType === "rainbow_line") comboInfo.push({ r: r2, c: c2, type: "rainbow_line", color: (p2 || p1).color, primaryCells });
+        else if (comboType === "rainbow_bomb") comboInfo.push({ r: r2, c: c2, type: "rainbow_bomb", color: (p2 || p1).color, primaryCells });
         await animateClear(clearList, comboInfo);
         clearList.forEach(([r, c]) => { board[r][c] = null; });
         damageAdjacentIce(clearList);
@@ -4645,6 +4646,7 @@
     const info = specialInfos.find(s => s.type === "rainbow_line") || specialInfos[0];
     const origin = cellCenter(info.r, info.c);
     const arcColors = PIECE_COLORS.slice(0, 6);
+    const targetCells = info.primaryCells || cells.map(({ r, c }) => [r, c]);
 
     await animateFrames(15, (frame, t) => {
       drawBoard((oc) => {
@@ -4678,7 +4680,7 @@
     addShockwave(origin.x, origin.y, cellSize * 3, 18, "#ffffff");
     addFlash(origin.x, origin.y, cellSize * 4, "#ffffff", 15);
 
-    const cellSnaps = cells.map(({ r, c }, i) => {
+    const cellSnaps = targetCells.map(([r, c], i) => {
       const cc = cellCenter(r, c);
       return { r, c, x: cc.x, y: cc.y, color: arcColors[i % arcColors.length] };
     });
@@ -4744,6 +4746,7 @@
     const origin = cellCenter(info.r, info.c);
     const color = PIECE_COLORS[info.color] || "#ff8800";
     const arcColors = PIECE_COLORS.slice(0, 6);
+    const targetCells = info.primaryCells || cells.map(({ r, c }) => [r, c]);
 
     await animateFrames(15, (frame, t) => {
       drawBoard((oc) => {
@@ -4782,7 +4785,7 @@
     addShockwave(origin.x, origin.y, cellSize * 4, 22, "#ffffff");
     addFlash(origin.x, origin.y, cellSize * 5, "#ffffff", 18);
 
-    const cellSnaps = cells.map(({ r, c }, i) => {
+    const cellSnaps = targetCells.map(([r, c], i) => {
       const cc = cellCenter(r, c);
       return { r, c, x: cc.x, y: cc.y, color: arcColors[i % arcColors.length] };
     });
