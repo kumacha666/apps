@@ -609,6 +609,9 @@ export function initUI() {
     showScreen("title");
   });
 
+  // --- Canvas Input ---
+  initInput();
+
   // --- Initial screen ---
   showScreen("splash");
 }
