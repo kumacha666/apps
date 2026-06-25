@@ -510,6 +510,13 @@ body {
   color: #333;
 }
 
+.star-hint {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  margin-left: 4px;
+  letter-spacing: 0;
+}
+
 #hud-stage {
   font-weight: 700;
   font-size: 0.85rem;

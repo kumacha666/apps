@@ -1912,6 +1912,41 @@
       });
     },
 
+    // 18b. addMovesChime() - Power-up chime for +3 moves (~0.4s)
+    addMovesChime() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+      const notes = [523.25, 659.25, 783.99];
+      notes.forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0, t);
+        g.gain.setValueAtTime(0.1, t + i * 0.08);
+        g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.08 + 0.2);
+        osc.connect(g).connect(masterGain);
+        osc.start(t + i * 0.08);
+        osc.stop(t + i * 0.08 + 0.25);
+      });
+    },
+
+    // 19. coinSpend() - Coin spend sound (~0.2s)
+    coinSpend() {
+      if (!soundEnabled || !audioCtx) return;
+      const t = now();
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1200, t);
+      osc.frequency.exponentialRampToValueAtTime(600, t + 0.15);
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.08, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+      osc.connect(g).connect(masterGain);
+      osc.start(t);
+      osc.stop(t + 0.25);
+    },
+
     // 18. countdown() - Meteor alert (~0.4s)
     countdown() {
       if (!soundEnabled || !audioCtx) return;
@@ -3704,7 +3739,7 @@
       return;
     }
     animating = true;
-    if (!debugMode) { saveData.coins -= ITEM_COSTS.pinpoint; writeSave(); }
+    if (!debugMode) { saveData.coins -= ITEM_COSTS.pinpoint; writeSave(); SFX.coinSpend(); }
     updateItemBar();
 
     const cleared = new Set();
@@ -3756,7 +3791,7 @@
 
   async function useShuffle() {
     animating = true;
-    if (!debugMode) { saveData.coins -= ITEM_COSTS.shuffle; writeSave(); }
+    if (!debugMode) { saveData.coins -= ITEM_COSTS.shuffle; writeSave(); SFX.coinSpend(); }
     updateItemBar();
 
     const pieces = [];
@@ -3790,16 +3825,17 @@
 
   function useAddMoves() {
     if (!debugMode) { saveData.coins -= ITEM_COSTS.addmoves; writeSave(); }
+    SFX.coinSpend();
     movesLeft += 3;
     updateHUD();
     updateItemBar();
-    SFX.stageClear();
+    SFX.addMovesChime();
     startHintTimer();
   }
 
   async function useColorBomb(colorIndex) {
     animating = true;
-    if (!debugMode) { saveData.coins -= ITEM_COSTS.colorbomb; writeSave(); }
+    if (!debugMode) { saveData.coins -= ITEM_COSTS.colorbomb; writeSave(); SFX.coinSpend(); }
     updateItemBar();
 
     const cleared = new Set();
@@ -5505,6 +5541,13 @@
         ? '<span class="star-on">★</span>'
         : '<span class="star-off">★</span>';
     }
+    if (currentStars === 3) {
+      const margin = stg.star3moves - usedMoves;
+      html += `<span class="star-hint">あと${margin}手</span>`;
+    } else if (currentStars === 2) {
+      const margin = stg.star2moves - usedMoves;
+      html += `<span class="star-hint">あと${margin}手</span>`;
+    }
     starsEl.innerHTML = html;
   }
 
@@ -5553,24 +5596,68 @@
       writeSave();
 
       SFX.stageClear();
+      addScreenShake(3);
+      const cx = boardPixelW / 2;
+      const cy = boardPixelH / 2;
+      const colors = ["#ffd700", "#e94560", "#4ecdc4", "#ff8a5c", "#fff"];
+      colors.forEach(color => {
+        addBurstParticles(cx, cy, color, 8, { speed: 5, size: 6, decay: 0.015, sizeDecay: 0.04 });
+      });
+      addShockwave(cx, cy, boardPixelW * 0.6, 20, "#ffd700");
       track("stage_clear", { stage: stg.name, stars, moves_used: usedMoves, moves_total: stg.moves, mission_type: stg.mission.type, coins_earned: coinsEarned });
-      showResult(true, stars);
+      setTimeout(() => showResult(true, stars), 800);
     } else if (movesLeft <= 0) {
       const stg = STAGES[currentStage];
       SFX.stageFail();
       track("stage_fail", { stage: stg.name, moves_total: stg.moves, mission_type: stg.mission.type });
-      showResult(false, 0);
+      showResult(false, 0, m);
     }
   }
 
-  function showResult(win, stars) {
+  function getFailureProgress(mission) {
+    switch (mission.type) {
+      case "score": return `スコア ${score} / ${mission.target}（あと${mission.target - score}）`;
+      case "clear": return `消去 ${totalCleared} / ${mission.count}（あと${mission.count - totalCleared}個）`;
+      case "color": {
+        const done = colorCleared[mission.colorIndex] || 0;
+        return `${PIECE_NAMES_JA[mission.colorIndex]} ${done} / ${mission.count}（あと${mission.count - done}個）`;
+      }
+      case "special": return `特殊ピース ${specialsCreated} / ${mission.count}（あと${mission.count - specialsCreated}個）`;
+      case "chain": return `最大チェイン ${maxChain} / ${mission.count}`;
+    }
+    return "";
+  }
+
+  function showResult(win, stars, failedMission) {
     document.getElementById("result-title").textContent = win ? "クリア！" : "あと少し…";
-    document.getElementById("result-stars").textContent = win
-      ? "★".repeat(stars) + "☆".repeat(3 - stars)
-      : "";
+
+    const starsEl = document.getElementById("result-stars");
+    starsEl.innerHTML = "";
+
+    if (win) {
+      for (let i = 0; i < 3; i++) {
+        const span = document.createElement("span");
+        span.textContent = i < stars ? "★" : "☆";
+        span.style.opacity = "0";
+        span.style.display = "inline-block";
+        span.style.transition = "opacity 0.3s, transform 0.3s";
+        span.style.transform = "scale(0.3)";
+        if (i < stars) span.style.color = "#ffd700";
+        starsEl.appendChild(span);
+        setTimeout(() => {
+          span.style.opacity = "1";
+          span.style.transform = "scale(1.2)";
+          setTimeout(() => { span.style.transform = "scale(1)"; }, 200);
+        }, 300 + i * 300);
+      }
+    }
+
     let details = `スコア: ${score}`;
     if (win && coinsEarned > 0) {
       details += `<br><span class="coin-icon"></span> +${coinsEarned} コイン（所持: ${saveData.coins || 0}）`;
+    }
+    if (!win && failedMission) {
+      details += `<br><span style="color:#4ecdc4">${getFailureProgress(failedMission)}</span>`;
     }
     document.getElementById("result-details").innerHTML = details;
 
@@ -6210,7 +6297,7 @@
 
   document.getElementById("btn-rescue").addEventListener("click", () => {
     if (!debugMode && (saveData.coins || 0) < ITEM_COSTS.addmoves) return;
-    if (!debugMode) { saveData.coins -= ITEM_COSTS.addmoves; writeSave(); }
+    if (!debugMode) { saveData.coins -= ITEM_COSTS.addmoves; writeSave(); SFX.coinSpend(); }
     movesLeft += 3;
     updateHUD();
     updateItemBar();
