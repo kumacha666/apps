@@ -3076,10 +3076,11 @@
     return specials;
   }
 
-  function findSpecialHint() {
+  function findHint() {
     const PRIORITY = { rainbow: 3, bomb: 2, line_d: 2, line_h: 1, line_v: 1 };
     let bestList = [];
     let bestPriority = 0;
+    const normalList = [];
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -3096,9 +3097,11 @@
           const matches = findAllMatches();
           if (matches.length > 0) {
             const specials = findSpecialCreations(matches);
+            let hasSpecial = false;
             for (const sp of specials) {
               const p = PRIORITY[sp.type] || 0;
               if (p > 0) {
+                hasSpecial = true;
                 const colorMatches = matches.filter(([mr, mc]) =>
                   board[mr][mc] && board[mr][mc].color === sp.color);
                 const colorSet = new Set(colorMatches.map(([mr, mc]) => mr * cols + mc));
@@ -3116,21 +3119,28 @@
                 }
               }
             }
+            if (!hasSpecial) {
+              const pattern = matches.map(([mr, mc]) => ({ r: mr, c: mc }));
+              const pos1in = pattern.some(p => p.r === r && p.c === c);
+              const mover = pos1in ? { r: nr, c: nc } : { r, c };
+              normalList.push({ mover, pattern: pattern.filter(p => !(p.r === mover.r && p.c === mover.c)) });
+            }
           }
           swapPieces(r, c, nr, nc);
         }
       }
     }
 
-    if (bestList.length === 0) return null;
-    return bestList[Math.floor(Math.random() * bestList.length)];
+    if (bestList.length > 0) return bestList[Math.floor(Math.random() * bestList.length)];
+    if (normalList.length > 0) return normalList[Math.floor(Math.random() * normalList.length)];
+    return null;
   }
 
   function startHintTimer() {
     clearHint();
     hintTimer = setTimeout(() => {
       if (animating) return;
-      const hint = findSpecialHint();
+      const hint = findHint();
       if (hint) {
         hintData = hint;
         startHintAnim();
