@@ -604,9 +604,17 @@ export function initUI() {
   });
 
   // --- Splash Screen ---
-  document.getElementById("screen-splash").addEventListener("click", () => {
+  const splashHandler = () => {
     initAudio();
     showScreen("title");
+  };
+  document.getElementById("screen-splash").addEventListener("click", splashHandler);
+  document.addEventListener("keydown", function onSplashKey(e) {
+    if ((e.key === "Enter" || e.key === " ") && G.screens.splash.classList.contains("active")) {
+      e.preventDefault();
+      document.removeEventListener("keydown", onSplashKey);
+      splashHandler();
+    }
   });
 
   // --- Canvas Input ---
