@@ -689,7 +689,7 @@ export function updateHUD() {
   d.hudMoves.textContent = `のこり ${G.movesLeft} 手`;
 
   const m = G.STAGES[G.currentStage].mission;
-  d.hudMissionLabel.innerHTML = getMissionText(m, true);
+  d.hudMissionLabel.innerHTML = getMissionText(m, true, getMissionIconUrl);
 
   let current = 0;
   let target = 0;
