@@ -212,6 +212,7 @@ export function isMatchable(r, c) {
   if (!G.board[r][c]) return false;
   if (isHole(r, c) || isRock(r, c)) return false;
   if (G.board[r][c].special && TAP_ACTIVATE_SPECIALS.has(G.board[r][c].special)) return false;
+  if (G.board[r][c].special === "countdown") return false;
   return true;
 }
 
