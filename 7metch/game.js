@@ -1931,20 +1931,28 @@
       });
     },
 
-    // 19. coinSpend() - Coin spend sound (~0.2s)
+    // 19. coinSpend() - Coin spend sound (~0.25s)
     coinSpend() {
       if (!soundEnabled || !audioCtx) return;
       const t = now();
-      const osc = audioCtx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(1200, t);
-      osc.frequency.exponentialRampToValueAtTime(600, t + 0.15);
-      const g = audioCtx.createGain();
-      g.gain.setValueAtTime(0.08, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-      osc.connect(g).connect(masterGain);
-      osc.start(t);
-      osc.stop(t + 0.25);
+      const osc1 = audioCtx.createOscillator();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(1400, t);
+      osc1.frequency.exponentialRampToValueAtTime(700, t + 0.18);
+      const g1 = audioCtx.createGain();
+      g1.gain.setValueAtTime(0.22, t);
+      g1.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+      osc1.connect(g1).connect(masterGain);
+      osc1.start(t); osc1.stop(t + 0.3);
+      const osc2 = audioCtx.createOscillator();
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(900, t);
+      osc2.frequency.exponentialRampToValueAtTime(450, t + 0.15);
+      const g2 = audioCtx.createGain();
+      g2.gain.setValueAtTime(0.15, t);
+      g2.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+      osc2.connect(g2).connect(masterGain);
+      osc2.start(t); osc2.stop(t + 0.25);
     },
 
     // 18. countdown() - Meteor alert (~0.4s)
@@ -3349,7 +3357,7 @@
   let hintTimer = null;
   let hintData = null;
   let hintAnimId = null;
-  const HINT_DELAY_MS = 6000;
+  const HINT_DELAY_MS = 4000;
 
   function getComboType(s1, s2) {
     const normalize = (s) => s === "countdown" ? "bomb" : s;
@@ -4039,58 +4047,79 @@
     const color = PIECE_COLORS[info.color] || "#ffffff";
     const dissolved = new Set();
 
-    await animateFrames(8, (frame, t) => {
+    const beamDirs = [];
+    if (info.type === "line_h") {
+      beamDirs.push({ dx: 1, dy: 0 }, { dx: -1, dy: 0 });
+    } else if (info.type === "line_v") {
+      beamDirs.push({ dx: 0, dy: 1 }, { dx: 0, dy: -1 });
+    } else if (info.type === "line_d") {
+      const inv = Math.SQRT1_2;
+      beamDirs.push({ dx: inv, dy: inv }, { dx: -inv, dy: -inv }, { dx: inv, dy: -inv }, { dx: -inv, dy: inv });
+    }
+    const beamLen = Math.max(rows, cols) * cellSize;
+
+    await animateFrames(12, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         oc.shadowColor = color;
-        oc.shadowBlur = 10 + t * 20;
+        oc.shadowBlur = 12 + t * 30;
         oc.fillStyle = color;
-        oc.globalAlpha = 0.3 + t * 0.4;
+        oc.globalAlpha = 0.4 + t * 0.5;
         oc.beginPath();
-        oc.arc(origin.x, origin.y, cellSize * 0.4, 0, Math.PI * 2);
+        oc.arc(origin.x, origin.y, cellSize * (0.3 + t * 0.3), 0, Math.PI * 2);
         oc.fill();
         oc.restore();
       });
       drawVFX();
     });
 
-    addShockwave(origin.x, origin.y, cellSize * 1.5, 15, color);
-    addScreenShake(2);
+    addShockwave(origin.x, origin.y, cellSize * 2, 18, color);
+    addScreenShake(3);
 
-    const cometDirs = [];
-    if (info.type === "line_h") {
-      cometDirs.push({ dx: 1, dy: 0 }, { dx: -1, dy: 0 });
-    } else if (info.type === "line_v") {
-      cometDirs.push({ dx: 0, dy: 1 }, { dx: 0, dy: -1 });
-    } else if (info.type === "line_d") {
-      const inv = Math.SQRT1_2;
-      cometDirs.push({ dx: inv, dy: inv }, { dx: -inv, dy: -inv }, { dx: inv, dy: -inv }, { dx: -inv, dy: inv });
-    }
-    for (const d of cometDirs) {
-      addComet(origin.x, origin.y, d.dx, d.dy, color, cellSize * 0.35, 14);
+    for (const d of beamDirs) {
+      addComet(origin.x, origin.y, d.dx, d.dy, color, cellSize * 0.45, 18);
     }
 
-    await animateFrames(25, (frame, t) => {
+    await animateFrames(35, (frame, t) => {
       for (const { r, c } of cells) {
         const key = r + "," + c;
         if (dissolved.has(key)) continue;
         const cc = cellCenter(r, c);
         for (const comet of vfxComets) {
-          if (Math.hypot(comet.x - cc.x, comet.y - cc.y) < cellSize * 0.7) {
+          if (Math.hypot(comet.x - cc.x, comet.y - cc.y) < cellSize * 0.8) {
             dissolved.add(key);
-            addBurstParticles(cc.x, cc.y, color, 6, { speed: 2, size: 3, decay: 0.05, sizeDecay: 0.06 });
+            addBurstParticles(cc.x, cc.y, color, 8, { speed: 3, size: 4, decay: 0.04, sizeDecay: 0.05 });
+            addFlash(cc.x, cc.y, cellSize * 0.5, color, 6);
             break;
           }
         }
       }
-      drawBoard(() => {});
+      drawBoard((oc) => {
+        oc.save();
+        const beamAlpha = (1 - t) * 0.35;
+        if (beamAlpha > 0.01) {
+          oc.globalAlpha = beamAlpha;
+          oc.strokeStyle = color;
+          oc.shadowColor = color;
+          oc.shadowBlur = 15;
+          oc.lineWidth = cellSize * 0.15 * (1 - t * 0.5);
+          oc.lineCap = "round";
+          for (const d of beamDirs) {
+            oc.beginPath();
+            oc.moveTo(origin.x, origin.y);
+            oc.lineTo(origin.x + d.dx * beamLen * t, origin.y + d.dy * beamLen * t);
+            oc.stroke();
+          }
+        }
+        oc.restore();
+      });
       drawVFX();
     });
 
     for (const { r, c } of cells) {
       if (!dissolved.has(r + "," + c)) {
         const cc = cellCenter(r, c);
-        addBurstParticles(cc.x, cc.y, color, 5, { speed: 1.5, size: 2.5, decay: 0.05, sizeDecay: 0.05 });
+        addBurstParticles(cc.x, cc.y, color, 6, { speed: 2, size: 3, decay: 0.04, sizeDecay: 0.05 });
       }
     }
   }
@@ -5543,10 +5572,10 @@
     }
     if (currentStars === 3) {
       const margin = stg.star3moves - usedMoves;
-      html += `<span class="star-hint">あと${margin}手</span>`;
+      if (margin >= 1) html += `<span class="star-hint">あと${margin}手</span>`;
     } else if (currentStars === 2) {
       const margin = stg.star2moves - usedMoves;
-      html += `<span class="star-hint">あと${margin}手</span>`;
+      if (margin >= 1) html += `<span class="star-hint">あと${margin}手</span>`;
     }
     starsEl.innerHTML = html;
   }
