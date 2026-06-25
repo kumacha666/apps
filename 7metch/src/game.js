@@ -728,10 +728,10 @@ export function updateHUD() {
       : '<span class="star-off">★</span>';
   }
   if (currentStars === 3) {
-    const margin = stg.star3moves - usedMoves + 1;
+    const margin = stg.star3moves - usedMoves;
     if (margin >= 1) html += `<span class="star-hint">あと${margin}手</span>`;
   } else if (currentStars === 2) {
-    const margin = stg.star2moves - usedMoves + 1;
+    const margin = stg.star2moves - usedMoves;
     if (margin >= 1) html += `<span class="star-hint">あと${margin}手</span>`;
   }
   starsEl.innerHTML = html;
