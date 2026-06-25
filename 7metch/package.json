@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node --input-type=module -e \"import{readFileSync}from'fs';const j=readFileSync('dist/game.js','utf8');const m=['pointerdown','pointerup','pointermove'].filter(s=>!j.includes(s));if(m.length){console.error('BUILD CHECK FAILED: missing: '+m.join(', '));process.exit(1)}console.log('Build check passed.')\"",
     "preview": "vite preview",
-    "deploy": "vite build && cp dist/game.js dist/index.html dist/style.css dist/manifest.json . && echo 'Deploy files copied to root. Run: git checkout index.html  to restore dev mode.'"
+    "deploy": "npm run build && cp dist/game.js dist/index.html dist/style.css dist/manifest.json . && echo 'Deploy files copied to root. Run: git checkout index.html  to restore dev mode.'"
   },
   "devDependencies": {
     "terser": "^5.48.0",
