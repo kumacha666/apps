@@ -488,20 +488,6 @@ export function buildPieceCache() {
   }
 }
 
-export function getMissionIconUrl(colorIdx) {
-  if (G.missionIconCache[colorIdx]) return G.missionIconCache[colorIdx];
-  const iconSize = 28;
-  const dpr = window.devicePixelRatio || 1;
-  const c = document.createElement("canvas");
-  c.width = iconSize * dpr;
-  c.height = iconSize * dpr;
-  const cx = c.getContext("2d");
-  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  drawPlanet(cx, colorIdx, iconSize / 2, iconSize / 2, iconSize * 0.4);
-  G.missionIconCache[colorIdx] = c.toDataURL();
-  return G.missionIconCache[colorIdx];
-}
-
 // --- Background Stars ---
 
 export function initBgStars() {

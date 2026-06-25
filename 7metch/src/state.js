@@ -128,7 +128,6 @@ export const G = {
   resultShootingStar: null,
   splashBgStars: [],
   splashBgAnimId: null,
-  missionIconCache: {},
   dragStart: null,
   dragStartPx: null,
   restoreData: null,
