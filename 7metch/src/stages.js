@@ -75,6 +75,8 @@ export function buildStages() {
     else if (size.cols >= 9) moves = Math.max(16, baseMoves);
     else if (size.cols >= 8) moves = Math.max(14, baseMoves);
     else moves = baseMoves;
+    if (i >= 100) moves += 2;
+    if (i >= 300) moves += 1;
     const baseColors = Math.min(7, 5 + Math.floor(i / 10));
     const colors = (i >= 200) ? 8 : baseColors;
 
@@ -91,7 +93,7 @@ export function buildStages() {
     let iceCells = 0, rockCells = 0, holePattern = null, countdownBombs = 0;
     if (features.ice) {
       const progress = Math.min(1, (i - 100) / 100);
-      iceCells = 2 + Math.floor(progress * 4);
+      iceCells = 1 + Math.floor(progress * 3);
     }
     if (features.rock) {
       const progress = Math.min(1, (i - 150) / 100);
@@ -102,7 +104,7 @@ export function buildStages() {
     }
     if (features.countdown) {
       const progress = Math.min(1, (i - 300) / 50);
-      countdownBombs = 1 + Math.floor(progress * 2);
+      countdownBombs = 1 + Math.floor(progress * 1);
     }
 
     let mission;
@@ -112,17 +114,17 @@ export function buildStages() {
         const targetColor = i % colors;
         mission = { type: "color", colorIndex: targetColor, count: Math.floor(moves * 1.0) };
       } else if (slot === 1) {
-        mission = { type: "special", count: 3 + Math.floor((i - 350) / 50) };
+        mission = { type: "special", count: 2 + Math.floor((i - 350) / 60) };
       } else if (slot === 2) {
-        mission = { type: "chain", count: 3 + Math.floor((i - 350) / 75) };
+        mission = { type: "chain", count: 2 + Math.floor((i - 350) / 100) };
       } else if (slot === 3) {
         mission = { type: "score", target: Math.floor(moves * Math.min(100, 50 + i * 1.0)) };
       } else if (slot === 4) {
         mission = { type: "clear", count: Math.floor(moves * Math.min(8, 3.0 + i * 0.04)) };
       } else if (slot === 5) {
-        mission = { type: "special", count: 4 + Math.floor((i - 350) / 60) };
+        mission = { type: "special", count: 3 + Math.floor((i - 350) / 75) };
       } else {
-        mission = { type: "chain", count: 4 + Math.floor((i - 350) / 100) };
+        mission = { type: "chain", count: 3 + Math.floor((i - 350) / 125) };
       }
     } else if (i % 5 === 0 && i > 0) {
       const targetColor = i % colors;
