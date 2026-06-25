@@ -1,10 +1,11 @@
-import { G, STAR_GATES, PIECE_COLORS, PIECE_NAMES_JA } from "./state.js";
+import type { StageConfig, Mission, StageFeatures, StarGate, CellStateType } from "./types";
+import { G, STAR_GATES, PIECE_COLORS, PIECE_NAMES_JA } from "./state";
 
-export function getTotalStars() {
+export function getTotalStars(): number {
   return Object.values(G.saveData.bestStars).reduce((sum, s) => sum + s, 0);
 }
 
-export function isStageUnlocked(i) {
+export function isStageUnlocked(i: number): boolean {
   if (i === 0) return true;
   if (!G.saveData.cleared[i - 1]) return false;
   const gate = STAR_GATES.find((g) => g.stage === i);
@@ -12,20 +13,20 @@ export function isStageUnlocked(i) {
   return true;
 }
 
-export function getGateFor(i) {
+export function getGateFor(i: number): StarGate | null {
   return STAR_GATES.find((g) => g.stage === i) || null;
 }
 
 // --- Stages ---
-export function boardSizeForStage(i) {
+export function boardSizeForStage(i: number): { cols: number; rows: number } {
   if (i < 10) return { cols: 6, rows: 7 };
   if (i < 100) return { cols: 7, rows: 8 };
   if (i < 250) return { cols: 8, rows: 9 };
   return { cols: 9, rows: 10 };
 }
 
-export function generateHolePattern(c, r, variant) {
-  const holes = [];
+export function generateHolePattern(c: number, r: number, variant: number): [number, number][] {
+  const holes: [number, number][] = [];
   switch (variant) {
     case 0:
       holes.push([0,0],[0,1],[1,0]);
@@ -64,13 +65,13 @@ export function generateHolePattern(c, r, variant) {
   return holes;
 }
 
-export function buildStages() {
-  const stages = [];
+export function buildStages(): StageConfig[] {
+  const stages: StageConfig[] = [];
   for (let i = 0; i < 500; i++) {
     const size = boardSizeForStage(i);
     const tier = Math.floor(i / 10);
     const baseMoves = Math.max(14, 22 - tier);
-    let moves;
+    let moves: number;
     if (i < 10) moves = 20;
     else if (size.cols >= 9) moves = Math.max(16, baseMoves);
     else if (size.cols >= 8) moves = Math.max(14, baseMoves);
@@ -83,14 +84,14 @@ export function buildStages() {
     const star2rate = i < 10 ? 0.65 : 0.6;
     const star3rate = i < 10 ? 0.45 : 0.35;
 
-    const features = {};
+    const features: StageFeatures = {};
     features.diagonalLine = true;
     if (i >= 100) features.ice = true;
     if (i >= 150) features.rock = true;
     if (i >= 250) features.holes = true;
     if (i >= 300) features.countdown = true;
 
-    let iceCells = 0, rockCells = 0, holePattern = null, countdownBombs = 0;
+    let iceCells = 0, rockCells = 0, holePattern: [number, number][] | null = null, countdownBombs = 0;
     if (features.ice) {
       const progress = Math.min(1, (i - 100) / 100);
       iceCells = 1 + Math.floor(progress * 3);
@@ -107,7 +108,7 @@ export function buildStages() {
       countdownBombs = 1 + Math.floor(progress * 1);
     }
 
-    let mission;
+    let mission: Mission;
     if (i >= 350) {
       const slot = i % 7;
       if (slot === 0) {
@@ -154,30 +155,31 @@ export function buildStages() {
   return stages;
 }
 
-export function getMissionText(m, html) {
+export function getMissionText(m: Mission, html?: boolean): string {
   switch (m.type) {
     case "score": return `${m.target}点 とろう`;
     case "clear": return `${m.count}個 けそう`;
     case "color":
       if (html) {
-        const c = PIECE_COLORS[m.colorIndex];
+        const c = PIECE_COLORS[m.colorIndex!];
         return `<span style="display:inline-block;width:1.3em;height:1.3em;border-radius:50%;background:${c};vertical-align:middle;margin:-2px 2px 0 0;box-shadow:inset -2px -2px 4px rgba(0,0,0,.3)"></span>を${m.count}個けそう`;
       }
-      return `${PIECE_NAMES_JA[m.colorIndex]}を${m.count}個けそう`;
+      return `${PIECE_NAMES_JA[m.colorIndex!]}を${m.count}個けそう`;
     case "special": return `特殊ピースを${m.count}個つくろう`;
     case "chain": return `${m.count}チェインしよう`;
+    default: return "";
   }
 }
 
-export function hasSquare() {
-  const isHole = (r, c) => G.cellState[r] && G.cellState[r][c] === "hole";
-  const isRock = (r, c) => G.cellState[r] && G.cellState[r][c] === "rock";
+export function hasSquare(): boolean {
+  const isHole = (r: number, c: number): boolean => G.cellState[r] && G.cellState[r][c] === "hole";
+  const isRock = (r: number, c: number): boolean => G.cellState[r] && G.cellState[r][c] === "rock";
   for (let r = 0; r < G.rows - 1; r++) {
     for (let c = 0; c < G.cols - 1; c++) {
-      const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
+      const cells: [number, number][] = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
       if (cells.some(([cr,cc]) => !G.board[cr][cc] || isHole(cr,cc) || isRock(cr,cc))) continue;
-      const color = G.board[r][c].color;
-      if (cells.every(([cr,cc]) => G.board[cr][cc].color === color)) return true;
+      const color = G.board[r][c]!.color;
+      if (cells.every(([cr,cc]) => G.board[cr][cc]!.color === color)) return true;
     }
   }
   return false;

@@ -1,22 +1,23 @@
-import { G, PIECE_COLORS, STAR_GATES, DEFAULT_OPTIONS, ITEM_COSTS, loadOptions, saveOptions, applyVisualOptions, loadSave, writeSave } from "./state.js";
-import { initAudio, switchBgm, stopAllBgm, applyAudioOptions, SFX } from "./audio.js";
-import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim, stopTitleBgAnim, startResultBgAnim, stopResultBgAnim, startSplashBgAnim, stopSplashBgAnim, drawBoard } from "./rendering.js";
-import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker } from "./game.js";
-import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board.js";
-import { buildStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText } from "./stages.js";
-import { track, FEEDBACK_URL } from "./tracking.js";
-import { initInput, renderHelpPieceIcons } from "./input.js";
+import type { ScreenName, StarGate, SaveData } from "./types";
+import { G, PIECE_COLORS, STAR_GATES, DEFAULT_OPTIONS, ITEM_COSTS, loadOptions, saveOptions, applyVisualOptions, loadSave, writeSave } from "./state";
+import { initAudio, switchBgm, stopAllBgm, applyAudioOptions, SFX } from "./audio";
+import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim, stopTitleBgAnim, startResultBgAnim, stopResultBgAnim, startSplashBgAnim, stopSplashBgAnim, drawBoard } from "./rendering";
+import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker } from "./game";
+import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
+import { buildStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText } from "./stages";
+import { track, FEEDBACK_URL } from "./tracking";
+import { initInput, renderHelpPieceIcons } from "./input";
 
 // --- Screens ---
 
-export function showScreen(name) {
+export function showScreen(name: ScreenName): void {
   const fromGame = name === "options" && G.optionsReturnScreen === "game";
   if (name !== "game" && !fromGame) { clearHint(); stopBgAnim(); }
   if (name !== "title" && name !== "splash") stopTitleBgAnim();
   if (name === "splash") stopSplashBgAnim();
   if (name !== "result") stopResultBgAnim();
-  Object.values(G.screens).forEach((s) => s.classList.remove("active"));
-  G.screens[name].classList.add("active");
+  Object.values(G.screens!).forEach((s: HTMLElement) => s.classList.remove("active"));
+  G.screens![name].classList.add("active");
   if (name === "game") startBgAnim();
   if (name === "title") startTitleBgAnim();
   if (name === "splash") startSplashBgAnim();
@@ -34,26 +35,26 @@ export function showScreen(name) {
 
 // --- Options UI ---
 
-export function syncOptionsUI() {
-  document.getElementById("opt-bgm-vol").value = G.options.bgmVol;
-  document.getElementById("opt-bgm-val").textContent = G.options.bgmVol;
-  document.getElementById("opt-sfx-vol").value = G.options.sfxVol;
-  document.getElementById("opt-sfx-val").textContent = G.options.sfxVol;
-  document.getElementById("opt-saturation").value = G.options.saturation;
-  document.getElementById("opt-sat-val").textContent = G.options.saturation;
-  document.getElementById("opt-brightness").value = G.options.brightness;
-  document.getElementById("opt-brt-val").textContent = G.options.brightness;
-  document.getElementById("opt-bg-anim").checked = G.options.bgAnim;
-  document.getElementById("opt-screen-shake").checked = G.options.screenShake;
+export function syncOptionsUI(): void {
+  (document.getElementById("opt-bgm-vol") as HTMLInputElement).value = String(G.options.bgmVol);
+  document.getElementById("opt-bgm-val")!.textContent = String(G.options.bgmVol);
+  (document.getElementById("opt-sfx-vol") as HTMLInputElement).value = String(G.options.sfxVol);
+  document.getElementById("opt-sfx-val")!.textContent = String(G.options.sfxVol);
+  (document.getElementById("opt-saturation") as HTMLInputElement).value = String(G.options.saturation);
+  document.getElementById("opt-sat-val")!.textContent = String(G.options.saturation);
+  (document.getElementById("opt-brightness") as HTMLInputElement).value = String(G.options.brightness);
+  document.getElementById("opt-brt-val")!.textContent = String(G.options.brightness);
+  (document.getElementById("opt-bg-anim") as HTMLInputElement).checked = G.options.bgAnim;
+  (document.getElementById("opt-screen-shake") as HTMLInputElement).checked = G.options.screenShake;
 }
 
 // --- Game Modal ---
 
-export function showGameModal(text, confirmLabel, cancelLabel) {
+export function showGameModal(text: string, confirmLabel?: string, cancelLabel?: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const overlay = document.getElementById("game-modal-overlay");
-    const textEl = document.getElementById("game-modal-text");
-    const buttonsEl = document.getElementById("game-modal-buttons");
+    const overlay = document.getElementById("game-modal-overlay")!;
+    const textEl = document.getElementById("game-modal-text")!;
+    const buttonsEl = document.getElementById("game-modal-buttons")!;
     textEl.textContent = text;
     buttonsEl.innerHTML = "";
     const btnConfirm = document.createElement("button");
@@ -70,10 +71,10 @@ export function showGameModal(text, confirmLabel, cancelLabel) {
   });
 }
 
-export function showGateBlockMessage(gate) {
+export function showGateBlockMessage(gate: StarGate): void {
   const total = getTotalStars();
   const need = gate.stars - total;
-  const toast = document.getElementById("gate-toast");
+  const toast = document.getElementById("gate-toast")!;
   toast.textContent = `★ あと${need}個で次のエリア解放！`;
   toast.classList.remove("hidden");
   setTimeout(() => { toast.classList.add("hidden"); }, 2500);
@@ -83,21 +84,21 @@ export function showGateBlockMessage(gate) {
 
 // --- Stage Select ---
 
-export function buildStageSelect() {
-  const grid = document.getElementById("stage-grid");
+export function buildStageSelect(): void {
+  const grid = document.getElementById("stage-grid")!;
   grid.innerHTML = "";
   const total = getTotalStars();
 
-  document.getElementById("total-stars-display").innerHTML = `★ ${total}　<span style="color:#4ecdc4"><span class="coin-icon"></span> ${G.saveData.coins || 0}</span>`;
+  document.getElementById("total-stars-display")!.innerHTML = `★ ${total}　<span style="color:#4ecdc4"><span class="coin-icon"></span> ${G.saveData.coins || 0}</span>`;
 
   const lastClearedIdx = Object.keys(G.saveData.cleared)
     .map(Number)
-    .reduce((max, n) => Math.max(max, n), -1);
+    .reduce((max: number, n: number) => Math.max(max, n), -1);
   const visibleUpTo = lastClearedIdx + 6;
 
   let stopped = false;
 
-  for (let i = 0; i < G.STAGES.length; i++) {
+  for (let i = 0; i < G.STAGES!.length; i++) {
     if (stopped) break;
 
     const gate = getGateFor(i);
@@ -112,7 +113,7 @@ export function buildStageSelect() {
 
     if (i > visibleUpTo && !G.saveData.cleared[i]) break;
 
-    const stg = G.STAGES[i];
+    const stg = G.STAGES![i];
     const btn = document.createElement("button");
     btn.className = "stage-btn";
     const unlocked = isStageUnlocked(i);
@@ -144,20 +145,25 @@ export function buildStageSelect() {
 
 // --- Start Stage ---
 
-const TUTORIALS = [
+interface TutorialEntry {
+  icon: string;
+  html: string;
+}
+
+const TUTORIALS: TutorialEntry[] = [
   { icon: "👆", html: 'ピースをスワイプして<br>入れ替えよう！<br><strong>8方向</strong>に動かせるよ' },
   { icon: "🎯", html: '上の<strong>ミッション欄</strong>をチェック！<br>手数以内に達成して<br>★を集めよう' },
 ];
 
-function showTutorial(stageIndex) {
+function showTutorial(stageIndex: number): void {
   if (stageIndex >= TUTORIALS.length) return;
   if (G.saveData.tutorialDone && G.saveData.tutorialDone[stageIndex]) return;
   const t = TUTORIALS[stageIndex];
-  const overlay = document.getElementById("tutorial-overlay");
-  document.getElementById("tutorial-icon").textContent = t.icon;
-  document.getElementById("tutorial-text").innerHTML = t.html;
+  const overlay = document.getElementById("tutorial-overlay")!;
+  document.getElementById("tutorial-icon")!.textContent = t.icon;
+  document.getElementById("tutorial-text")!.innerHTML = t.html;
   overlay.classList.remove("hidden");
-  const dismiss = () => {
+  const dismiss = (): void => {
     overlay.classList.add("hidden");
     overlay.removeEventListener("click", dismiss);
     if (!G.saveData.tutorialDone) G.saveData.tutorialDone = {};
@@ -167,8 +173,8 @@ function showTutorial(stageIndex) {
   overlay.addEventListener("click", dismiss);
 }
 
-export function startStage(index) {
-  const stg = G.STAGES[index];
+export function startStage(index: number): void {
+  const stg = G.STAGES![index];
   G.cols = stg.boardCols;
   G.rows = stg.boardRows;
   G.movesLeft = stg.moves;
@@ -183,7 +189,7 @@ export function startStage(index) {
   G.vfxParticles = []; G.vfxShockwaves = []; G.vfxFlashes = []; G.vfxComets = []; G.vfxTexts = []; G.shakeX = G.shakeY = G.shakeIntensity = 0;
   G.itemMode = null;
   G.coinsEarned = 0;
-  G.canvas.classList.remove("item-targeting");
+  G.canvas!.classList.remove("item-targeting");
 
   resizeCanvas();
   applyVisualOptions();
@@ -200,8 +206,8 @@ export function startStage(index) {
 
 // --- Resize Canvas ---
 
-export function resizeCanvas() {
-  const app = document.getElementById("app");
+export function resizeCanvas(): void {
+  const app = document.getElementById("app")!;
   const maxW = app.clientWidth - 16;
   const maxH = app.clientHeight - 140;
 
@@ -212,18 +218,18 @@ export function resizeCanvas() {
   G.boardPixelH = G.rows * G.cellSize;
 
   const dpr = window.devicePixelRatio || 1;
-  G.canvas.width = G.boardPixelW * dpr;
-  G.canvas.height = G.boardPixelH * dpr;
-  G.canvas.style.width = G.boardPixelW + "px";
-  G.canvas.style.height = G.boardPixelH + "px";
-  G.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  G.canvas!.width = G.boardPixelW * dpr;
+  G.canvas!.height = G.boardPixelH * dpr;
+  G.canvas!.style.width = G.boardPixelW + "px";
+  G.canvas!.style.height = G.boardPixelH + "px";
+  G.ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
   buildPieceCache();
   initBgStars();
 }
 
 // --- Debug Spawn Indicator ---
 
-const SPAWN_LABELS = {
+const SPAWN_LABELS: Record<string, string> = {
   line_h: "← → 横ライン",
   line_v: "↑ ↓ 縦ライン",
   bomb: "◎ ボム",
@@ -232,8 +238,8 @@ const SPAWN_LABELS = {
   countdown: "⏱️ カウントダウン",
 };
 
-function updateSpawnIndicator() {
-  const el = document.getElementById("spawn-indicator");
+function updateSpawnIndicator(): void {
+  const el = document.getElementById("spawn-indicator")!;
   if (G.debugSpawnType && SPAWN_LABELS[G.debugSpawnType]) {
     el.textContent = `スポナーON: ${SPAWN_LABELS[G.debugSpawnType]}（盤面タップで設置）`;
     el.classList.remove("hidden");
@@ -244,26 +250,26 @@ function updateSpawnIndicator() {
 
 // --- initUI: All Event Listener Setup ---
 
-export function initUI() {
+export function initUI(): void {
   // --- Screens DOM cache ---
   G.screens = {
-    splash: document.getElementById("screen-splash"),
-    title: document.getElementById("screen-title"),
-    options: document.getElementById("screen-options"),
-    stageSelect: document.getElementById("screen-stage-select"),
-    help: document.getElementById("screen-help"),
-    game: document.getElementById("screen-game"),
-    result: document.getElementById("screen-result"),
+    splash: document.getElementById("screen-splash")!,
+    title: document.getElementById("screen-title")!,
+    options: document.getElementById("screen-options")!,
+    stageSelect: document.getElementById("screen-stage-select")!,
+    help: document.getElementById("screen-help")!,
+    game: document.getElementById("screen-game")!,
+    result: document.getElementById("screen-result")!,
   };
 
   // --- Sound Toggle ---
-  document.getElementById("btn-sound-toggle").addEventListener("click", () => {
+  document.getElementById("btn-sound-toggle")!.addEventListener("click", () => {
     G.soundEnabled = !G.soundEnabled;
-    document.getElementById("btn-sound-toggle").textContent = G.soundEnabled ? "🔊" : "🔇";
+    document.getElementById("btn-sound-toggle")!.textContent = G.soundEnabled ? "🔊" : "🔇";
     if (!G.soundEnabled) {
       stopAllBgm();
     } else if (G.bgmInitialized) {
-      const activeScreen = Object.keys(G.screens).find(k => G.screens[k].classList.contains("active"));
+      const activeScreen = (Object.keys(G.screens!) as ScreenName[]).find(k => G.screens![k].classList.contains("active"));
       if (activeScreen === "title" || activeScreen === "help") switchBgm("title");
       else if (activeScreen === "stageSelect") switchBgm("select");
       else if (activeScreen === "game") switchBgm("ingame");
@@ -271,12 +277,12 @@ export function initUI() {
   });
 
   // --- Start / Stage Select ---
-  document.getElementById("btn-start").addEventListener("click", () => {
+  document.getElementById("btn-start")!.addEventListener("click", () => {
     initAudio();
     const lastCleared = Object.keys(G.saveData.cleared)
       .map(Number)
-      .sort((a, b) => a - b);
-    let next = lastCleared.length > 0 ? Math.min(lastCleared[lastCleared.length - 1] + 1, G.STAGES.length - 1) : 0;
+      .sort((a: number, b: number) => a - b);
+    let next = lastCleared.length > 0 ? Math.min(lastCleared[lastCleared.length - 1] + 1, G.STAGES!.length - 1) : 0;
     const gate = getGateFor(next);
     if (gate && getTotalStars() < gate.stars) {
       showGateBlockMessage(gate);
@@ -291,28 +297,28 @@ export function initUI() {
     startStage(G.currentStage);
   });
 
-  document.getElementById("btn-stage-select").addEventListener("click", () => {
+  document.getElementById("btn-stage-select")!.addEventListener("click", () => {
     initAudio();
     buildStageSelect();
     showScreen("stageSelect");
   });
 
-  document.getElementById("btn-back-title").addEventListener("click", () => {
+  document.getElementById("btn-back-title")!.addEventListener("click", () => {
     showScreen("title");
   });
 
   // --- Help ---
-  document.getElementById("btn-help").addEventListener("click", () => {
+  document.getElementById("btn-help")!.addEventListener("click", () => {
     showScreen("help");
     renderHelpPieceIcons();
   });
 
-  document.getElementById("btn-back-help").addEventListener("click", () => {
+  document.getElementById("btn-back-help")!.addEventListener("click", () => {
     showScreen("title");
   });
 
   // --- Backup / Restore ---
-  document.getElementById("btn-backup").addEventListener("click", () => {
+  document.getElementById("btn-backup")!.addEventListener("click", () => {
     const json = JSON.stringify(G.saveData, null, 2);
     const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -324,39 +330,40 @@ export function initUI() {
     URL.revokeObjectURL(url);
   });
 
-  document.getElementById("btn-restore").addEventListener("click", () => {
+  document.getElementById("btn-restore")!.addEventListener("click", () => {
     G.restoreData = null;
-    document.getElementById("restore-file").value = "";
-    document.getElementById("restore-file-name").textContent = "";
-    document.getElementById("btn-restore-exec").disabled = true;
-    document.getElementById("restore-modal").classList.remove("hidden");
+    (document.getElementById("restore-file") as HTMLInputElement).value = "";
+    document.getElementById("restore-file-name")!.textContent = "";
+    (document.getElementById("btn-restore-exec") as HTMLButtonElement).disabled = true;
+    document.getElementById("restore-modal")!.classList.remove("hidden");
   });
 
-  document.getElementById("restore-file").addEventListener("change", (e) => {
-    const file = e.target.files[0];
+  document.getElementById("restore-file")!.addEventListener("change", (e: Event) => {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
     if (!file) return;
-    document.getElementById("restore-file-name").textContent = file.name;
+    document.getElementById("restore-file-name")!.textContent = file.name;
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const parsed = JSON.parse(reader.result);
+        const parsed = JSON.parse(reader.result as string) as SaveData;
         if (!parsed.cleared || !parsed.bestStars) throw new Error();
         G.restoreData = parsed;
-        document.getElementById("btn-restore-exec").disabled = false;
+        (document.getElementById("btn-restore-exec") as HTMLButtonElement).disabled = false;
       } catch {
         G.restoreData = null;
-        document.getElementById("btn-restore-exec").disabled = true;
+        (document.getElementById("btn-restore-exec") as HTMLButtonElement).disabled = true;
         alert("このファイルはバックアップデータではありません。");
       }
     };
     reader.readAsText(file);
   });
 
-  document.getElementById("btn-restore-cancel").addEventListener("click", () => {
-    document.getElementById("restore-modal").classList.add("hidden");
+  document.getElementById("btn-restore-cancel")!.addEventListener("click", () => {
+    document.getElementById("restore-modal")!.classList.add("hidden");
   });
 
-  document.getElementById("btn-restore-exec").addEventListener("click", () => {
+  document.getElementById("btn-restore-exec")!.addEventListener("click", () => {
     if (!G.restoreData) return;
     if (G.restoreData.coins === undefined) {
       G.restoreData.coins = 0;
@@ -371,75 +378,75 @@ export function initUI() {
     }
     G.saveData = G.restoreData;
     writeSave();
-    document.getElementById("restore-modal").classList.add("hidden");
+    document.getElementById("restore-modal")!.classList.add("hidden");
     alert("データを復元しました！");
   });
 
   // --- Feedback ---
-  document.getElementById("btn-feedback").addEventListener("click", () => {
+  document.getElementById("btn-feedback")!.addEventListener("click", () => {
     if (FEEDBACK_URL) {
       window.open(FEEDBACK_URL, "_blank");
     }
   });
 
   // --- Options Screen ---
-  document.getElementById("btn-options").addEventListener("click", () => {
+  document.getElementById("btn-options")!.addEventListener("click", () => {
     initAudio();
     G.optionsReturnScreen = "title";
     syncOptionsUI();
     showScreen("options");
   });
 
-  document.getElementById("btn-game-options").addEventListener("click", () => {
+  document.getElementById("btn-game-options")!.addEventListener("click", () => {
     G.optionsReturnScreen = "game";
     syncOptionsUI();
     showScreen("options");
   });
 
-  document.getElementById("btn-options-back").addEventListener("click", () => {
+  document.getElementById("btn-options-back")!.addEventListener("click", () => {
     showScreen(G.optionsReturnScreen);
   });
 
   // --- Options Controls ---
-  document.getElementById("opt-bgm-vol").addEventListener("input", (e) => {
-    G.options.bgmVol = Number(e.target.value);
-    document.getElementById("opt-bgm-val").textContent = G.options.bgmVol;
+  document.getElementById("opt-bgm-vol")!.addEventListener("input", (e: Event) => {
+    G.options.bgmVol = Number((e.target as HTMLInputElement).value);
+    document.getElementById("opt-bgm-val")!.textContent = String(G.options.bgmVol);
     applyAudioOptions();
     saveOptions();
   });
 
-  document.getElementById("opt-sfx-vol").addEventListener("input", (e) => {
-    G.options.sfxVol = Number(e.target.value);
-    document.getElementById("opt-sfx-val").textContent = G.options.sfxVol;
+  document.getElementById("opt-sfx-vol")!.addEventListener("input", (e: Event) => {
+    G.options.sfxVol = Number((e.target as HTMLInputElement).value);
+    document.getElementById("opt-sfx-val")!.textContent = String(G.options.sfxVol);
     applyAudioOptions();
     saveOptions();
   });
 
-  document.getElementById("opt-saturation").addEventListener("input", (e) => {
-    G.options.saturation = Number(e.target.value);
-    document.getElementById("opt-sat-val").textContent = G.options.saturation;
+  document.getElementById("opt-saturation")!.addEventListener("input", (e: Event) => {
+    G.options.saturation = Number((e.target as HTMLInputElement).value);
+    document.getElementById("opt-sat-val")!.textContent = String(G.options.saturation);
     applyVisualOptions();
     saveOptions();
   });
 
-  document.getElementById("opt-brightness").addEventListener("input", (e) => {
-    G.options.brightness = Number(e.target.value);
-    document.getElementById("opt-brt-val").textContent = G.options.brightness;
+  document.getElementById("opt-brightness")!.addEventListener("input", (e: Event) => {
+    G.options.brightness = Number((e.target as HTMLInputElement).value);
+    document.getElementById("opt-brt-val")!.textContent = String(G.options.brightness);
     applyVisualOptions();
     saveOptions();
   });
 
-  document.getElementById("opt-bg-anim").addEventListener("change", (e) => {
-    G.options.bgAnim = e.target.checked;
+  document.getElementById("opt-bg-anim")!.addEventListener("change", (e: Event) => {
+    G.options.bgAnim = (e.target as HTMLInputElement).checked;
     saveOptions();
   });
 
-  document.getElementById("opt-screen-shake").addEventListener("change", (e) => {
-    G.options.screenShake = e.target.checked;
+  document.getElementById("opt-screen-shake")!.addEventListener("change", (e: Event) => {
+    G.options.screenShake = (e.target as HTMLInputElement).checked;
     saveOptions();
   });
 
-  document.getElementById("btn-options-reset").addEventListener("click", () => {
+  document.getElementById("btn-options-reset")!.addEventListener("click", () => {
     G.options = { ...DEFAULT_OPTIONS };
     saveOptions();
     syncOptionsUI();
@@ -448,22 +455,22 @@ export function initUI() {
   });
 
   // --- Game Buttons (Retry, Quit, Next, Result) ---
-  document.getElementById("btn-retry").addEventListener("click", async () => {
+  document.getElementById("btn-retry")!.addEventListener("click", async () => {
     const ok = await showGameModal("リトライしますか？");
     if (!ok) return;
-    track("stage_retry", { stage: G.STAGES[G.currentStage].name });
+    track("stage_retry", { stage: G.STAGES![G.currentStage].name });
     startStage(G.currentStage);
   });
 
-  document.getElementById("btn-quit").addEventListener("click", async () => {
+  document.getElementById("btn-quit")!.addEventListener("click", async () => {
     const ok = await showGameModal("タイトルに戻りますか？");
     if (!ok) return;
     showScreen("title");
   });
 
-  document.getElementById("btn-next").addEventListener("click", () => {
+  document.getElementById("btn-next")!.addEventListener("click", () => {
     const next = G.currentStage + 1;
-    if (next >= G.STAGES.length) {
+    if (next >= G.STAGES!.length) {
       buildStageSelect();
       showScreen("stageSelect");
       return;
@@ -482,50 +489,50 @@ export function initUI() {
     startStage(G.currentStage);
   });
 
-  document.getElementById("btn-result-retry").addEventListener("click", () => {
-    track("stage_retry", { stage: G.STAGES[G.currentStage].name });
+  document.getElementById("btn-result-retry")!.addEventListener("click", () => {
+    track("stage_retry", { stage: G.STAGES![G.currentStage].name });
     startStage(G.currentStage);
   });
 
-  document.getElementById("btn-result-stages").addEventListener("click", () => {
+  document.getElementById("btn-result-stages")!.addEventListener("click", () => {
     buildStageSelect();
     showScreen("stageSelect");
   });
 
   // --- Resize ---
   window.addEventListener("resize", () => {
-    if (G.screens.game.classList.contains("active")) {
+    if (G.screens!.game.classList.contains("active")) {
       resizeCanvas();
       drawBoard();
     }
   });
 
   // --- Debug Mode ---
-  document.getElementById("version-info").addEventListener("click", () => {
+  document.getElementById("version-info")!.addEventListener("click", () => {
     G.debugTapCount++;
-    clearTimeout(G.debugTapTimer);
+    clearTimeout(G.debugTapTimer!);
     G.debugTapTimer = setTimeout(() => { G.debugTapCount = 0; }, 1500);
     if (G.debugTapCount >= 7) {
       G.debugTapCount = 0;
       G.debugMode = true;
-      document.getElementById("debug-badge").classList.remove("hidden");
-      document.getElementById("debug-panel").classList.remove("hidden");
-      document.getElementById("btn-debug-open").classList.remove("hidden");
+      document.getElementById("debug-badge")!.classList.remove("hidden");
+      document.getElementById("debug-panel")!.classList.remove("hidden");
+      document.getElementById("btn-debug-open")!.classList.remove("hidden");
       updateItemBar();
     }
   });
 
-  document.getElementById("btn-debug-jump").addEventListener("click", () => {
-    const num = parseInt(document.getElementById("debug-stage-num").value, 10);
-    if (num >= 1 && num <= G.STAGES.length) {
+  document.getElementById("btn-debug-jump")!.addEventListener("click", () => {
+    const num = parseInt((document.getElementById("debug-stage-num") as HTMLInputElement).value, 10);
+    if (num >= 1 && num <= G.STAGES!.length) {
       G.currentStage = num - 1;
-      document.getElementById("debug-panel").classList.add("hidden");
+      document.getElementById("debug-panel")!.classList.add("hidden");
       startStage(G.currentStage);
     }
   });
 
-  document.getElementById("btn-debug-unlock-all").addEventListener("click", () => {
-    for (let i = 0; i < G.STAGES.length; i++) {
+  document.getElementById("btn-debug-unlock-all")!.addEventListener("click", () => {
+    for (let i = 0; i < G.STAGES!.length; i++) {
       G.saveData.cleared[i] = true;
       if (!G.saveData.bestStars[i]) G.saveData.bestStars[i] = 1;
     }
@@ -533,27 +540,27 @@ export function initUI() {
     alert("全ステージを解放しました");
   });
 
-  document.getElementById("btn-debug-reset").addEventListener("click", async () => {
+  document.getElementById("btn-debug-reset")!.addEventListener("click", async () => {
     const ok = await showGameModal("セーブデータをリセットしますか？", "リセット", "キャンセル");
     if (ok) {
       G.saveData = { cleared: {}, bestStars: {}, coins: 0 };
       writeSave();
-      const toast = document.getElementById("gate-toast");
+      const toast = document.getElementById("gate-toast")!;
       toast.textContent = "リセットしました";
       toast.classList.remove("hidden");
       setTimeout(() => { toast.classList.add("hidden"); }, 2000);
     }
   });
 
-  document.getElementById("btn-debug-close").addEventListener("click", () => {
-    document.getElementById("debug-panel").classList.add("hidden");
+  document.getElementById("btn-debug-close")!.addEventListener("click", () => {
+    document.getElementById("debug-panel")!.classList.add("hidden");
   });
 
   // --- Item Buttons ---
-  document.querySelectorAll(".item-btn").forEach(btn => {
+  document.querySelectorAll<HTMLButtonElement>(".item-btn").forEach((btn: HTMLButtonElement) => {
     btn.addEventListener("click", () => {
-      if (G.animating || !G.screens.game.classList.contains("active")) return;
-      const item = btn.dataset.item;
+      if (G.animating || !G.screens!.game.classList.contains("active")) return;
+      const item = btn.dataset.item!;
       const cost = ITEM_COSTS[item];
       if (!G.debugMode && (G.saveData.coins || 0) < cost) return;
 
@@ -567,7 +574,7 @@ export function initUI() {
             cancelItemMode();
           } else {
             G.itemMode = "pinpoint";
-            G.canvas.classList.add("item-targeting");
+            G.canvas!.classList.add("item-targeting");
           }
           break;
         case "shuffle":
@@ -583,38 +590,38 @@ export function initUI() {
     });
   });
 
-  document.getElementById("btn-color-cancel").addEventListener("click", () => {
-    document.getElementById("color-picker-modal").classList.add("hidden");
+  document.getElementById("btn-color-cancel")!.addEventListener("click", () => {
+    document.getElementById("color-picker-modal")!.classList.add("hidden");
   });
 
-  document.getElementById("btn-rescue").addEventListener("click", () => {
+  document.getElementById("btn-rescue")!.addEventListener("click", () => {
     if (!G.debugMode && (G.saveData.coins || 0) < ITEM_COSTS.addmoves) return;
     if (!G.debugMode) { G.saveData.coins -= ITEM_COSTS.addmoves; writeSave(); SFX.coinSpend(); }
     G.movesLeft += 3;
     updateHUD();
     updateItemBar();
     showScreen("game");
-    track("item_rescue", { stage: G.STAGES[G.currentStage].name, coins_remaining: G.saveData.coins });
+    track("item_rescue", { stage: G.STAGES![G.currentStage].name, coins_remaining: G.saveData.coins });
   });
 
   // --- Special Piece Spawner (Debug) ---
-  document.querySelectorAll(".btn-spawn").forEach(btn => {
+  document.querySelectorAll<HTMLButtonElement>(".btn-spawn").forEach((btn: HTMLButtonElement) => {
     btn.addEventListener("click", () => {
-      const type = btn.dataset.spawn;
-      document.querySelectorAll(".btn-spawn").forEach(b => b.classList.remove("active"));
+      const type = btn.dataset.spawn!;
+      document.querySelectorAll<HTMLButtonElement>(".btn-spawn").forEach((b: HTMLButtonElement) => b.classList.remove("active"));
       if (type === "off" || G.debugSpawnType === type) {
         G.debugSpawnType = null;
       } else {
         G.debugSpawnType = type;
         btn.classList.add("active");
       }
-      document.getElementById("debug-panel").classList.add("hidden");
+      document.getElementById("debug-panel")!.classList.add("hidden");
       updateSpawnIndicator();
     });
   });
 
-  document.getElementById("btn-debug-open").addEventListener("click", () => {
-    document.getElementById("debug-panel").classList.remove("hidden");
+  document.getElementById("btn-debug-open")!.addEventListener("click", () => {
+    document.getElementById("debug-panel")!.classList.remove("hidden");
   });
 
   // --- Visibility Change (Audio suspend/resume) ---
@@ -628,13 +635,13 @@ export function initUI() {
   });
 
   // --- Splash Screen ---
-  const splashHandler = () => {
+  const splashHandler = (): void => {
     initAudio();
     showScreen("title");
   };
-  document.getElementById("screen-splash").addEventListener("click", splashHandler);
-  document.addEventListener("keydown", function onSplashKey(e) {
-    if ((e.key === "Enter" || e.key === " ") && G.screens.splash.classList.contains("active")) {
+  document.getElementById("screen-splash")!.addEventListener("click", splashHandler);
+  document.addEventListener("keydown", function onSplashKey(e: KeyboardEvent) {
+    if ((e.key === "Enter" || e.key === " ") && G.screens!.splash.classList.contains("active")) {
       e.preventDefault();
       document.removeEventListener("keydown", onSplashKey);
       splashHandler();

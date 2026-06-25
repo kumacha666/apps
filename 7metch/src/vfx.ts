@@ -1,17 +1,18 @@
-import { G, PIECE_COLORS } from "./state.js";
+import type { GameState } from "./types";
+import { G, PIECE_COLORS } from "./state";
 
 // ============================================================
 //  Easing Functions
 // ============================================================
 
-export function easeOutQuad(t) { return t * (2 - t); }
-export function easeInQuad(t)  { return t * t; }
+export function easeOutQuad(t: number): number { return t * (2 - t); }
+export function easeInQuad(t: number): number  { return t * t; }
 
 // ============================================================
 //  Helper: Cell Pixel Center
 // ============================================================
 
-export function cellCenter(r, c) {
+export function cellCenter(r: number, c: number): { x: number; y: number } {
   return {
     x: c * G.cellSize + G.cellSize / 2,
     y: r * G.cellSize + G.cellSize / 2
@@ -25,7 +26,7 @@ export function cellCenter(r, c) {
 //  Each particle carries its own velocity, color, size, and
 //  a life value that drains by `decay` per frame.
 
-export function addParticle(x, y, color, opts = {}) {
+export function addParticle(x: number, y: number, color: string, opts: Partial<{vx: number, vy: number, decay: number, size: number, sizeDecay: number}> = {}): void {
   G.vfxParticles.push({
     x,
     y,
@@ -47,7 +48,7 @@ export function addParticle(x, y, color, opts = {}) {
 //  Distributes `count` particles evenly around a circle with
 //  some random angular jitter and speed variance.
 
-export function addBurstParticles(x, y, color, count, opts = {}) {
+export function addBurstParticles(x: number, y: number, color: string, count: number, opts: Partial<{speed: number, size: number, decay: number, sizeDecay: number}> = {}): void {
   const speed     = opts.speed     || 3;
   const size      = opts.size      || 4;
   const decay     = opts.decay     || 0.03;
@@ -70,7 +71,7 @@ export function addBurstParticles(x, y, color, count, opts = {}) {
 //  addShockwave — Expanding Ring
 // ============================================================
 
-export function addShockwave(x, y, maxR, duration, color) {
+export function addShockwave(x: number, y: number, maxR: number, duration: number, color: string): void {
   G.vfxShockwaves.push({
     x, y,
     r:        0,
@@ -85,7 +86,7 @@ export function addShockwave(x, y, maxR, duration, color) {
 //  addFlash — Expanding Filled Circle
 // ============================================================
 
-export function addFlash(x, y, maxR, color, duration) {
+export function addFlash(x: number, y: number, maxR: number, color: string, duration?: number): void {
   G.vfxFlashes.push({
     x, y,
     r:        0,
@@ -103,7 +104,7 @@ export function addFlash(x, y, maxR, color, duration) {
 //  a white circle with a colored glow; trail is a series of
 //  shrinking, fading dots. Auto-removed when far out of bounds.
 
-export function addComet(x, y, dx, dy, color, speed, trailLength) {
+export function addComet(x: number, y: number, dx: number, dy: number, color: string, speed?: number, trailLength?: number): void {
   speed       = speed       || 8;
   trailLength = trailLength || 12;
   G.vfxComets.push({
@@ -122,7 +123,7 @@ export function addComet(x, y, dx, dy, color, speed, trailLength) {
 //  addScreenShake — Trigger Screen Shake
 // ============================================================
 
-export function addScreenShake(intensity) {
+export function addScreenShake(intensity: number): void {
   if (!G.options.screenShake) return;
   G.shakeIntensity = Math.max(G.shakeIntensity, intensity);
 }
@@ -131,7 +132,7 @@ export function addScreenShake(intensity) {
 //  addFloatingText — Rising, Fading Text
 // ============================================================
 
-export function addFloatingText(text, x, y, color, size) {
+export function addFloatingText(text: string, x: number, y: number, color?: string, size?: number): void {
   G.vfxTexts.push({
     text,
     x, y,
@@ -147,7 +148,7 @@ export function addFloatingText(text, x, y, color, size) {
 //  updateVFX — Per-Frame Update for All VFX
 // ============================================================
 
-export function updateVFX() {
+export function updateVFX(): void {
   // --- Particles ---
   for (let i = G.vfxParticles.length - 1; i >= 0; i--) {
     const p = G.vfxParticles[i];
@@ -223,22 +224,23 @@ export function updateVFX() {
 //  drawVFX — Render All Active VFX onto ctx
 // ============================================================
 
-export function drawVFX() {
-  G.ctx.save();
-  G.ctx.translate(G.shakeX, G.shakeY);
+export function drawVFX(): void {
+  const ctx = G.ctx!;
+  ctx.save();
+  ctx.translate(G.shakeX, G.shakeY);
 
   // --- Flashes (drawn first — behind everything else) ---
   for (const f of G.vfxFlashes) {
     const t     = f.frame / f.duration;
     const alpha = 0.6 * (1 - t);
     if (alpha <= 0) continue;
-    G.ctx.save();
-    G.ctx.globalAlpha = alpha;
-    G.ctx.fillStyle   = f.color;
-    G.ctx.beginPath();
-    G.ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
-    G.ctx.fill();
-    G.ctx.restore();
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle   = f.color;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   // --- Shockwaves ---
@@ -247,46 +249,46 @@ export function drawVFX() {
     const alpha     = 1 - t;
     const lineWidth = Math.max(1, (1 - t) * 4);
     if (alpha <= 0) continue;
-    G.ctx.save();
-    G.ctx.globalAlpha   = alpha;
-    G.ctx.strokeStyle   = s.color;
-    G.ctx.lineWidth     = lineWidth;
-    G.ctx.beginPath();
-    G.ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-    G.ctx.stroke();
-    G.ctx.restore();
+    ctx.save();
+    ctx.globalAlpha   = alpha;
+    ctx.strokeStyle   = s.color;
+    ctx.lineWidth     = lineWidth;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   // --- Particles (4-point star) ---
   for (const p of G.vfxParticles) {
     if (p.alpha <= 0 || p.size <= 0) continue;
-    G.ctx.save();
-    G.ctx.globalAlpha = p.alpha;
-    G.ctx.translate(p.x, p.y);
-    G.ctx.rotate(p.rotation);
-    G.ctx.fillStyle = p.color;
+    ctx.save();
+    ctx.globalAlpha = p.alpha;
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.rotation);
+    ctx.fillStyle = p.color;
     // 4-point star: two overlapping diamonds
     const s  = p.size;
     const sn = s * 0.38;   // narrow half-width
-    G.ctx.beginPath();
+    ctx.beginPath();
     // vertical diamond
-    G.ctx.moveTo(0,  -s);
-    G.ctx.lineTo(sn,  0);
-    G.ctx.moveTo(0,  -s);
-    G.ctx.lineTo(-sn, 0);
-    G.ctx.lineTo(0,   s);
-    G.ctx.lineTo(sn,  0);
-    G.ctx.closePath();
-    G.ctx.fill();
+    ctx.moveTo(0,  -s);
+    ctx.lineTo(sn,  0);
+    ctx.moveTo(0,  -s);
+    ctx.lineTo(-sn, 0);
+    ctx.lineTo(0,   s);
+    ctx.lineTo(sn,  0);
+    ctx.closePath();
+    ctx.fill();
     // horizontal diamond
-    G.ctx.beginPath();
-    G.ctx.moveTo(-s,  0);
-    G.ctx.lineTo(0,  -sn);
-    G.ctx.lineTo(s,   0);
-    G.ctx.lineTo(0,   sn);
-    G.ctx.closePath();
-    G.ctx.fill();
-    G.ctx.restore();
+    ctx.beginPath();
+    ctx.moveTo(-s,  0);
+    ctx.lineTo(0,  -sn);
+    ctx.lineTo(s,   0);
+    ctx.lineTo(0,   sn);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
 
   // --- Comets ---
@@ -296,55 +298,55 @@ export function drawVFX() {
       const t     = i / c.trail.length;          // 0 = oldest, 1 = newest
       const alpha = t * 0.7;
       const r     = Math.max(1, t * 4);
-      G.ctx.save();
-      G.ctx.globalAlpha = alpha;
-      G.ctx.fillStyle   = c.color;
-      G.ctx.beginPath();
-      G.ctx.arc(c.trail[i].x, c.trail[i].y, r, 0, Math.PI * 2);
-      G.ctx.fill();
-      G.ctx.restore();
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle   = c.color;
+      ctx.beginPath();
+      ctx.arc(c.trail[i].x, c.trail[i].y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
     // head: colored glow
-    G.ctx.save();
-    G.ctx.globalAlpha = 0.9;
-    G.ctx.shadowColor = c.color;
-    G.ctx.shadowBlur  = 14;
-    G.ctx.fillStyle   = c.color;
-    G.ctx.beginPath();
-    G.ctx.arc(c.x, c.y, 5, 0, Math.PI * 2);
-    G.ctx.fill();
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.shadowColor = c.color;
+    ctx.shadowBlur  = 14;
+    ctx.fillStyle   = c.color;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, 5, 0, Math.PI * 2);
+    ctx.fill();
     // white core
-    G.ctx.shadowBlur  = 0;
-    G.ctx.fillStyle   = '#ffffff';
-    G.ctx.beginPath();
-    G.ctx.arc(c.x, c.y, 2.5, 0, Math.PI * 2);
-    G.ctx.fill();
-    G.ctx.restore();
+    ctx.shadowBlur  = 0;
+    ctx.fillStyle   = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   // --- Floating Texts ---
   for (const t of G.vfxTexts) {
     if (t.life <= 0) continue;
-    G.ctx.save();
-    G.ctx.globalAlpha    = Math.min(1, t.life * 2);   // fade near end
-    G.ctx.fillStyle      = t.color;
-    G.ctx.font           = `bold ${t.size}px sans-serif`;
-    G.ctx.textAlign      = 'center';
-    G.ctx.textBaseline   = 'middle';
-    G.ctx.shadowColor    = t.color;
-    G.ctx.shadowBlur     = 8;
-    G.ctx.fillText(t.text, t.x, t.y);
-    G.ctx.restore();
+    ctx.save();
+    ctx.globalAlpha    = Math.min(1, t.life * 2);   // fade near end
+    ctx.fillStyle      = t.color;
+    ctx.font           = `bold ${t.size}px sans-serif`;
+    ctx.textAlign      = 'center';
+    ctx.textBaseline   = 'middle';
+    ctx.shadowColor    = t.color;
+    ctx.shadowBlur     = 8;
+    ctx.fillText(t.text, t.x, t.y);
+    ctx.restore();
   }
 
-  G.ctx.restore();
+  ctx.restore();
 }
 
 // ============================================================
 //  hasActiveVFX — Are Any VFX Still Alive?
 // ============================================================
 
-export function hasActiveVFX() {
+export function hasActiveVFX(): boolean {
   return G.vfxParticles.length > 0
       || G.vfxShockwaves.length > 0
       || G.vfxFlashes.length > 0
