@@ -33,7 +33,7 @@ export default defineConfig(({ mode }) => ({
   test: {
     environment: "node",
     alias: {
-      "./audio.js": resolve("src/__mocks__/audio.js"),
+      "./audio": resolve("src/__mocks__/audio.ts"),
     },
   },
 }));

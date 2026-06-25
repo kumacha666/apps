@@ -1,13 +1,11 @@
-import { G, DRAG_THRESHOLD_RATIO } from "./state.js";
-import { doMove, cancelItemMode, spawnSpecialAt, activateByTap, usePinpoint } from "./game.js";
-import { activateSpecial, clearHint, startHintTimer, isPlayable, inBounds, isHole, isRock, isAdjacent, TAP_ACTIVATE_SPECIALS } from "./board.js";
-import { drawBoard, drawSpecialIcon } from "./rendering.js";
-import { animateClear } from "./animations.js";
-import { cellCenter } from "./vfx.js";
-import { SFX } from "./audio.js";
+import type { CellPos, SpecialType } from "./types";
+import { G, DRAG_THRESHOLD_RATIO } from "./state";
+import { doMove, cancelItemMode, spawnSpecialAt, activateByTap, usePinpoint } from "./game";
+import { clearHint, inBounds, isHole, isRock, isAdjacent, TAP_ACTIVATE_SPECIALS } from "./board";
+import { drawBoard, drawSpecialIcon } from "./rendering";
 
-export function getCell(px, py) {
-  const rect = G.canvas.getBoundingClientRect();
+export function getCell(px: number, py: number): CellPos | null {
+  const rect = G.canvas!.getBoundingClientRect();
   const x = px - rect.left;
   const y = py - rect.top;
   const c = Math.floor(x / G.cellSize);
@@ -16,7 +14,7 @@ export function getCell(px, py) {
   return null;
 }
 
-function dragDirection(sx, sy, ex, ey) {
+function dragDirection(sx: number, sy: number, ex: number, ey: number): { dr: number; dc: number } | null {
   const dx = ex - sx;
   const dy = ey - sy;
   const dist = Math.sqrt(dx * dx + dy * dy);
@@ -38,8 +36,8 @@ function dragDirection(sx, sy, ex, ey) {
   return null;
 }
 
-export function initInput() {
-  G.canvas.addEventListener("pointerdown", (e) => {
+export function initInput(): void {
+  G.canvas!.addEventListener("pointerdown", (e) => {
     if (G.animating) return;
     e.preventDefault();
     clearHint();
@@ -61,7 +59,7 @@ export function initInput() {
     G.dragStartPx = { x: e.clientX, y: e.clientY };
   });
 
-  G.canvas.addEventListener("pointermove", (e) => {
+  G.canvas!.addEventListener("pointermove", (e) => {
     if (!G.dragStart || !G.dragStartPx || G.animating) return;
     e.preventDefault();
 
@@ -79,7 +77,7 @@ export function initInput() {
     G.dragStartPx = null;
   });
 
-  G.canvas.addEventListener("pointerup", (e) => {
+  G.canvas!.addEventListener("pointerup", (e) => {
     if (!G.dragStart || G.animating) {
       G.dragStart = null;
       G.dragStartPx = null;
@@ -117,22 +115,22 @@ export function initInput() {
     drawBoard();
   });
 
-  G.canvas.addEventListener("pointerleave", () => {
+  G.canvas!.addEventListener("pointerleave", () => {
     G.dragStart = null;
     G.dragStartPx = null;
   });
 }
 
-export function renderHelpPieceIcons() {
-  document.querySelectorAll(".help-piece-canvas").forEach(cv => {
-    const type = cv.dataset.special;
+export function renderHelpPieceIcons(): void {
+  document.querySelectorAll<HTMLCanvasElement>(".help-piece-canvas").forEach(cv => {
+    const type = cv.dataset.special!;
     const dpr = window.devicePixelRatio || 1;
     const size = 48 * dpr;
     cv.width = size;
     cv.height = size;
-    const ctx = cv.getContext("2d");
+    const ctx = cv.getContext("2d")!;
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, 48, 48);
-    drawSpecialIcon(ctx, type, 24, 24, 20, null);
+    drawSpecialIcon(ctx, type as SpecialType, 24, 24, 20, null);
   });
 }

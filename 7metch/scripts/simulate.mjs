@@ -37,18 +37,18 @@ if (typeof globalThis.document === "undefined") {
 }
 
 // --- Imports ---
-const { G, MATCH_MIN, SCORE_PER_PIECE } = await import("../src/state.js");
+const { G, MATCH_MIN, SCORE_PER_PIECE } = await import("../src/state.ts");
 
-// audio.js の SFX を差し替え
-// board.js は import { SFX } from "./audio.js" しているので、
-// audio.js をモック化するため直接書き換える
+// audio.ts の SFX を差し替え
+// board.ts は import { SFX } from "./audio" しているので、
+// audio.ts をモック化するため直接書き換える
 import {
   createBoard, initCellState, findAllMatches, findSpecialCreations,
   activateSpecial, applyGravityData, swapPieces, countAvailableMoves,
   damageAdjacentIce, tickCountdowns, isPlayable, inBounds, isIce,
   randomPiece, isHole, isRock, isMatchable,
-} from "../src/board.js";
-import { buildStages } from "../src/stages.js";
+} from "../src/board.ts";
+import { buildStages } from "../src/stages.ts";
 
 // --- Game simulation ---
 function initGameState(stageIndex) {

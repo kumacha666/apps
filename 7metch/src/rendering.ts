@@ -1,22 +1,23 @@
-import { G, PIECE_COLORS, PIECE_SHAPES, PIECE_SYMBOLS, ANIM } from "./state.js";
-import { drawVFX, updateVFX, hasActiveVFX, addScreenShake } from "./vfx.js";
-import { isHole, isRock, isIce, TAP_ACTIVATE_SPECIALS } from "./board.js";
+import type { Piece, SpecialType, ChainLabel, BgStar, ShootingStar } from "./types";
+import { G, PIECE_COLORS, PIECE_SHAPES, PIECE_SYMBOLS, ANIM } from "./state";
+import { drawVFX, updateVFX, hasActiveVFX, addScreenShake } from "./vfx";
+import { isHole, isRock, isIce, TAP_ACTIVATE_SPECIALS } from "./board";
 
 // --- Chain Label System ---
 
-export function startChainLabel(chain) {
+export function startChainLabel(chain: number): void {
   G.activeChainLabel = { chain, label: `${chain} Chain!`, startTime: performance.now(), duration: 550 };
   if (chain >= 3) addScreenShake(Math.min(chain * 0.8, 4));
 }
 
-export function updateChainLabel() {
+export function updateChainLabel(): void {
   if (!G.activeChainLabel) return;
   if (performance.now() - G.activeChainLabel.startTime >= G.activeChainLabel.duration) {
     G.activeChainLabel = null;
   }
 }
 
-export function drawChainLabel() {
+export function drawChainLabel(): void {
   if (!G.activeChainLabel) return;
   const { chain, label, startTime, duration } = G.activeChainLabel;
   const t = (performance.now() - startTime) / duration;
@@ -26,36 +27,36 @@ export function drawChainLabel() {
   const alpha = t < 0.65 ? 1 : 1 - (t - 0.65) / 0.35;
   const chainColor = chain >= 5 ? "#ff4444" : chain >= 3 ? "#ff8800" : "#ffd700";
 
-  G.ctx.save();
-  G.ctx.globalAlpha = alpha;
-  G.ctx.fillStyle = chainColor;
-  G.ctx.strokeStyle = "#000";
-  G.ctx.lineWidth = 4;
-  G.ctx.shadowColor = chainColor;
-  G.ctx.shadowBlur = 8 + chain * 3;
-  G.ctx.font = `bold ${G.cellSize * (0.7 + chain * 0.05) * scale}px sans-serif`;
-  G.ctx.textAlign = "center";
-  G.ctx.textBaseline = "middle";
+  G.ctx!.save();
+  G.ctx!.globalAlpha = alpha;
+  G.ctx!.fillStyle = chainColor;
+  G.ctx!.strokeStyle = "#000";
+  G.ctx!.lineWidth = 4;
+  G.ctx!.shadowColor = chainColor;
+  G.ctx!.shadowBlur = 8 + chain * 3;
+  G.ctx!.font = `bold ${G.cellSize * (0.7 + chain * 0.05) * scale}px sans-serif`;
+  G.ctx!.textAlign = "center";
+  G.ctx!.textBaseline = "middle";
   const x = G.boardPixelW / 2;
   const y = G.boardPixelH / 2 + yOffset;
-  G.ctx.strokeText(label, x, y);
-  G.ctx.fillText(label, x, y);
-  G.ctx.restore();
+  G.ctx!.strokeText(label, x, y);
+  G.ctx!.fillText(label, x, y);
+  G.ctx!.restore();
 }
 
-function sleep(ms) {
+function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function flashInvalid(r1, c1, r2, c2) {
+export async function flashInvalid(r1: number, c1: number, r2: number, c2: number): Promise<void> {
   for (let i = 0; i < 3; i++) {
-    drawBoard(() => {
-      G.ctx.save();
-      G.ctx.globalAlpha = 0.4;
-      G.ctx.fillStyle = "#f00";
-      G.ctx.fillRect(c1 * G.cellSize, r1 * G.cellSize, G.cellSize, G.cellSize);
-      G.ctx.fillRect(c2 * G.cellSize, r2 * G.cellSize, G.cellSize, G.cellSize);
-      G.ctx.restore();
+    drawBoard((ctx: CanvasRenderingContext2D) => {
+      ctx.save();
+      ctx.globalAlpha = 0.4;
+      ctx.fillStyle = "#f00";
+      ctx.fillRect(c1 * G.cellSize, r1 * G.cellSize, G.cellSize, G.cellSize);
+      ctx.fillRect(c2 * G.cellSize, r2 * G.cellSize, G.cellSize, G.cellSize);
+      ctx.restore();
     });
     await sleep(60);
     drawBoard();
@@ -64,10 +65,10 @@ export async function flashInvalid(r1, c1, r2, c2) {
 }
 
 // --- Drawing ---
-export function drawBoardBase() {
-  G.ctx.clearRect(0, 0, G.boardPixelW, G.boardPixelH);
-  G.ctx.save();
-  G.ctx.translate(G.shakeX, G.shakeY);
+export function drawBoardBase(): void {
+  G.ctx!.clearRect(0, 0, G.boardPixelW, G.boardPixelH);
+  G.ctx!.save();
+  G.ctx!.translate(G.shakeX, G.shakeY);
 
   // Animated space background
   drawSpaceBackground();
@@ -77,92 +78,92 @@ export function drawBoardBase() {
       const x = c * G.cellSize;
       const y = r * G.cellSize;
       if (isHole(r, c)) {
-        G.ctx.fillStyle = "rgba(5,5,16,0.85)";
-        G.ctx.fillRect(x, y, G.cellSize, G.cellSize);
+        G.ctx!.fillStyle = "rgba(5,5,16,0.85)";
+        G.ctx!.fillRect(x, y, G.cellSize, G.cellSize);
         continue;
       }
       if (isRock(r, c)) {
-        G.ctx.fillStyle = "rgba(25,25,40,0.9)";
-        G.ctx.fillRect(x, y, G.cellSize, G.cellSize);
-        G.ctx.save();
-        G.ctx.fillStyle = "#3a3a4a";
+        G.ctx!.fillStyle = "rgba(25,25,40,0.9)";
+        G.ctx!.fillRect(x, y, G.cellSize, G.cellSize);
+        G.ctx!.save();
+        G.ctx!.fillStyle = "#3a3a4a";
         const rcx = x + G.cellSize / 2;
         const rcy = y + G.cellSize / 2;
         const rr = G.cellSize / 2 - 4;
-        G.ctx.beginPath();
-        G.ctx.arc(rcx, rcy, rr, 0, Math.PI * 2);
-        G.ctx.fill();
-        G.ctx.strokeStyle = "#555";
-        G.ctx.lineWidth = 2;
-        G.ctx.stroke();
-        G.ctx.strokeStyle = "#666";
-        G.ctx.lineWidth = 2;
-        G.ctx.beginPath();
-        G.ctx.moveTo(rcx - rr * 0.4, rcy - rr * 0.4);
-        G.ctx.lineTo(rcx + rr * 0.4, rcy + rr * 0.4);
-        G.ctx.moveTo(rcx + rr * 0.4, rcy - rr * 0.4);
-        G.ctx.lineTo(rcx - rr * 0.4, rcy + rr * 0.4);
-        G.ctx.stroke();
-        G.ctx.restore();
+        G.ctx!.beginPath();
+        G.ctx!.arc(rcx, rcy, rr, 0, Math.PI * 2);
+        G.ctx!.fill();
+        G.ctx!.strokeStyle = "#555";
+        G.ctx!.lineWidth = 2;
+        G.ctx!.stroke();
+        G.ctx!.strokeStyle = "#666";
+        G.ctx!.lineWidth = 2;
+        G.ctx!.beginPath();
+        G.ctx!.moveTo(rcx - rr * 0.4, rcy - rr * 0.4);
+        G.ctx!.lineTo(rcx + rr * 0.4, rcy + rr * 0.4);
+        G.ctx!.moveTo(rcx + rr * 0.4, rcy - rr * 0.4);
+        G.ctx!.lineTo(rcx - rr * 0.4, rcy + rr * 0.4);
+        G.ctx!.stroke();
+        G.ctx!.restore();
         continue;
       }
       // Semi-transparent cell overlay so stars show through subtly
-      G.ctx.fillStyle = (r + c) % 2 === 0 ? "rgba(10,18,40,0.45)" : "rgba(14,24,50,0.45)";
-      G.ctx.fillRect(x, y, G.cellSize, G.cellSize);
+      G.ctx!.fillStyle = (r + c) % 2 === 0 ? "rgba(10,18,40,0.45)" : "rgba(14,24,50,0.45)";
+      G.ctx!.fillRect(x, y, G.cellSize, G.cellSize);
     }
   }
 }
 
-export function drawPieceAt(piece, cx, cy) {
+export function drawPieceAt(piece: Piece | null, cx: number, cy: number): void {
   if (!piece) return;
   const radius = G.cellSize * 0.36;
 
   if (piece.special) {
-    drawSpecialIcon(G.ctx, piece.special, cx, cy, G.cellSize * 0.44, piece);
+    drawSpecialIcon(G.ctx!, piece.special, cx, cy, G.cellSize * 0.44, piece);
   } else {
     if (G.pieceCacheSize === G.cellSize && G.pieceCache[piece.color]) {
       const cached = G.pieceCache[piece.color];
       const pad = 1.4;
       const size = Math.ceil(G.cellSize * pad);
-      G.ctx.drawImage(cached, cx - size / 2, cy - size / 2, size, size);
+      G.ctx!.drawImage(cached, cx - size / 2, cy - size / 2, size, size);
     } else {
-      drawPlanet(G.ctx, piece.color, cx, cy, radius);
+      drawPlanet(G.ctx!, piece.color, cx, cy, radius);
     }
   }
 }
 
-export function drawIceOverlay(r, c) {
+export function drawIceOverlay(r: number, c: number): void {
   const x = c * G.cellSize, y = r * G.cellSize;
-  G.ctx.save();
+  G.ctx!.save();
   const iceAlpha = G.cellState[r][c] === "ice2" ? 0.35 : 0.2;
-  G.ctx.fillStyle = `rgba(100, 200, 255, ${iceAlpha})`;
-  G.ctx.fillRect(x + 1, y + 1, G.cellSize - 2, G.cellSize - 2);
-  G.ctx.strokeStyle = `rgba(150, 220, 255, ${iceAlpha + 0.15})`;
-  G.ctx.lineWidth = 2;
-  G.ctx.strokeRect(x + 2, y + 2, G.cellSize - 4, G.cellSize - 4);
-  G.ctx.strokeStyle = `rgba(200, 240, 255, ${iceAlpha})`;
-  G.ctx.lineWidth = 1;
-  G.ctx.beginPath();
-  G.ctx.moveTo(x + G.cellSize * 0.2, y + G.cellSize * 0.3);
-  G.ctx.lineTo(x + G.cellSize * 0.5, y + G.cellSize * 0.15);
-  G.ctx.lineTo(x + G.cellSize * 0.8, y + G.cellSize * 0.3);
-  G.ctx.stroke();
+  G.ctx!.fillStyle = `rgba(100, 200, 255, ${iceAlpha})`;
+  G.ctx!.fillRect(x + 1, y + 1, G.cellSize - 2, G.cellSize - 2);
+  G.ctx!.strokeStyle = `rgba(150, 220, 255, ${iceAlpha + 0.15})`;
+  G.ctx!.lineWidth = 2;
+  G.ctx!.strokeRect(x + 2, y + 2, G.cellSize - 4, G.cellSize - 4);
+  G.ctx!.strokeStyle = `rgba(200, 240, 255, ${iceAlpha})`;
+  G.ctx!.lineWidth = 1;
+  G.ctx!.beginPath();
+  G.ctx!.moveTo(x + G.cellSize * 0.2, y + G.cellSize * 0.3);
+  G.ctx!.lineTo(x + G.cellSize * 0.5, y + G.cellSize * 0.15);
+  G.ctx!.lineTo(x + G.cellSize * 0.8, y + G.cellSize * 0.3);
+  G.ctx!.stroke();
   if (G.cellState[r][c] === "ice2") {
-    G.ctx.beginPath();
-    G.ctx.moveTo(x + G.cellSize * 0.3, y + G.cellSize * 0.7);
-    G.ctx.lineTo(x + G.cellSize * 0.6, y + G.cellSize * 0.85);
-    G.ctx.stroke();
+    G.ctx!.beginPath();
+    G.ctx!.moveTo(x + G.cellSize * 0.3, y + G.cellSize * 0.7);
+    G.ctx!.lineTo(x + G.cellSize * 0.6, y + G.cellSize * 0.85);
+    G.ctx!.stroke();
   }
-  G.ctx.restore();
+  G.ctx!.restore();
 }
 
-export function drawBoard(overlay) {
+export function drawBoard(overlay?: (ctx: CanvasRenderingContext2D) => void): void {
   drawBoardBase();
 
   for (let r = 0; r < G.rows; r++) {
     for (let c = 0; c < G.cols; c++) {
       if (!G.board[r][c] || isHole(r, c) || isRock(r, c)) continue;
-      const piece = G.board[r][c];
+      const piece = G.board[r][c]!;
 
       const cx = c * G.cellSize + G.cellSize / 2;
       const cy = r * G.cellSize + G.cellSize / 2;
@@ -176,34 +177,34 @@ export function drawBoard(overlay) {
       }
 
       if (G.selected && G.selected.r === r && G.selected.c === c) {
-        G.ctx.save();
+        G.ctx!.save();
         const isActivatable = piece.special && TAP_ACTIVATE_SPECIALS.has(piece.special);
         if (isActivatable) {
           const pulse = 0.4 + Math.sin(performance.now() / 200) * 0.2;
-          G.ctx.strokeStyle = "#ffd700";
-          G.ctx.lineWidth = 3;
-          G.ctx.globalAlpha = pulse;
-          G.ctx.shadowColor = "#ffd700";
-          G.ctx.shadowBlur = 10;
-          G.ctx.strokeRect(c * G.cellSize + 1, r * G.cellSize + 1, G.cellSize - 2, G.cellSize - 2);
+          G.ctx!.strokeStyle = "#ffd700";
+          G.ctx!.lineWidth = 3;
+          G.ctx!.globalAlpha = pulse;
+          G.ctx!.shadowColor = "#ffd700";
+          G.ctx!.shadowBlur = 10;
+          G.ctx!.strokeRect(c * G.cellSize + 1, r * G.cellSize + 1, G.cellSize - 2, G.cellSize - 2);
         } else {
-          G.ctx.strokeStyle = "#fff";
-          G.ctx.lineWidth = 3;
-          G.ctx.strokeRect(c * G.cellSize + 2, r * G.cellSize + 2, G.cellSize - 4, G.cellSize - 4);
+          G.ctx!.strokeStyle = "#fff";
+          G.ctx!.lineWidth = 3;
+          G.ctx!.strokeRect(c * G.cellSize + 2, r * G.cellSize + 2, G.cellSize - 4, G.cellSize - 4);
         }
-        G.ctx.restore();
+        G.ctx!.restore();
       }
     }
   }
 
-  if (overlay) overlay(G.ctx);
+  if (overlay) overlay(G.ctx!);
   updateChainLabel();
   drawChainLabel();
-  G.ctx.restore();
+  G.ctx!.restore();
 }
 
 // --- Color utility functions for planet gradients ---
-export function hexToRgb(hex) {
+export function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return result ? {
     r: parseInt(result[1], 16),
@@ -212,7 +213,7 @@ export function hexToRgb(hex) {
   } : { r: 0, g: 0, b: 0 };
 }
 
-export function lightenColor(hex, amount) {
+export function lightenColor(hex: string, amount: number): string {
   const rgb = hexToRgb(hex);
   const r = Math.min(255, rgb.r + amount);
   const g = Math.min(255, rgb.g + amount);
@@ -220,7 +221,7 @@ export function lightenColor(hex, amount) {
   return `rgb(${r},${g},${b})`;
 }
 
-export function darkenColor(hex, amount) {
+export function darkenColor(hex: string, amount: number): string {
   const rgb = hexToRgb(hex);
   const r = Math.max(0, rgb.r - amount);
   const g = Math.max(0, rgb.g - amount);
@@ -229,7 +230,7 @@ export function darkenColor(hex, amount) {
 }
 
 // --- Planet drawing functions ---
-export function drawPlanet(ctx, colorIdx, cx, cy, r) {
+export function drawPlanet(ctx: CanvasRenderingContext2D, colorIdx: number, cx: number, cy: number, r: number): void {
   ctx.save();
   const color = PIECE_COLORS[colorIdx];
 
@@ -276,7 +277,7 @@ export function drawPlanet(ctx, colorIdx, cx, cy, r) {
 }
 
 // Sun: Bold corona rays + surface flares
-export function drawSun(ctx, cx, cy, r, color) {
+export function drawSun(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string): void {
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -316,17 +317,17 @@ export function drawSun(ctx, cx, cy, r, color) {
   ctx.restore();
 }
 
-export function drawMoon(ctx, cx, cy, r, color) {
+export function drawMoon(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string): void {
 }
 
-export function drawMars(ctx, cx, cy, r, color) {
+export function drawMars(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string): void {
 }
 
-export function drawMercury(ctx, cx, cy, r, color) {
+export function drawMercury(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string): void {
 }
 
 // Jupiter: Bold cloud bands + prominent Great Red Spot
-export function drawJupiter(ctx, cx, cy, r, color) {
+export function drawJupiter(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string): void {
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -353,7 +354,7 @@ export function drawJupiter(ctx, cx, cy, r, color) {
 }
 
 // Venus: Bold cloud swirl patterns
-export function drawVenus(ctx, cx, cy, r, color) {
+export function drawVenus(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string): void {
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -375,7 +376,7 @@ export function drawVenus(ctx, cx, cy, r, color) {
 }
 
 // Saturn: Bold prominent rings
-export function drawSaturn(ctx, cx, cy, r, color) {
+export function drawSaturn(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string): void {
   // Back half of rings
   ctx.save();
   ctx.globalAlpha = 0.5;
@@ -430,7 +431,7 @@ export function drawSaturn(ctx, cx, cy, r, color) {
 }
 
 // Earth: Bold continents + clouds
-export function drawEarth(ctx, cx, cy, r, color) {
+export function drawEarth(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string): void {
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -465,7 +466,7 @@ export function drawEarth(ctx, cx, cy, r, color) {
 }
 
 // --- Offscreen canvas cache for planet pieces ---
-export function buildPieceCache() {
+export function buildPieceCache(): void {
   G.pieceCache = {};
   G.pieceCacheSize = G.cellSize;
   const pad = 1.4;
@@ -476,7 +477,7 @@ export function buildPieceCache() {
     const offCanvas = document.createElement("canvas");
     offCanvas.width = size * dpr;
     offCanvas.height = size * dpr;
-    const offCtx = offCanvas.getContext("2d");
+    const offCtx = offCanvas.getContext("2d")!;
     offCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const cx = size / 2;
@@ -490,7 +491,7 @@ export function buildPieceCache() {
 
 // --- Background Stars ---
 
-export function initBgStars() {
+export function initBgStars(): void {
   G.bgStars = [];
   const w = G.boardPixelW, h = G.boardPixelH;
   const layers = [
@@ -512,36 +513,36 @@ export function initBgStars() {
   }
 }
 
-export function drawSpaceBackground() {
+export function drawSpaceBackground(): void {
   const w = G.boardPixelW, h = G.boardPixelH;
 
   // Cached deep space gradient (recreate only on resize)
   const sizeKey = w + "x" + h;
   if (G.bgGradSize !== sizeKey) {
-    G.bgGradCache = G.ctx.createLinearGradient(0, 0, w * 0.3, h);
+    G.bgGradCache = G.ctx!.createLinearGradient(0, 0, w * 0.3, h);
     G.bgGradCache.addColorStop(0, "#0a0a2e");
     G.bgGradCache.addColorStop(0.5, "#0d1030");
     G.bgGradCache.addColorStop(1, "#150a30");
     G.bgGradSize = sizeKey;
   }
-  G.ctx.fillStyle = G.bgGradCache;
-  G.ctx.fillRect(0, 0, w, h);
+  G.ctx!.fillStyle = G.bgGradCache!;
+  G.ctx!.fillRect(0, 0, w, h);
 
   for (const star of G.bgStars) {
     const flicker = 0.7 + 0.3 * Math.sin(star.twinkle);
-    G.ctx.globalAlpha = star.alpha * flicker;
-    G.ctx.fillStyle = "#fff";
-    G.ctx.beginPath();
-    G.ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
-    G.ctx.fill();
+    G.ctx!.globalAlpha = star.alpha * flicker;
+    G.ctx!.fillStyle = "#fff";
+    G.ctx!.beginPath();
+    G.ctx!.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+    G.ctx!.fill();
   }
-  G.ctx.globalAlpha = 1;
+  G.ctx!.globalAlpha = 1;
 }
 
-export function startBgAnim() {
+export function startBgAnim(): void {
   stopBgAnim();
-  function tick() {
-    if (!G.screens.game.classList.contains("active")) return;
+  function tick(): void {
+    if (!G.screens!.game.classList.contains("active")) return;
     updateVFX();
     if (!G.animating && !G.hintData) {
       drawBoard();
@@ -554,13 +555,13 @@ export function startBgAnim() {
   G.bgAnimId = requestAnimationFrame(tick);
 }
 
-export function stopBgAnim() {
+export function stopBgAnim(): void {
   if (G.bgAnimId) { cancelAnimationFrame(G.bgAnimId); G.bgAnimId = null; }
 }
 
 // --- Title screen background ---
 
-export function initTitleBgStars(w, h) {
+export function initTitleBgStars(w: number, h: number): void {
   G.titleBgStars = [];
   const layers = [
     { count: 100, speed: 0.06, sizeMin: 0.5, sizeMax: 1.5, alpha: 0.5 },
@@ -581,26 +582,26 @@ export function initTitleBgStars(w, h) {
   }
 }
 
-export function startTitleBgAnim() {
+export function startTitleBgAnim(): void {
   stopTitleBgAnim();
-  const canvas = document.getElementById("title-bg-canvas");
+  const canvas = document.getElementById("title-bg-canvas") as HTMLCanvasElement | null;
   if (!canvas) return;
-  const tCtx = canvas.getContext("2d");
+  const tCtx = canvas.getContext("2d")!;
   const dpr = window.devicePixelRatio || 1;
 
-  function resize() {
-    const rect = canvas.parentElement.getBoundingClientRect();
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
+  function resize(): void {
+    const rect = canvas!.parentElement!.getBoundingClientRect();
+    canvas!.width = rect.width * dpr;
+    canvas!.height = rect.height * dpr;
     tCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (G.titleBgStars.length === 0) initTitleBgStars(rect.width, rect.height);
   }
   resize();
 
-  function tick() {
-    if (!G.screens.title.classList.contains("active")) return;
-    const w = canvas.width / dpr;
-    const h = canvas.height / dpr;
+  function tick(): void {
+    if (!G.screens!.title.classList.contains("active")) return;
+    const w = canvas!.width / dpr;
+    const h = canvas!.height / dpr;
 
     const grad = tCtx.createLinearGradient(0, 0, w * 0.3, h);
     grad.addColorStop(0, "#0a0a2e");
@@ -663,11 +664,11 @@ export function startTitleBgAnim() {
   G.titleBgAnimId = requestAnimationFrame(tick);
 }
 
-export function stopTitleBgAnim() {
+export function stopTitleBgAnim(): void {
   if (G.titleBgAnimId) { cancelAnimationFrame(G.titleBgAnimId); G.titleBgAnimId = null; }
 }
 
-export function initResultBgStars(w, h) {
+export function initResultBgStars(w: number, h: number): void {
   G.resultBgStars = [];
   const layers = [
     { count: 100, speed: 0.06, sizeMin: 0.5, sizeMax: 1.5, alpha: 0.5 },
@@ -687,26 +688,26 @@ export function initResultBgStars(w, h) {
   }
 }
 
-export function startResultBgAnim() {
+export function startResultBgAnim(): void {
   stopResultBgAnim();
-  const canvas = document.getElementById("result-bg-canvas");
+  const canvas = document.getElementById("result-bg-canvas") as HTMLCanvasElement | null;
   if (!canvas) return;
-  const rCtx = canvas.getContext("2d");
+  const rCtx = canvas.getContext("2d")!;
   const dpr = window.devicePixelRatio || 1;
 
-  function resize() {
-    const rect = canvas.parentElement.getBoundingClientRect();
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
+  function resize(): void {
+    const rect = canvas!.parentElement!.getBoundingClientRect();
+    canvas!.width = rect.width * dpr;
+    canvas!.height = rect.height * dpr;
     rCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (G.resultBgStars.length === 0) initResultBgStars(rect.width, rect.height);
   }
   resize();
 
-  function tick() {
-    if (!G.screens.result.classList.contains("active")) return;
-    const w = canvas.width / dpr;
-    const h = canvas.height / dpr;
+  function tick(): void {
+    if (!G.screens!.result.classList.contains("active")) return;
+    const w = canvas!.width / dpr;
+    const h = canvas!.height / dpr;
 
     const grad = rCtx.createLinearGradient(0, 0, w * 0.3, h);
     grad.addColorStop(0, "#0a0a2e");
@@ -764,21 +765,21 @@ export function startResultBgAnim() {
   G.resultBgAnimId = requestAnimationFrame(tick);
 }
 
-export function stopResultBgAnim() {
+export function stopResultBgAnim(): void {
   if (G.resultBgAnimId) { cancelAnimationFrame(G.resultBgAnimId); G.resultBgAnimId = null; }
 }
 
-export function startSplashBgAnim() {
+export function startSplashBgAnim(): void {
   stopSplashBgAnim();
-  const canvas = document.getElementById("splash-bg-canvas");
+  const canvas = document.getElementById("splash-bg-canvas") as HTMLCanvasElement | null;
   if (!canvas) return;
-  const sCtx = canvas.getContext("2d");
+  const sCtx = canvas.getContext("2d")!;
   const dpr = window.devicePixelRatio || 1;
 
-  function resize() {
-    const rect = canvas.parentElement.getBoundingClientRect();
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
+  function resize(): void {
+    const rect = canvas!.parentElement!.getBoundingClientRect();
+    canvas!.width = rect.width * dpr;
+    canvas!.height = rect.height * dpr;
     sCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (G.splashBgStars.length === 0) {
       G.splashBgStars = [];
@@ -796,10 +797,10 @@ export function startSplashBgAnim() {
   }
   resize();
 
-  function tick() {
-    if (!G.screens.splash.classList.contains("active")) return;
-    const w = canvas.width / dpr;
-    const h = canvas.height / dpr;
+  function tick(): void {
+    if (!G.screens!.splash.classList.contains("active")) return;
+    const w = canvas!.width / dpr;
+    const h = canvas!.height / dpr;
     const grad = sCtx.createLinearGradient(0, 0, w * 0.3, h);
     grad.addColorStop(0, "#0a0a2e");
     grad.addColorStop(0.5, "#0d1030");
@@ -824,13 +825,13 @@ export function startSplashBgAnim() {
   G.splashBgAnimId = requestAnimationFrame(tick);
 }
 
-export function stopSplashBgAnim() {
+export function stopSplashBgAnim(): void {
   if (G.splashBgAnimId) { cancelAnimationFrame(G.splashBgAnimId); G.splashBgAnimId = null; }
 }
 
 // --- Star & Special Icon Drawing ---
 
-export function drawStar5(ctx, cx, cy, r) {
+export function drawStar5(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
   ctx.beginPath();
   for (let i = 0; i < 5; i++) {
     const a = (i * 2 * Math.PI / 5) - Math.PI / 2;
@@ -843,7 +844,7 @@ export function drawStar5(ctx, cx, cy, r) {
   ctx.fill();
 }
 
-export function drawShootingStar(ctx, cx, cy, r, angle, tint) {
+export function drawShootingStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, angle: number, tint: string | null): void {
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(angle);
@@ -867,9 +868,9 @@ export function drawShootingStar(ctx, cx, cy, r, angle, tint) {
   ctx.restore();
 }
 
-export function drawSpecialIcon(ctx, type, cx, cy, r, piece) {
+export function drawSpecialIcon(ctx: CanvasRenderingContext2D, type: SpecialType | string, cx: number, cy: number, r: number, piece: Piece | null): void {
   ctx.save();
-  const tint = (piece && piece.color >= 0) ? PIECE_COLORS[piece.color] : null;
+  const tint: string | null = (piece && piece.color >= 0) ? PIECE_COLORS[piece.color] : null;
   switch (type) {
     case "line_h": {
       drawShootingStar(ctx, cx, cy, r, Math.PI / 2, tint);
@@ -884,7 +885,7 @@ export function drawSpecialIcon(ctx, type, cx, cy, r, piece) {
       ctx.translate(cx, cy);
       const s = r;
       const tc = tint || "#ffd700";
-      [-Math.PI / 4, Math.PI / 4].forEach(a => {
+      [-Math.PI / 4, Math.PI / 4].forEach((a: number) => {
         ctx.save();
         ctx.rotate(a);
         ctx.shadowColor = tc;
@@ -970,7 +971,7 @@ export function drawSpecialIcon(ctx, type, cx, cy, r, piece) {
     }
     case "countdown": {
       const s = r;
-      const count = piece ? piece.countdown : 0;
+      const count = piece ? piece.countdown ?? 0 : 0;
       const urgency = count <= 3;
       ctx.shadowColor = urgency ? "#ff4444" : "#ff6600";
       ctx.shadowBlur = r * 0.3;

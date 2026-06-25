@@ -1,32 +1,33 @@
-import { G, PIECE_COLORS, MATCH_MIN } from "./state.js";
-import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, addFloatingText } from "./vfx.js";
-import { drawBoard } from "./rendering.js";
-import { SFX } from "./audio.js";
+import type { Piece, SpecialType, SpecialCreation, CellPos, FallEntry, HintData, ComboType, StageConfig } from "./types";
+import { G, PIECE_COLORS, MATCH_MIN } from "./state";
+import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, addFloatingText } from "./vfx";
+import { drawBoard } from "./rendering";
+import { SFX } from "./audio";
 
 const HINT_DELAY_MS = 4000;
-export const TAP_ACTIVATE_SPECIALS = new Set(["line_h", "line_v", "line_d", "bomb"]);
+export const TAP_ACTIVATE_SPECIALS: Set<string> = new Set(["line_h", "line_v", "line_d", "bomb"]);
 
 // ---------------------------------------------------------------------------
 // Board helpers
 // ---------------------------------------------------------------------------
 
-export function hasSquare() {
+export function hasSquare(): boolean {
   for (let r = 0; r < G.rows - 1; r++) {
     for (let c = 0; c < G.cols - 1; c++) {
-      const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
+      const cells: [number, number][] = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
       if (cells.some(([cr,cc]) => !G.board[cr][cc] || isHole(cr,cc) || isRock(cr,cc))) continue;
-      const color = G.board[r][c].color;
-      if (cells.every(([cr,cc]) => G.board[cr][cc].color === color)) return true;
+      const color = G.board[r][c]!.color;
+      if (cells.every(([cr,cc]) => G.board[cr][cc]!.color === color)) return true;
     }
   }
   return false;
 }
 
-export function createBoard(numColors) {
+export function createBoard(numColors: number): void {
   const maxMoves = Math.max(10, Math.floor(G.rows * G.cols * 0.15));
   const minMoves = 2;
   const target = Math.floor((minMoves + maxMoves) / 2);
-  let bestBoard = null;
+  let bestBoard: (Piece | null)[][] | null = null;
   let bestDiff = Infinity;
 
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -64,15 +65,16 @@ export function createBoard(numColors) {
 
   if (bestBoard) G.board = bestBoard;
 
-  const stg = G.STAGES[G.currentStage];
+  const stg = G.STAGES![G.currentStage];
   if (stg.countdownBombs > 0) {
     let placed = 0, attempts = 0;
     while (placed < stg.countdownBombs && attempts < 200) {
       const br = Math.floor(Math.random() * G.rows);
       const bc = Math.floor(Math.random() * G.cols);
-      if (G.board[br][bc] && !G.board[br][bc].special) {
-        G.board[br][bc].special = "countdown";
-        G.board[br][bc].countdown = 8 + Math.floor(Math.random() * 5);
+      const cell = G.board[br][bc];
+      if (cell && !cell.special) {
+        cell.special = "countdown";
+        cell.countdown = 8 + Math.floor(Math.random() * 5);
         placed++;
       }
       attempts++;
@@ -80,16 +82,16 @@ export function createBoard(numColors) {
   }
 }
 
-export function randomPiece(numColors) {
+export function randomPiece(numColors: number): Piece {
   return { color: Math.floor(Math.random() * numColors), special: null };
 }
 
-export function countAvailableMoves() {
+export function countAvailableMoves(): number {
   let count = 0;
   for (let r = 0; r < G.rows; r++) {
     for (let c = 0; c < G.cols; c++) {
       if (!G.board[r][c] || !isPlayable(r, c)) continue;
-      const fwd = [[r, c+1], [r+1, c-1], [r+1, c], [r+1, c+1]];
+      const fwd: [number, number][] = [[r, c+1], [r+1, c-1], [r+1, c], [r+1, c+1]];
       for (const [nr, nc] of fwd) {
         if (!inBounds(nr, nc) || !G.board[nr][nc] || !isPlayable(nr, nc)) continue;
         swapPieces(r, c, nr, nc);
@@ -101,7 +103,7 @@ export function countAvailableMoves() {
   return count;
 }
 
-export function initCellState(stg) {
+export function initCellState(stg: StageConfig): void {
   G.cellState = [];
   for (let r = 0; r < G.rows; r++) {
     G.cellState[r] = [];
@@ -146,19 +148,19 @@ export function initCellState(stg) {
 // Cell state queries
 // ---------------------------------------------------------------------------
 
-export function isHole(r, c) { return G.cellState[r] && G.cellState[r][c] === "hole"; }
-export function isRock(r, c) { return G.cellState[r] && G.cellState[r][c] === "rock"; }
-export function isIce(r, c) { return G.cellState[r] && (G.cellState[r][c] === "ice1" || G.cellState[r][c] === "ice2"); }
-export function isPlayable(r, c) { return !isHole(r, c) && !isRock(r, c); }
+export function isHole(r: number, c: number): boolean { return G.cellState[r] && G.cellState[r][c] === "hole"; }
+export function isRock(r: number, c: number): boolean { return G.cellState[r] && G.cellState[r][c] === "rock"; }
+export function isIce(r: number, c: number): boolean { return G.cellState[r] && (G.cellState[r][c] === "ice1" || G.cellState[r][c] === "ice2"); }
+export function isPlayable(r: number, c: number): boolean { return !isHole(r, c) && !isRock(r, c); }
 
-export function damageIce(r, c) {
+export function damageIce(r: number, c: number): boolean {
   if (G.cellState[r][c] === "ice2") { G.cellState[r][c] = "ice1"; SFX.iceCrack(); return false; }
   if (G.cellState[r][c] === "ice1") { G.cellState[r][c] = null; SFX.iceCrack(); return true; }
   return true;
 }
 
-export function damageAdjacentIce(clearList) {
-  const iceSet = new Set();
+export function damageAdjacentIce(clearList: [number, number][]): void {
+  const iceSet = new Set<number>();
   for (const [r, c] of clearList) {
     for (let dr = -1; dr <= 1; dr++) {
       for (let dc = -1; dc <= 1; dc++) {
@@ -177,13 +179,14 @@ export function damageAdjacentIce(clearList) {
 // Countdown
 // ---------------------------------------------------------------------------
 
-export function tickCountdowns() {
-  const exploded = [];
+export function tickCountdowns(): [number, number][] {
+  const exploded: [number, number][] = [];
   for (let r = 0; r < G.rows; r++) {
     for (let c = 0; c < G.cols; c++) {
-      if (G.board[r][c] && G.board[r][c].special === "countdown") {
-        G.board[r][c].countdown--;
-        if (G.board[r][c].countdown <= 0) exploded.push([r, c]);
+      const cell = G.board[r][c];
+      if (cell && cell.special === "countdown") {
+        cell.countdown!--;
+        if (cell.countdown! <= 0) exploded.push([r, c]);
       }
     }
   }
@@ -194,11 +197,11 @@ export function tickCountdowns() {
 // Bounds & adjacency
 // ---------------------------------------------------------------------------
 
-export function inBounds(r, c) {
+export function inBounds(r: number, c: number): boolean {
   return r >= 0 && r < G.rows && c >= 0 && c < G.cols;
 }
 
-export function isAdjacent(r1, c1, r2, c2) {
+export function isAdjacent(r1: number, c1: number, r2: number, c2: number): boolean {
   const dr = Math.abs(r1 - r2);
   const dc = Math.abs(c1 - c2);
   return dr <= 1 && dc <= 1 && (dr + dc > 0);
@@ -208,26 +211,26 @@ export function isAdjacent(r1, c1, r2, c2) {
 // Match finding
 // ---------------------------------------------------------------------------
 
-export function isMatchable(r, c) {
+export function isMatchable(r: number, c: number): boolean {
   if (!G.board[r][c]) return false;
   if (isHole(r, c) || isRock(r, c)) return false;
-  if (G.board[r][c].special && TAP_ACTIVATE_SPECIALS.has(G.board[r][c].special)) return false;
-  if (G.board[r][c].special === "countdown") return false;
+  if (G.board[r][c]!.special && TAP_ACTIVATE_SPECIALS.has(G.board[r][c]!.special!)) return false;
+  if (G.board[r][c]!.special === "countdown") return false;
   if (isIce(r, c)) return false;
   return true;
 }
 
-export function findAllMatches() {
-  const matched = new Set();
-  const directions = [[0, 1], [1, 0]];
+export function findAllMatches(): [number, number][] {
+  const matched = new Set<number>();
+  const directions: [number, number][] = [[0, 1], [1, 0]];
   for (let r = 0; r < G.rows; r++) {
     for (let c = 0; c < G.cols; c++) {
       if (!isMatchable(r, c)) continue;
-      const color = G.board[r][c].color;
+      const color = G.board[r][c]!.color;
       for (const [dr, dc] of directions) {
-        const line = [[r, c]];
+        const line: [number, number][] = [[r, c]];
         let nr = r + dr, nc = c + dc;
-        while (inBounds(nr, nc) && isMatchable(nr, nc) && G.board[nr][nc].color === color) {
+        while (inBounds(nr, nc) && isMatchable(nr, nc) && G.board[nr][nc]!.color === color) {
           line.push([nr, nc]);
           nr += dr;
           nc += dc;
@@ -238,40 +241,40 @@ export function findAllMatches() {
       }
     }
   }
-  const stg = G.STAGES[G.currentStage];
+  const stg = G.STAGES![G.currentStage];
   if (stg && stg.features && stg.features.diagonalLine) {
     for (let r = 0; r < G.rows - 1; r++) {
       for (let c = 0; c < G.cols - 1; c++) {
         if (!isMatchable(r, c)) continue;
-        const color = G.board[r][c].color;
-        const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
-        const allMatch = cells.every(([cr, cc]) => isMatchable(cr, cc) && G.board[cr][cc].color === color);
+        const color = G.board[r][c]!.color;
+        const cells: [number, number][] = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
+        const allMatch = cells.every(([cr, cc]) => isMatchable(cr, cc) && G.board[cr][cc]!.color === color);
         if (allMatch) cells.forEach(([cr, cc]) => matched.add(cr * G.cols + cc));
       }
     }
   }
-  return [...matched].map((v) => [Math.floor(v / G.cols), v % G.cols]);
+  return [...matched].map((v) => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
 }
 
-export function findSpecialCreations(matches) {
-  const specials = [];
+export function findSpecialCreations(matches: [number, number][]): SpecialCreation[] {
+  const specials: SpecialCreation[] = [];
   const matchSet = new Set(matches.map(([r, c]) => r * G.cols + c));
-  const stg = G.STAGES[G.currentStage];
+  const stg = G.STAGES![G.currentStage];
 
-  const hLines = [];
-  const vLines = [];
+  const hLines: { line: [number, number][]; color: number }[] = [];
+  const vLines: { line: [number, number][]; color: number }[] = [];
 
   for (let r = 0; r < G.rows; r++) {
     for (let c = 0; c < G.cols; c++) {
       if (!G.board[r][c]) continue;
       if (isHole(r, c) || isRock(r, c)) continue;
-      const color = G.board[r][c].color;
+      const color = G.board[r][c]!.color;
 
       // horizontal
       {
-        const line = [[r, c]];
+        const line: [number, number][] = [[r, c]];
         let nc = c + 1;
-        while (inBounds(r, nc) && G.board[r][nc] && !isHole(r, nc) && !isRock(r, nc) && G.board[r][nc].color === color) {
+        while (inBounds(r, nc) && G.board[r][nc] && !isHole(r, nc) && !isRock(r, nc) && G.board[r][nc]!.color === color) {
           line.push([r, nc]);
           nc++;
         }
@@ -282,9 +285,9 @@ export function findSpecialCreations(matches) {
 
       // vertical
       {
-        const line = [[r, c]];
+        const line: [number, number][] = [[r, c]];
         let nr = r + 1;
-        while (inBounds(nr, c) && G.board[nr][c] && !isHole(nr, c) && !isRock(nr, c) && G.board[nr][c].color === color) {
+        while (inBounds(nr, c) && G.board[nr][c] && !isHole(nr, c) && !isRock(nr, c) && G.board[nr][c]!.color === color) {
           line.push([nr, c]);
           nr++;
         }
@@ -295,7 +298,7 @@ export function findSpecialCreations(matches) {
     }
   }
 
-  const usedCells = new Set();
+  const usedCells = new Set<number>();
 
   // T/L shape: intersecting horizontal + vertical of same color -> bomb
   for (const h of hLines) {
@@ -304,9 +307,9 @@ export function findSpecialCreations(matches) {
       for (const [hr, hc] of h.line) {
         for (const [vr, vc] of v.line) {
           if (hr === vr && hc === vc) {
-            const allCells = [...h.line, ...v.line];
+            const allCells: [number, number][] = [...h.line, ...v.line];
             let sr = hr, sc = hc;
-            if (G.lastSwapTarget && allCells.some(([cr, cc]) => cr === G.lastSwapTarget.r && cc === G.lastSwapTarget.c)) {
+            if (G.lastSwapTarget && allCells.some(([cr, cc]) => cr === G.lastSwapTarget!.r && cc === G.lastSwapTarget!.c)) {
               sr = G.lastSwapTarget.r;
               sc = G.lastSwapTarget.c;
             }
@@ -324,8 +327,8 @@ export function findSpecialCreations(matches) {
 
   // 5+ line -> rainbow, 4 line -> line clear
   const allLines = [
-    ...hLines.map((h) => ({ ...h, dir: "h" })),
-    ...vLines.map((v) => ({ ...v, dir: "v" })),
+    ...hLines.map((h) => ({ ...h, dir: "h" as const })),
+    ...vLines.map((v) => ({ ...v, dir: "v" as const })),
   ];
 
   for (const { line, color, dir } of allLines) {
@@ -335,7 +338,7 @@ export function findSpecialCreations(matches) {
 
     if (line.length >= 5) {
       let sr = mid[0], sc = mid[1], sk = midKey;
-      if (G.lastSwapTarget && line.some(([lr, lc]) => lr === G.lastSwapTarget.r && lc === G.lastSwapTarget.c)) {
+      if (G.lastSwapTarget && line.some(([lr, lc]) => lr === G.lastSwapTarget!.r && lc === G.lastSwapTarget!.c)) {
         sr = G.lastSwapTarget.r;
         sc = G.lastSwapTarget.c;
         sk = sr * G.cols + sc;
@@ -345,9 +348,9 @@ export function findSpecialCreations(matches) {
         usedCells.add(sk);
       }
     } else if (line.length === 4) {
-      const type = dir === "h" ? "line_h" : "line_v";
+      const type: SpecialType = dir === "h" ? "line_h" : "line_v";
       let sr = line[1][0], sc = line[1][1];
-      if (G.lastSwapTarget && line.some(([lr, lc]) => lr === G.lastSwapTarget.r && lc === G.lastSwapTarget.c)) {
+      if (G.lastSwapTarget && line.some(([lr, lc]) => lr === G.lastSwapTarget!.r && lc === G.lastSwapTarget!.c)) {
         sr = G.lastSwapTarget.r;
         sc = G.lastSwapTarget.c;
       }
@@ -364,13 +367,13 @@ export function findSpecialCreations(matches) {
     for (let r = 0; r < G.rows - 1; r++) {
       for (let c = 0; c < G.cols - 1; c++) {
         if (!G.board[r][c]) continue;
-        const sqColor = G.board[r][c].color;
-        const cells = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
-        if (cells.every(([cr,cc]) => G.board[cr][cc] && G.board[cr][cc].color === sqColor) &&
+        const sqColor = G.board[r][c]!.color;
+        const cells: [number, number][] = [[r,c],[r,c+1],[r+1,c],[r+1,c+1]];
+        if (cells.every(([cr,cc]) => G.board[cr][cc] && G.board[cr][cc]!.color === sqColor) &&
             cells.every(([cr,cc]) => matchSet.has(cr * G.cols + cc)) &&
             cells.every(([cr,cc]) => !usedCells.has(cr * G.cols + cc))) {
           let sr = r, sc = c;
-          if (G.lastSwapTarget && cells.some(([cr,cc]) => cr === G.lastSwapTarget.r && cc === G.lastSwapTarget.c)) {
+          if (G.lastSwapTarget && cells.some(([cr,cc]) => cr === G.lastSwapTarget!.r && cc === G.lastSwapTarget!.c)) {
             sr = G.lastSwapTarget.r;
             sc = G.lastSwapTarget.c;
           }
@@ -388,16 +391,16 @@ export function findSpecialCreations(matches) {
 // Hint system
 // ---------------------------------------------------------------------------
 
-export function findHint() {
-  const PRIORITY = { rainbow: 3, bomb: 2, line_d: 2, line_h: 1, line_v: 1 };
-  let bestList = [];
+export function findHint(): HintData | null {
+  const PRIORITY: Record<string, number> = { rainbow: 3, bomb: 2, line_d: 2, line_h: 1, line_v: 1 };
+  let bestList: HintData[] = [];
   let bestPriority = 0;
-  const normalList = [];
+  const normalList: HintData[] = [];
 
   for (let r = 0; r < G.rows; r++) {
     for (let c = 0; c < G.cols; c++) {
       if (!G.board[r][c] || !isPlayable(r, c)) continue;
-      const neighbors = [
+      const neighbors: [number, number][] = [
         [r-1,c-1],[r-1,c],[r-1,c+1],
         [r,c+1],[r+1,c+1],[r+1,c],[r+1,c-1],[r,c-1]
       ];
@@ -415,12 +418,12 @@ export function findHint() {
             if (p > 0) {
               hasSpecial = true;
               const colorMatches = matches.filter(([mr, mc]) =>
-                G.board[mr][mc] && G.board[mr][mc].color === sp.color);
+                G.board[mr][mc] && G.board[mr][mc]!.color === sp.color);
               const colorSet = new Set(colorMatches.map(([mr, mc]) => mr * G.cols + mc));
               const pos1in = colorSet.has(r * G.cols + c);
-              const mover = pos1in ? { r: nr, c: nc } : { r, c };
-              const swapDest = pos1in ? { r, c } : { r: nr, c: nc };
-              const pattern = colorMatches
+              const mover: CellPos = pos1in ? { r: nr, c: nc } : { r, c };
+              const swapDest: CellPos = pos1in ? { r, c } : { r: nr, c: nc };
+              const pattern: CellPos[] = colorMatches
                 .filter(([mr, mc]) => !(mr === swapDest.r && mc === swapDest.c))
                 .map(([mr, mc]) => ({ r: mr, c: mc }));
               if (p > bestPriority) {
@@ -434,16 +437,16 @@ export function findHint() {
           if (!hasSpecial) {
             const matchSet = new Set(matches.map(([mr, mc]) => mr * G.cols + mc));
             let targetColor = -1;
-            if (matchSet.has(nr * G.cols + nc) && G.board[nr][nc]) targetColor = G.board[nr][nc].color;
-            else if (matchSet.has(r * G.cols + c) && G.board[r][c]) targetColor = G.board[r][c].color;
+            if (matchSet.has(nr * G.cols + nc) && G.board[nr][nc]) targetColor = G.board[nr][nc]!.color;
+            else if (matchSet.has(r * G.cols + c) && G.board[r][c]) targetColor = G.board[r][c]!.color;
             if (targetColor >= 0) {
               const colorMatches = matches.filter(([mr, mc]) =>
-                G.board[mr][mc] && G.board[mr][mc].color === targetColor);
+                G.board[mr][mc] && G.board[mr][mc]!.color === targetColor);
               const colorSet = new Set(colorMatches.map(([mr, mc]) => mr * G.cols + mc));
               const pos1in = colorSet.has(r * G.cols + c);
-              const mover = pos1in ? { r: nr, c: nc } : { r, c };
-              const swapDest = pos1in ? { r, c } : { r: nr, c: nc };
-              const pattern = colorMatches
+              const mover: CellPos = pos1in ? { r: nr, c: nc } : { r, c };
+              const swapDest: CellPos = pos1in ? { r, c } : { r: nr, c: nc };
+              const pattern: CellPos[] = colorMatches
                 .filter(([mr, mc]) => !(mr === swapDest.r && mc === swapDest.c))
                 .map(([mr, mc]) => ({ r: mr, c: mc }));
               normalList.push({ mover, pattern });
@@ -460,7 +463,7 @@ export function findHint() {
   return null;
 }
 
-export function startHintTimer() {
+export function startHintTimer(): void {
   clearHint();
   G.hintTimer = setTimeout(() => {
     if (G.animating) return;
@@ -472,48 +475,48 @@ export function startHintTimer() {
   }, HINT_DELAY_MS);
 }
 
-export function clearHint() {
+export function clearHint(): void {
   if (G.hintTimer) { clearTimeout(G.hintTimer); G.hintTimer = null; }
   if (G.hintAnimId) { cancelAnimationFrame(G.hintAnimId); G.hintAnimId = null; }
   if (G.hintData) { G.hintData = null; drawBoard(); }
 }
 
-export function startHintAnim() {
+export function startHintAnim(): void {
   const startTime = performance.now();
-  function tick() {
+  function tick(): void {
     if (!G.hintData) return;
     drawBoard(() => {
       const elapsed = performance.now() - startTime;
       const pulse = 0.5 + 0.5 * Math.sin(elapsed / 300);
-      G.ctx.save();
-      for (const cell of G.hintData.pattern) {
+      G.ctx!.save();
+      for (const cell of G.hintData!.pattern) {
         const cx = cell.c * G.cellSize + G.cellSize / 2;
         const cy = cell.r * G.cellSize + G.cellSize / 2;
         const radius = G.cellSize * 0.45;
-        G.ctx.globalAlpha = 0.15 + 0.2 * pulse;
-        G.ctx.fillStyle = "#fff";
-        G.ctx.beginPath();
-        G.ctx.arc(cx, cy, radius * (0.9 + 0.1 * pulse), 0, Math.PI * 2);
-        G.ctx.fill();
-        G.ctx.strokeStyle = "#ffe66d";
-        G.ctx.lineWidth = 1.5;
-        G.ctx.globalAlpha = 0.3 + 0.3 * pulse;
-        G.ctx.stroke();
+        G.ctx!.globalAlpha = 0.15 + 0.2 * pulse;
+        G.ctx!.fillStyle = "#fff";
+        G.ctx!.beginPath();
+        G.ctx!.arc(cx, cy, radius * (0.9 + 0.1 * pulse), 0, Math.PI * 2);
+        G.ctx!.fill();
+        G.ctx!.strokeStyle = "#ffe66d";
+        G.ctx!.lineWidth = 1.5;
+        G.ctx!.globalAlpha = 0.3 + 0.3 * pulse;
+        G.ctx!.stroke();
       }
-      const m = G.hintData.mover;
+      const m = G.hintData!.mover;
       const mcx = m.c * G.cellSize + G.cellSize / 2;
       const mcy = m.r * G.cellSize + G.cellSize / 2;
       const mr = G.cellSize * 0.45;
-      G.ctx.globalAlpha = 0.3 + 0.4 * pulse;
-      G.ctx.fillStyle = "#fff";
-      G.ctx.beginPath();
-      G.ctx.arc(mcx, mcy, mr * (0.9 + 0.15 * pulse), 0, Math.PI * 2);
-      G.ctx.fill();
-      G.ctx.strokeStyle = "#ffe66d";
-      G.ctx.lineWidth = 2.5;
-      G.ctx.globalAlpha = 0.6 + 0.4 * pulse;
-      G.ctx.stroke();
-      G.ctx.restore();
+      G.ctx!.globalAlpha = 0.3 + 0.4 * pulse;
+      G.ctx!.fillStyle = "#fff";
+      G.ctx!.beginPath();
+      G.ctx!.arc(mcx, mcy, mr * (0.9 + 0.15 * pulse), 0, Math.PI * 2);
+      G.ctx!.fill();
+      G.ctx!.strokeStyle = "#ffe66d";
+      G.ctx!.lineWidth = 2.5;
+      G.ctx!.globalAlpha = 0.6 + 0.4 * pulse;
+      G.ctx!.stroke();
+      G.ctx!.restore();
     });
     G.hintAnimId = requestAnimationFrame(tick);
   }
@@ -524,14 +527,14 @@ export function startHintAnim() {
 // Special piece activation
 // ---------------------------------------------------------------------------
 
-export function activateSpecial(r, c, alreadyCleared, triggeredBy) {
+export function activateSpecial(r: number, c: number, alreadyCleared: Set<number>, triggeredBy?: SpecialType | string | null): [number, number][] {
   const piece = G.board[r][c];
   if (!piece || !piece.special) return [];
-  let sp = piece.special;
+  let sp: string = piece.special;
   if (triggeredBy === "line_h" && sp === "line_h") sp = "line_v";
   else if (triggeredBy === "line_v" && sp === "line_v") sp = "line_h";
-  const extra = [];
-  const key = (r2, c2) => r2 * G.cols + c2;
+  const extra: [number, number][] = [];
+  const key = (r2: number, c2: number): number => r2 * G.cols + c2;
 
   if (sp === "line_h") {
     for (let cc = 0; cc < G.cols; cc++) {
@@ -566,7 +569,7 @@ export function activateSpecial(r, c, alreadyCleared, triggeredBy) {
     const targetColor = piece.color;
     for (let rr = 0; rr < G.rows; rr++) {
       for (let cc = 0; cc < G.cols; cc++) {
-        if (G.board[rr][cc] && G.board[rr][cc].color === targetColor && !alreadyCleared.has(key(rr, cc)) && isPlayable(rr, cc)) {
+        if (G.board[rr][cc] && G.board[rr][cc]!.color === targetColor && !alreadyCleared.has(key(rr, cc)) && isPlayable(rr, cc)) {
           extra.push([rr, cc]);
         }
       }
@@ -586,9 +589,9 @@ export function activateSpecial(r, c, alreadyCleared, triggeredBy) {
 // Gravity & fill (data only, no animation)
 // ---------------------------------------------------------------------------
 
-export function applyGravityData() {
-  const numColors = G.STAGES[G.currentStage].colors;
-  const fallMap = [];
+export function applyGravityData(): FallEntry[] {
+  const numColors = G.STAGES![G.currentStage].colors;
+  const fallMap: FallEntry[] = [];
   for (let c = 0; c < G.cols; c++) {
     let writeRow = G.rows - 1;
     while (writeRow >= 0 && (isHole(writeRow, c) || isRock(writeRow, c))) writeRow--;
@@ -598,7 +601,7 @@ export function applyGravityData() {
         if (r !== writeRow) {
           G.board[writeRow][c] = G.board[r][c];
           G.board[r][c] = null;
-          fallMap.push({ c, fromR: r, toR: writeRow, piece: G.board[writeRow][c] });
+          fallMap.push({ c, fromR: r, toR: writeRow, piece: G.board[writeRow][c]! });
         }
         writeRow--;
         while (writeRow >= 0 && (isHole(writeRow, c) || isRock(writeRow, c))) writeRow--;
@@ -609,7 +612,7 @@ export function applyGravityData() {
       if (isHole(r, c) || isRock(r, c)) continue;
       G.board[r][c] = randomPiece(numColors);
       newPieceOffset++;
-      fallMap.push({ c, fromR: -newPieceOffset, toR: r, piece: G.board[r][c], isNew: true });
+      fallMap.push({ c, fromR: -newPieceOffset, toR: r, piece: G.board[r][c]!, isNew: true });
     }
   }
   return fallMap;
@@ -619,7 +622,7 @@ export function applyGravityData() {
 // Swap
 // ---------------------------------------------------------------------------
 
-export function swapPieces(r1, c1, r2, c2) {
+export function swapPieces(r1: number, c1: number, r2: number, c2: number): void {
   const tmp = G.board[r1][c1];
   G.board[r1][c1] = G.board[r2][c2];
   G.board[r2][c2] = tmp;
@@ -629,10 +632,10 @@ export function swapPieces(r1, c1, r2, c2) {
 // Combo type lookup
 // ---------------------------------------------------------------------------
 
-export function getComboType(s1, s2) {
+export function getComboType(s1: SpecialType | null, s2: SpecialType | null): ComboType | null {
   if (s1 === "countdown" || s2 === "countdown") return null;
   const pair = [s1, s2].sort().join("+");
-  const combos = {
+  const combos: Record<string, ComboType> = {
     "line_h+line_h": "cross",
     "line_h+line_v": "cross",
     "line_v+line_v": "cross",

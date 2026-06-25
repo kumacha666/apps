@@ -1,19 +1,19 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { G, MATCH_MIN } from "./state.js";
+import { G, MATCH_MIN } from "./state";
 import {
   isMatchable, isIce, isHole, isRock, isPlayable,
   damageIce, damageAdjacentIce,
   findAllMatches, getComboType, tickCountdowns,
   inBounds, isAdjacent, TAP_ACTIVATE_SPECIALS,
-} from "./board.js";
+} from "./board";
 
-function setupBoard(rows, cols) {
+function setupBoard(rows: number, cols: number): void {
   G.rows = rows;
   G.cols = cols;
   G.board = [];
   G.cellState = [];
   G.currentStage = 0;
-  G.STAGES = [{ features: { diagonalLine: true }, moves: 20, colors: 5 }];
+  G.STAGES = [{ features: { diagonalLine: true }, moves: 20, colors: 5 } as any];
   G.lastSwapTarget = null;
   for (let r = 0; r < rows; r++) {
     G.board[r] = [];
@@ -25,7 +25,7 @@ function setupBoard(rows, cols) {
   }
 }
 
-function clearBoard() {
+function clearBoard(): void {
   for (let r = 0; r < G.rows; r++)
     for (let c = 0; c < G.cols; c++)
       G.board[r][c] = { color: (r * G.cols + c) % 5, special: null };
@@ -78,7 +78,7 @@ describe("isMatchable", () => {
     expect(isMatchable(0, 0)).toBe(false);
   });
 
-  for (const sp of ["line_h", "line_v", "line_d", "bomb"]) {
+  for (const sp of ["line_h", "line_v", "line_d", "bomb"] as const) {
     it(`タップ起動特殊 (${sp}) はマッチ不可`, () => {
       G.board[0][0] = { color: 0, special: sp };
       expect(isMatchable(0, 0)).toBe(false);

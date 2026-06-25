@@ -1,10 +1,11 @@
-import { G, ANIM } from "./state.js";
+import { G, ANIM } from "./state";
+import type { ComboType } from "./types";
 
 // --- BGM System ---
 const BGM_MASTER = 0.70;
 const BGM_CROSSFADE_MS = 500;
 
-const BGM_SCALE = {
+const BGM_SCALE: Record<string, number> = {
   D2: 73.42, F2: 87.31, G2: 98.00, A2: 110.00, C3: 130.81,
   D3: 146.83, F3: 174.61, G3: 196.00, A3: 220.00, C4: 261.63,
   D4: 293.66, F4: 349.23, G4: 392.00, A4: 440.00, C5: 523.25,
@@ -12,25 +13,36 @@ const BGM_SCALE = {
   D6: 1174.66, F6: 1396.91, G6: 1567.98, A6: 1760.00, C7: 2093.00,
 };
 
-const BGM_ARP_MID  = [BGM_SCALE.D4, BGM_SCALE.F4, BGM_SCALE.G4, BGM_SCALE.A4, BGM_SCALE.C5];
-const BGM_ARP_HIGH = [BGM_SCALE.D5, BGM_SCALE.F5, BGM_SCALE.G5, BGM_SCALE.A5, BGM_SCALE.C6];
-const BGM_TWINKLE  = [BGM_SCALE.D6, BGM_SCALE.F6, BGM_SCALE.G6, BGM_SCALE.A6, BGM_SCALE.C7];
+const BGM_ARP_MID: number[]  = [BGM_SCALE.D4, BGM_SCALE.F4, BGM_SCALE.G4, BGM_SCALE.A4, BGM_SCALE.C5];
+const BGM_ARP_HIGH: number[] = [BGM_SCALE.D5, BGM_SCALE.F5, BGM_SCALE.G5, BGM_SCALE.A5, BGM_SCALE.C6];
+const BGM_TWINKLE: number[]  = [BGM_SCALE.D6, BGM_SCALE.F6, BGM_SCALE.G6, BGM_SCALE.A6, BGM_SCALE.C7];
 
-const GAME_BASS_NOTES = [110.00, 130.81, 146.83, 164.81, 196.00];
-const GAME_MID_NOTES  = [220.00, 261.63, 293.66, 329.63, 392.00];
-const GAME_HIGH_NOTES = [440.00, 523.25, 587.33, 659.25, 783.99];
-const GAME_SPARKLE_NOTES = [880.00, 1046.50, 1174.66, 1318.51, 1567.98];
+const GAME_BASS_NOTES: number[] = [110.00, 130.81, 146.83, 164.81, 196.00];
+const GAME_MID_NOTES: number[]  = [220.00, 261.63, 293.66, 329.63, 392.00];
+const GAME_HIGH_NOTES: number[] = [440.00, 523.25, 587.33, 659.25, 783.99];
+const GAME_SPARKLE_NOTES: number[] = [880.00, 1046.50, 1174.66, 1318.51, 1567.98];
 
-const bgmTracks = {
+type BgmTrackName = "title" | "select" | "ingame";
+
+interface BgmTrack {
+  gain: GainNode | null;
+  volume: number;
+  nodes: AudioNode[];
+  playing: boolean;
+  fadeGain: GainNode | null;
+  timers: ReturnType<typeof setTimeout>[];
+}
+
+const bgmTracks: Record<BgmTrackName, BgmTrack> = {
   title:  { gain: null, volume: 0.70, nodes: [], playing: false, fadeGain: null, timers: [] },
   select: { gain: null, volume: 0.70, nodes: [], playing: false, fadeGain: null, timers: [] },
   ingame: { gain: null, volume: 0.70, nodes: [], playing: false, fadeGain: null, timers: [] },
 };
 
-export function initAudio() {
+export function initAudio(): void {
   if (!G.audioCtx) {
     try {
-      G.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      G.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       G.masterGain = G.audioCtx.createGain();
       G.masterGain.gain.value = 0.3 * (G.options.sfxVol / 100);
       G.masterGain.connect(G.audioCtx.destination);
@@ -44,19 +56,19 @@ export function initAudio() {
   applyAudioOptions();
 }
 
-export function applyAudioOptions() {
+export function applyAudioOptions(): void {
   if (G.masterGain) G.masterGain.gain.value = 0.3 * (G.options.sfxVol / 100);
   if (G.bgmGain) G.bgmGain.gain.value = BGM_MASTER * (G.options.bgmVol / 100);
 }
 
-function now() {
-  return G.audioCtx.currentTime;
+function now(): number {
+  return G.audioCtx!.currentTime;
 }
 
-function createNoiseBuffer(duration) {
-  const sampleRate = G.audioCtx.sampleRate;
+function createNoiseBuffer(duration: number): AudioBuffer {
+  const sampleRate = G.audioCtx!.sampleRate;
   const length = sampleRate * duration;
-  const buffer = G.audioCtx.createBuffer(1, length, sampleRate);
+  const buffer = G.audioCtx!.createBuffer(1, length, sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < length; i++) {
     data[i] = Math.random() * 2 - 1;
@@ -64,52 +76,53 @@ function createNoiseBuffer(duration) {
   return buffer;
 }
 
-function createNoise(duration) {
-  const source = G.audioCtx.createBufferSource();
+function createNoise(duration: number): AudioBufferSourceNode {
+  const source = G.audioCtx!.createBufferSource();
   source.buffer = createNoiseBuffer(duration);
   return source;
 }
 
-function createPanner(value) {
-  if (G.audioCtx.createStereoPanner) {
-    const panner = G.audioCtx.createStereoPanner();
+function createPanner(value: number): StereoPannerNode | GainNode {
+  if ('createStereoPanner' in G.audioCtx!) {
+    const panner = G.audioCtx!.createStereoPanner();
     panner.pan.value = value;
     return panner;
   }
   // Fallback: use gain node (no panning, but no error)
-  const gain = G.audioCtx.createGain();
+  const gain = G.audioCtx!.createGain();
   gain.gain.value = 1;
   return gain;
 }
 
-function initBgm() {
+function initBgm(): void {
   if (G.bgmInitialized || !G.audioCtx) return;
   G.bgmGain = G.audioCtx.createGain();
   G.bgmGain.gain.value = BGM_MASTER;
-  G.bgmGain.connect(G.masterGain);
+  G.bgmGain.connect(G.masterGain!);
   for (const key in bgmTracks) {
+    const trackName = key as BgmTrackName;
     const trackGain = G.audioCtx.createGain();
-    trackGain.gain.value = bgmTracks[key].volume;
+    trackGain.gain.value = bgmTracks[trackName].volume;
     const fadeGain = G.audioCtx.createGain();
     fadeGain.gain.value = 0;
-    trackGain.connect(fadeGain).connect(G.bgmGain);
-    bgmTracks[key].gain = trackGain;
-    bgmTracks[key].fadeGain = fadeGain;
+    trackGain.connect(fadeGain).connect(G.bgmGain!);
+    bgmTracks[trackName].gain = trackGain;
+    bgmTracks[trackName].fadeGain = fadeGain;
   }
   G.bgmInitialized = true;
 }
 
-function bgmReg(name, node) {
+function bgmReg(name: BgmTrackName, node: AudioNode): AudioNode {
   bgmTracks[name].nodes.push(node);
   return node;
 }
 
-function bgmRegTimer(name, id) {
+function bgmRegTimer(name: BgmTrackName, id: ReturnType<typeof setTimeout>): void {
   bgmTracks[name].timers.push(id);
 }
 
-function bgmPickNote(arr, avoid) {
-  let note, attempts = 0;
+function bgmPickNote(arr: number[], avoid?: number | null): number {
+  let note: number, attempts = 0;
   do {
     note = arr[Math.floor(Math.random() * arr.length)];
     attempts++;
@@ -117,18 +130,18 @@ function bgmPickNote(arr, avoid) {
   return note;
 }
 
-function bgmCreateLoopingNoise(name, duration) {
-  const source = G.audioCtx.createBufferSource();
+function bgmCreateLoopingNoise(name: BgmTrackName, duration: number): AudioBufferSourceNode {
+  const source = G.audioCtx!.createBufferSource();
   source.buffer = createNoiseBuffer(duration);
   source.loop = true;
   bgmReg(name, source);
   return source;
 }
 
-function stopBgmTrack(name) {
+function stopBgmTrack(name: BgmTrackName): void {
   const track = bgmTracks[name];
   track.nodes.forEach(node => {
-    try { if (node.stop) node.stop(); if (node.disconnect) node.disconnect(); } catch (e) {}
+    try { if ((node as any).stop) (node as any).stop(); if (node.disconnect) node.disconnect(); } catch (e) {}
   });
   track.nodes = [];
   track.playing = false;
@@ -136,29 +149,29 @@ function stopBgmTrack(name) {
   track.timers = [];
 }
 
-function bgmFadeIn(name) {
+function bgmFadeIn(name: BgmTrackName): void {
   const track = bgmTracks[name];
-  const t = G.audioCtx.currentTime;
-  track.fadeGain.gain.cancelScheduledValues(t);
-  track.fadeGain.gain.setValueAtTime(track.fadeGain.gain.value, t);
-  track.fadeGain.gain.linearRampToValueAtTime(1.0, t + BGM_CROSSFADE_MS / 1000);
+  const t = G.audioCtx!.currentTime;
+  track.fadeGain!.gain.cancelScheduledValues(t);
+  track.fadeGain!.gain.setValueAtTime(track.fadeGain!.gain.value, t);
+  track.fadeGain!.gain.linearRampToValueAtTime(1.0, t + BGM_CROSSFADE_MS / 1000);
 }
 
-function bgmFadeOut(name) {
+function bgmFadeOut(name: BgmTrackName): void {
   const track = bgmTracks[name];
-  const t = G.audioCtx.currentTime;
-  track.fadeGain.gain.cancelScheduledValues(t);
-  track.fadeGain.gain.setValueAtTime(track.fadeGain.gain.value, t);
-  track.fadeGain.gain.linearRampToValueAtTime(0.0, t + BGM_CROSSFADE_MS / 1000);
+  const t = G.audioCtx!.currentTime;
+  track.fadeGain!.gain.cancelScheduledValues(t);
+  track.fadeGain!.gain.setValueAtTime(track.fadeGain!.gain.value, t);
+  track.fadeGain!.gain.linearRampToValueAtTime(0.0, t + BGM_CROSSFADE_MS / 1000);
   setTimeout(() => {
     if (G.currentBgm !== name) stopBgmTrack(name);
   }, BGM_CROSSFADE_MS + 100);
 }
 
-export function switchBgm(name) {
+export function switchBgm(name: BgmTrackName | null): void {
   if (!G.soundEnabled || !G.audioCtx || !G.bgmInitialized) return;
   if (G.currentBgm === name) return;
-  if (G.currentBgm) bgmFadeOut(G.currentBgm);
+  if (G.currentBgm) bgmFadeOut(G.currentBgm as BgmTrackName);
   if (name === null) { G.currentBgm = null; return; }
   G.currentBgm = name;
   bgmTracks[name].playing = true;
@@ -168,12 +181,12 @@ export function switchBgm(name) {
   bgmFadeIn(name);
 }
 
-export function stopAllBgm() {
-  if (G.currentBgm) bgmFadeOut(G.currentBgm);
+export function stopAllBgm(): void {
+  if (G.currentBgm) bgmFadeOut(G.currentBgm as BgmTrackName);
   G.currentBgm = null;
 }
 
-function startBgmTrack(name) {
+function startBgmTrack(name: BgmTrackName): void {
   stopBgmTrack(name);
   bgmTracks[name].playing = true;
   switch (name) {
@@ -184,22 +197,22 @@ function startBgmTrack(name) {
 }
 
 // --- BGM Track: Title ---
-function bgmStartTitle() {
-  const name = 'title';
-  const dest = bgmTracks[name].gain;
-  const t = G.audioCtx.currentTime;
+function bgmStartTitle(): void {
+  const name: BgmTrackName = 'title';
+  const dest = bgmTracks[name].gain!;
+  const t = G.audioCtx!.currentTime;
 
   // --- Sub-bass drone: D2 with slow pitch oscillation ---
-  const drone = G.audioCtx.createOscillator();
+  const drone = G.audioCtx!.createOscillator();
   drone.type = 'sine';
   drone.frequency.value = BGM_SCALE.D2;
-  const droneLfo = G.audioCtx.createOscillator();
+  const droneLfo = G.audioCtx!.createOscillator();
   droneLfo.type = 'sine';
   droneLfo.frequency.value = 0.08;
-  const droneLfoGain = G.audioCtx.createGain();
+  const droneLfoGain = G.audioCtx!.createGain();
   droneLfoGain.gain.value = 2.5;
   droneLfo.connect(droneLfoGain).connect(drone.frequency);
-  const droneGain = G.audioCtx.createGain();
+  const droneGain = G.audioCtx!.createGain();
   droneGain.gain.value = 0.35;
   drone.connect(droneGain).connect(dest);
   drone.start(t);
@@ -211,31 +224,31 @@ function bgmStartTitle() {
 
   // --- Warm pad: D3 + A3 (perfect 5th) through low-pass filtered sawtooth ---
   [BGM_SCALE.D3, BGM_SCALE.A3].forEach((freq, i) => {
-    const osc = G.audioCtx.createOscillator();
+    const osc = G.audioCtx!.createOscillator();
     osc.type = 'sawtooth';
     osc.frequency.value = freq;
     osc.detune.value = i === 0 ? -5 : 5;
 
-    const lp = G.audioCtx.createBiquadFilter();
+    const lp = G.audioCtx!.createBiquadFilter();
     lp.type = 'lowpass';
     lp.frequency.value = 400;
     lp.Q.value = 1.5;
 
-    const filterLfo = G.audioCtx.createOscillator();
+    const filterLfo = G.audioCtx!.createOscillator();
     filterLfo.type = 'sine';
     filterLfo.frequency.value = 0.06 + i * 0.02;
-    const filterLfoGain = G.audioCtx.createGain();
+    const filterLfoGain = G.audioCtx!.createGain();
     filterLfoGain.gain.value = 120;
     filterLfo.connect(filterLfoGain).connect(lp.frequency);
     filterLfo.start(t);
 
-    const padGain = G.audioCtx.createGain();
+    const padGain = G.audioCtx!.createGain();
     padGain.gain.value = 0.25;
 
-    const ampLfo = G.audioCtx.createOscillator();
+    const ampLfo = G.audioCtx!.createOscillator();
     ampLfo.type = 'sine';
     ampLfo.frequency.value = 0.04 + i * 0.015;
-    const ampLfoGain = G.audioCtx.createGain();
+    const ampLfoGain = G.audioCtx!.createGain();
     ampLfoGain.gain.value = 0.07;
     ampLfo.connect(ampLfoGain).connect(padGain.gain);
     ampLfo.start(t);
@@ -252,14 +265,14 @@ function bgmStartTitle() {
   });
 
   // --- Additional pad layer: triangle wave on D3 for body ---
-  const triPad = G.audioCtx.createOscillator();
+  const triPad = G.audioCtx!.createOscillator();
   triPad.type = 'triangle';
   triPad.frequency.value = BGM_SCALE.D3;
-  const triLp = G.audioCtx.createBiquadFilter();
+  const triLp = G.audioCtx!.createBiquadFilter();
   triLp.type = 'lowpass';
   triLp.frequency.value = 350;
   triLp.Q.value = 0.7;
-  const triGain = G.audioCtx.createGain();
+  const triGain = G.audioCtx!.createGain();
   triGain.gain.value = 0.15;
   triPad.connect(triLp).connect(triGain).connect(dest);
   triPad.start(t);
@@ -268,28 +281,28 @@ function bgmStartTitle() {
   bgmReg(name, triGain);
 
   // --- Sparse arpeggio: pentatonic notes, sine/triangle, every ~4-6s ---
-  let lastArpNote = null;
-  function scheduleArpTitle() {
+  let lastArpNote: number | null = null;
+  function scheduleArpTitle(): void {
     if (!bgmTracks[name].playing && G.currentBgm !== name) return;
     const delay = 4000 + Math.random() * 3000;
     const timerId = setTimeout(() => {
       if (!bgmTracks[name].playing && G.currentBgm !== name) return;
-      const ct = G.audioCtx.currentTime;
+      const ct = G.audioCtx!.currentTime;
 
       const note = bgmPickNote(BGM_ARP_MID, lastArpNote);
       lastArpNote = note;
 
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = Math.random() > 0.5 ? 'sine' : 'triangle';
       osc.frequency.value = note;
 
-      const arpGain = G.audioCtx.createGain();
+      const arpGain = G.audioCtx!.createGain();
       arpGain.gain.value = 0;
       arpGain.gain.setValueAtTime(0, ct);
       arpGain.gain.linearRampToValueAtTime(0.12, ct + 0.3);
       arpGain.gain.exponentialRampToValueAtTime(0.001, ct + 3.0);
 
-      const arpLp = G.audioCtx.createBiquadFilter();
+      const arpLp = G.audioCtx!.createBiquadFilter();
       arpLp.type = 'lowpass';
       arpLp.frequency.value = 1200;
       arpLp.Q.value = 0.5;
@@ -301,10 +314,10 @@ function bgmStartTitle() {
       if (Math.random() > 0.6) {
         const idx = BGM_ARP_MID.indexOf(note);
         const harmNote = BGM_ARP_MID[(idx + 2) % BGM_ARP_MID.length];
-        const osc2 = G.audioCtx.createOscillator();
+        const osc2 = G.audioCtx!.createOscillator();
         osc2.type = 'sine';
         osc2.frequency.value = harmNote;
-        const hGain = G.audioCtx.createGain();
+        const hGain = G.audioCtx!.createGain();
         hGain.gain.value = 0;
         hGain.gain.setValueAtTime(0, ct + 0.15);
         hGain.gain.linearRampToValueAtTime(0.07, ct + 0.45);
@@ -322,17 +335,17 @@ function bgmStartTitle() {
   bgmRegTimer(name, initTimer);
 
   // --- Twinkle layer: distant star sparkles ---
-  function scheduleTwinkle() {
+  function scheduleTwinkle(): void {
     if (!bgmTracks[name].playing && G.currentBgm !== name) return;
     const delay = 3000 + Math.random() * 5000;
     const timerId = setTimeout(() => {
       if (!bgmTracks[name].playing && G.currentBgm !== name) return;
-      const ct = G.audioCtx.currentTime;
+      const ct = G.audioCtx!.currentTime;
       const note = bgmPickNote(BGM_TWINKLE);
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = 'sine';
       osc.frequency.value = note;
-      const tGain = G.audioCtx.createGain();
+      const tGain = G.audioCtx!.createGain();
       tGain.gain.value = 0;
       tGain.gain.setValueAtTime(0, ct);
       tGain.gain.linearRampToValueAtTime(0.06, ct + 0.05);
@@ -350,32 +363,32 @@ function bgmStartTitle() {
 }
 
 // --- BGM Track: Select ---
-function bgmStartSelect() {
-  const name = 'select';
-  const dest = bgmTracks[name].gain;
-  const t = G.audioCtx.currentTime;
+function bgmStartSelect(): void {
+  const name: BgmTrackName = 'select';
+  const dest = bgmTracks[name].gain!;
+  const t = G.audioCtx!.currentTime;
 
   // --- Brighter pad: D3 + A3, pulled back to make room for motif ---
   [BGM_SCALE.D3, BGM_SCALE.A3].forEach((freq, i) => {
-    const osc = G.audioCtx.createOscillator();
+    const osc = G.audioCtx!.createOscillator();
     osc.type = 'sawtooth';
     osc.frequency.value = freq;
     osc.detune.value = i === 0 ? -6 : 6;
 
-    const lp = G.audioCtx.createBiquadFilter();
+    const lp = G.audioCtx!.createBiquadFilter();
     lp.type = 'lowpass';
     lp.frequency.value = 700 + i * 100;
     lp.Q.value = 1.5;
 
-    const fLfo = G.audioCtx.createOscillator();
+    const fLfo = G.audioCtx!.createOscillator();
     fLfo.type = 'sine';
     fLfo.frequency.value = 0.06 + i * 0.02;
-    const fLfoG = G.audioCtx.createGain();
+    const fLfoG = G.audioCtx!.createGain();
     fLfoG.gain.value = 150;
     fLfo.connect(fLfoG).connect(lp.frequency);
     fLfo.start(t);
 
-    const g = G.audioCtx.createGain();
+    const g = G.audioCtx!.createGain();
     g.gain.value = 0.12;
 
     osc.connect(lp).connect(g).connect(dest);
@@ -384,10 +397,10 @@ function bgmStartSelect() {
   });
 
   // --- Sub drone ---
-  const subDrone = G.audioCtx.createOscillator();
+  const subDrone = G.audioCtx!.createOscillator();
   subDrone.type = 'sine';
   subDrone.frequency.value = BGM_SCALE.D2;
-  const subG = G.audioCtx.createGain();
+  const subG = G.audioCtx!.createGain();
   subG.gain.value = 0.2;
   subDrone.connect(subG).connect(dest);
   subDrone.start(t);
@@ -395,19 +408,19 @@ function bgmStartSelect() {
 
   // --- Strong shimmer: constant, louder ---
   const shimmerNoise = bgmCreateLoopingNoise(name, 2);
-  const shimmerHp = G.audioCtx.createBiquadFilter();
+  const shimmerHp = G.audioCtx!.createBiquadFilter();
   shimmerHp.type = 'highpass';
   shimmerHp.frequency.value = 5000;
-  const shimmerLp = G.audioCtx.createBiquadFilter();
+  const shimmerLp = G.audioCtx!.createBiquadFilter();
   shimmerLp.type = 'lowpass';
   shimmerLp.frequency.value = 12000;
-  const shimmerLfo = G.audioCtx.createOscillator();
+  const shimmerLfo = G.audioCtx!.createOscillator();
   shimmerLfo.type = 'sine';
   shimmerLfo.frequency.value = 0.2;
-  const shimmerLfoG = G.audioCtx.createGain();
+  const shimmerLfoG = G.audioCtx!.createGain();
   shimmerLfoG.gain.value = 0.025;
   shimmerLfo.connect(shimmerLfoG);
-  const shimmerGain = G.audioCtx.createGain();
+  const shimmerGain = G.audioCtx!.createGain();
   shimmerGain.gain.value = 0.04;
   shimmerLfoG.connect(shimmerGain.gain);
   shimmerNoise.connect(shimmerHp).connect(shimmerLp).connect(shimmerGain).connect(dest);
@@ -417,23 +430,23 @@ function bgmStartSelect() {
   bgmReg(name, shimmerLfo); bgmReg(name, shimmerLfoG); bgmReg(name, shimmerGain);
 
   // --- Repeating melodic motif: 4-note loop ---
-  const motifNotes = [BGM_SCALE.D5, BGM_SCALE.A4, BGM_SCALE.G4, BGM_SCALE.F4];
+  const motifNotes: number[] = [BGM_SCALE.D5, BGM_SCALE.A4, BGM_SCALE.G4, BGM_SCALE.F4];
   const motifInterval = 0.8;
   let motifIdx = 0;
 
-  function playMotifNote(freq, startTime) {
-    const osc = G.audioCtx.createOscillator();
+  function playMotifNote(freq: number, startTime: number): void {
+    const osc = G.audioCtx!.createOscillator();
     osc.type = 'triangle';
     osc.frequency.value = freq;
 
-    const g = G.audioCtx.createGain();
+    const g = G.audioCtx!.createGain();
     g.gain.value = 0;
     g.gain.setValueAtTime(0, startTime);
     g.gain.linearRampToValueAtTime(0.38, startTime + 0.04);
     g.gain.linearRampToValueAtTime(0.28, startTime + 0.25);
     g.gain.exponentialRampToValueAtTime(0.001, startTime + motifInterval * 0.9);
 
-    const lp = G.audioCtx.createBiquadFilter();
+    const lp = G.audioCtx!.createBiquadFilter();
     lp.type = 'lowpass';
     lp.frequency.value = 3500;
     lp.Q.value = 0.8;
@@ -443,11 +456,11 @@ function bgmStartSelect() {
     osc.stop(startTime + motifInterval);
   }
 
-  function scheduleMotif() {
+  function scheduleMotif(): void {
     if (!bgmTracks[name].playing && G.currentBgm !== name) return;
     const timerId = setTimeout(() => {
       if (!bgmTracks[name].playing && G.currentBgm !== name) return;
-      const ct = G.audioCtx.currentTime;
+      const ct = G.audioCtx!.currentTime;
       const freq = motifNotes[motifIdx % motifNotes.length];
       motifIdx++;
       playMotifNote(freq, ct);
@@ -460,13 +473,13 @@ function bgmStartSelect() {
   scheduleMotif();
 
   // --- Rhythmic pulse: clear heartbeat ---
-  const pulseOsc = G.audioCtx.createOscillator();
+  const pulseOsc = G.audioCtx!.createOscillator();
   pulseOsc.type = 'sine';
   pulseOsc.frequency.value = BGM_SCALE.D2;
-  const pulseLfo = G.audioCtx.createOscillator();
+  const pulseLfo = G.audioCtx!.createOscillator();
   pulseLfo.type = 'sine';
   pulseLfo.frequency.value = 1.0;
-  const pulseShaper = G.audioCtx.createWaveShaper();
+  const pulseShaper = G.audioCtx!.createWaveShaper();
   const shapeLen = 256;
   const shapeCurve = new Float32Array(shapeLen);
   for (let i = 0; i < shapeLen; i++) {
@@ -474,13 +487,13 @@ function bgmStartSelect() {
     shapeCurve[i] = x > 0 ? x * x : 0;
   }
   pulseShaper.curve = shapeCurve;
-  const pulseLfoGain = G.audioCtx.createGain();
+  const pulseLfoGain = G.audioCtx!.createGain();
   pulseLfoGain.gain.value = 0.28;
   pulseLfo.connect(pulseShaper).connect(pulseLfoGain);
-  const pulseAmpGain = G.audioCtx.createGain();
+  const pulseAmpGain = G.audioCtx!.createGain();
   pulseAmpGain.gain.value = 0;
   pulseLfoGain.connect(pulseAmpGain.gain);
-  const pulseLp = G.audioCtx.createBiquadFilter();
+  const pulseLp = G.audioCtx!.createBiquadFilter();
   pulseLp.type = 'lowpass';
   pulseLp.frequency.value = 250;
   pulseLp.Q.value = 3;
@@ -491,20 +504,20 @@ function bgmStartSelect() {
   bgmReg(name, pulseLfoGain); bgmReg(name, pulseAmpGain); bgmReg(name, pulseLp);
 
   // --- Additional random arpeggios in high register ---
-  let lastArpNote = null;
-  function scheduleArpSelect() {
+  let lastArpNote: number | null = null;
+  function scheduleArpSelect(): void {
     if (!bgmTracks[name].playing && G.currentBgm !== name) return;
     const delay = 2000 + Math.random() * 2000;
     const timerId = setTimeout(() => {
       if (!bgmTracks[name].playing && G.currentBgm !== name) return;
-      const ct = G.audioCtx.currentTime;
+      const ct = G.audioCtx!.currentTime;
       const note = bgmPickNote(BGM_ARP_HIGH, lastArpNote);
       lastArpNote = note;
 
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = 'sine';
       osc.frequency.value = note;
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.value = 0;
       g.gain.setValueAtTime(0, ct);
       g.gain.linearRampToValueAtTime(0.08, ct + 0.05);
@@ -520,17 +533,17 @@ function bgmStartSelect() {
   scheduleArpSelect();
 
   // --- Twinkle ---
-  function scheduleTwinkleSelect() {
+  function scheduleTwinkleSelect(): void {
     if (!bgmTracks[name].playing && G.currentBgm !== name) return;
     const delay = 3000 + Math.random() * 4000;
     const timerId = setTimeout(() => {
       if (!bgmTracks[name].playing && G.currentBgm !== name) return;
-      const ct = G.audioCtx.currentTime;
+      const ct = G.audioCtx!.currentTime;
       const note = bgmPickNote(BGM_TWINKLE);
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = 'sine';
       osc.frequency.value = note;
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.value = 0;
       g.gain.setValueAtTime(0, ct);
       g.gain.linearRampToValueAtTime(0.06, ct + 0.02);
@@ -546,35 +559,35 @@ function bgmStartSelect() {
 }
 
 // --- BGM Track: Ingame ---
-function bgmStartIngame() {
-  const name = 'ingame';
-  const dest = bgmTracks[name].gain;
-  const t = G.audioCtx.currentTime;
+function bgmStartIngame(): void {
+  const name: BgmTrackName = 'ingame';
+  const dest = bgmTracks[name].gain!;
+  const t = G.audioCtx!.currentTime;
   const BPM = 120;
   const beatSec = 60 / BPM;
   const sixteenth = beatSec / 4;
 
   // --- Synth pad: A3 + E4 (5th), sawtooth + LP400Hz ---
   [220.00, 329.63].forEach((freq, i) => {
-    const osc = G.audioCtx.createOscillator();
+    const osc = G.audioCtx!.createOscillator();
     osc.type = 'sawtooth';
     osc.frequency.value = freq;
     osc.detune.value = i === 0 ? -6 : 6;
 
-    const lp = G.audioCtx.createBiquadFilter();
+    const lp = G.audioCtx!.createBiquadFilter();
     lp.type = 'lowpass';
     lp.frequency.value = 400;
     lp.Q.value = 1.5;
 
-    const fLfo = G.audioCtx.createOscillator();
+    const fLfo = G.audioCtx!.createOscillator();
     fLfo.type = 'sine';
     fLfo.frequency.value = 0.08 + i * 0.03;
-    const fLfoG = G.audioCtx.createGain();
+    const fLfoG = G.audioCtx!.createGain();
     fLfoG.gain.value = 250;
     fLfo.connect(fLfoG).connect(lp.frequency);
     fLfo.start(t);
 
-    const g = G.audioCtx.createGain();
+    const g = G.audioCtx!.createGain();
     g.gain.value = 0.115;
 
     osc.connect(lp).connect(g).connect(dest);
@@ -584,17 +597,17 @@ function bgmStartIngame() {
 
   // --- Driving bass pattern: eighth notes, syncopated ---
   let bassIdx = 0;
-  const bassPattern = [0, -1, 4, 0, -1, 3, 0, 2];
+  const bassPattern: number[] = [0, -1, 4, 0, -1, 3, 0, 2];
 
-  function playBassNote(freq, startTime) {
-    const osc = G.audioCtx.createOscillator();
+  function playBassNote(freq: number, startTime: number): void {
+    const osc = G.audioCtx!.createOscillator();
     osc.type = 'triangle';
     osc.frequency.value = freq;
-    const lp = G.audioCtx.createBiquadFilter();
+    const lp = G.audioCtx!.createBiquadFilter();
     lp.type = 'lowpass';
     lp.frequency.value = 350;
     lp.Q.value = 1.5;
-    const g = G.audioCtx.createGain();
+    const g = G.audioCtx!.createGain();
     g.gain.value = 0;
     g.gain.setValueAtTime(0, startTime);
     g.gain.linearRampToValueAtTime(0.05, startTime + 0.015);
@@ -605,12 +618,12 @@ function bgmStartIngame() {
     osc.stop(startTime + beatSec * 0.5);
   }
 
-  function scheduleBass() {
+  function scheduleBass(): void {
     if (!bgmTracks[name].playing && G.currentBgm !== name) return;
     const delay = beatSec * 500;
     const timerId = setTimeout(() => {
       if (!bgmTracks[name].playing && G.currentBgm !== name) return;
-      const ct = G.audioCtx.currentTime;
+      const ct = G.audioCtx!.currentTime;
       const patIdx = bassPattern[bassIdx % bassPattern.length];
       bassIdx++;
       if (patIdx === -1) { scheduleBass(); return; }
@@ -625,12 +638,12 @@ function bgmStartIngame() {
 
   // --- Kick drum: four-on-the-floor ---
   let kickCount = 0;
-  function playKick(startTime) {
-    const osc = G.audioCtx.createOscillator();
+  function playKick(startTime: number): void {
+    const osc = G.audioCtx!.createOscillator();
     osc.type = 'sine';
     osc.frequency.setValueAtTime(150, startTime);
     osc.frequency.exponentialRampToValueAtTime(50, startTime + 0.08);
-    const g = G.audioCtx.createGain();
+    const g = G.audioCtx!.createGain();
     g.gain.value = 0;
     g.gain.setValueAtTime(0.21, startTime);
     g.gain.exponentialRampToValueAtTime(0.001, startTime + 0.18);
@@ -639,13 +652,13 @@ function bgmStartIngame() {
     osc.stop(startTime + 0.22);
   }
 
-  function scheduleKick() {
+  function scheduleKick(): void {
     if (!bgmTracks[name].playing && G.currentBgm !== name) return;
     const delay = beatSec * 1000;
     const timerId = setTimeout(() => {
       if (!bgmTracks[name].playing && G.currentBgm !== name) return;
       kickCount++;
-      playKick(G.audioCtx.currentTime);
+      playKick(G.audioCtx!.currentTime);
       scheduleKick();
     }, delay);
     bgmRegTimer(name, timerId);
@@ -654,11 +667,11 @@ function bgmStartIngame() {
   scheduleKick();
 
   // --- Delay effect for arpeggios ---
-  const delayNode = G.audioCtx.createDelay(1.0);
+  const delayNode = G.audioCtx!.createDelay(1.0);
   delayNode.delayTime.value = beatSec * 0.75;
-  const delayFeedback = G.audioCtx.createGain();
+  const delayFeedback = G.audioCtx!.createGain();
   delayFeedback.gain.value = 0.35;
-  const delayFilter = G.audioCtx.createBiquadFilter();
+  const delayFilter = G.audioCtx!.createBiquadFilter();
   delayFilter.type = 'lowpass';
   delayFilter.frequency.value = 2500;
   delayNode.connect(delayFeedback).connect(delayFilter).connect(delayNode);
@@ -667,14 +680,14 @@ function bgmStartIngame() {
 
   // --- Bright arpeggios: frequent, short, punchy with echo ---
   let arpStep = 0;
-  let lastGameArp = null;
+  let lastGameArp: number | null = null;
 
-  function scheduleGameArp() {
+  function scheduleGameArp(): void {
     if (!bgmTracks[name].playing && G.currentBgm !== name) return;
     const delay = beatSec * (0.75 + Math.random() * 1.25) * 1000;
     const timerId = setTimeout(() => {
       if (!bgmTracks[name].playing && G.currentBgm !== name) return;
-      const ct = G.audioCtx.currentTime;
+      const ct = G.audioCtx!.currentTime;
       arpStep++;
 
       const noteArr = arpStep % 3 === 0 ? GAME_HIGH_NOTES : GAME_MID_NOTES;
@@ -682,19 +695,19 @@ function bgmStartIngame() {
       const note = bgmPickNote(noteArr, lastGameArp);
       lastGameArp = note;
 
-      const osc = G.audioCtx.createOscillator();
-      const waveType = arpStep % 5 === 0 ? 'square' : (isHigh ? 'triangle' : 'sine');
+      const osc = G.audioCtx!.createOscillator();
+      const waveType: OscillatorType = arpStep % 5 === 0 ? 'square' : (isHigh ? 'triangle' : 'sine');
       osc.type = waveType;
       osc.frequency.value = note;
 
-      const lp = G.audioCtx.createBiquadFilter();
+      const lp = G.audioCtx!.createBiquadFilter();
       lp.type = 'lowpass';
       lp.frequency.value = isHigh ? 2500 : 3500;
       lp.Q.value = 1.2;
 
       const peakGain = isHigh ? 0.07 : (waveType === 'square' ? 0.08 : 0.13);
       const sustainGain = isHigh ? 0.043 : (waveType === 'square' ? 0.05 : 0.085);
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.value = 0;
       g.gain.setValueAtTime(0, ct);
       g.gain.linearRampToValueAtTime(peakGain, ct + 0.015);
@@ -710,10 +723,10 @@ function bgmStartIngame() {
       if (arpStep % 2 === 0) {
         const idx = noteArr.indexOf(note);
         const next = noteArr[(idx + 2) % noteArr.length];
-        const osc2 = G.audioCtx.createOscillator();
+        const osc2 = G.audioCtx!.createOscillator();
         osc2.type = 'sine';
         osc2.frequency.value = next;
-        const g2 = G.audioCtx.createGain();
+        const g2 = G.audioCtx!.createGain();
         g2.gain.value = 0;
         const offset = beatSec * 0.25;
         const followGain = isHigh ? 0.05 : 0.10;
@@ -735,20 +748,20 @@ function bgmStartIngame() {
 
   // --- Hi-hat pattern: eighth notes with accent variation ---
   let hatBeat = 0;
-  function scheduleHat() {
+  function scheduleHat(): void {
     if (!bgmTracks[name].playing && G.currentBgm !== name) return;
     const delay = beatSec * 500;
     const timerId = setTimeout(() => {
       if (!bgmTracks[name].playing && G.currentBgm !== name) return;
-      const ct = G.audioCtx.currentTime;
+      const ct = G.audioCtx!.currentTime;
       hatBeat++;
 
-      const noise = G.audioCtx.createBufferSource();
+      const noise = G.audioCtx!.createBufferSource();
       noise.buffer = createNoiseBuffer(0.08);
-      const hp = G.audioCtx.createBiquadFilter();
+      const hp = G.audioCtx!.createBiquadFilter();
       hp.type = 'highpass';
       hp.frequency.value = 7000;
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.value = 0;
       const accent = hatBeat % 4 === 0 ? 0.10 : (hatBeat % 2 === 0 ? 0.07 : 0.05);
       const duration = hatBeat % 4 === 0 ? 0.09 : 0.05;
@@ -764,17 +777,17 @@ function bgmStartIngame() {
   scheduleHat();
 
   // --- Sparkle accents ---
-  function scheduleSparkle() {
+  function scheduleSparkle(): void {
     if (!bgmTracks[name].playing && G.currentBgm !== name) return;
     const delay = 3000 + Math.random() * 4000;
     const timerId = setTimeout(() => {
       if (!bgmTracks[name].playing && G.currentBgm !== name) return;
-      const ct = G.audioCtx.currentTime;
+      const ct = G.audioCtx!.currentTime;
       const note = bgmPickNote(GAME_SPARKLE_NOTES);
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = 'sine';
       osc.frequency.value = note;
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.value = 0;
       g.gain.setValueAtTime(0, ct);
       g.gain.linearRampToValueAtTime(0.14, ct + 0.01);
@@ -794,7 +807,7 @@ function bgmStartIngame() {
 export const SFX = {
 
   // 1. swap() - Warp sound (~0.2s)
-  swap() {
+  swap(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -806,7 +819,7 @@ export const SFX = {
     const g1 = G.audioCtx.createGain();
     g1.gain.setValueAtTime(0.15, t);
     g1.gain.linearRampToValueAtTime(0.0, t + 0.2);
-    osc1.connect(g1).connect(G.masterGain);
+    osc1.connect(g1).connect(G.masterGain!);
     osc1.start(t);
     osc1.stop(t + 0.2);
 
@@ -818,7 +831,7 @@ export const SFX = {
     const g2 = G.audioCtx.createGain();
     g2.gain.setValueAtTime(0.1, t);
     g2.gain.linearRampToValueAtTime(0.0, t + 0.2);
-    osc2.connect(g2).connect(G.masterGain);
+    osc2.connect(g2).connect(G.masterGain!);
     osc2.start(t);
     osc2.stop(t + 0.2);
 
@@ -832,13 +845,13 @@ export const SFX = {
     const gn = G.audioCtx.createGain();
     gn.gain.setValueAtTime(0.08, t);
     gn.gain.linearRampToValueAtTime(0.0, t + 0.2);
-    noise.connect(bp).connect(gn).connect(G.masterGain);
+    noise.connect(bp).connect(gn).connect(G.masterGain!);
     noise.start(t);
     noise.stop(t + 0.2);
   },
 
   // 2. invalidSwap() - Error buzz (~0.25s)
-  invalidSwap() {
+  invalidSwap(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -863,14 +876,14 @@ export const SFX = {
       g.gain.setValueAtTime(0.12, t);
       g.gain.setValueAtTime(0.12, t + 0.15);
       g.gain.linearRampToValueAtTime(0.0, t + 0.25);
-      osc.connect(g).connect(G.masterGain);
+      osc.connect(g).connect(G.masterGain!);
       osc.start(t);
       osc.stop(t + 0.25);
     }
   },
 
   // 3. drop() - Floating drop (~0.2s)
-  drop() {
+  drop(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -882,7 +895,7 @@ export const SFX = {
     const g = G.audioCtx.createGain();
     g.gain.setValueAtTime(0.15, t);
     g.gain.linearRampToValueAtTime(0.0, t + 0.2);
-    osc.connect(g).connect(G.masterGain);
+    osc.connect(g).connect(G.masterGain!);
     osc.start(t);
     osc.stop(t + 0.2);
 
@@ -895,13 +908,13 @@ export const SFX = {
     g2.gain.setValueAtTime(0.0, t);
     g2.gain.setValueAtTime(0.15 * 0.25, t + 0.04); // -12dB ≈ 0.25
     g2.gain.linearRampToValueAtTime(0.0, t + 0.24);
-    osc2.connect(g2).connect(G.masterGain);
+    osc2.connect(g2).connect(G.masterGain!);
     osc2.start(t + 0.04);
     osc2.stop(t + 0.24);
   },
 
   // 4. clear(chain) - Star extinction (~0.35s)
-  clear(chain) {
+  clear(chain?: number): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
     chain = chain || 1;
@@ -916,7 +929,7 @@ export const SFX = {
       const g = G.audioCtx.createGain();
       g.gain.setValueAtTime(0.12, t);
       g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-      osc.connect(g).connect(G.masterGain);
+      osc.connect(g).connect(G.masterGain!);
       osc.start(t);
       osc.stop(t + 0.35);
     }
@@ -933,7 +946,7 @@ export const SFX = {
       g.gain.setValueAtTime(0.0, t);
       g.gain.setValueAtTime(0.08, t + delay);
       g.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.12);
-      osc.connect(g).connect(G.masterGain);
+      osc.connect(g).connect(G.masterGain!);
       osc.start(t + delay);
       osc.stop(t + delay + 0.15);
     }
@@ -946,13 +959,13 @@ export const SFX = {
     eg.gain.setValueAtTime(0.0, t);
     eg.gain.setValueAtTime(0.06, t + 0.05);
     eg.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-    echoOsc.connect(eg).connect(G.masterGain);
+    echoOsc.connect(eg).connect(G.masterGain!);
     echoOsc.start(t + 0.05);
     echoOsc.stop(t + 0.35);
   },
 
   // 5. line() - Comet pass (~0.5s)
-  line() {
+  line(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -975,11 +988,11 @@ export const SFX = {
 
     // Stereo pan left→right
     const panner = createPanner(-1);
-    if (panner.pan) {
-      panner.pan.setValueAtTime(-1, t);
-      panner.pan.linearRampToValueAtTime(1, t + 0.5);
+    if ((panner as StereoPannerNode).pan) {
+      (panner as StereoPannerNode).pan.setValueAtTime(-1, t);
+      (panner as StereoPannerNode).pan.linearRampToValueAtTime(1, t + 0.5);
     }
-    osc.connect(lp).connect(g).connect(panner).connect(G.masterGain);
+    osc.connect(lp).connect(g).connect(panner).connect(G.masterGain!);
     osc.start(t);
     osc.stop(t + 0.5);
 
@@ -995,17 +1008,17 @@ export const SFX = {
     gn.gain.setValueAtTime(0.06, t);
     gn.gain.linearRampToValueAtTime(0.0, t + 0.5);
     const panner2 = createPanner(-1);
-    if (panner2.pan) {
-      panner2.pan.setValueAtTime(-1, t);
-      panner2.pan.linearRampToValueAtTime(1, t + 0.5);
+    if ((panner2 as StereoPannerNode).pan) {
+      (panner2 as StereoPannerNode).pan.setValueAtTime(-1, t);
+      (panner2 as StereoPannerNode).pan.linearRampToValueAtTime(1, t + 0.5);
     }
-    noise.connect(bp).connect(gn).connect(panner2).connect(G.masterGain);
+    noise.connect(bp).connect(gn).connect(panner2).connect(G.masterGain!);
     noise.start(t);
     noise.stop(t + 0.5);
   },
 
   // 6. bomb() - Supernova (~0.8s)
-  bomb() {
+  bomb(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -1019,7 +1032,7 @@ export const SFX = {
     const gn = G.audioCtx.createGain();
     gn.gain.setValueAtTime(0.2, t);
     gn.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
-    noise.connect(lp).connect(gn).connect(G.masterGain);
+    noise.connect(lp).connect(gn).connect(G.masterGain!);
     noise.start(t);
     noise.stop(t + 0.8);
 
@@ -1030,23 +1043,23 @@ export const SFX = {
     const gs = G.audioCtx.createGain();
     gs.gain.setValueAtTime(0.2, t);
     gs.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
-    sub.connect(gs).connect(G.masterGain);
+    sub.connect(gs).connect(G.masterGain!);
     sub.start(t);
     sub.stop(t + 0.7);
 
     // 3 detuned sawtooth rumble 40/55/75Hz through lowpass 150Hz
     [40, 55, 75].forEach(freq => {
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = 'sawtooth';
       osc.frequency.value = freq;
-      const lp2 = G.audioCtx.createBiquadFilter();
+      const lp2 = G.audioCtx!.createBiquadFilter();
       lp2.type = 'lowpass';
       lp2.frequency.value = 150;
       lp2.Q.value = 1;
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.setValueAtTime(0.1, t);
       g.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
-      osc.connect(lp2).connect(g).connect(G.masterGain);
+      osc.connect(lp2).connect(g).connect(G.masterGain!);
       osc.start(t);
       osc.stop(t + 0.8);
     });
@@ -1059,7 +1072,7 @@ export const SFX = {
     const gp = G.audioCtx.createGain();
     gp.gain.setValueAtTime(0.15, t);
     gp.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-    ping.connect(gp).connect(G.masterGain);
+    ping.connect(gp).connect(G.masterGain!);
     ping.start(t);
     ping.stop(t + 0.3);
 
@@ -1072,13 +1085,13 @@ export const SFX = {
     gp2.gain.setValueAtTime(0.0, t);
     gp2.gain.setValueAtTime(0.07, t + 0.08);
     gp2.gain.exponentialRampToValueAtTime(0.001, t + 0.38);
-    ping2.connect(gp2).connect(G.masterGain);
+    ping2.connect(gp2).connect(G.masterGain!);
     ping2.start(t + 0.08);
     ping2.stop(t + 0.4);
   },
 
   // 7. rainbow() - Black hole (~0.8s)
-  rainbow() {
+  rainbow(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -1100,47 +1113,47 @@ export const SFX = {
     gd.gain.linearRampToValueAtTime(0.18, t + 0.55);
     gd.gain.setValueAtTime(0.18, t + 0.65);
     gd.gain.linearRampToValueAtTime(0.0, t + 0.72);
-    drone.connect(gd).connect(G.masterGain);
+    drone.connect(gd).connect(G.masterGain!);
     drone.start(t);
     drone.stop(t + 0.8);
 
     // 3 sawtooth sweep 1500/1600/1700→60Hz through closing lowpass
     [1500, 1600, 1700].forEach(startFreq => {
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(startFreq, t);
       osc.frequency.exponentialRampToValueAtTime(60, t + 0.7);
-      const lp = G.audioCtx.createBiquadFilter();
+      const lp = G.audioCtx!.createBiquadFilter();
       lp.type = 'lowpass';
       lp.frequency.setValueAtTime(4000, t);
       lp.frequency.exponentialRampToValueAtTime(100, t + 0.7);
       lp.Q.value = 4;
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.setValueAtTime(0.01, t);
       g.gain.linearRampToValueAtTime(0.08, t + 0.5);
       g.gain.linearRampToValueAtTime(0.0, t + 0.75);
-      osc.connect(lp).connect(g).connect(G.masterGain);
+      osc.connect(lp).connect(g).connect(G.masterGain!);
       osc.start(t);
       osc.stop(t + 0.8);
     });
 
     // Eerie triangle harmonics at 120/160Hz
     [120, 160].forEach(freq => {
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = 'triangle';
       osc.frequency.value = freq;
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.setValueAtTime(0.01, t);
       g.gain.linearRampToValueAtTime(0.1, t + 0.5);
       g.gain.linearRampToValueAtTime(0.0, t + 0.75);
-      osc.connect(g).connect(G.masterGain);
+      osc.connect(g).connect(G.masterGain!);
       osc.start(t);
       osc.stop(t + 0.8);
     });
   },
 
   // 8. diagonal() - Meteor shower (~0.4s)
-  diagonal() {
+  diagonal(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -1156,7 +1169,7 @@ export const SFX = {
       g.gain.setValueAtTime(0.0, t);
       g.gain.setValueAtTime(0.12, startTime);
       g.gain.exponentialRampToValueAtTime(0.001, startTime + 0.1);
-      osc.connect(g).connect(G.masterGain);
+      osc.connect(g).connect(G.masterGain!);
       osc.start(startTime);
       osc.stop(startTime + 0.12);
 
@@ -1170,14 +1183,14 @@ export const SFX = {
       gn.gain.setValueAtTime(0.0, t);
       gn.gain.setValueAtTime(0.05, startTime);
       gn.gain.exponentialRampToValueAtTime(0.001, startTime + 0.08);
-      noise.connect(hp).connect(gn).connect(G.masterGain);
+      noise.connect(hp).connect(gn).connect(G.masterGain!);
       noise.start(startTime);
       noise.stop(startTime + 0.1);
     }
   },
 
   // 9. cross() - Comet collision (~0.5s)
-  cross() {
+  cross(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -1194,7 +1207,7 @@ export const SFX = {
     g1.gain.setValueAtTime(0.1, t);
     g1.gain.linearRampToValueAtTime(0.15, t + 0.24);
     g1.gain.linearRampToValueAtTime(0.0, t + 0.35);
-    osc1.connect(lp1).connect(g1).connect(G.masterGain);
+    osc1.connect(lp1).connect(g1).connect(G.masterGain!);
     osc1.start(t);
     osc1.stop(t + 0.35);
 
@@ -1211,7 +1224,7 @@ export const SFX = {
     g2.gain.setValueAtTime(0.1, t);
     g2.gain.linearRampToValueAtTime(0.15, t + 0.24);
     g2.gain.linearRampToValueAtTime(0.0, t + 0.35);
-    osc2.connect(lp2).connect(g2).connect(G.masterGain);
+    osc2.connect(lp2).connect(g2).connect(G.masterGain!);
     osc2.start(t);
     osc2.stop(t + 0.35);
 
@@ -1226,7 +1239,7 @@ export const SFX = {
     gn.gain.setValueAtTime(0.0, t);
     gn.gain.setValueAtTime(0.18, t + 0.25);
     gn.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
-    noise.connect(lp3).connect(gn).connect(G.masterGain);
+    noise.connect(lp3).connect(gn).connect(G.masterGain!);
     noise.start(t + 0.2);
     noise.stop(t + 0.5);
 
@@ -1238,39 +1251,39 @@ export const SFX = {
     gs.gain.setValueAtTime(0.0, t);
     gs.gain.setValueAtTime(0.2, t + 0.25);
     gs.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
-    sub.connect(gs).connect(G.masterGain);
+    sub.connect(gs).connect(G.masterGain!);
     sub.start(t + 0.25);
     sub.stop(t + 0.5);
   },
 
   // 10. starCross() - Meteor storm (~0.6s)
-  starCross() {
+  starCross(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
     // 4 directional sweeps converging to 800Hz
     const starts = [200, 2000, 400, 1600];
     starts.forEach((startFreq, i) => {
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(startFreq, t);
       osc.frequency.exponentialRampToValueAtTime(800, t + 0.3);
-      const lp = G.audioCtx.createBiquadFilter();
+      const lp = G.audioCtx!.createBiquadFilter();
       lp.type = 'lowpass';
       lp.frequency.value = 2500;
       lp.Q.value = 2;
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.setValueAtTime(0.08, t);
       g.gain.linearRampToValueAtTime(0.12, t + 0.28);
       g.gain.linearRampToValueAtTime(0.0, t + 0.4);
       // Pan each sweep to a different position
       const panVal = [-0.8, 0.8, -0.4, 0.4][i];
       const panner = createPanner(panVal);
-      if (panner.pan) {
-        panner.pan.setValueAtTime(panVal, t);
-        panner.pan.linearRampToValueAtTime(0, t + 0.3);
+      if ((panner as StereoPannerNode).pan) {
+        (panner as StereoPannerNode).pan.setValueAtTime(panVal, t);
+        (panner as StereoPannerNode).pan.linearRampToValueAtTime(0, t + 0.3);
       }
-      osc.connect(lp).connect(g).connect(panner).connect(G.masterGain);
+      osc.connect(lp).connect(g).connect(panner).connect(G.masterGain!);
       osc.start(t);
       osc.stop(t + 0.4);
     });
@@ -1286,7 +1299,7 @@ export const SFX = {
     gn.gain.setValueAtTime(0.0, t);
     gn.gain.setValueAtTime(0.15, t + 0.3);
     gn.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
-    noise.connect(lp).connect(gn).connect(G.masterGain);
+    noise.connect(lp).connect(gn).connect(G.masterGain!);
     noise.start(t + 0.25);
     noise.stop(t + 0.6);
 
@@ -1302,39 +1315,39 @@ export const SFX = {
       g.gain.setValueAtTime(0.0, t);
       g.gain.setValueAtTime(0.1, t + delay);
       g.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.15);
-      osc.connect(g).connect(G.masterGain);
+      osc.connect(g).connect(G.masterGain!);
       osc.start(t + delay);
       osc.stop(t + delay + 0.18);
     }
   },
 
   // 11. tripleLine() - Comet swarm (~0.6s)
-  tripleLine() {
+  tripleLine(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
     // 3 detuned sawtooth sweeps with V-shaped Doppler curves
     [-100, 0, 100].forEach((detuneCents, i) => {
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = 'sawtooth';
       osc.detune.setValueAtTime(detuneCents, t);
       // V-shaped Doppler: high → low → high
       osc.frequency.setValueAtTime(1400 + i * 50, t);
       osc.frequency.exponentialRampToValueAtTime(350, t + 0.3);
       osc.frequency.exponentialRampToValueAtTime(1200 + i * 50, t + 0.58);
-      const lp = G.audioCtx.createBiquadFilter();
+      const lp = G.audioCtx!.createBiquadFilter();
       lp.type = 'lowpass';
       lp.frequency.setValueAtTime(3000, t);
       lp.frequency.exponentialRampToValueAtTime(600, t + 0.3);
       lp.frequency.exponentialRampToValueAtTime(2500, t + 0.58);
       lp.Q.value = 3;
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.setValueAtTime(0.08, t);
       g.gain.setValueAtTime(0.08, t + 0.45);
       g.gain.linearRampToValueAtTime(0.0, t + 0.6);
       const panVal = (i - 1) * 0.6;
       const panner = createPanner(panVal);
-      osc.connect(lp).connect(g).connect(panner).connect(G.masterGain);
+      osc.connect(lp).connect(g).connect(panner).connect(G.masterGain!);
       osc.start(t);
       osc.stop(t + 0.6);
     });
@@ -1350,13 +1363,13 @@ export const SFX = {
     const gn = G.audioCtx.createGain();
     gn.gain.setValueAtTime(0.1, t);
     gn.gain.linearRampToValueAtTime(0.0, t + 0.6);
-    noise.connect(bp).connect(gn).connect(G.masterGain);
+    noise.connect(bp).connect(gn).connect(G.masterGain!);
     noise.start(t);
     noise.stop(t + 0.6);
   },
 
   // 12. bigBomb() - Big bang (~1.2s)
-  bigBomb() {
+  bigBomb(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
     const onset = t + 0.02; // 20ms silence
@@ -1372,7 +1385,7 @@ export const SFX = {
     gn.gain.setValueAtTime(0.0, t);
     gn.gain.setValueAtTime(0.5, onset);
     gn.gain.exponentialRampToValueAtTime(0.001, onset + 1.1);
-    noise.connect(lp).connect(gn).connect(G.masterGain);
+    noise.connect(lp).connect(gn).connect(G.masterGain!);
     noise.start(onset);
     noise.stop(onset + 1.18);
 
@@ -1384,24 +1397,24 @@ export const SFX = {
     gs.gain.setValueAtTime(0.0, t);
     gs.gain.setValueAtTime(0.25, onset);
     gs.gain.exponentialRampToValueAtTime(0.001, onset + 1.0);
-    sub.connect(gs).connect(G.masterGain);
+    sub.connect(gs).connect(G.masterGain!);
     sub.start(onset);
     sub.stop(onset + 1.0);
 
     // 4 detuned rumble 35/50/65/80Hz
     [35, 50, 65, 80].forEach(freq => {
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = 'sawtooth';
       osc.frequency.value = freq;
-      const lpR = G.audioCtx.createBiquadFilter();
+      const lpR = G.audioCtx!.createBiquadFilter();
       lpR.type = 'lowpass';
       lpR.frequency.value = 180;
       lpR.Q.value = 1;
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.setValueAtTime(0.0, t);
       g.gain.setValueAtTime(0.08, onset);
       g.gain.exponentialRampToValueAtTime(0.001, onset + 1.0);
-      osc.connect(lpR).connect(g).connect(G.masterGain);
+      osc.connect(lpR).connect(g).connect(G.masterGain!);
       osc.start(onset);
       osc.stop(onset + 1.0);
     });
@@ -1417,7 +1430,7 @@ export const SFX = {
       gp.gain.setValueAtTime(0.0, t);
       gp.gain.setValueAtTime(0.12 - i * 0.03, onset + delay);
       gp.gain.exponentialRampToValueAtTime(0.001, onset + delay + 0.3);
-      ping.connect(gp).connect(G.masterGain);
+      ping.connect(gp).connect(G.masterGain!);
       ping.start(onset + delay);
       ping.stop(onset + delay + 0.35);
     }
@@ -1436,13 +1449,13 @@ export const SFX = {
     gSweep.gain.setValueAtTime(0.0, t);
     gSweep.gain.setValueAtTime(0.12, onset);
     gSweep.gain.exponentialRampToValueAtTime(0.001, onset + 0.9);
-    sweep.connect(lpS).connect(gSweep).connect(G.masterGain);
+    sweep.connect(lpS).connect(gSweep).connect(G.masterGain!);
     sweep.start(onset);
     sweep.stop(onset + 0.9);
   },
 
   // 13. rainbowLine() - Gravitational catapult (~0.77s)
-  rainbowLine() {
+  rainbowLine(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -1461,7 +1474,7 @@ export const SFX = {
     const gd = G.audioCtx.createGain();
     gd.gain.setValueAtTime(0.12, t);
     gd.gain.linearRampToValueAtTime(0.0, t + 0.22);
-    drone.connect(gd).connect(G.masterGain);
+    drone.connect(gd).connect(G.masterGain!);
     drone.start(t);
     drone.stop(t + 0.22);
 
@@ -1478,7 +1491,7 @@ export const SFX = {
     const gv = G.audioCtx.createGain();
     gv.gain.setValueAtTime(0.1, t);
     gv.gain.linearRampToValueAtTime(0.0, t + 0.22);
-    vortex.connect(lpV).connect(gv).connect(G.masterGain);
+    vortex.connect(lpV).connect(gv).connect(G.masterGain!);
     vortex.start(t);
     vortex.stop(t + 0.22);
 
@@ -1502,7 +1515,7 @@ export const SFX = {
 
       const panVal = -0.6 + i * 0.3;
       const panner = createPanner(panVal);
-      osc.connect(lp).connect(g).connect(panner).connect(G.masterGain);
+      osc.connect(lp).connect(g).connect(panner).connect(G.masterGain!);
       osc.start(st);
       osc.stop(st + 0.11);
 
@@ -1516,14 +1529,14 @@ export const SFX = {
       gn.gain.setValueAtTime(0.0, t);
       gn.gain.setValueAtTime(0.05, st);
       gn.gain.exponentialRampToValueAtTime(0.001, st + 0.08);
-      n.connect(bp).connect(gn).connect(panner).connect(G.masterGain);
+      n.connect(bp).connect(gn).connect(panner).connect(G.masterGain!);
       n.start(st);
       n.stop(st + 0.08);
     }
   },
 
   // 14. rainbowBomb() - Quasar (~1.0s)
-  rainbowBomb() {
+  rainbowBomb(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -1539,7 +1552,7 @@ export const SFX = {
     gb.gain.setValueAtTime(0.15, t);
     gb.gain.setValueAtTime(0.15, t + 0.5);
     gb.gain.linearRampToValueAtTime(0.0, t + 0.7);
-    beam.connect(bp).connect(gb).connect(G.masterGain);
+    beam.connect(bp).connect(gb).connect(G.masterGain!);
     beam.start(t);
     beam.stop(t + 0.7);
 
@@ -1550,7 +1563,7 @@ export const SFX = {
     const gs = G.audioCtx.createGain();
     gs.gain.setValueAtTime(0.18, t);
     gs.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
-    sub.connect(gs).connect(G.masterGain);
+    sub.connect(gs).connect(G.masterGain!);
     sub.start(t);
     sub.stop(t + 0.8);
 
@@ -1569,7 +1582,7 @@ export const SFX = {
       gn.gain.setValueAtTime(0.0, t);
       gn.gain.setValueAtTime(0.15 - i * 0.04, st);
       gn.gain.exponentialRampToValueAtTime(0.001, st + 0.18);
-      n.connect(lp).connect(gn).connect(G.masterGain);
+      n.connect(lp).connect(gn).connect(G.masterGain!);
       n.start(st);
       n.stop(st + 0.2);
 
@@ -1582,34 +1595,34 @@ export const SFX = {
       gBass.gain.setValueAtTime(0.0, t);
       gBass.gain.setValueAtTime(0.15 - i * 0.04, st);
       gBass.gain.exponentialRampToValueAtTime(0.001, st + 0.15);
-      bass.connect(gBass).connect(G.masterGain);
+      bass.connect(gBass).connect(G.masterGain!);
       bass.start(st);
       bass.stop(st + 0.18);
     }
   },
 
   // 15. boardClear() - Galaxy collision (~1.5s)
-  boardClear() {
+  boardClear(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
     // 4-oscillator harmonic build-up (root/3rd/5th/octave) sweeping 200→2000Hz through opening lowpass
     const intervals = [1, 1.25, 1.5, 2]; // root, major 3rd, 5th, octave
     intervals.forEach((ratio, i) => {
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = i % 2 === 0 ? 'sawtooth' : 'triangle';
       osc.frequency.setValueAtTime(200 * ratio, t);
       osc.frequency.exponentialRampToValueAtTime(2000 * ratio, t + 0.7);
-      const lp = G.audioCtx.createBiquadFilter();
+      const lp = G.audioCtx!.createBiquadFilter();
       lp.type = 'lowpass';
       lp.frequency.setValueAtTime(400, t);
       lp.frequency.exponentialRampToValueAtTime(6000, t + 0.7);
       lp.Q.value = 3;
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.setValueAtTime(0.03, t);
       g.gain.linearRampToValueAtTime(0.1, t + 0.65);
       g.gain.linearRampToValueAtTime(0.0, t + 0.8);
-      osc.connect(lp).connect(g).connect(G.masterGain);
+      osc.connect(lp).connect(g).connect(G.masterGain!);
       osc.start(t);
       osc.stop(t + 0.8);
     });
@@ -1625,7 +1638,7 @@ export const SFX = {
     gn.gain.setValueAtTime(0.0, t);
     gn.gain.setValueAtTime(0.35, t + 0.7);
     gn.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
-    noise.connect(lp).connect(gn).connect(G.masterGain);
+    noise.connect(lp).connect(gn).connect(G.masterGain!);
     noise.start(t + 0.65);
     noise.stop(t + 1.45);
 
@@ -1638,7 +1651,7 @@ export const SFX = {
     gBass.gain.setValueAtTime(0.0, t);
     gBass.gain.setValueAtTime(0.25, t + 0.7);
     gBass.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
-    bass.connect(gBass).connect(G.masterGain);
+    bass.connect(gBass).connect(G.masterGain!);
     bass.start(t + 0.7);
     bass.stop(t + 1.45);
 
@@ -1654,7 +1667,7 @@ export const SFX = {
       g.gain.setValueAtTime(0.0, t);
       g.gain.setValueAtTime(0.08, t + delay);
       g.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.4);
-      osc.connect(g).connect(G.masterGain);
+      osc.connect(g).connect(G.masterGain!);
       osc.start(t + delay);
       osc.stop(t + delay + 0.45);
     }
@@ -1670,13 +1683,13 @@ export const SFX = {
     gR.gain.setValueAtTime(0.0, t);
     gR.gain.setValueAtTime(0.1, t + 0.7);
     gR.gain.exponentialRampToValueAtTime(0.001, t + 1.5);
-    rumble.connect(lpR).connect(gR).connect(G.masterGain);
+    rumble.connect(lpR).connect(gR).connect(G.masterGain!);
     rumble.start(t + 0.7);
     rumble.stop(t + 1.5);
   },
 
   // 16. stageClear() - Mission complete (~1.1s)
-  stageClear() {
+  stageClear(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -1686,14 +1699,14 @@ export const SFX = {
       const startTime = t + i * 0.08;
 
       // Triangle + sine blend
-      const tri = G.audioCtx.createOscillator();
+      const tri = G.audioCtx!.createOscillator();
       tri.type = 'triangle';
       tri.frequency.value = freq;
-      const sine = G.audioCtx.createOscillator();
+      const sine = G.audioCtx!.createOscillator();
       sine.type = 'sine';
       sine.frequency.value = freq;
 
-      const gTri = G.audioCtx.createGain();
+      const gTri = G.audioCtx!.createGain();
       gTri.gain.setValueAtTime(0.0, t);
       gTri.gain.setValueAtTime(0.12, startTime);
       if (i < 3) {
@@ -1703,7 +1716,7 @@ export const SFX = {
         gTri.gain.setValueAtTime(0.12, startTime + 0.4);
         gTri.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
       }
-      const gSine = G.audioCtx.createGain();
+      const gSine = G.audioCtx!.createGain();
       gSine.gain.setValueAtTime(0.0, t);
       gSine.gain.setValueAtTime(0.08, startTime);
       if (i < 3) {
@@ -1713,8 +1726,8 @@ export const SFX = {
         gSine.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
       }
 
-      tri.connect(gTri).connect(G.masterGain);
-      sine.connect(gSine).connect(G.masterGain);
+      tri.connect(gTri).connect(G.masterGain!);
+      sine.connect(gSine).connect(G.masterGain!);
       tri.start(startTime);
       sine.start(startTime);
       const endTime = i < 3 ? startTime + 0.55 : t + 1.1;
@@ -1722,33 +1735,33 @@ export const SFX = {
       sine.stop(endTime);
 
       // Delay reverb echo per note
-      const echoTri = G.audioCtx.createOscillator();
+      const echoTri = G.audioCtx!.createOscillator();
       echoTri.type = 'triangle';
       echoTri.frequency.value = freq;
-      const echoG = G.audioCtx.createGain();
+      const echoG = G.audioCtx!.createGain();
       echoG.gain.setValueAtTime(0.0, t);
       echoG.gain.setValueAtTime(0.05, startTime + 0.06);
       echoG.gain.exponentialRampToValueAtTime(0.001, startTime + 0.4);
-      echoTri.connect(echoG).connect(G.masterGain);
+      echoTri.connect(echoG).connect(G.masterGain!);
       echoTri.start(startTime + 0.06);
       echoTri.stop(startTime + 0.45);
 
       // Second echo, quieter
-      const echo2 = G.audioCtx.createOscillator();
+      const echo2 = G.audioCtx!.createOscillator();
       echo2.type = 'sine';
       echo2.frequency.value = freq;
-      const echoG2 = G.audioCtx.createGain();
+      const echoG2 = G.audioCtx!.createGain();
       echoG2.gain.setValueAtTime(0.0, t);
       echoG2.gain.setValueAtTime(0.025, startTime + 0.12);
       echoG2.gain.exponentialRampToValueAtTime(0.001, startTime + 0.35);
-      echo2.connect(echoG2).connect(G.masterGain);
+      echo2.connect(echoG2).connect(G.masterGain!);
       echo2.start(startTime + 0.12);
       echo2.stop(startTime + 0.4);
     });
   },
 
   // 17. stageFail() - Mission failed (~1.0s)
-  stageFail() {
+  stageFail(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -1759,26 +1772,26 @@ export const SFX = {
     closingLP.frequency.setValueAtTime(2000, t);
     closingLP.frequency.exponentialRampToValueAtTime(200, t + 1.0);
     closingLP.Q.value = 1;
-    closingLP.connect(G.masterGain);
+    closingLP.connect(G.masterGain!);
 
     notes.forEach((freq, i) => {
       const startTime = t + i * 0.2;
 
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = 'triangle';
       osc.frequency.value = freq;
 
       // Slow 2Hz LFO vibrato
-      const lfo = G.audioCtx.createOscillator();
+      const lfo = G.audioCtx!.createOscillator();
       lfo.type = 'sine';
       lfo.frequency.value = 2;
-      const lfoG = G.audioCtx.createGain();
+      const lfoG = G.audioCtx!.createGain();
       lfoG.gain.value = 8;
       lfo.connect(lfoG).connect(osc.frequency);
       lfo.start(startTime);
       lfo.stop(startTime + 0.6);
 
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.setValueAtTime(0.0, t);
       g.gain.setValueAtTime(0.15, startTime);
       g.gain.exponentialRampToValueAtTime(0.001, startTime + 0.6);
@@ -1787,18 +1800,18 @@ export const SFX = {
       osc.stop(startTime + 0.65);
 
       // Sine layer
-      const sine = G.audioCtx.createOscillator();
+      const sine = G.audioCtx!.createOscillator();
       sine.type = 'sine';
       sine.frequency.value = freq;
-      const lfo2 = G.audioCtx.createOscillator();
+      const lfo2 = G.audioCtx!.createOscillator();
       lfo2.type = 'sine';
       lfo2.frequency.value = 2;
-      const lfoG2 = G.audioCtx.createGain();
+      const lfoG2 = G.audioCtx!.createGain();
       lfoG2.gain.value = 6;
       lfo2.connect(lfoG2).connect(sine.frequency);
       lfo2.start(startTime);
       lfo2.stop(startTime + 0.6);
-      const gS = G.audioCtx.createGain();
+      const gS = G.audioCtx!.createGain();
       gS.gain.setValueAtTime(0.0, t);
       gS.gain.setValueAtTime(0.1, startTime);
       gS.gain.exponentialRampToValueAtTime(0.001, startTime + 0.55);
@@ -1809,26 +1822,26 @@ export const SFX = {
   },
 
   // 18b. addMovesChime() - Power-up chime for +3 moves (~0.4s)
-  addMovesChime() {
+  addMovesChime(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
     const notes = [523.25, 659.25, 783.99];
     notes.forEach((freq, i) => {
-      const osc = G.audioCtx.createOscillator();
+      const osc = G.audioCtx!.createOscillator();
       osc.type = 'sine';
       osc.frequency.value = freq;
-      const g = G.audioCtx.createGain();
+      const g = G.audioCtx!.createGain();
       g.gain.setValueAtTime(0.0, t);
       g.gain.setValueAtTime(0.1, t + i * 0.08);
       g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.08 + 0.2);
-      osc.connect(g).connect(G.masterGain);
+      osc.connect(g).connect(G.masterGain!);
       osc.start(t + i * 0.08);
       osc.stop(t + i * 0.08 + 0.25);
     });
   },
 
   // 19. coinSpend() - Coin spend sound (~0.25s)
-  coinSpend() {
+  coinSpend(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
     const osc1 = G.audioCtx.createOscillator();
@@ -1838,7 +1851,7 @@ export const SFX = {
     const g1 = G.audioCtx.createGain();
     g1.gain.setValueAtTime(0.22, t);
     g1.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-    osc1.connect(g1).connect(G.masterGain);
+    osc1.connect(g1).connect(G.masterGain!);
     osc1.start(t); osc1.stop(t + 0.3);
     const osc2 = G.audioCtx.createOscillator();
     osc2.type = 'triangle';
@@ -1847,12 +1860,12 @@ export const SFX = {
     const g2 = G.audioCtx.createGain();
     g2.gain.setValueAtTime(0.15, t);
     g2.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-    osc2.connect(g2).connect(G.masterGain);
+    osc2.connect(g2).connect(G.masterGain!);
     osc2.start(t); osc2.stop(t + 0.25);
   },
 
   // 18. countdown() - Meteor alert (~0.4s)
-  countdown() {
+  countdown(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -1872,7 +1885,7 @@ export const SFX = {
     am1.connect(amG1).connect(g1.gain);
     am1.start(t);
     am1.stop(t + 0.4);
-    osc1.connect(g1).connect(G.masterGain);
+    osc1.connect(g1).connect(G.masterGain!);
     osc1.start(t);
     osc1.stop(t + 0.4);
 
@@ -1891,13 +1904,13 @@ export const SFX = {
     am2.connect(amG2).connect(g2.gain);
     am2.start(t);
     am2.stop(t + 0.4);
-    osc2.connect(g2).connect(G.masterGain);
+    osc2.connect(g2).connect(G.masterGain!);
     osc2.start(t);
     osc2.stop(t + 0.4);
   },
 
   // 19. iceCrack() - Ice shatter (~0.3s)
-  iceCrack() {
+  iceCrack(): void {
     if (!G.soundEnabled || !G.audioCtx) return;
     const t = now();
 
@@ -1910,7 +1923,7 @@ export const SFX = {
     const gn = G.audioCtx.createGain();
     gn.gain.setValueAtTime(0.15, t);
     gn.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-    noise.connect(hp).connect(gn).connect(G.masterGain);
+    noise.connect(hp).connect(gn).connect(G.masterGain!);
     noise.start(t);
     noise.stop(t + 0.25);
 
@@ -1922,7 +1935,7 @@ export const SFX = {
     const gg = G.audioCtx.createGain();
     gg.gain.setValueAtTime(0.12, t);
     gg.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-    glass.connect(gg).connect(G.masterGain);
+    glass.connect(gg).connect(G.masterGain!);
     glass.start(t);
     glass.stop(t + 0.3);
 
@@ -1938,14 +1951,14 @@ export const SFX = {
       gp.gain.setValueAtTime(0.0, t);
       gp.gain.setValueAtTime(0.08, t + delay);
       gp.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.1);
-      ping.connect(gp).connect(G.masterGain);
+      ping.connect(gp).connect(G.masterGain!);
       ping.start(t + delay);
       ping.stop(t + delay + 0.12);
     }
   },
 
   // Combo dispatcher
-  combo(type) {
+  combo(type: ComboType): void {
     switch (type) {
       case "cross": this.cross(); break;
       case "star_cross": this.starCross(); break;
