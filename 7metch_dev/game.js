@@ -4149,55 +4149,73 @@
   async function animateBombSpecial(cells, info) {
     const origin = cellCenter(info.r, info.c);
     const color = PIECE_COLORS[info.color] || "#ff8800";
+    const blastRadius = cellSize * 2.5;
 
-    await animateFrames(6, (frame, t) => {
+    await animateFrames(10, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         oc.shadowColor = color;
-        oc.shadowBlur = 8 + t * 22;
+        oc.shadowBlur = 10 + t * 30;
         oc.fillStyle = color;
-        oc.globalAlpha = 0.4 + t * 0.4;
+        oc.globalAlpha = 0.4 + t * 0.5;
         oc.beginPath();
-        oc.arc(origin.x, origin.y, cellSize * 0.4, 0, Math.PI * 2);
+        oc.arc(origin.x, origin.y, cellSize * (0.3 + t * 0.2), 0, Math.PI * 2);
         oc.fill();
+        if (t > 0.5) {
+          oc.globalAlpha = (t - 0.5) * 1.5;
+          oc.fillStyle = "#ffffff";
+          oc.beginPath();
+          oc.arc(origin.x, origin.y, cellSize * 0.2 * (1 - (t - 0.5)), 0, Math.PI * 2);
+          oc.fill();
+        }
         oc.restore();
       });
       drawVFX();
     });
 
-    await animateFrames(4, (frame, t) => {
-      const scale = 1 - t * 0.8;
-      drawBoard((oc) => {
-        oc.save();
-        oc.globalAlpha = 0.6;
-        oc.fillStyle = "#ffffff";
-        oc.beginPath();
-        oc.arc(origin.x, origin.y, cellSize * 0.35 * scale, 0, Math.PI * 2);
-        oc.fill();
-        oc.restore();
-      });
-      drawVFX();
-    });
-
-    addScreenShake(6);
+    addScreenShake(7);
     addShockwave(origin.x, origin.y, cellSize * 5, 25, "#ffffff");
-    addFlash(origin.x, origin.y, cellSize * 3, "#ffffff", 15);
-    addBurstParticles(origin.x, origin.y, "#ffffff", 20, { speed: 5, size: 5, decay: 0.03, sizeDecay: 0.08 });
-    addBurstParticles(origin.x, origin.y, color, 20, { speed: 3.5, size: 4, decay: 0.025, sizeDecay: 0.06 });
+    addShockwave(origin.x, origin.y, cellSize * 3, 18, color);
+    addFlash(origin.x, origin.y, cellSize * 4, "#ffffff", 18);
+    addBurstParticles(origin.x, origin.y, "#ffffff", 25, { speed: 6, size: 6, decay: 0.025, sizeDecay: 0.07 });
+    addBurstParticles(origin.x, origin.y, color, 25, { speed: 4, size: 5, decay: 0.02, sizeDecay: 0.06 });
 
     const cellDistances = cells.map(({ r, c }) => ({
       r, c, dist: Math.abs(r - info.r) + Math.abs(c - info.c)
     }));
 
-    await animateFrames(20, (frame, t) => {
+    await animateFrames(25, (frame, t) => {
       for (const { r, c, dist } of cellDistances) {
         if (frame === dist * 2 + 1) {
           const cc = cellCenter(r, c);
           const pColor = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || color) : color;
-          addBurstParticles(cc.x, cc.y, pColor, 6, { speed: 2, size: 3, decay: 0.04, sizeDecay: 0.05 });
+          addBurstParticles(cc.x, cc.y, pColor, 8, { speed: 2.5, size: 3.5, decay: 0.04, sizeDecay: 0.05 });
+          addFlash(cc.x, cc.y, cellSize * 0.4, pColor, 5);
         }
       }
-      drawBoard(() => {});
+      drawBoard((oc) => {
+        if (t < 0.7) {
+          const ringT = t / 0.7;
+          const ringR = blastRadius * ringT;
+          const ringAlpha = (1 - ringT) * 0.6;
+          oc.save();
+          oc.globalAlpha = ringAlpha;
+          oc.strokeStyle = color;
+          oc.shadowColor = color;
+          oc.shadowBlur = 20;
+          oc.lineWidth = cellSize * 0.4 * (1 - ringT * 0.7);
+          oc.beginPath();
+          oc.arc(origin.x, origin.y, ringR, 0, Math.PI * 2);
+          oc.stroke();
+          oc.strokeStyle = "#ffffff";
+          oc.shadowBlur = 0;
+          oc.lineWidth = cellSize * 0.15 * (1 - ringT);
+          oc.beginPath();
+          oc.arc(origin.x, origin.y, ringR, 0, Math.PI * 2);
+          oc.stroke();
+          oc.restore();
+        }
+      });
       drawVFX();
     });
   }
@@ -4206,33 +4224,40 @@
     const origin = cellCenter(info.r, info.c);
     const color = PIECE_COLORS[info.color] || "#aa44ff";
 
-    await animateFrames(10, (frame, t) => {
+    await animateFrames(12, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         oc.translate(origin.x, origin.y);
-        oc.globalAlpha = 0.3 + t * 0.3;
-        const grad = oc.createRadialGradient(0, 0, 0, 0, 0, cellSize);
-        grad.addColorStop(0, "rgba(20, 0, 40, 0.8)");
+        oc.globalAlpha = 0.3 + t * 0.4;
+        const grad = oc.createRadialGradient(0, 0, 0, 0, 0, cellSize * 1.5);
+        grad.addColorStop(0, "rgba(20, 0, 40, 0.9)");
+        grad.addColorStop(0.6, "rgba(40, 0, 80, 0.4)");
         grad.addColorStop(1, "rgba(20, 0, 40, 0)");
         oc.fillStyle = grad;
         oc.beginPath();
-        oc.arc(0, 0, cellSize * (0.5 + t * 0.8), 0, Math.PI * 2);
+        oc.arc(0, 0, cellSize * (0.5 + t * 1.0), 0, Math.PI * 2);
         oc.fill();
-        const arcCount = 3;
-        const baseAngle = frame * 0.3;
-        oc.strokeStyle = color;
-        oc.lineWidth = 2;
-        oc.globalAlpha = 0.5 + t * 0.3;
+        const arcCount = 4;
+        const baseAngle = frame * 0.35;
+        oc.lineWidth = 3 + t * 3;
+        oc.globalAlpha = 0.5 + t * 0.4;
+        oc.lineCap = "round";
         for (let i = 0; i < arcCount; i++) {
           const a = baseAngle + (Math.PI * 2 * i / arcCount);
+          oc.strokeStyle = PIECE_COLORS[i % PIECE_COLORS.length] || color;
+          oc.shadowColor = oc.strokeStyle;
+          oc.shadowBlur = 10;
           oc.beginPath();
-          oc.arc(0, 0, cellSize * (0.3 + t * 0.4), a, a + Math.PI * 0.5);
+          oc.arc(0, 0, cellSize * (0.3 + t * 0.5), a, a + Math.PI * 0.5);
           oc.stroke();
         }
         oc.restore();
       });
       drawVFX();
     });
+
+    addShockwave(origin.x, origin.y, cellSize * 2, 15, color);
+    addScreenShake(2);
 
     const cellSnaps = cells.map(({ r, c }) => {
       const cc = cellCenter(r, c);
@@ -4242,89 +4267,160 @@
     await animateFrames(30, (frame, t) => {
       const pullT = t * t;
       drawBoard((oc) => {
+        oc.save();
+        oc.lineCap = "round";
         for (const snap of cellSnaps) {
           const cx = snap.startX + (origin.x - snap.startX) * pullT;
           const cy = snap.startY + (origin.y - snap.startY) * pullT;
           const scale = 1 - pullT * 0.8;
           const alpha = 1 - pullT;
           if (alpha <= 0 || scale <= 0) continue;
-          oc.save();
-          oc.globalAlpha = alpha * 0.5;
+          oc.globalAlpha = alpha * 0.3;
+          oc.strokeStyle = color;
+          oc.shadowColor = color;
+          oc.shadowBlur = 8;
+          oc.lineWidth = 2;
+          oc.beginPath();
+          oc.moveTo(cx, cy);
+          oc.lineTo(origin.x, origin.y);
+          oc.stroke();
+          oc.shadowBlur = 0;
+          oc.globalAlpha = alpha * 0.6;
           oc.fillStyle = color;
           oc.beginPath();
           oc.arc(cx, cy, cellSize * 0.3 * scale, 0, Math.PI * 2);
           oc.fill();
-          oc.restore();
         }
-        if (frame % 3 === 0) {
+        oc.restore();
+        if (frame % 2 === 0) {
           const sparkColor = PIECE_COLORS[Math.floor(Math.random() * PIECE_COLORS.length)] || color;
           addParticle(
-            origin.x + (Math.random() - 0.5) * cellSize * 0.5,
-            origin.y + (Math.random() - 0.5) * cellSize * 0.5,
+            origin.x + (Math.random() - 0.5) * cellSize * 0.6,
+            origin.y + (Math.random() - 0.5) * cellSize * 0.6,
             sparkColor,
-            { vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2, size: 3, decay: 0.06, sizeDecay: 0.05 }
+            { vx: (Math.random() - 0.5) * 3, vy: (Math.random() - 0.5) * 3, size: 4, decay: 0.05, sizeDecay: 0.05 }
           );
         }
       });
       drawVFX();
     });
 
-    addBurstParticles(origin.x, origin.y, color, 15, { speed: 4, size: 5, decay: 0.03, sizeDecay: 0.07 });
-    addShockwave(origin.x, origin.y, cellSize * 3, 18, color);
+    addScreenShake(4);
+    addFlash(origin.x, origin.y, cellSize * 4, color, 15);
+    addBurstParticles(origin.x, origin.y, "#ffffff", 20, { speed: 5, size: 5, decay: 0.025, sizeDecay: 0.06 });
+    addBurstParticles(origin.x, origin.y, color, 20, { speed: 4, size: 5, decay: 0.03, sizeDecay: 0.07 });
+    addShockwave(origin.x, origin.y, cellSize * 4, 22, color);
   }
 
   async function animateCrossCombo(cells, specialInfos) {
     const info = specialInfos.find(s => s.type === "cross" || s.type === "star_cross") || specialInfos[0];
     const origin = cellCenter(info.r, info.c);
     const color = PIECE_COLORS[info.color] || "#ffffff";
+    const isStar = info.type === "star_cross";
+    const dissolved = new Set();
 
-    await animateFrames(6, (frame, t) => {
+    const beamDirs = [
+      { dx: 1, dy: 0, color: "#ff4444" }, { dx: -1, dy: 0, color: "#ff4444" },
+      { dx: 0, dy: 1, color: "#4488ff" }, { dx: 0, dy: -1, color: "#4488ff" },
+    ];
+    if (isStar) {
+      const inv = Math.SQRT1_2;
+      beamDirs.push(
+        { dx: inv, dy: inv, color: "#44ff88" }, { dx: -inv, dy: -inv, color: "#44ff88" },
+        { dx: inv, dy: -inv, color: "#ff44ff" }, { dx: -inv, dy: inv, color: "#ff44ff" }
+      );
+    }
+    const beamLen = Math.max(rows, cols) * cellSize;
+
+    await animateFrames(12, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         oc.shadowColor = "#ffff00";
-        oc.shadowBlur = 15 + t * 20;
+        oc.shadowBlur = 15 + t * 35;
         oc.fillStyle = "#ffff00";
-        oc.globalAlpha = 0.3 + t * 0.5;
+        oc.globalAlpha = 0.4 + t * 0.5;
         oc.beginPath();
-        oc.arc(origin.x, origin.y, cellSize * 0.4, 0, Math.PI * 2);
+        oc.arc(origin.x, origin.y, cellSize * (0.3 + t * 0.4), 0, Math.PI * 2);
         oc.fill();
         oc.restore();
       });
       drawVFX();
     });
 
-    addComet(origin.x, origin.y, 1, 0, "#ff4444", cellSize * 0.35, 14);
-    addComet(origin.x, origin.y, -1, 0, "#ff4444", cellSize * 0.35, 14);
-    addComet(origin.x, origin.y, 0, 1, "#4488ff", cellSize * 0.35, 14);
-    addComet(origin.x, origin.y, 0, -1, "#4488ff", cellSize * 0.35, 14);
-    if (info.type === "star_cross") {
-      const inv = Math.SQRT1_2;
-      addComet(origin.x, origin.y, inv, inv, "#44ff88", cellSize * 0.35, 14);
-      addComet(origin.x, origin.y, -inv, -inv, "#44ff88", cellSize * 0.35, 14);
-      addComet(origin.x, origin.y, inv, -inv, "#ff44ff", cellSize * 0.35, 14);
-      addComet(origin.x, origin.y, -inv, inv, "#ff44ff", cellSize * 0.35, 14);
+    addShockwave(origin.x, origin.y, cellSize * 2.5, 20, "#ffff00");
+    addScreenShake(4);
+    for (const d of beamDirs) {
+      addComet(origin.x, origin.y, d.dx, d.dy, d.color, cellSize * 0.5, 20);
     }
-    addScreenShake(3);
 
-    await animateFrames(25, (frame, t) => {
-      if (frame === 12) {
-        addShockwave(origin.x, origin.y, cellSize * 4, 18, "#ffff44");
-        addBurstParticles(origin.x, origin.y, "#ffff00", 15, { speed: 4, size: 4.5, decay: 0.03, sizeDecay: 0.06 });
-        addScreenShake(4);
+    await animateFrames(38, (frame, t) => {
+      if (frame === 15) {
+        addShockwave(origin.x, origin.y, cellSize * 5, 22, "#ffff44");
+        addBurstParticles(origin.x, origin.y, "#ffff00", 20, { speed: 5, size: 5, decay: 0.03, sizeDecay: 0.06 });
+        addScreenShake(5);
       }
       for (const { r, c } of cells) {
+        const key = r + "," + c;
+        if (dissolved.has(key)) continue;
         const cc = cellCenter(r, c);
         for (const comet of vfxComets) {
-          if (Math.hypot(comet.x - cc.x, comet.y - cc.y) < cellSize * 0.7) {
+          if (Math.hypot(comet.x - cc.x, comet.y - cc.y) < cellSize * 0.8) {
+            dissolved.add(key);
             const pColor = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || "#ffffff") : "#ffffff";
-            addBurstParticles(cc.x, cc.y, pColor, 4, { speed: 1.5, size: 2.5, decay: 0.05, sizeDecay: 0.05 });
+            addBurstParticles(cc.x, cc.y, pColor, 8, { speed: 3, size: 4, decay: 0.04, sizeDecay: 0.05 });
+            addFlash(cc.x, cc.y, cellSize * 0.5, pColor, 6);
             break;
           }
         }
       }
-      drawBoard(() => {});
+      drawBoard((oc) => {
+        oc.save();
+        const beamAlpha = (1 - t * 0.7) * 0.7;
+        if (beamAlpha > 0.01) {
+          const reach = Math.min(t * 2.5, 1);
+          const fade = 1 - Math.max(0, (t - 0.6) / 0.4);
+          const width = cellSize * 0.7 * fade;
+          oc.lineCap = "round";
+          for (const d of beamDirs) {
+            oc.globalAlpha = beamAlpha * 0.5;
+            oc.strokeStyle = d.color;
+            oc.shadowColor = d.color;
+            oc.shadowBlur = 25;
+            oc.lineWidth = width + cellSize * 0.3;
+            oc.beginPath();
+            oc.moveTo(origin.x, origin.y);
+            oc.lineTo(origin.x + d.dx * beamLen * reach, origin.y + d.dy * beamLen * reach);
+            oc.stroke();
+            oc.globalAlpha = beamAlpha;
+            oc.shadowBlur = 10;
+            oc.lineWidth = width;
+            oc.beginPath();
+            oc.moveTo(origin.x, origin.y);
+            oc.lineTo(origin.x + d.dx * beamLen * reach, origin.y + d.dy * beamLen * reach);
+            oc.stroke();
+          }
+          oc.strokeStyle = "#ffffff";
+          oc.shadowBlur = 0;
+          oc.lineWidth = width * 0.3;
+          oc.globalAlpha = beamAlpha * 0.9;
+          for (const d of beamDirs) {
+            oc.beginPath();
+            oc.moveTo(origin.x, origin.y);
+            oc.lineTo(origin.x + d.dx * beamLen * reach, origin.y + d.dy * beamLen * reach);
+            oc.stroke();
+          }
+        }
+        oc.restore();
+      });
       drawVFX();
     });
+
+    for (const { r, c } of cells) {
+      if (!dissolved.has(r + "," + c)) {
+        const cc = cellCenter(r, c);
+        addBurstParticles(cc.x, cc.y, color, 6, { speed: 2, size: 3, decay: 0.04, sizeDecay: 0.05 });
+      }
+    }
   }
 
   async function animateBigBomb(cells, specialInfos) {
