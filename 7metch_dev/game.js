@@ -5876,17 +5876,18 @@
     ctx.fill();
   }
 
-  function drawShootingStar(ctx, cx, cy, r, angle) {
+  function drawShootingStar(ctx, cx, cy, r, angle, tint) {
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(angle);
     const s = r;
-    ctx.shadowColor = "#ffd700";
+    const tc = tint || "#ffd700";
+    ctx.shadowColor = tc;
     ctx.shadowBlur = r * 0.3;
     const tg = ctx.createLinearGradient(0, s * 0.8, 0, -s * 0.3);
-    tg.addColorStop(0, "rgba(255,215,0,0)");
-    tg.addColorStop(0.5, "rgba(255,215,0,0.4)");
-    tg.addColorStop(1, "#ffd700");
+    tg.addColorStop(0, tc + "00");
+    tg.addColorStop(0.5, tc + "66");
+    tg.addColorStop(1, tc);
     ctx.fillStyle = tg;
     ctx.beginPath();
     ctx.moveTo(0, -s * 0.4);
@@ -5901,28 +5902,30 @@
 
   function drawSpecialIcon(ctx, type, cx, cy, r, piece) {
     ctx.save();
+    const tint = (piece && piece.color >= 0) ? PIECE_COLORS[piece.color] : null;
     switch (type) {
       case "line_h": {
-        drawShootingStar(ctx, cx, cy, r, Math.PI / 2);
+        drawShootingStar(ctx, cx, cy, r, Math.PI / 2, tint);
         break;
       }
       case "line_v": {
-        drawShootingStar(ctx, cx, cy, r, 0);
+        drawShootingStar(ctx, cx, cy, r, 0, tint);
         break;
       }
       case "line_d": {
         ctx.save();
         ctx.translate(cx, cy);
         const s = r;
+        const tc = tint || "#ffd700";
         [-Math.PI / 4, Math.PI / 4].forEach(a => {
           ctx.save();
           ctx.rotate(a);
-          ctx.shadowColor = "#ffd700";
+          ctx.shadowColor = tc;
           ctx.shadowBlur = r * 0.3;
           const tg = ctx.createLinearGradient(0, s * 0.8, 0, -s * 0.3);
-          tg.addColorStop(0, "rgba(255,215,0,0)");
-          tg.addColorStop(0.5, "rgba(255,215,0,0.4)");
-          tg.addColorStop(1, "#ffd700");
+          tg.addColorStop(0, tc + "00");
+          tg.addColorStop(0.5, tc + "66");
+          tg.addColorStop(1, tc);
           ctx.fillStyle = tg;
           ctx.beginPath();
           ctx.moveTo(0, -s * 0.4);
@@ -5939,11 +5942,12 @@
       }
       case "bomb": {
         const s = r;
-        ctx.shadowColor = "#ff6600";
+        const bc = tint || "#ff6600";
+        ctx.shadowColor = bc;
         ctx.shadowBlur = r * 0.3;
         const bg = ctx.createRadialGradient(cx - s * 0.15, cy - s * 0.1, s * 0.05, cx, cy + s * 0.05, s * 0.5);
-        bg.addColorStop(0, "#555");
-        bg.addColorStop(0.8, "#222");
+        bg.addColorStop(0, (tint || "#555555") + "aa");
+        bg.addColorStop(0.6, (tint || "#333333") + "66");
         bg.addColorStop(1, "#111");
         ctx.fillStyle = bg;
         ctx.beginPath();
