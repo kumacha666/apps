@@ -9,6 +9,8 @@
 
 ## 手順
 
+0. **変更チェック**: `git status` で `7metch/src/` 配下に変更（staged/unstaged/untracked）があるか確認する。変更がなければ「デプロイ対象の変更がありません」と報告して**中断する**
+
 1. **ビルド**: `cd /home/user/apps/7metch && npm run build` を実行。失敗したら中断して原因を報告する
 
 2. **成果物コピー**: `dist/index.html`, `dist/style.css`, `dist/game.js` をルート (`/home/user/apps/7metch/`) にコピー
