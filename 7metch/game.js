@@ -4096,18 +4096,40 @@
       }
       drawBoard((oc) => {
         oc.save();
-        const beamAlpha = (1 - t) * 0.35;
+        const beamAlpha = (1 - t * 0.7) * 0.7;
         if (beamAlpha > 0.01) {
-          oc.globalAlpha = beamAlpha;
+          const reach = Math.min(t * 2.5, 1);
+          const fade = 1 - Math.max(0, (t - 0.6) / 0.4);
+          const width = cellSize * 0.7 * fade;
+          oc.lineCap = "round";
+          oc.globalAlpha = beamAlpha * 0.5;
           oc.strokeStyle = color;
           oc.shadowColor = color;
-          oc.shadowBlur = 15;
-          oc.lineWidth = cellSize * 0.15 * (1 - t * 0.5);
-          oc.lineCap = "round";
+          oc.shadowBlur = 25;
+          oc.lineWidth = width + cellSize * 0.3;
           for (const d of beamDirs) {
             oc.beginPath();
             oc.moveTo(origin.x, origin.y);
-            oc.lineTo(origin.x + d.dx * beamLen * t, origin.y + d.dy * beamLen * t);
+            oc.lineTo(origin.x + d.dx * beamLen * reach, origin.y + d.dy * beamLen * reach);
+            oc.stroke();
+          }
+          oc.globalAlpha = beamAlpha;
+          oc.shadowBlur = 10;
+          oc.lineWidth = width;
+          for (const d of beamDirs) {
+            oc.beginPath();
+            oc.moveTo(origin.x, origin.y);
+            oc.lineTo(origin.x + d.dx * beamLen * reach, origin.y + d.dy * beamLen * reach);
+            oc.stroke();
+          }
+          oc.globalAlpha = beamAlpha * 0.9;
+          oc.strokeStyle = "#ffffff";
+          oc.shadowBlur = 0;
+          oc.lineWidth = width * 0.3;
+          for (const d of beamDirs) {
+            oc.beginPath();
+            oc.moveTo(origin.x, origin.y);
+            oc.lineTo(origin.x + d.dx * beamLen * reach, origin.y + d.dy * beamLen * reach);
             oc.stroke();
           }
         }
@@ -5571,10 +5593,10 @@
         : '<span class="star-off">★</span>';
     }
     if (currentStars === 3) {
-      const margin = stg.star3moves - usedMoves;
+      const margin = stg.star3moves - usedMoves + 1;
       if (margin >= 1) html += `<span class="star-hint">あと${margin}手</span>`;
     } else if (currentStars === 2) {
-      const margin = stg.star2moves - usedMoves;
+      const margin = stg.star2moves - usedMoves + 1;
       if (margin >= 1) html += `<span class="star-hint">あと${margin}手</span>`;
     }
     starsEl.innerHTML = html;
