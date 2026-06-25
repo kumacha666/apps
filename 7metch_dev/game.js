@@ -4171,72 +4171,115 @@
   async function animateBombSpecial(cells, info) {
     const origin = cellCenter(info.r, info.c);
     const color = PIECE_COLORS[info.color] || "#ff8800";
-    const blastRadius = cellSize * 2.5;
+    const blastRadius = cellSize * 3.5;
+    const rayCount = 12;
 
-    await animateFrames(10, (frame, t) => {
+    await animateFrames(15, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
-        oc.shadowColor = color;
-        oc.shadowBlur = 10 + t * 30;
-        oc.fillStyle = color;
-        oc.globalAlpha = 0.4 + t * 0.5;
+        oc.translate(origin.x, origin.y);
+        const pulse = 1 + Math.sin(frame * 1.2) * 0.15;
+        const coreR = cellSize * (0.25 + t * 0.35) * pulse;
+        const grad = oc.createRadialGradient(0, 0, 0, 0, 0, coreR * 2);
+        grad.addColorStop(0, color);
+        grad.addColorStop(0.5, color + "88");
+        grad.addColorStop(1, color + "00");
+        oc.globalAlpha = 0.5 + t * 0.4;
+        oc.fillStyle = grad;
         oc.beginPath();
-        oc.arc(origin.x, origin.y, cellSize * (0.3 + t * 0.2), 0, Math.PI * 2);
+        oc.arc(0, 0, coreR * 2, 0, Math.PI * 2);
         oc.fill();
-        if (t > 0.5) {
-          oc.globalAlpha = (t - 0.5) * 1.5;
-          oc.fillStyle = "#ffffff";
-          oc.beginPath();
-          oc.arc(origin.x, origin.y, cellSize * 0.2 * (1 - (t - 0.5)), 0, Math.PI * 2);
-          oc.fill();
+        oc.globalAlpha = 0.6 + t * 0.4;
+        oc.shadowColor = "#ffffff";
+        oc.shadowBlur = 15 + t * 30;
+        oc.fillStyle = "#ffffff";
+        oc.beginPath();
+        oc.arc(0, 0, coreR * 0.5, 0, Math.PI * 2);
+        oc.fill();
+        if (t > 0.3) {
+          const rayT = (t - 0.3) / 0.7;
+          oc.globalAlpha = rayT * 0.4;
+          oc.strokeStyle = color;
+          oc.shadowColor = color;
+          oc.shadowBlur = 10;
+          oc.lineWidth = 2 + rayT * 3;
+          oc.lineCap = "round";
+          for (let i = 0; i < rayCount; i++) {
+            const a = (Math.PI * 2 * i / rayCount) + frame * 0.15;
+            const rLen = cellSize * (0.5 + rayT * 1.5);
+            oc.beginPath();
+            oc.moveTo(Math.cos(a) * coreR, Math.sin(a) * coreR);
+            oc.lineTo(Math.cos(a) * rLen, Math.sin(a) * rLen);
+            oc.stroke();
+          }
         }
         oc.restore();
       });
       drawVFX();
     });
 
-    addScreenShake(7);
-    addShockwave(origin.x, origin.y, cellSize * 5, 25, "#ffffff");
-    addShockwave(origin.x, origin.y, cellSize * 3, 18, color);
-    addFlash(origin.x, origin.y, cellSize * 4, "#ffffff", 18);
-    addBurstParticles(origin.x, origin.y, "#ffffff", 25, { speed: 6, size: 6, decay: 0.025, sizeDecay: 0.07 });
-    addBurstParticles(origin.x, origin.y, color, 25, { speed: 4, size: 5, decay: 0.02, sizeDecay: 0.06 });
+    addScreenShake(10);
+    addFlash(origin.x, origin.y, cellSize * 5, "#ffffff", 20);
+    addShockwave(origin.x, origin.y, cellSize * 6, 28, "#ffffff");
+    addShockwave(origin.x, origin.y, cellSize * 4.5, 22, color);
+    addShockwave(origin.x, origin.y, cellSize * 3, 16, color);
+    addBurstParticles(origin.x, origin.y, "#ffffff", 35, { speed: 7, size: 7, decay: 0.02, sizeDecay: 0.06 });
+    addBurstParticles(origin.x, origin.y, color, 30, { speed: 5, size: 6, decay: 0.02, sizeDecay: 0.05 });
+    for (let i = 0; i < rayCount; i++) {
+      const a = Math.PI * 2 * i / rayCount;
+      addComet(origin.x, origin.y, Math.cos(a), Math.sin(a), color, cellSize * 0.35, 12);
+    }
 
     const cellDistances = cells.map(({ r, c }) => ({
       r, c, dist: Math.abs(r - info.r) + Math.abs(c - info.c)
     }));
 
-    await animateFrames(25, (frame, t) => {
+    await animateFrames(30, (frame, t) => {
       for (const { r, c, dist } of cellDistances) {
         if (frame === dist * 2 + 1) {
           const cc = cellCenter(r, c);
           const pColor = (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || color) : color;
-          addBurstParticles(cc.x, cc.y, pColor, 8, { speed: 2.5, size: 3.5, decay: 0.04, sizeDecay: 0.05 });
-          addFlash(cc.x, cc.y, cellSize * 0.4, pColor, 5);
+          addBurstParticles(cc.x, cc.y, pColor, 12, { speed: 3.5, size: 4.5, decay: 0.035, sizeDecay: 0.05 });
+          addFlash(cc.x, cc.y, cellSize * 0.6, pColor, 7);
+          addFlash(cc.x, cc.y, cellSize * 0.3, "#ffffff", 4);
         }
       }
       drawBoard((oc) => {
-        if (t < 0.7) {
-          const ringT = t / 0.7;
-          const ringR = blastRadius * ringT;
-          const ringAlpha = (1 - ringT) * 0.6;
-          oc.save();
+        oc.save();
+        for (let ring = 0; ring < 3; ring++) {
+          const delay = ring * 0.12;
+          const rt = Math.max(0, t - delay);
+          if (rt <= 0 || rt > 0.8) continue;
+          const ringT = rt / 0.8;
+          const ringR = blastRadius * ringT * (1 - ring * 0.15);
+          const ringAlpha = (1 - ringT) * 0.5;
           oc.globalAlpha = ringAlpha;
-          oc.strokeStyle = color;
-          oc.shadowColor = color;
-          oc.shadowBlur = 20;
-          oc.lineWidth = cellSize * 0.4 * (1 - ringT * 0.7);
+          oc.strokeStyle = ring === 0 ? "#ffffff" : color;
+          oc.shadowColor = ring === 0 ? "#ffffff" : color;
+          oc.shadowBlur = 25 - ring * 5;
+          oc.lineWidth = cellSize * (0.5 - ring * 0.12) * (1 - ringT * 0.6);
           oc.beginPath();
           oc.arc(origin.x, origin.y, ringR, 0, Math.PI * 2);
           oc.stroke();
-          oc.strokeStyle = "#ffffff";
-          oc.shadowBlur = 0;
-          oc.lineWidth = cellSize * 0.15 * (1 - ringT);
-          oc.beginPath();
-          oc.arc(origin.x, origin.y, ringR, 0, Math.PI * 2);
-          oc.stroke();
-          oc.restore();
         }
+        if (t < 0.4) {
+          const rayFade = 1 - t / 0.4;
+          oc.globalAlpha = rayFade * 0.5;
+          oc.strokeStyle = "#ffffff";
+          oc.shadowColor = "#ffffff";
+          oc.shadowBlur = 15;
+          oc.lineWidth = cellSize * 0.15 * rayFade;
+          oc.lineCap = "round";
+          for (let i = 0; i < rayCount; i++) {
+            const a = Math.PI * 2 * i / rayCount;
+            const rLen = blastRadius * (0.5 + t * 2);
+            oc.beginPath();
+            oc.moveTo(origin.x, origin.y);
+            oc.lineTo(origin.x + Math.cos(a) * rLen, origin.y + Math.sin(a) * rLen);
+            oc.stroke();
+          }
+        }
+        oc.restore();
       });
       drawVFX();
     });
@@ -4245,93 +4288,133 @@
   async function animateRainbow(cells, info) {
     const origin = cellCenter(info.r, info.c);
     const color = PIECE_COLORS[info.color] || "#aa44ff";
+    const arcColors = PIECE_COLORS.slice(0, 6);
+    const arcCount = 6;
 
-    await animateFrames(12, (frame, t) => {
+    await animateFrames(18, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         oc.translate(origin.x, origin.y);
-        oc.globalAlpha = 0.3 + t * 0.4;
-        const grad = oc.createRadialGradient(0, 0, 0, 0, 0, cellSize * 1.5);
-        grad.addColorStop(0, "rgba(20, 0, 40, 0.9)");
-        grad.addColorStop(0.6, "rgba(40, 0, 80, 0.4)");
-        grad.addColorStop(1, "rgba(20, 0, 40, 0)");
+        const vortexR = cellSize * (0.6 + t * 1.8);
+        const grad = oc.createRadialGradient(0, 0, 0, 0, 0, vortexR);
+        grad.addColorStop(0, "rgba(60, 0, 120, 0.95)");
+        grad.addColorStop(0.4, "rgba(40, 0, 80, 0.5)");
+        grad.addColorStop(0.8, "rgba(20, 0, 40, 0.2)");
+        grad.addColorStop(1, "rgba(0, 0, 0, 0)");
+        oc.globalAlpha = 0.4 + t * 0.5;
         oc.fillStyle = grad;
         oc.beginPath();
-        oc.arc(0, 0, cellSize * (0.5 + t * 1.0), 0, Math.PI * 2);
+        oc.arc(0, 0, vortexR, 0, Math.PI * 2);
         oc.fill();
-        const arcCount = 4;
-        const baseAngle = frame * 0.35;
-        oc.lineWidth = 3 + t * 3;
-        oc.globalAlpha = 0.5 + t * 0.4;
-        oc.lineCap = "round";
-        for (let i = 0; i < arcCount; i++) {
-          const a = baseAngle + (Math.PI * 2 * i / arcCount);
-          oc.strokeStyle = PIECE_COLORS[i % PIECE_COLORS.length] || color;
-          oc.shadowColor = oc.strokeStyle;
-          oc.shadowBlur = 10;
-          oc.beginPath();
-          oc.arc(0, 0, cellSize * (0.3 + t * 0.5), a, a + Math.PI * 0.5);
-          oc.stroke();
+        const baseAngle = frame * 0.4;
+        for (let layer = 0; layer < 2; layer++) {
+          const layerR = cellSize * (0.4 + t * 0.6 + layer * 0.3);
+          oc.lineWidth = (5 + t * 5) * (1 - layer * 0.3);
+          oc.globalAlpha = (0.5 + t * 0.4) * (1 - layer * 0.25);
+          oc.lineCap = "round";
+          for (let i = 0; i < arcCount; i++) {
+            const a = baseAngle + (Math.PI * 2 * i / arcCount) + layer * 0.3;
+            const arcC = arcColors[i % arcColors.length];
+            oc.strokeStyle = arcC;
+            oc.shadowColor = arcC;
+            oc.shadowBlur = 12 + t * 15;
+            oc.beginPath();
+            oc.arc(0, 0, layerR, a, a + Math.PI * 0.45);
+            oc.stroke();
+          }
         }
+        oc.globalAlpha = 0.5 + t * 0.5;
+        oc.shadowColor = "#ffffff";
+        oc.shadowBlur = 20 + t * 20;
+        oc.fillStyle = "#ffffff";
+        oc.beginPath();
+        oc.arc(0, 0, cellSize * (0.15 + t * 0.1), 0, Math.PI * 2);
+        oc.fill();
         oc.restore();
       });
+      if (frame % 3 === 0) {
+        const sc = arcColors[frame % arcColors.length];
+        const a = Math.random() * Math.PI * 2;
+        const r = cellSize * 0.5;
+        addParticle(origin.x + Math.cos(a) * r, origin.y + Math.sin(a) * r, sc,
+          { vx: Math.cos(a) * 2, vy: Math.sin(a) * 2, size: 4, decay: 0.04, sizeDecay: 0.05 });
+      }
       drawVFX();
     });
 
-    addShockwave(origin.x, origin.y, cellSize * 2, 15, color);
-    addScreenShake(2);
+    addScreenShake(5);
+    addShockwave(origin.x, origin.y, cellSize * 3, 18, color);
 
     const cellSnaps = cells.map(({ r, c }) => {
       const cc = cellCenter(r, c);
-      return { r, c, startX: cc.x, startY: cc.y };
+      const dx = cc.x - origin.x, dy = cc.y - origin.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      return { r, c, startX: cc.x, startY: cc.y, dx: dx / dist, dy: dy / dist, dist,
+        color: (board[r] && board[r][c]) ? (PIECE_COLORS[board[r][c].color] || color) : color };
     });
 
-    await animateFrames(30, (frame, t) => {
-      const pullT = t * t;
+    await animateFrames(35, (frame, t) => {
       drawBoard((oc) => {
         oc.save();
         oc.lineCap = "round";
-        for (const snap of cellSnaps) {
-          const cx = snap.startX + (origin.x - snap.startX) * pullT;
-          const cy = snap.startY + (origin.y - snap.startY) * pullT;
-          const scale = 1 - pullT * 0.8;
-          const alpha = 1 - pullT;
-          if (alpha <= 0 || scale <= 0) continue;
-          oc.globalAlpha = alpha * 0.3;
-          oc.strokeStyle = color;
-          oc.shadowColor = color;
-          oc.shadowBlur = 8;
-          oc.lineWidth = 2;
+        for (let si = 0; si < cellSnaps.length; si++) {
+          const snap = cellSnaps[si];
+          const beamT = Math.min(t * 2.5, 1);
+          const fadeT = Math.max(0, (t - 0.5) / 0.5);
+          const beamAlpha = (1 - fadeT) * 0.7;
+          if (beamAlpha <= 0.01) continue;
+          const beamEndX = origin.x + (snap.startX - origin.x) * beamT;
+          const beamEndY = origin.y + (snap.startY - origin.y) * beamT;
+          const bColor = arcColors[si % arcColors.length];
+          oc.globalAlpha = beamAlpha * 0.4;
+          oc.strokeStyle = bColor;
+          oc.shadowColor = bColor;
+          oc.shadowBlur = 15;
+          oc.lineWidth = cellSize * 0.25;
           oc.beginPath();
-          oc.moveTo(cx, cy);
-          oc.lineTo(origin.x, origin.y);
+          oc.moveTo(origin.x, origin.y);
+          oc.lineTo(beamEndX, beamEndY);
           oc.stroke();
-          oc.shadowBlur = 0;
-          oc.globalAlpha = alpha * 0.6;
-          oc.fillStyle = color;
+          oc.globalAlpha = beamAlpha * 0.8;
+          oc.shadowBlur = 5;
+          oc.lineWidth = cellSize * 0.1;
           oc.beginPath();
-          oc.arc(cx, cy, cellSize * 0.3 * scale, 0, Math.PI * 2);
-          oc.fill();
+          oc.moveTo(origin.x, origin.y);
+          oc.lineTo(beamEndX, beamEndY);
+          oc.stroke();
+          oc.globalAlpha = beamAlpha;
+          oc.strokeStyle = "#ffffff";
+          oc.shadowBlur = 0;
+          oc.lineWidth = cellSize * 0.04;
+          oc.beginPath();
+          oc.moveTo(origin.x, origin.y);
+          oc.lineTo(beamEndX, beamEndY);
+          oc.stroke();
+          if (beamT >= 0.95 && fadeT < 0.3 && frame === Math.floor(snap.dist / (cellSize * 0.5)) + 8) {
+            addBurstParticles(snap.startX, snap.startY, bColor, 10, { speed: 3, size: 4, decay: 0.035, sizeDecay: 0.05 });
+            addFlash(snap.startX, snap.startY, cellSize * 0.5, bColor, 6);
+          }
         }
         oc.restore();
-        if (frame % 2 === 0) {
-          const sparkColor = PIECE_COLORS[Math.floor(Math.random() * PIECE_COLORS.length)] || color;
-          addParticle(
-            origin.x + (Math.random() - 0.5) * cellSize * 0.6,
-            origin.y + (Math.random() - 0.5) * cellSize * 0.6,
-            sparkColor,
-            { vx: (Math.random() - 0.5) * 3, vy: (Math.random() - 0.5) * 3, size: 4, decay: 0.05, sizeDecay: 0.05 }
-          );
-        }
       });
+      if (frame % 2 === 0) {
+        const sc = arcColors[Math.floor(Math.random() * arcColors.length)];
+        addParticle(
+          origin.x + (Math.random() - 0.5) * cellSize,
+          origin.y + (Math.random() - 0.5) * cellSize,
+          sc, { vx: (Math.random() - 0.5) * 4, vy: (Math.random() - 0.5) * 4, size: 5, decay: 0.04, sizeDecay: 0.05 });
+      }
       drawVFX();
     });
 
-    addScreenShake(4);
-    addFlash(origin.x, origin.y, cellSize * 4, color, 15);
-    addBurstParticles(origin.x, origin.y, "#ffffff", 20, { speed: 5, size: 5, decay: 0.025, sizeDecay: 0.06 });
-    addBurstParticles(origin.x, origin.y, color, 20, { speed: 4, size: 5, decay: 0.03, sizeDecay: 0.07 });
-    addShockwave(origin.x, origin.y, cellSize * 4, 22, color);
+    addScreenShake(8);
+    addFlash(origin.x, origin.y, cellSize * 5, "#ffffff", 20);
+    for (let i = 0; i < arcColors.length; i++) {
+      addBurstParticles(origin.x, origin.y, arcColors[i], 10, { speed: 6 + i * 0.5, size: 6, decay: 0.02, sizeDecay: 0.05 });
+    }
+    addBurstParticles(origin.x, origin.y, "#ffffff", 25, { speed: 7, size: 5, decay: 0.02, sizeDecay: 0.05 });
+    addShockwave(origin.x, origin.y, cellSize * 5, 25, "#ffffff");
+    addShockwave(origin.x, origin.y, cellSize * 4, 20, color);
   }
 
   async function animateCrossCombo(cells, specialInfos) {
