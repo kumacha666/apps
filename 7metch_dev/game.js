@@ -3314,7 +3314,7 @@
   let hintTimer = null;
   let hintData = null;
   let hintAnimId = null;
-  const HINT_DELAY_MS = 3000;
+  const HINT_DELAY_MS = 6000;
 
   function getComboType(s1, s2) {
     const normalize = (s) => s === "countdown" ? "bomb" : s;
@@ -3561,6 +3561,7 @@
       SFX.invalidSwap();
       await animateSwap(r2, c2, r1, c1);
       swapPieces(r1, c1, r2, c2);
+      await flashInvalid(r1, c1, r2, c2);
       animating = false;
       drawBoard();
       startHintTimer();
@@ -3659,7 +3660,7 @@
 
       updateHUD();
 
-      await sleep(ANIM.CHAIN_PAUSE_MS);
+      await sleep(Math.max(60, ANIM.CHAIN_PAUSE_MS - chainCount * 25));
 
       matches = findAllMatches();
     }
@@ -4390,7 +4391,7 @@
 
         if (frame <= fallFrames) {
           const t = Math.min(frame / fallFrames, 1);
-          const accel = t * t * t;
+          const accel = t * t;
           currentR = fall.fromR + dist * accel;
         } else {
           const bt = (frame - fallFrames) / bounceFrames;
@@ -5588,13 +5589,13 @@
 
   let dragStart = null;
   let dragStartPx = null;
-  const DRAG_THRESHOLD = 12;
+  const DRAG_THRESHOLD_RATIO = 0.15;
 
   function dragDirection(sx, sy, ex, ey) {
     const dx = ex - sx;
     const dy = ey - sy;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < DRAG_THRESHOLD) return null;
+    if (dist < cellSize * DRAG_THRESHOLD_RATIO) return null;
 
     const angle = Math.atan2(dy, dx);
     const sector = Math.round(angle / (Math.PI / 4));
@@ -5630,27 +5631,8 @@
       return;
     }
 
-    if (selected) {
-      if (selected.r === cell.r && selected.c === cell.c) {
-        const p = board[cell.r][cell.c];
-        if (p && p.special && TAP_ACTIVATE_SPECIALS.has(p.special)) {
-          selected = null;
-          activateByTap(cell.r, cell.c);
-          return;
-        }
-      }
-      if (isAdjacent(selected.r, selected.c, cell.r, cell.c)) {
-        doMove(selected.r, selected.c, cell.r, cell.c);
-        selected = null;
-        drawBoard();
-        return;
-      }
-    }
-
-    selected = cell;
     dragStart = cell;
     dragStartPx = { x: e.clientX, y: e.clientY };
-    drawBoard();
   });
 
   canvas.addEventListener("pointermove", (e) => {
@@ -5671,9 +5653,42 @@
     dragStartPx = null;
   });
 
-  canvas.addEventListener("pointerup", () => {
+  canvas.addEventListener("pointerup", (e) => {
+    if (!dragStart || animating) {
+      dragStart = null;
+      dragStartPx = null;
+      return;
+    }
+
+    const cell = dragStart;
+    const wasDrag = dragStartPx && dragDirection(dragStartPx.x, dragStartPx.y, e.clientX, e.clientY);
     dragStart = null;
     dragStartPx = null;
+
+    if (wasDrag) return;
+
+    if (selected) {
+      if (selected.r === cell.r && selected.c === cell.c) {
+        const p = board[cell.r][cell.c];
+        if (p && p.special && TAP_ACTIVATE_SPECIALS.has(p.special)) {
+          selected = null;
+          activateByTap(cell.r, cell.c);
+          return;
+        }
+        selected = null;
+        drawBoard();
+        return;
+      }
+      if (isAdjacent(selected.r, selected.c, cell.r, cell.c)) {
+        doMove(selected.r, selected.c, cell.r, cell.c);
+        selected = null;
+        drawBoard();
+        return;
+      }
+    }
+
+    selected = cell;
+    drawBoard();
   });
 
   canvas.addEventListener("pointerleave", () => {
