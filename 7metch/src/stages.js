@@ -154,14 +154,14 @@ export function buildStages() {
   return stages;
 }
 
-export function getMissionText(m, html, getMissionIconUrl) {
+export function getMissionText(m, html) {
   switch (m.type) {
     case "score": return `${m.target}点 とろう`;
     case "clear": return `${m.count}個 けそう`;
     case "color":
       if (html) {
-        const url = getMissionIconUrl(m.colorIndex);
-        return `<img src="${url}" style="width:1.3em;height:1.3em;vertical-align:middle;margin:-2px 2px 0 0" alt="${PIECE_NAMES_JA[m.colorIndex]}">を${m.count}個けそう`;
+        const c = PIECE_COLORS[m.colorIndex];
+        return `<span style="display:inline-block;width:1.3em;height:1.3em;border-radius:50%;background:${c};vertical-align:middle;margin:-2px 2px 0 0;box-shadow:inset -2px -2px 4px rgba(0,0,0,.3)"></span>を${m.count}個けそう`;
       }
       return `${PIECE_NAMES_JA[m.colorIndex]}を${m.count}個けそう`;
     case "special": return `特殊ピースを${m.count}個つくろう`;

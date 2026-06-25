@@ -2,7 +2,7 @@ import { G, PIECE_COLORS, ANIM, ITEM_COSTS, STAR_GATES, PIECE_NAMES_JA, SCORE_PE
 import { findAllMatches, findSpecialCreations, activateSpecial, applyGravityData, swapPieces, getComboType, createBoard, countAvailableMoves, damageAdjacentIce, tickCountdowns, startHintTimer, clearHint, isHole, isRock, randomPiece, inBounds, initCellState, TAP_ACTIVATE_SPECIALS } from "./board.js";
 import { animateSwap, animateClear, animateDrop, sleep } from "./animations.js";
 import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, addFloatingText, hasActiveVFX, updateVFX } from "./vfx.js";
-import { drawBoard, buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startResultBgAnim, stopResultBgAnim, startChainLabel, flashInvalid, getMissionIconUrl } from "./rendering.js";
+import { drawBoard, buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startResultBgAnim, stopResultBgAnim, startChainLabel, flashInvalid } from "./rendering.js";
 import { SFX } from "./audio.js";
 import { track } from "./tracking.js";
 import { getMissionText } from "./stages.js";
