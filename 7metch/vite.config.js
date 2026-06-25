@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
+import { resolve } from "path";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   root: ".",
   base: "./",
   publicDir: "public",
@@ -29,4 +30,10 @@ export default defineConfig({
   define: {
     __DEBUG__: JSON.stringify(process.env.NODE_ENV !== "production"),
   },
-});
+  test: {
+    environment: "node",
+    alias: {
+      "./audio.js": resolve("src/__mocks__/audio.js"),
+    },
+  },
+}));

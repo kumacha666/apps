@@ -69,7 +69,7 @@ export function buildStages() {
   for (let i = 0; i < 500; i++) {
     const size = boardSizeForStage(i);
     const tier = Math.floor(i / 10);
-    const baseMoves = Math.max(12, 20 - tier * 2);
+    const baseMoves = Math.max(14, 22 - tier);
     let moves;
     if (i < 10) moves = 20;
     else if (size.cols >= 9) moves = Math.max(16, baseMoves);
@@ -112,15 +112,15 @@ export function buildStages() {
       const slot = i % 7;
       if (slot === 0) {
         const targetColor = i % colors;
-        mission = { type: "color", colorIndex: targetColor, count: Math.floor(moves * 1.0) };
+        mission = { type: "color", colorIndex: targetColor, count: Math.floor(moves * 0.8) };
       } else if (slot === 1) {
         mission = { type: "special", count: 2 + Math.floor((i - 350) / 60) };
       } else if (slot === 2) {
         mission = { type: "chain", count: 2 + Math.floor((i - 350) / 100) };
       } else if (slot === 3) {
-        mission = { type: "score", target: Math.floor(moves * Math.min(100, 50 + i * 1.0)) };
+        mission = { type: "score", target: Math.floor(moves * Math.min(55, 30 + i * 0.2)) };
       } else if (slot === 4) {
-        mission = { type: "clear", count: Math.floor(moves * Math.min(8, 3.0 + i * 0.04)) };
+        mission = { type: "clear", count: Math.floor(moves * Math.min(4.5, 2.5 + i * 0.01)) };
       } else if (slot === 5) {
         mission = { type: "special", count: 3 + Math.floor((i - 350) / 75) };
       } else {
@@ -128,11 +128,11 @@ export function buildStages() {
       }
     } else if (i % 5 === 0 && i > 0) {
       const targetColor = i % colors;
-      mission = { type: "color", colorIndex: targetColor, count: Math.floor(moves * Math.min(1.0, 0.5 + i * 0.008)) };
+      mission = { type: "color", colorIndex: targetColor, count: Math.floor(moves * Math.min(0.8, 0.4 + i * 0.005)) };
     } else if (i % 3 === 0) {
-      mission = { type: "score", target: Math.floor(moves * Math.min(100, 50 + i * 1.0)) };
+      mission = { type: "score", target: Math.floor(moves * Math.min(55, 30 + i * 0.2)) };
     } else {
-      mission = { type: "clear", count: Math.floor(moves * Math.min(8, 3.0 + i * 0.04)) };
+      mission = { type: "clear", count: Math.floor(moves * Math.min(4.5, 2.5 + i * 0.01)) };
     }
 
     stages.push({
