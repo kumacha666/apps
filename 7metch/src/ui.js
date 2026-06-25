@@ -144,6 +144,29 @@ export function buildStageSelect() {
 
 // --- Start Stage ---
 
+const TUTORIALS = [
+  { icon: "👆", html: 'ピースをスワイプして<br>入れ替えよう！<br><strong>8方向</strong>に動かせるよ' },
+  { icon: "🎯", html: '上の<strong>ミッション欄</strong>をチェック！<br>手数以内に達成して<br>★を集めよう' },
+];
+
+function showTutorial(stageIndex) {
+  if (stageIndex >= TUTORIALS.length) return;
+  if (G.saveData.tutorialDone && G.saveData.tutorialDone[stageIndex]) return;
+  const t = TUTORIALS[stageIndex];
+  const overlay = document.getElementById("tutorial-overlay");
+  document.getElementById("tutorial-icon").textContent = t.icon;
+  document.getElementById("tutorial-text").innerHTML = t.html;
+  overlay.classList.remove("hidden");
+  const dismiss = () => {
+    overlay.classList.add("hidden");
+    overlay.removeEventListener("click", dismiss);
+    if (!G.saveData.tutorialDone) G.saveData.tutorialDone = {};
+    G.saveData.tutorialDone[stageIndex] = true;
+    writeSave();
+  };
+  overlay.addEventListener("click", dismiss);
+}
+
 export function startStage(index) {
   const stg = G.STAGES[index];
   G.cols = stg.boardCols;
@@ -172,6 +195,7 @@ export function startStage(index) {
   showScreen("game");
   track("stage_start", { stage: stg.name, mission_type: stg.mission.type });
   startHintTimer();
+  showTutorial(index);
 }
 
 // --- Resize Canvas ---
