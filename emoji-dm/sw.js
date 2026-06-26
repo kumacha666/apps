@@ -30,7 +30,7 @@ self.addEventListener('notificationclick', (e) => {
   );
 });
 
-const CACHE = 'emoji-dm-1.1.2';
+const CACHE = 'emoji-dm-1.1.3';
 const ASSETS = ['/emoji-dm/', '/emoji-dm/index.html', '/emoji-dm/style.css', '/emoji-dm/app.js'];
 
 self.addEventListener('install', (e) => {
