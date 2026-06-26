@@ -6,13 +6,13 @@ import {
 // ── Firebase Config ──
 // Replace with your own Firebase project config
 const firebaseConfig = {
-  apiKey: "AIzaSyCplaceholder",
+  apiKey: "AIzaSyBEcJVfrNeK_q5pf1tGTJDosGn-Fw7dvq4",
   authDomain: "emoji-dm.firebaseapp.com",
-  databaseURL: "https://emoji-dm-default-rtdb.firebaseio.com",
+  databaseURL: "https://emoji-dm-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "emoji-dm",
-  storageBucket: "emoji-dm.appspot.com",
-  messagingSenderId: "000000000000",
-  appId: "1:000000000000:web:placeholder"
+  storageBucket: "emoji-dm.firebasestorage.app",
+  messagingSenderId: "125384370581",
+  appId: "1:125384370581:web:6a23a3b5e83442af106e9c"
 };
 
 let db;
