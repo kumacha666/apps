@@ -5,11 +5,10 @@ import {
   inBounds,
 } from "./board";
 import { has } from "./upgrades";
-import { drawBoard, drawClearEffect } from "./rendering";
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+import { drawBoard, startChainLabel } from "./rendering";
+import { animateSwap, animateStandardClear, animateDrop, sleep } from "./animations";
+import type { FallEntry } from "./animations";
+import { addScreenShake } from "./vfx";
 
 function updateHUD(): void {
   document.getElementById("hud-stage")!.textContent = `Stage ${G.run.stage + 1}`;
@@ -24,7 +23,6 @@ function updateUpgradeList(): void {
     return;
   }
   el.classList.remove("hidden");
-  // Import ALL_UPGRADES to get icons
   import("./upgrades").then(({ ALL_UPGRADES }) => {
     el.innerHTML = G.run.upgrades.map(id => {
       const def = ALL_UPGRADES.find(u => u.id === id);
@@ -82,63 +80,131 @@ export function showScreen(name: string): void {
   }
 }
 
+// --- Capture fall data before gravity for animation ---
+
+function captureAndApplyGravity(): FallEntry[] {
+  const fallEntries: FallEntry[] = [];
+
+  for (let c = 0; c < COLS; c++) {
+    // Collect existing pieces with their current rows
+    const pieces: { piece: typeof G.board[0][0]; fromR: number }[] = [];
+    for (let r = ROWS - 1; r >= 0; r--) {
+      if (G.board[r][c]) {
+        pieces.push({ piece: G.board[r][c], fromR: r });
+      }
+    }
+
+    // Calculate target rows (bottom-aligned)
+    let writeRow = ROWS - 1;
+    for (const entry of pieces) {
+      if (entry.fromR !== writeRow) {
+        fallEntries.push({
+          c,
+          fromR: entry.fromR,
+          toR: writeRow,
+          piece: entry.piece!,
+        });
+      }
+      writeRow--;
+    }
+  }
+
+  // Apply gravity (this also fills new pieces)
+  applyGravity();
+
+  // Also capture newly spawned pieces (they fall from above)
+  for (let c = 0; c < COLS; c++) {
+    // Find how many empty rows were at the top before gravity
+    const existingFalls = fallEntries.filter(f => f.c === c);
+    const lowestExistingFrom = existingFalls.length > 0
+      ? Math.min(...existingFalls.map(f => f.fromR))
+      : ROWS;
+    // Count empty cells above existing pieces
+    const newPieceCount = lowestExistingFrom;
+
+    // The new pieces are now at rows 0..newPieceCount-1
+    // They should animate from above the board
+    for (let i = 0; i < newPieceCount; i++) {
+      const toR = i;
+      if (G.board[toR][c]) {
+        fallEntries.push({
+          c,
+          fromR: toR - newPieceCount, // from above the board
+          toR,
+          piece: G.board[toR][c]!,
+        });
+      }
+    }
+  }
+
+  return fallEntries;
+}
+
 export async function doMove(r1: number, c1: number, r2: number, c2: number): Promise<void> {
   if (G.animating) return;
   if (!isAdjacentAllowed(r1, c1, r2, c2)) return;
 
   G.animating = true;
-  G.lastSwapDir = { dr: r2 - r1, dc: c2 - c1 };
 
-  swapPieces(r1, c1, r2, c2);
-  const matches = findAllMatches();
+  try {
+    G.lastSwapDir = { dr: r2 - r1, dc: c2 - c1 };
 
-  if (matches.length === 0) {
+    // Animate swap
+    await animateSwap(r1, c1, r2, c2);
+
+    // Actually swap
     swapPieces(r1, c1, r2, c2);
-    G.animating = false;
-    G.lastSwapDir = null;
-    return;
-  }
+    const matches = findAllMatches();
 
-  // Afterimage: clear pieces along swap path
-  if (has(G.run.upgrades, "afterimage")) {
-    const p = G.board[r2][c2];
-    if (p) {
-      // The swapped piece moved from (r1,c1) to (r2,c2), clear the origin
-      if (G.board[r1][c1]) {
-        G.board[r1][c1] = null;
-        G.totalCleared++;
-        G.score += 10;
+    if (matches.length === 0) {
+      // Invalid move: animate swap back
+      await animateSwap(r2, c2, r1, c1);
+      swapPieces(r1, c1, r2, c2);
+      G.lastSwapDir = null;
+      return;
+    }
+
+    // Afterimage
+    if (has(G.run.upgrades, "afterimage")) {
+      const p = G.board[r2][c2];
+      if (p) {
+        if (G.board[r1][c1]) {
+          G.board[r1][c1] = null;
+          G.totalCleared++;
+          G.score += 10;
+        }
       }
     }
-  }
 
-  // Mirror: duplicate the swap on the mirrored side
-  if (has(G.run.upgrades, "mirror")) {
-    const mc1 = COLS - 1 - c1;
-    const mc2 = COLS - 1 - c2;
-    if (mc1 !== c1 && mc2 !== c2 && inBounds(r1, mc1) && inBounds(r2, mc2) &&
-      G.board[r1][mc1] && G.board[r2][mc2]) {
-      swapPieces(r1, mc1, r2, mc2);
+    // Mirror
+    if (has(G.run.upgrades, "mirror")) {
+      const mc1 = COLS - 1 - c1;
+      const mc2 = COLS - 1 - c2;
+      if (mc1 !== c1 && mc2 !== c2 && inBounds(r1, mc1) && inBounds(r2, mc2) &&
+        G.board[r1][mc1] && G.board[r2][mc2]) {
+        swapPieces(r1, mc1, r2, mc2);
+      }
     }
+
+    G.movesLeft--;
+    G.chainCount = 0;
+    G.clearCountThisTurn = 0;
+
+    await resolveBoard();
+
+    // Meltdown
+    if (has(G.run.upgrades, "meltdown") && G.clearCountThisTurn >= 10) {
+      await meltdownEffect();
+    }
+
+    G.lastSwapDir = null;
+    updateHUD();
+    drawBoard();
+
+    checkWinLose();
+  } finally {
+    G.animating = false;
   }
-
-  G.movesLeft--;
-  G.chainCount = 0;
-  G.clearCountThisTurn = 0;
-
-  await resolveBoard();
-
-  // Meltdown: if cleared 10+ this turn, add a row
-  if (has(G.run.upgrades, "meltdown") && G.clearCountThisTurn >= 10) {
-    await meltdownEffect();
-  }
-
-  G.lastSwapDir = null;
-  G.animating = false;
-  updateHUD();
-  drawBoard();
-
-  checkWinLose();
 }
 
 async function resolveBoard(): Promise<void> {
@@ -146,6 +212,12 @@ async function resolveBoard(): Promise<void> {
   while (matches.length > 0) {
     G.chainCount++;
     if (G.chainCount > G.maxChain) G.maxChain = G.chainCount;
+
+    // Show chain label for chains >= 2
+    if (G.chainCount >= 2) {
+      startChainLabel(G.chainCount);
+      if (G.chainCount >= 3) addScreenShake(Math.min(G.chainCount * 0.8, 4));
+    }
 
     const specials = findSpecialCreations(matches);
 
@@ -160,7 +232,7 @@ async function resolveBoard(): Promise<void> {
       }
     }
 
-    // Chain reaction: activate specials caught in the blast
+    // Chain reaction
     const clearList = [...cleared].map(v => [Math.floor(v / COLS), v % COLS] as [number, number]);
     for (let i = 0; i < clearList.length; i++) {
       const [cr, cc] = clearList[i];
@@ -175,7 +247,7 @@ async function resolveBoard(): Promise<void> {
       }
     }
 
-    // Infection: spread color before clearing
+    // Infection
     if (has(G.run.upgrades, "infection")) {
       const infectedCells: [number, number, number][] = [];
       for (const [r, c] of clearList) {
@@ -195,7 +267,7 @@ async function resolveBoard(): Promise<void> {
       }
     }
 
-    // Resonance: track color clears
+    // Resonance
     if (has(G.run.upgrades, "resonance")) {
       for (const [r, c] of clearList) {
         if (G.board[r]?.[c]) {
@@ -205,7 +277,7 @@ async function resolveBoard(): Promise<void> {
       }
     }
 
-    // Track proliferation
+    // Proliferation
     if (has(G.run.upgrades, "proliferation") && clearList.length > 0) {
       const colorCounts: Record<number, number> = {};
       for (const [r, c] of clearList) {
@@ -229,10 +301,8 @@ async function resolveBoard(): Promise<void> {
     G.run.totalCleared += clearList.length;
     G.clearCountThisTurn += clearList.length;
 
-    // Visual
-    drawBoard();
-    drawClearEffect(clearList as [number, number][]);
-    await sleep(120);
+    // Animate clear
+    await animateStandardClear(clearList);
 
     // Clear pieces
     for (const [r, c] of clearList) {
@@ -262,7 +332,7 @@ async function resolveBoard(): Promise<void> {
       }
     }
 
-    // Chain bombs: on 3+ chain, rain bombs
+    // Chain bombs
     if (has(G.run.upgrades, "chain_bombs") && G.chainCount >= 3) {
       const bombCount = Math.min(3, G.chainCount - 2);
       for (let i = 0; i < bombCount; i++) {
@@ -279,17 +349,18 @@ async function resolveBoard(): Promise<void> {
       }
     }
 
-    // Gravity
-    applyGravity();
-    drawBoard();
-    await sleep(100);
+    // Capture fall data then apply gravity
+    const fallEntries = captureAndApplyGravity();
+
+    // Animate drop
+    await animateDrop(fallEntries);
 
     // Blackhole effect
     if (has(G.run.upgrades, "blackhole")) {
-      await blackholeEffect(clearList as [number, number][]);
+      await blackholeEffect(clearList);
     }
 
-    // Auto-detonate check
+    // Auto-detonate
     const detonateTargets = autoDetonateCheck();
     if (detonateTargets.length > 0) {
       const detCleared = new Set<number>();
@@ -302,15 +373,14 @@ async function resolveBoard(): Promise<void> {
       G.score += detList.length * 10;
       G.totalCleared += detList.length;
       G.clearCountThisTurn += detList.length;
-      drawBoard();
-      drawClearEffect(detList);
-      await sleep(120);
+
+      await animateStandardClear(detList);
+
       for (const [r, c] of detList) {
         G.board[r][c] = null;
       }
-      applyGravity();
-      drawBoard();
-      await sleep(100);
+      const detFalls = captureAndApplyGravity();
+      await animateDrop(detFalls);
     }
 
     updateHUD();
@@ -331,20 +401,19 @@ async function resolveBoard(): Promise<void> {
       G.score += clearList.length * 10;
       G.totalCleared += clearList.length;
       G.clearCountThisTurn += clearList.length;
-      drawClearEffect(clearList);
-      await sleep(120);
+
+      await animateStandardClear(clearList);
+
       for (const [r, c] of clearList) { G.board[r][c] = null; }
-      applyGravity();
-      drawBoard();
-      await sleep(100);
-      // Re-resolve after explosions
+      const cdFalls = captureAndApplyGravity();
+      await animateDrop(cdFalls);
+
       await resolveBoard();
     }
   }
 }
 
 async function blackholeEffect(clearList: [number, number][]): Promise<void> {
-  // Pick a few cleared positions and "absorb" surrounding pieces
   const absorbCount = Math.min(3, clearList.length);
   const absorbed = new Set<number>();
   for (let i = 0; i < absorbCount; i++) {
@@ -363,17 +432,16 @@ async function blackholeEffect(clearList: [number, number][]): Promise<void> {
     G.score += absList.length * 5;
     G.totalCleared += absList.length;
     G.clearCountThisTurn += absList.length;
-    drawClearEffect(absList);
-    await sleep(80);
+
+    await animateStandardClear(absList);
+
     for (const [r, c] of absList) { G.board[r][c] = null; }
-    applyGravity();
-    drawBoard();
-    await sleep(80);
+    const bhFalls = captureAndApplyGravity();
+    await animateDrop(bhFalls);
   }
 }
 
 async function meltdownEffect(): Promise<void> {
-  // Push everything down 1 row, top row gets new pieces
   for (let c = 0; c < COLS; c++) {
     for (let r = ROWS - 1; r > 0; r--) {
       G.board[r][c] = G.board[r - 1][c];
@@ -386,10 +454,8 @@ async function meltdownEffect(): Promise<void> {
 
 function checkWinLose(): void {
   if (G.score >= G.stageTarget) {
-    // Stage clear!
     setTimeout(() => showStageClear(), 300);
   } else if (G.movesLeft <= 0) {
-    // Game over
     setTimeout(() => showGameOver(), 300);
   }
 }
@@ -407,7 +473,6 @@ function showUpgradeScreen(): void {
     const choices = pickUpgradeChoices(G.run.upgrades, 3);
 
     if (choices.length === 0) {
-      // No more upgrades, just continue
       G.run.stage++;
       startStage();
       return;

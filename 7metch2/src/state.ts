@@ -5,6 +5,37 @@ export const ROWS = 8;
 export const NUM_COLORS = 5;
 export const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffd700", "#c0c8d8", "#ff8a5c", "#1e4fff", "#ff6bb3"];
 
+export interface VfxParticle {
+  x: number; y: number;
+  vx: number; vy: number;
+  color: string;
+  life: number; decay: number;
+  size: number; sizeDecay: number;
+  alpha: number;
+  rotation: number;
+}
+
+export interface VfxShockwave {
+  x: number; y: number;
+  r: number; maxR: number;
+  frame: number; duration: number;
+  color: string;
+}
+
+export interface VfxFlash {
+  x: number; y: number;
+  r: number; maxR: number;
+  frame: number; duration: number;
+  color: string;
+}
+
+export interface ChainLabel {
+  chain: number;
+  label: string;
+  startTime: number;
+  duration: number;
+}
+
 export interface GameState {
   board: (Piece | null)[][];
   animating: boolean;
@@ -27,6 +58,15 @@ export interface GameState {
   stageTarget: number;
   proliferationColor: number | null;
   clearCountThisTurn: number;
+  // VFX
+  vfxParticles: VfxParticle[];
+  vfxShockwaves: VfxShockwave[];
+  vfxFlashes: VfxFlash[];
+  shakeX: number;
+  shakeY: number;
+  shakeIntensity: number;
+  // Chain label
+  activeChainLabel: ChainLabel | null;
 }
 
 export const G: GameState = {
@@ -51,4 +91,13 @@ export const G: GameState = {
   stageTarget: 0,
   proliferationColor: null,
   clearCountThisTurn: 0,
+  // VFX
+  vfxParticles: [],
+  vfxShockwaves: [],
+  vfxFlashes: [],
+  shakeX: 0,
+  shakeY: 0,
+  shakeIntensity: 0,
+  // Chain label
+  activeChainLabel: null,
 };
