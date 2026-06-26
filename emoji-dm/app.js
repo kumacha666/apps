@@ -17,6 +17,7 @@ const firebaseConfig = {
 };
 
 const VAPID_KEY = 'BMC5k_Xn-c9pSSCvYcRWYWRm7nrSZG3smrMQWtYgnGB3mnKNCbL2RxhUlfqVi_jWYNk6yYd8Yy6tCK286DlZjo4';
+const APP_VERSION = '1.1.0';
 
 let app;
 let db;
@@ -67,6 +68,9 @@ function init() {
   renderEmojiBar();
   bindEvents();
   registerSW();
+
+  const versionEl = document.getElementById('version');
+  if (versionEl) versionEl.textContent = 'v' + APP_VERSION;
 }
 
 function renderAvatarPicker() {
