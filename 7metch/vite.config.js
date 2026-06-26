@@ -8,6 +8,15 @@ export default defineConfig(({ mode }) => ({
   root: ".",
   base: "./",
   publicDir: "public",
+  plugins: [{
+    name: "entry-rewrite",
+    transformIndexHtml(html) {
+      return html.replace(
+        /<script type="module"[^>]*src="[^"]*game\.js"/,
+        '<script type="module" src="./src/main.ts"'
+      );
+    },
+  }],
   build: {
     outDir: "dist",
     emptyOutDir: true,
@@ -38,6 +47,11 @@ export default defineConfig(({ mode }) => ({
     environment: "node",
     alias: {
       "./audio": resolve("src/__mocks__/audio.ts"),
+      "./animations": resolve("src/__mocks__/animations.ts"),
+      "./rendering": resolve("src/__mocks__/rendering.ts"),
+      "./vfx": resolve("src/__mocks__/vfx.ts"),
+      "./tracking": resolve("src/__mocks__/tracking.ts"),
+      "./ui": resolve("src/__mocks__/ui.ts"),
     },
   },
 }));

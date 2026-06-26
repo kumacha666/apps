@@ -89,6 +89,39 @@ describe("isMatchable", () => {
     G.board[0][0] = { color: 0, special: "rainbow" };
     expect(isMatchable(0, 0)).toBe(true);
   });
+
+  // 全SpecialType網羅テスト
+  const allSpecials: Array<{ type: import("./types").SpecialType; expected: boolean }> = [
+    { type: "line_h",    expected: false },
+    { type: "line_v",    expected: false },
+    { type: "line_d",    expected: false },
+    { type: "bomb",      expected: false },
+    { type: "rainbow",   expected: true  },
+    { type: "countdown", expected: false },
+  ];
+
+  for (const { type, expected } of allSpecials) {
+    it(`SpecialType "${type}" → isMatchable=${expected}`, () => {
+      G.board[0][0] = { color: 0, special: type, ...(type === "countdown" ? { countdown: 5 } : {}) };
+      expect(isMatchable(0, 0)).toBe(expected);
+    });
+  }
+
+  // 全CellStateType網羅テスト
+  const allCellStates: Array<{ state: import("./types").CellStateType; expected: boolean }> = [
+    { state: null,   expected: true  },
+    { state: "hole", expected: false },
+    { state: "rock", expected: false },
+    { state: "ice1", expected: false },
+    { state: "ice2", expected: false },
+  ];
+
+  for (const { state, expected } of allCellStates) {
+    it(`CellState "${state}" → isMatchable=${expected}`, () => {
+      G.cellState[0][0] = state;
+      expect(isMatchable(0, 0)).toBe(expected);
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------
