@@ -1,4 +1,45 @@
-const CACHE = 'emoji-dm-v1';
+importScripts('https://www.gstatic.com/firebasejs/11.1.0/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/11.1.0/firebase-messaging-compat.js');
+
+firebase.initializeApp({
+  apiKey: "AIzaSyBEcJVfrNeK_q5pf1tGTJDosGn-Fw7dvq4",
+  authDomain: "emoji-dm.firebaseapp.com",
+  databaseURL: "https://emoji-dm-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "emoji-dm",
+  storageBucket: "emoji-dm.firebasestorage.app",
+  messagingSenderId: "125384370581",
+  appId: "1:125384370581:web:6a23a3b5e83442af106e9c"
+});
+
+const messaging = firebase.messaging();
+
+messaging.onBackgroundMessage((payload) => {
+  const title = payload.notification?.title || '💬 emojidm';
+  const body = payload.notification?.body || '';
+  self.registration.showNotification(title, {
+    body,
+    icon: '/emoji-dm/icon-192.png',
+    badge: '/emoji-dm/icon-192.png',
+    tag: 'emoji-dm-msg',
+    renotify: true,
+  });
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const client of list) {
+        if (client.url.includes('/emoji-dm/') && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      return clients.openWindow('/emoji-dm/');
+    })
+  );
+});
+
+const CACHE = 'emoji-dm-v2';
 const ASSETS = ['/', '/emoji-dm/', '/emoji-dm/index.html', '/emoji-dm/style.css', '/emoji-dm/app.js'];
 
 self.addEventListener('install', (e) => {

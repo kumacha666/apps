@@ -1,7 +1,8 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js';
 import {
-  getDatabase, ref, push, onChildAdded, onValue, set, serverTimestamp, onDisconnect
+  getDatabase, ref, push, onChildAdded, onValue, set, update, serverTimestamp, onDisconnect
 } from 'https://www.gstatic.com/firebasejs/11.1.0/firebase-database.js';
+import { getMessaging, getToken, onMessage } from 'https://www.gstatic.com/firebasejs/11.1.0/firebase-messaging.js';
 
 // ── Firebase Config ──
 // Replace with your own Firebase project config
@@ -15,7 +16,11 @@ const firebaseConfig = {
   appId: "1:125384370581:web:6a23a3b5e83442af106e9c"
 };
 
+const VAPID_KEY = 'BMC5k_Xn-c9pSSCvYcRWYWRm7nrSZG3smrMQWtYgnGB3mnKNCbL2RxhUlfqVi_jWYNk6yYd8Yy6tCK286DlZjo4';
+
+let app;
 let db;
+let messaging;
 let currentRoom = null;
 let myId = null;
 let myAvatar = '🐱';
@@ -133,16 +138,14 @@ function createRoom() {
 
 function joinRoom(roomId) {
   try {
-    const app = initializeApp(firebaseConfig);
+    app = initializeApp(firebaseConfig);
     db = getDatabase(app);
   } catch (e) {
-    // Already initialized
     db = getDatabase();
   }
 
   currentRoom = roomId;
 
-  // Set my presence
   const memberRef = ref(db, `rooms/${roomId}/members/${myId}`);
   set(memberRef, { avatar: myAvatar, joinedAt: serverTimestamp() });
   onDisconnect(memberRef).remove();
@@ -150,6 +153,36 @@ function joinRoom(roomId) {
   switchToChat();
   listenMessages();
   listenMembers();
+  setupFCM(roomId);
+}
+
+async function setupFCM(roomId) {
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') return;
+
+    if (!messaging) {
+      messaging = getMessaging(app);
+      onMessage(messaging, (payload) => {
+        showStampPreview(payload.notification?.body || '💬');
+      });
+    }
+
+    const sw = await navigator.serviceWorker.getRegistration('/emoji-dm/');
+    if (!sw) return;
+
+    const token = await getToken(messaging, {
+      vapidKey: VAPID_KEY,
+      serviceWorkerRegistration: sw,
+    });
+
+    if (token) {
+      const tokenRef = ref(db, `rooms/${roomId}/members/${myId}/fcmToken`);
+      update(ref(db, `rooms/${roomId}/members/${myId}`), { fcmToken: token });
+    }
+  } catch (e) {
+    console.warn('FCM setup failed:', e);
+  }
 }
 
 function leaveRoom() {
