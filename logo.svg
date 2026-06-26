@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 70" width="520" height="70">
+  <defs>
+    <linearGradient id="honeyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F5C842"/>
+      <stop offset="100%" stop-color="#D4951A"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Honey paw stamp (slightly above center) -->
+  <g transform="translate(32, 22) scale(0.30)" opacity="0.9">
+    <path d="M 0 10 C -35 10, -52 25, -50 50 C -48 75, -30 90, 0 92 C 30 90, 48 75, 50 50 C 52 25, 35 10, 0 10 Z" fill="url(#honeyGrad)"/>
+    <ellipse cx="-42" cy="-15" rx="16" ry="19" transform="rotate(-15, -42, -15)" fill="url(#honeyGrad)"/>
+    <ellipse cx="-15" cy="-32" rx="15" ry="18" transform="rotate(-5, -15, -32)" fill="url(#honeyGrad)"/>
+    <ellipse cx="15" cy="-32" rx="15" ry="18" transform="rotate(5, 15, -32)" fill="url(#honeyGrad)"/>
+    <ellipse cx="42" cy="-15" rx="16" ry="19" transform="rotate(15, 42, -15)" fill="url(#honeyGrad)"/>
+    <path d="M 5 92 C 5 100, 4 115, 5 122 C 6 126, 9 126, 9 122 C 10 115, 8 100, 8 92" fill="#D4951A" opacity="0.7"/>
+    <path d="M -25 82 C -25 88, -26 95, -25 99 C -24 102, -22 102, -22 99 C -21 95, -23 88, -23 82" fill="#D4951A" opacity="0.6"/>
+    <path d="M 30 88 C 30 93, 31 98, 30 101 C 29 103, 27 103, 28 101 C 28 98, 29 93, 29 88" fill="#D4951A" opacity="0.5"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="68" y="42" font-family="'Nunito', 'Arial Rounded MT Bold', 'Helvetica Neue', sans-serif" font-size="44" font-weight="800" fill="#3D2B1F" letter-spacing="1">Honeypaw Lab.</text>
+</svg>
