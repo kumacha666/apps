@@ -2,7 +2,7 @@ import { initCanvas, drawBoard } from "./rendering";
 import { initInput } from "./input";
 import { startRun, showScreen } from "./game";
 import { updateVFX, hasActiveVFX } from "./vfx";
-const VERSION = "0.2.2";
+const VERSION = "0.2.3";
 
 function gameLoop(): void {
   if (hasActiveVFX()) {
