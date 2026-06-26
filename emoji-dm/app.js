@@ -17,7 +17,7 @@ const firebaseConfig = {
 };
 
 const VAPID_KEY = 'BMC5k_Xn-c9pSSCvYcRWYWRm7nrSZG3smrMQWtYgnGB3mnKNCbL2RxhUlfqVi_jWYNk6yYd8Yy6tCK286DlZjo4';
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 
 let app;
 let db;
@@ -71,6 +71,9 @@ function init() {
 
   const versionEl = document.getElementById('version');
   if (versionEl) versionEl.textContent = 'v' + APP_VERSION;
+
+  const savedRoom = localStorage.getItem('emoji-dm-room');
+  if (savedRoom) joinRoom(savedRoom);
 }
 
 function renderAvatarPicker() {
@@ -149,6 +152,7 @@ function joinRoom(roomId) {
   }
 
   currentRoom = roomId;
+  localStorage.setItem('emoji-dm-room', roomId);
 
   const memberRef = ref(db, `rooms/${roomId}/members/${myId}`);
   set(memberRef, { avatar: myAvatar, joinedAt: serverTimestamp() });
@@ -193,6 +197,7 @@ function leaveRoom() {
   unsubscribers.forEach(fn => { if (typeof fn === 'function') fn(); });
   unsubscribers = [];
   currentRoom = null;
+  localStorage.removeItem('emoji-dm-room');
   switchToSetup();
 }
 
