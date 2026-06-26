@@ -5,10 +5,10 @@
 ### ユニットテスト (`npm test`)
 
 - **フレームワーク**: Vitest (vite.config.js で設定)
-- **テストファイル**: `src/board.test.js`
-- **モック**: `src/__mocks__/audio.js` — SFX を no-op に差し替え (AudioContext 非依存化)
+- **テストファイル**: `src/board.test.ts`, `src/game.test.ts`, `src/stages.test.ts`
+- **モック**: `src/__mocks__/` — audio, animations, rendering, vfx, tracking, ui を no-op に差し替え (DOM/Canvas/AudioContext 非依存化)
 - **実行タイミング**: `npm run build` の prebuild で自動実行。テスト失敗時はビルドが中断される
-- **対象**: board.js のコアロジック (isMatchable, findAllMatches, damageIce, getComboType, tickCountdowns 等)
+- **対象**: board.ts (isMatchable, findAllMatches, damageIce, getComboType, tickCountdowns), game.ts (doMove, activateByTap, checkWinLose, updateHUD), stages.ts (getMissionText, buildStages, boardSizeForStage, isStageUnlocked)
 - **前提**: ゲームロジックを変更した場合は必ずテストを追加・更新すること。特に isMatchable の判定条件を変えた場合はテストケースの追加が必須
 
 ### シミュレーションテスト (`npm run sim`)

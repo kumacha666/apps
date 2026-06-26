@@ -38,6 +38,11 @@ export default defineConfig(({ mode }) => ({
     environment: "node",
     alias: {
       "./audio": resolve("src/__mocks__/audio.ts"),
+      "./animations": resolve("src/__mocks__/animations.ts"),
+      "./rendering": resolve("src/__mocks__/rendering.ts"),
+      "./vfx": resolve("src/__mocks__/vfx.ts"),
+      "./tracking": resolve("src/__mocks__/tracking.ts"),
+      "./ui": resolve("src/__mocks__/ui.ts"),
     },
   },
 }));
