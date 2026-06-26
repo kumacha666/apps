@@ -77,7 +77,7 @@ export function buildStages(): StageConfig[] {
     else if (size.cols >= 8) moves = Math.max(14, baseMoves);
     else moves = baseMoves;
     if (i >= 100) moves += 2;
-    if (i >= 300) moves += 1;
+    if (i >= 295) moves += 1;
     const baseColors = Math.min(7, 5 + Math.floor(i / 10));
     const colors = (i >= 200) ? 8 : baseColors;
 
