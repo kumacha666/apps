@@ -1,19 +1,19 @@
-const { onValueCreated } = require("firebase-functions/v2/database");
-const { initializeApp } = require("firebase-admin/app");
-const { getDatabase } = require("firebase-admin/database");
-const { getMessaging } = require("firebase-admin/messaging");
+const functions = require("firebase-functions/v1");
+const admin = require("firebase-admin");
 
-initializeApp();
+admin.initializeApp();
 
-exports.sendNotification = onValueCreated(
-  { ref: "/rooms/{roomId}/messages/{messageId}", region: "asia-southeast1" },
-  async (event) => {
-    const message = event.data.val();
-    const { roomId } = event.params;
+exports.sendNotification = functions
+  .region("asia-southeast1")
+  .database.ref("/rooms/{roomId}/messages/{messageId}")
+  .onCreate(async (snapshot, context) => {
+    const message = snapshot.val();
+    const { roomId } = context.params;
     const senderId = message.sender;
 
-    const membersSnap = await getDatabase()
-      .ref(`rooms/${roomId}/members`)
+    const membersSnap = await admin
+      .database()
+      .ref("rooms/" + roomId + "/members")
       .once("value");
     const members = membersSnap.val() || {};
 
@@ -24,32 +24,32 @@ exports.sendNotification = onValueCreated(
       }
     }
 
-    if (tokens.length === 0) return;
+    if (tokens.length === 0) return null;
 
     const senderAvatar = message.avatar || "😊";
 
     const payload = {
       notification: {
-        title: `${senderAvatar} emojidm`,
+        title: senderAvatar + " emojidm",
         body: message.emoji,
       },
       webpush: {
         fcmOptions: {
-          link: `https://honeypawlab.com/emoji-dm/`,
+          link: "https://honeypawlab.com/emoji-dm/",
         },
       },
     };
 
     const results = await Promise.allSettled(
-      tokens.map((token) =>
-        getMessaging().send({ ...payload, token })
-      )
+      tokens.map(function (token) {
+        return admin.messaging().send(Object.assign({}, payload, { token: token }));
+      })
     );
 
-    const failedTokens = [];
-    results.forEach((result, i) => {
+    var failedTokens = [];
+    results.forEach(function (result, i) {
       if (result.status === "rejected") {
-        const code = result.reason?.code;
+        var code = result.reason && result.reason.code;
         if (
           code === "messaging/invalid-registration-token" ||
           code === "messaging/registration-token-not-registered"
@@ -60,13 +60,14 @@ exports.sendNotification = onValueCreated(
     });
 
     if (failedTokens.length > 0) {
-      const updates = {};
+      var updates = {};
       for (const [uid, data] of Object.entries(members)) {
         if (failedTokens.includes(data.fcmToken)) {
-          updates[`rooms/${roomId}/members/${uid}/fcmToken`] = null;
+          updates["rooms/" + roomId + "/members/" + uid + "/fcmToken"] = null;
         }
       }
-      await getDatabase().ref().update(updates);
+      await admin.database().ref().update(updates);
     }
-  }
-);
+
+    return null;
+  });
