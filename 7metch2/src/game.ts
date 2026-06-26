@@ -216,6 +216,12 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
 }
 
 async function resolveBoard(): Promise<void> {
+  // Fill any pre-existing holes (from afterimage, mirror, etc.)
+  if (boardHasHoles()) {
+    const preFalls = captureAndApplyGravity();
+    if (preFalls.length > 0) await animateDrop(preFalls);
+  }
+
   let matches = findAllMatches();
   while (matches.length > 0) {
     G.chainCount++;
