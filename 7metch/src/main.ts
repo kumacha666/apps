@@ -31,5 +31,8 @@ G.STAGES = buildStages();
 G.options = loadOptions();
 G.saveData = loadSave();
 
+declare const __APP_VERSION__: string;
+document.getElementById("version-info")!.textContent = `v${__APP_VERSION__}`;
+
 initUI();
 showScreen("splash");

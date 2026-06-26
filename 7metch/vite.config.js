@@ -1,5 +1,8 @@
 import { defineConfig } from "vite";
 import { resolve } from "path";
+import { readFileSync } from "fs";
+
+const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 
 export default defineConfig(({ mode }) => ({
   root: ".",
@@ -29,6 +32,7 @@ export default defineConfig(({ mode }) => ({
   },
   define: {
     __DEBUG__: JSON.stringify(process.env.NODE_ENV !== "production"),
+    __APP_VERSION__: JSON.stringify(pkg.version),
   },
   test: {
     environment: "node",
