@@ -67,55 +67,57 @@ export async function activateByTap(r: number, c: number): Promise<void> {
   if (!piece || !piece.special || !TAP_ACTIVATE_SPECIALS.has(piece.special)) return;
   G.animating = true;
   clearHint();
+  try {
+    if (piece.special === "bomb") SFX.bomb();
+    else if (piece.special === "line_d") { SFX.line(); SFX.diagonal(); }
+    else if (piece.special === "line_h" || piece.special === "line_v") SFX.line();
+    track("tap_activate", { type: piece.special, stage: G.STAGES![G.currentStage].name });
+    G.movesLeft--;
+    G.chainCount = 1;
+    updateHUD();
 
-  if (piece.special === "bomb") SFX.bomb();
-  else if (piece.special === "line_d") { SFX.line(); SFX.diagonal(); }
-  else if (piece.special === "line_h" || piece.special === "line_v") SFX.line();
-  track("tap_activate", { type: piece.special, stage: G.STAGES![G.currentStage].name });
-  G.movesLeft--;
-  G.chainCount = 1;
-  updateHUD();
+    const cleared = new Set<number>([r * G.cols + c]);
+    const clearList: [number, number][] = [[r, c]];
+    const extra: [number, number][] = activateSpecial(r, c, cleared, null);
+    extra.forEach(([er, ec]) => {
+      if (!cleared.has(er * G.cols + ec)) {
+        cleared.add(er * G.cols + ec);
+        clearList.push([er, ec]);
+      }
+    });
 
-  const cleared = new Set<number>([r * G.cols + c]);
-  const clearList: [number, number][] = [[r, c]];
-  const extra: [number, number][] = activateSpecial(r, c, cleared, null);
-  extra.forEach(([er, ec]) => {
-    if (!cleared.has(er * G.cols + ec)) {
-      cleared.add(er * G.cols + ec);
-      clearList.push([er, ec]);
+    for (let i = 0; i < clearList.length; i++) {
+      const [cr, cc] = clearList[i];
+      if (G.board[cr][cc] && G.board[cr][cc]!.special && !(cr === r && cc === c)) {
+        const ex2: [number, number][] = activateSpecial(cr, cc, cleared, piece.special);
+        ex2.forEach(([er, ec]) => {
+          if (!cleared.has(er * G.cols + ec)) {
+            cleared.add(er * G.cols + ec);
+            clearList.push([er, ec]);
+          }
+        });
+      }
     }
-  });
 
-  for (let i = 0; i < clearList.length; i++) {
-    const [cr, cc] = clearList[i];
-    if (G.board[cr][cc] && G.board[cr][cc]!.special && !(cr === r && cc === c)) {
-      const ex2: [number, number][] = activateSpecial(cr, cc, cleared, piece.special);
-      ex2.forEach(([er, ec]) => {
-        if (!cleared.has(er * G.cols + ec)) {
-          cleared.add(er * G.cols + ec);
-          clearList.push([er, ec]);
-        }
-      });
-    }
+    trackClears(clearList);
+    G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
+
+    await animateClear(clearList, [{ r, c, type: piece.special, color: piece.color }]);
+    clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
+    damageAdjacentIce(clearList);
+
+    const fallMap: FallEntry[] = applyGravityData();
+    await animateDrop(fallMap);
+    await sleep(ANIM.CHAIN_PAUSE_MS);
+
+    await resolveBoard();
+
+    updateHUD();
+    checkWinLose();
+  } finally {
+    G.animating = false;
+    startHintTimer();
   }
-
-  trackClears(clearList);
-  G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
-
-  await animateClear(clearList, [{ r, c, type: piece.special, color: piece.color }]);
-  clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
-  damageAdjacentIce(clearList);
-
-  const fallMap: FallEntry[] = applyGravityData();
-  await animateDrop(fallMap);
-  await sleep(ANIM.CHAIN_PAUSE_MS);
-
-  await resolveBoard();
-
-  updateHUD();
-  checkWinLose();
-  G.animating = false;
-  startHintTimer();
 }
 
 // ============================================================
@@ -203,204 +205,198 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
   if (G.animating) return;
   G.animating = true;
   clearHint();
+  try {
+    const p1 = G.board[r1][c1];
+    const p2 = G.board[r2][c2];
 
-  const p1 = G.board[r1][c1];
-  const p2 = G.board[r2][c2];
+    G.lastSwapTarget = { r: r2, c: c2 };
 
-  G.lastSwapTarget = { r: r2, c: c2 };
+    SFX.swap();
+    await animateSwap(r1, c1, r2, c2);
+    swapPieces(r1, c1, r2, c2);
 
-  SFX.swap();
-  await animateSwap(r1, c1, r2, c2);
-  swapPieces(r1, c1, r2, c2);
+    // Special swap combo
+    if (p1 && p2 && p1.special && p2.special) {
+      const comboType = getComboType(p1.special, p2.special);
+      if (comboType) {
+        SFX.combo(comboType);
+        track("special_combo", { combo_type: comboType, stage: G.STAGES![G.currentStage].name });
+        G.movesLeft--;
+        G.chainCount = 1;
+        updateHUD();
 
-  // Special swap combo
-  if (p1 && p2 && p1.special && p2.special) {
-    const comboType = getComboType(p1.special, p2.special);
-    if (comboType) {
-      SFX.combo(comboType);
-      track("special_combo", { combo_type: comboType, stage: G.STAGES![G.currentStage].name });
-      G.movesLeft--;
-      G.chainCount = 1;
-      updateHUD();
+        const comboCells: [number, number][] = activateCombo(comboType, r2, c2, p1, p2);
+        const primaryCells: [number, number][] = comboCells.map(([r, c]) => [r, c] as [number, number]);
+        comboCells.push([r1, c1], [r2, c2]);
 
-      const comboCells: [number, number][] = activateCombo(comboType, r2, c2, p1, p2);
-      const primaryCells: [number, number][] = comboCells.map(([r, c]) => [r, c] as [number, number]);
-      comboCells.push([r1, c1], [r2, c2]);
+        // Activate specials on combo-cleared cells (chain reaction)
+        const cleared = new Set<number>(comboCells.map(([r, c]) => r * G.cols + c));
+        comboCells.forEach(([cr, cc]) => {
+          if (G.board[cr][cc] && G.board[cr][cc]!.special && !(cr === r1 && cc === c1) && !(cr === r2 && cc === c2)) {
+            const extra: [number, number][] = activateSpecial(cr, cc, cleared, null);
+            extra.forEach(([er, ec]) => {
+              if (!cleared.has(er * G.cols + ec)) {
+                cleared.add(er * G.cols + ec);
+                comboCells.push([er, ec]);
+              }
+            });
+          }
+        });
 
-      // Activate specials on combo-cleared cells (chain reaction)
-      const cleared = new Set<number>(comboCells.map(([r, c]) => r * G.cols + c));
-      comboCells.forEach(([cr, cc]) => {
-        if (G.board[cr][cc] && G.board[cr][cc]!.special && !(cr === r1 && cc === c1) && !(cr === r2 && cc === c2)) {
-          const extra: [number, number][] = activateSpecial(cr, cc, cleared, null);
-          extra.forEach(([er, ec]) => {
-            if (!cleared.has(er * G.cols + ec)) {
-              cleared.add(er * G.cols + ec);
-              comboCells.push([er, ec]);
-            }
-          });
-        }
-      });
+        const clearList: [number, number][] = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
+        trackClears(clearList);
+        G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
 
-      const clearList: [number, number][] = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
-      trackClears(clearList);
-      G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
+        const comboInfo: SpecialInfo[] = [];
+        if (comboType === "board_clear") comboInfo.push({ r: r2, c: c2, type: "galaxy", color: (p2 || p1).color });
+        else if (comboType === "big_bomb") comboInfo.push({ r: r2, c: c2, type: "big_bomb", color: (p2 || p1).color });
+        else if (comboType === "cross" || comboType === "star_cross") comboInfo.push({ r: r2, c: c2, type: comboType, color: (p2 || p1).color });
+        else if (comboType === "triple_line") comboInfo.push({ r: r2, c: c2, type: "triple_line", color: (p2 || p1).color });
+        else if (comboType === "rainbow_line") comboInfo.push({ r: r2, c: c2, type: "rainbow_line", color: (p2 || p1).color, primaryCells });
+        else if (comboType === "rainbow_bomb") comboInfo.push({ r: r2, c: c2, type: "rainbow_bomb", color: (p2 || p1).color, primaryCells });
+        await animateClear(clearList, comboInfo);
+        clearList.forEach(([r, c]) => { G.board[r][c] = null; });
+        damageAdjacentIce(clearList);
 
-      const comboInfo: SpecialInfo[] = [];
-      if (comboType === "board_clear") comboInfo.push({ r: r2, c: c2, type: "galaxy", color: (p2 || p1).color });
-      else if (comboType === "big_bomb") comboInfo.push({ r: r2, c: c2, type: "big_bomb", color: (p2 || p1).color });
-      else if (comboType === "cross" || comboType === "star_cross") comboInfo.push({ r: r2, c: c2, type: comboType, color: (p2 || p1).color });
-      else if (comboType === "triple_line") comboInfo.push({ r: r2, c: c2, type: "triple_line", color: (p2 || p1).color });
-      else if (comboType === "rainbow_line") comboInfo.push({ r: r2, c: c2, type: "rainbow_line", color: (p2 || p1).color, primaryCells });
-      else if (comboType === "rainbow_bomb") comboInfo.push({ r: r2, c: c2, type: "rainbow_bomb", color: (p2 || p1).color, primaryCells });
-      await animateClear(clearList, comboInfo);
-      clearList.forEach(([r, c]) => { G.board[r][c] = null; });
-      damageAdjacentIce(clearList);
+        const fallMap: FallEntry[] = applyGravityData();
+        await animateDrop(fallMap);
+        await sleep(ANIM.CHAIN_PAUSE_MS);
 
-      const fallMap: FallEntry[] = applyGravityData();
-      await animateDrop(fallMap);
-      await sleep(ANIM.CHAIN_PAUSE_MS);
+        await resolveBoard();
 
-      await resolveBoard();
+        updateHUD();
+        checkWinLose();
+        return;
+      }
 
-      updateHUD();
-      checkWinLose();
-      G.animating = false;
-      startHintTimer();
-      return;
+      // Countdown + special: both activate independently (no combo amplification)
+      if (p1.special === "countdown" || p2.special === "countdown") {
+        SFX.combo("big_bomb");
+        G.movesLeft--;
+        G.chainCount = 1;
+        updateHUD();
+
+        const cleared = new Set<number>([r1 * G.cols + c1, r2 * G.cols + c2]);
+        const extra1: [number, number][] = activateSpecial(r1, c1, cleared, null);
+        extra1.forEach(([r, c]) => cleared.add(r * G.cols + c));
+        const extra2: [number, number][] = activateSpecial(r2, c2, cleared, null);
+        extra2.forEach(([r, c]) => cleared.add(r * G.cols + c));
+
+        const allCells: [number, number][] = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
+        allCells.forEach(([cr, cc]) => {
+          if (G.board[cr][cc] && G.board[cr][cc]!.special && !(cr === r1 && cc === c1) && !(cr === r2 && cc === c2)) {
+            const extra: [number, number][] = activateSpecial(cr, cc, cleared, null);
+            extra.forEach(([er, ec]) => {
+              if (!cleared.has(er * G.cols + ec)) {
+                cleared.add(er * G.cols + ec);
+                allCells.push([er, ec]);
+              }
+            });
+          }
+        });
+
+        const clearList: [number, number][] = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
+        trackClears(clearList);
+        G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
+
+        await animateClear(clearList, [{ r: r2, c: c2, type: "big_bomb", color: (p2 || p1).color }]);
+        clearList.forEach(([r, c]) => { G.board[r][c] = null; });
+        damageAdjacentIce(clearList);
+
+        const fallMap: FallEntry[] = applyGravityData();
+        await animateDrop(fallMap);
+        await sleep(ANIM.CHAIN_PAUSE_MS);
+
+        await resolveBoard();
+
+        updateHUD();
+        checkWinLose();
+        return;
+      }
     }
 
-    // Countdown + special: both activate independently (no combo amplification)
-    if (p1.special === "countdown" || p2.special === "countdown") {
-      SFX.combo("big_bomb");
-      G.movesLeft--;
-      G.chainCount = 1;
-      updateHUD();
+    // Rainbow + normal piece swap
+    const rb1 = p1 && p1.special === "rainbow";
+    const rb2 = p2 && p2.special === "rainbow";
+    if ((rb1 || rb2) && !(rb1 && rb2)) {
+      const rainbow = rb1 ? p1! : p2!;
+      const other = rb1 ? p2! : p1!;
+      const rainbowR = rb1 ? r2 : r1;
+      const rainbowC = rb1 ? c2 : c1;
+      const otherR = rb1 ? r1 : r2;
+      const otherC = rb1 ? c1 : c2;
+      if (!other.special) {
+        const targetColor = other.color;
+        SFX.combo("rainbow_line");
+        track("rainbow_swap", { target_color: targetColor, stage: G.STAGES![G.currentStage].name });
+        G.movesLeft--;
+        G.chainCount = 1;
+        updateHUD();
 
-      const cleared = new Set<number>([r1 * G.cols + c1, r2 * G.cols + c2]);
-      const extra1: [number, number][] = activateSpecial(r1, c1, cleared, null);
-      extra1.forEach(([r, c]) => cleared.add(r * G.cols + c));
-      const extra2: [number, number][] = activateSpecial(r2, c2, cleared, null);
-      extra2.forEach(([r, c]) => cleared.add(r * G.cols + c));
-
-      const allCells: [number, number][] = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
-      allCells.forEach(([cr, cc]) => {
-        if (G.board[cr][cc] && G.board[cr][cc]!.special && !(cr === r1 && cc === c1) && !(cr === r2 && cc === c2)) {
-          const extra: [number, number][] = activateSpecial(cr, cc, cleared, null);
-          extra.forEach(([er, ec]) => {
-            if (!cleared.has(er * G.cols + ec)) {
-              cleared.add(er * G.cols + ec);
-              allCells.push([er, ec]);
+        const clearList: [number, number][] = [[rainbowR, rainbowC]];
+        const cleared = new Set<number>([rainbowR * G.cols + rainbowC]);
+        for (let rr = 0; rr < G.rows; rr++) {
+          for (let cc = 0; cc < G.cols; cc++) {
+            if (G.board[rr][cc] && G.board[rr][cc]!.color === targetColor && !cleared.has(rr * G.cols + cc) && isPlayable(rr, cc)) {
+              cleared.add(rr * G.cols + cc);
+              clearList.push([rr, cc]);
             }
-          });
-        }
-      });
-
-      const clearList: [number, number][] = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
-      trackClears(clearList);
-      G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
-
-      await animateClear(clearList, [{ r: r2, c: c2, type: "big_bomb", color: (p2 || p1).color }]);
-      clearList.forEach(([r, c]) => { G.board[r][c] = null; });
-      damageAdjacentIce(clearList);
-
-      const fallMap: FallEntry[] = applyGravityData();
-      await animateDrop(fallMap);
-      await sleep(ANIM.CHAIN_PAUSE_MS);
-
-      await resolveBoard();
-
-      updateHUD();
-      checkWinLose();
-      G.animating = false;
-      startHintTimer();
-      return;
-    }
-  }
-
-  // Rainbow + normal piece swap
-  const rb1 = p1 && p1.special === "rainbow";
-  const rb2 = p2 && p2.special === "rainbow";
-  if ((rb1 || rb2) && !(rb1 && rb2)) {
-    const rainbow = rb1 ? p1! : p2!;
-    const other = rb1 ? p2! : p1!;
-    const rainbowR = rb1 ? r2 : r1;
-    const rainbowC = rb1 ? c2 : c1;
-    const otherR = rb1 ? r1 : r2;
-    const otherC = rb1 ? c1 : c2;
-    if (!other.special) {
-      const targetColor = other.color;
-      SFX.combo("rainbow_line");
-      track("rainbow_swap", { target_color: targetColor, stage: G.STAGES![G.currentStage].name });
-      G.movesLeft--;
-      G.chainCount = 1;
-      updateHUD();
-
-      const clearList: [number, number][] = [[rainbowR, rainbowC]];
-      const cleared = new Set<number>([rainbowR * G.cols + rainbowC]);
-      for (let rr = 0; rr < G.rows; rr++) {
-        for (let cc = 0; cc < G.cols; cc++) {
-          if (G.board[rr][cc] && G.board[rr][cc]!.color === targetColor && !cleared.has(rr * G.cols + cc) && isPlayable(rr, cc)) {
-            cleared.add(rr * G.cols + cc);
-            clearList.push([rr, cc]);
           }
         }
+        clearList.forEach(([cr, cc]) => {
+          if (G.board[cr][cc] && G.board[cr][cc]!.special && !(cr === rainbowR && cc === rainbowC)) {
+            const extra: [number, number][] = activateSpecial(cr, cc, cleared, null);
+            extra.forEach(([er, ec]) => {
+              if (!cleared.has(er * G.cols + ec)) {
+                cleared.add(er * G.cols + ec);
+                clearList.push([er, ec]);
+              }
+            });
+          }
+        });
+
+        trackClears(clearList);
+        G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
+
+        await animateClear(clearList, [{ r: rainbowR, c: rainbowC, type: "rainbow", color: targetColor }]);
+        clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
+        damageAdjacentIce(clearList);
+
+        const fallMap: FallEntry[] = applyGravityData();
+        await animateDrop(fallMap);
+        await sleep(ANIM.CHAIN_PAUSE_MS);
+
+        await resolveBoard();
+
+        updateHUD();
+        checkWinLose();
+        return;
       }
-      clearList.forEach(([cr, cc]) => {
-        if (G.board[cr][cc] && G.board[cr][cc]!.special && !(cr === rainbowR && cc === rainbowC)) {
-          const extra: [number, number][] = activateSpecial(cr, cc, cleared, null);
-          extra.forEach(([er, ec]) => {
-            if (!cleared.has(er * G.cols + ec)) {
-              cleared.add(er * G.cols + ec);
-              clearList.push([er, ec]);
-            }
-          });
-        }
-      });
+    }
 
-      trackClears(clearList);
-      G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
-
-      await animateClear(clearList, [{ r: rainbowR, c: rainbowC, type: "rainbow", color: targetColor }]);
-      clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
-      damageAdjacentIce(clearList);
-
-      const fallMap: FallEntry[] = applyGravityData();
-      await animateDrop(fallMap);
-      await sleep(ANIM.CHAIN_PAUSE_MS);
-
-      await resolveBoard();
-
-      updateHUD();
-      checkWinLose();
-      G.animating = false;
-      startHintTimer();
+    const matches: [number, number][] = findAllMatches();
+    if (matches.length === 0) {
+      SFX.invalidSwap();
+      await animateSwap(r2, c2, r1, c1);
+      swapPieces(r1, c1, r2, c2);
+      await flashInvalid(r1, c1, r2, c2);
+      drawBoard();
       return;
     }
-  }
 
-  const matches: [number, number][] = findAllMatches();
-  if (matches.length === 0) {
-    SFX.invalidSwap();
-    await animateSwap(r2, c2, r1, c1);
-    swapPieces(r1, c1, r2, c2);
-    await flashInvalid(r1, c1, r2, c2);
+    G.movesLeft--;
+    G.chainCount = 0;
+    updateHUD();
+
+    await resolveBoard();
+    G.lastSwapTarget = null;
+
+    updateHUD();
+    checkWinLose();
+  } finally {
     G.animating = false;
-    drawBoard();
     startHintTimer();
-    return;
   }
-
-  G.movesLeft--;
-  G.chainCount = 0;
-  updateHUD();
-
-  await resolveBoard();
-  G.lastSwapTarget = null;
-
-  updateHUD();
-  checkWinLose();
-  G.animating = false;
-  startHintTimer();
 }
 
 // ============================================================
@@ -523,82 +519,88 @@ export async function usePinpoint(r: number, c: number): Promise<void> {
     return;
   }
   G.animating = true;
-  if (!G.debugMode) { G.saveData.coins -= ITEM_COSTS.pinpoint; writeSave(); SFX.coinSpend(); }
-  updateItemBar();
+  try {
+    if (!G.debugMode) { G.saveData.coins -= ITEM_COSTS.pinpoint; writeSave(); SFX.coinSpend(); }
+    updateItemBar();
 
-  const cleared = new Set<number>();
-  cleared.add(r * G.cols + c);
-  if (G.board[r][c]!.special) {
-    const sp = G.board[r][c]!.special!;
-    if (sp === "bomb" || sp === "countdown") SFX.bomb();
-    else if (sp === "line_h" || sp === "line_v" || sp === "line_d") SFX.line();
-    else if (sp === "rainbow") SFX.rainbow();
-    const queue: [number, number][] = activateSpecial(r, c, cleared);
-    for (let qi = 0; qi < queue.length; qi++) {
-      const [er, ec] = queue[qi];
-      cleared.add(er * G.cols + ec);
-      if (G.board[er][ec] && G.board[er][ec]!.special) {
-        activateSpecial(er, ec, cleared, sp).forEach(([er2, ec2]) => {
-          cleared.add(er2 * G.cols + ec2);
-          queue.push([er2, ec2]);
-        });
+    const cleared = new Set<number>();
+    cleared.add(r * G.cols + c);
+    if (G.board[r][c]!.special) {
+      const sp = G.board[r][c]!.special!;
+      if (sp === "bomb" || sp === "countdown") SFX.bomb();
+      else if (sp === "line_h" || sp === "line_v" || sp === "line_d") SFX.line();
+      else if (sp === "rainbow") SFX.rainbow();
+      const queue: [number, number][] = activateSpecial(r, c, cleared);
+      for (let qi = 0; qi < queue.length; qi++) {
+        const [er, ec] = queue[qi];
+        cleared.add(er * G.cols + ec);
+        if (G.board[er][ec] && G.board[er][ec]!.special) {
+          activateSpecial(er, ec, cleared, sp).forEach(([er2, ec2]) => {
+            cleared.add(er2 * G.cols + ec2);
+            queue.push([er2, ec2]);
+          });
+        }
       }
     }
+
+    const clearList: [number, number][] = [...cleared].map(v => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
+    trackClears(clearList);
+    G.score += clearList.length * SCORE_PER_PIECE;
+
+    if (!G.board[r][c]!.special) SFX.bomb();
+    await animateClear(clearList, []);
+    clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
+    damageAdjacentIce(clearList);
+
+    const fallMap: FallEntry[] = applyGravityData();
+    if (fallMap.length > 0) SFX.drop();
+    await animateDrop(fallMap);
+    await sleep(ANIM.CHAIN_PAUSE_MS);
+    await resolveBoard();
+
+    updateHUD();
+    checkWinLose();
+  } finally {
+    G.animating = false;
+    startHintTimer();
   }
-
-  const clearList: [number, number][] = [...cleared].map(v => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
-  trackClears(clearList);
-  G.score += clearList.length * SCORE_PER_PIECE;
-
-  if (!G.board[r][c]!.special) SFX.bomb();
-  await animateClear(clearList, []);
-  clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
-  damageAdjacentIce(clearList);
-
-  const fallMap: FallEntry[] = applyGravityData();
-  if (fallMap.length > 0) SFX.drop();
-  await animateDrop(fallMap);
-  await sleep(ANIM.CHAIN_PAUSE_MS);
-  await resolveBoard();
-
-  updateHUD();
-  checkWinLose();
-  G.animating = false;
-  startHintTimer();
 }
 
 export async function useShuffle(): Promise<void> {
   G.animating = true;
-  if (!G.debugMode) { G.saveData.coins -= ITEM_COSTS.shuffle; writeSave(); SFX.coinSpend(); }
-  updateItemBar();
+  try {
+    if (!G.debugMode) { G.saveData.coins -= ITEM_COSTS.shuffle; writeSave(); SFX.coinSpend(); }
+    updateItemBar();
 
-  const pieces: Piece[] = [];
-  const positions: [number, number][] = [];
-  for (let r = 0; r < G.rows; r++) {
-    for (let c = 0; c < G.cols; c++) {
-      if (G.board[r][c]) {
-        pieces.push(G.board[r][c]!);
-        positions.push([r, c]);
+    const pieces: Piece[] = [];
+    const positions: [number, number][] = [];
+    for (let r = 0; r < G.rows; r++) {
+      for (let c = 0; c < G.cols; c++) {
+        if (G.board[r][c]) {
+          pieces.push(G.board[r][c]!);
+          positions.push([r, c]);
+        }
       }
     }
+
+    for (let i = pieces.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pieces[i], pieces[j]] = [pieces[j], pieces[i]];
+    }
+
+    positions.forEach(([r, c], idx) => { G.board[r][c] = pieces[idx]; });
+
+    SFX.swap();
+    drawBoard();
+    await sleep(300);
+    await resolveBoard();
+
+    updateHUD();
+    checkWinLose();
+  } finally {
+    G.animating = false;
+    startHintTimer();
   }
-
-  for (let i = pieces.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pieces[i], pieces[j]] = [pieces[j], pieces[i]];
-  }
-
-  positions.forEach(([r, c], idx) => { G.board[r][c] = pieces[idx]; });
-
-  SFX.swap();
-  drawBoard();
-  await sleep(300);
-  await resolveBoard();
-
-  updateHUD();
-  checkWinLose();
-  G.animating = false;
-  startHintTimer();
 }
 
 export function useAddMoves(): void {
@@ -613,41 +615,43 @@ export function useAddMoves(): void {
 
 async function useColorBomb(colorIndex: number): Promise<void> {
   G.animating = true;
-  if (!G.debugMode) { G.saveData.coins -= ITEM_COSTS.colorbomb; writeSave(); SFX.coinSpend(); }
-  updateItemBar();
+  try {
+    if (!G.debugMode) { G.saveData.coins -= ITEM_COSTS.colorbomb; writeSave(); SFX.coinSpend(); }
+    updateItemBar();
 
-  const cleared = new Set<number>();
-  for (let r = 0; r < G.rows; r++) {
-    for (let c = 0; c < G.cols; c++) {
-      if (G.board[r][c] && G.board[r][c]!.color === colorIndex) {
-        cleared.add(r * G.cols + c);
+    const cleared = new Set<number>();
+    for (let r = 0; r < G.rows; r++) {
+      for (let c = 0; c < G.cols; c++) {
+        if (G.board[r][c] && G.board[r][c]!.color === colorIndex) {
+          cleared.add(r * G.cols + c);
+        }
       }
     }
-  }
 
-  if (cleared.size === 0) {
+    if (cleared.size === 0) {
+      return;
+    }
+
+    const clearList: [number, number][] = [...cleared].map(v => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
+    trackClears(clearList);
+    G.score += clearList.length * SCORE_PER_PIECE;
+
+    SFX.rainbow();
+    await animateClear(clearList, []);
+    clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
+
+    const fallMap: FallEntry[] = applyGravityData();
+    if (fallMap.length > 0) SFX.drop();
+    await animateDrop(fallMap);
+    await sleep(ANIM.CHAIN_PAUSE_MS);
+    await resolveBoard();
+
+    updateHUD();
+    checkWinLose();
+  } finally {
     G.animating = false;
-    return;
+    startHintTimer();
   }
-
-  const clearList: [number, number][] = [...cleared].map(v => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
-  trackClears(clearList);
-  G.score += clearList.length * SCORE_PER_PIECE;
-
-  SFX.rainbow();
-  await animateClear(clearList, []);
-  clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
-
-  const fallMap: FallEntry[] = applyGravityData();
-  if (fallMap.length > 0) SFX.drop();
-  await animateDrop(fallMap);
-  await sleep(ANIM.CHAIN_PAUSE_MS);
-  await resolveBoard();
-
-  updateHUD();
-  checkWinLose();
-  G.animating = false;
-  startHintTimer();
 }
 
 export function showColorPicker(): void {

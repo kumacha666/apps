@@ -50,14 +50,54 @@
   - 色消し: `min(0.8, 0.4 + i * 0.005)` per move
 - パラメータを変更した場合はシミュレーションテストで難易度カーブを確認すること
 
-## 次セッションのタスク
+## 変更時チェックリスト
+
+### 新しいピース種（SpecialType）を追加するとき
+
+- [ ] `isMatchable()` に判定を追加（board.ts）
+- [ ] `getComboType()` に正規化ルールを追加/除外（board.ts）
+- [ ] `getMissionText()` に表示対応を追加（該当する場合）（stages.ts）
+- [ ] `findHint()` のハイライト対象を更新（board.ts）
+- [ ] `TAP_ACTIVATE_SPECIALS` への追加要否を確認（board.ts）
+- [ ] ユニットテストを追加（最低: isMatchable, getComboType の該当ケース）
+- [ ] シミュレーションテストで難易度カーブを確認
+
+### 新しいミッション種（MissionType）を追加するとき
+
+- [ ] `getMissionText()` に表示処理を追加（stages.ts）
+- [ ] `checkWinLose()` に達成判定を追加（game.ts）
+- [ ] `updateHUD()` に進捗表示を追加（game.ts）
+- [ ] 進捗カウンターを `G` に追加し、適切な箇所でインクリメント
+- [ ] ユニットテストを追加（getMissionText, 達成判定）
+- [ ] シミュレーションテストで該当ミッションを含むステージの難易度確認
+
+### G.animating を操作する関数を追加/変更するとき
+
+- [ ] `G.animating = true` の後を必ず `try { ... } finally { G.animating = false; startHintTimer(); }` で囲む
+- [ ] 関数内に `G.animating = false` が try/finally 外に散在していないことを確認
+
+## 現在のタスク
+
+### Phase G: ガードレール構築（Phase 6 の前に完了させること）
+
+詳細は `ai-workspace/projects/7metch/IMPROVEMENT_PLAN.md` Phase G を参照
+
+1. **Step 1**: G.animating デッドロック修正 — game.ts の5関数に try/finally 追加
+2. **Step 2**: テスト拡充 — game.test.ts, stages.test.ts 新規作成、board.test.ts 拡充
+3. **Step 3**: 型ガードレール — isMatchable, getComboType に exhaustive check
+4. **Step 4**: デプロイ自動化 + CLAUDE.md テストセクション更新
 
 ### Phase 6: 新機能 — コイン経済（完全無課金）
 
-- TypeScript 移行完了済み（strict: true、全14ファイル変換済み）
+- Phase G 完了後に着手
 - ショップUI・永続アップグレード（手数+1, スコア倍率UP, アイテム割引, コイン獲得UP）
 - 一手巻き戻しアイテム（undo）
 - チート級能力（99,999コイン）
 - セーブデータ暗号化
 - コイン経済バランス調整
 - 詳細は `ai-workspace/projects/7metch/IMPROVEMENT_PLAN.md` Phase 6 を参照
+
+## 完了済み
+
+- TypeScript 移行完了（strict: true、全14ファイル変換済み）— PR #182
+- Phase 0-5 完了 — PR #151-#177
