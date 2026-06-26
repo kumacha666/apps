@@ -214,10 +214,23 @@ export function isAdjacent(r1: number, c1: number, r2: number, c2: number): bool
 export function isMatchable(r: number, c: number): boolean {
   if (!G.board[r][c]) return false;
   if (isHole(r, c) || isRock(r, c)) return false;
-  if (G.board[r][c]!.special && TAP_ACTIVATE_SPECIALS.has(G.board[r][c]!.special!)) return false;
-  if (G.board[r][c]!.special === "countdown") return false;
   if (isIce(r, c)) return false;
-  return true;
+  const sp = G.board[r][c]!.special;
+  if (sp === null) return true;
+  switch (sp) {
+    case "line_h":
+    case "line_v":
+    case "line_d":
+    case "bomb":
+    case "countdown":
+      return false;
+    case "rainbow":
+      return true;
+    default: {
+      const _exhaustive: never = sp;
+      return false;
+    }
+  }
 }
 
 export function findAllMatches(): [number, number][] {
@@ -632,22 +645,42 @@ export function swapPieces(r1: number, c1: number, r2: number, c2: number): void
 // Combo type lookup
 // ---------------------------------------------------------------------------
 
+function assertSpecialExhaustive(_sp: never): void {}
+
+function normalizeSpecial(sp: SpecialType): "line" | "line_d" | "bomb" | "rainbow" | "countdown" {
+  switch (sp) {
+    case "line_h":
+    case "line_v":
+      return "line";
+    case "line_d":
+      return "line_d";
+    case "bomb":
+      return "bomb";
+    case "rainbow":
+      return "rainbow";
+    case "countdown":
+      return "countdown";
+    default: {
+      assertSpecialExhaustive(sp);
+      return "countdown";
+    }
+  }
+}
+
 export function getComboType(s1: SpecialType | null, s2: SpecialType | null): ComboType | null {
-  if (s1 === "countdown" || s2 === "countdown") return null;
-  const pair = [s1, s2].sort().join("+");
+  if (!s1 || !s2) return null;
+  const n1 = normalizeSpecial(s1);
+  const n2 = normalizeSpecial(s2);
+  if (n1 === "countdown" || n2 === "countdown") return null;
+  const pair = [n1, n2].sort().join("+");
   const combos: Record<string, ComboType> = {
-    "line_h+line_h": "cross",
-    "line_h+line_v": "cross",
-    "line_v+line_v": "cross",
-    "line_d+line_h": "star_cross",
-    "line_d+line_v": "star_cross",
+    "line+line": "cross",
+    "line+line_d": "star_cross",
     "line_d+line_d": "star_cross",
-    "bomb+line_h": "triple_line",
-    "bomb+line_v": "triple_line",
+    "bomb+line": "triple_line",
     "bomb+line_d": "triple_line",
     "bomb+bomb": "big_bomb",
-    "line_h+rainbow": "rainbow_line",
-    "line_v+rainbow": "rainbow_line",
+    "line+rainbow": "rainbow_line",
     "line_d+rainbow": "rainbow_line",
     "bomb+rainbow": "rainbow_bomb",
     "rainbow+rainbow": "board_clear",
