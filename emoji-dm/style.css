@@ -54,7 +54,8 @@ h1 {
   background-clip: text;
 }
 
-.tagline { color: var(--text-dim); font-size: 0.95rem; margin-bottom: 1.5rem; }
+.tagline { color: var(--text-dim); font-size: 0.95rem; margin-bottom: 0.5rem; }
+.credit { color: var(--text-dim); font-size: 0.7rem; opacity: 0.6; margin-bottom: 1.5rem; }
 
 .setup-form { width: 100%; max-width: 340px; }
 
