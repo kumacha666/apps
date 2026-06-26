@@ -103,11 +103,6 @@
       </div>
     </div>
 
-    <div id="update-toast" class="hidden">
-      新しいバージョンがあります
-      <button id="btn-update">更新する</button>
-    </div>
-
     <div id="game-modal-overlay" class="hidden">
       <div id="game-modal">
         <p id="game-modal-text"></p>
@@ -375,21 +370,7 @@
 
   <script>
     if ("serviceWorker" in navigator) {
-      const hadController = !!navigator.serviceWorker.controller;
-      navigator.serviceWorker.register("sw.js").then((reg) => {
-        reg.addEventListener("updatefound", () => {
-          const newSW = reg.installing;
-          newSW.addEventListener("statechange", () => {
-            if (newSW.state === "activated" && hadController) {
-              const toast = document.getElementById("update-toast");
-              toast.classList.remove("hidden");
-              document.getElementById("btn-update").addEventListener("click", () => {
-                location.reload();
-              });
-            }
-          });
-        });
-      });
+      navigator.serviceWorker.register("sw.js");
     }
   </script>
 </body>
