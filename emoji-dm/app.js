@@ -17,7 +17,7 @@ const firebaseConfig = {
 };
 
 const VAPID_KEY = 'BMC5k_Xn-c9pSSCvYcRWYWRm7nrSZG3smrMQWtYgnGB3mnKNCbL2RxhUlfqVi_jWYNk6yYd8Yy6tCK286DlZjo4';
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.1.2';
 
 let app;
 let db;
@@ -155,8 +155,8 @@ function joinRoom(roomId) {
   localStorage.setItem('emoji-dm-room', roomId);
 
   const memberRef = ref(db, `rooms/${roomId}/members/${myId}`);
-  set(memberRef, { avatar: myAvatar, joinedAt: serverTimestamp() });
-  onDisconnect(memberRef).remove();
+  update(memberRef, { avatar: myAvatar, joinedAt: serverTimestamp(), online: true });
+  onDisconnect(ref(db, `rooms/${roomId}/members/${myId}/online`)).set(false);
 
   switchToChat();
   listenMessages();
