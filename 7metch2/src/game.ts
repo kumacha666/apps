@@ -247,8 +247,8 @@ async function resolveBoard(): Promise<void> {
       }
     }
 
-    // Infection
-    if (has(G.run.upgrades, "infection")) {
+    // Infection (capped to prevent infinite loops)
+    if (has(G.run.upgrades, "infection") && G.chainCount <= 8) {
       const infectedCells: [number, number, number][] = [];
       for (const [r, c] of clearList) {
         if (!G.board[r]?.[c]) continue;
