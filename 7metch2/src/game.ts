@@ -85,16 +85,22 @@ export function showScreen(name: string): void {
 function captureAndApplyGravity(): FallEntry[] {
   const fallEntries: FallEntry[] = [];
 
+  // Count empty cells per column before gravity
+  const emptyCounts: number[] = [];
   for (let c = 0; c < COLS; c++) {
-    // Collect existing pieces with their current rows
+    let empty = 0;
+    for (let r = 0; r < ROWS; r++) {
+      if (!G.board[r][c]) empty++;
+    }
+    emptyCounts.push(empty);
+
+    // Capture existing piece movements
     const pieces: { piece: typeof G.board[0][0]; fromR: number }[] = [];
     for (let r = ROWS - 1; r >= 0; r--) {
       if (G.board[r][c]) {
         pieces.push({ piece: G.board[r][c], fromR: r });
       }
     }
-
-    // Calculate target rows (bottom-aligned)
     let writeRow = ROWS - 1;
     for (const entry of pieces) {
       if (entry.fromR !== writeRow) {
@@ -109,27 +115,18 @@ function captureAndApplyGravity(): FallEntry[] {
     }
   }
 
-  // Apply gravity (this also fills new pieces)
   applyGravity();
 
-  // Also capture newly spawned pieces (they fall from above)
+  // Capture newly spawned pieces (only in columns that had empties)
   for (let c = 0; c < COLS; c++) {
-    // Find how many empty rows were at the top before gravity
-    const existingFalls = fallEntries.filter(f => f.c === c);
-    const lowestExistingFrom = existingFalls.length > 0
-      ? Math.min(...existingFalls.map(f => f.fromR))
-      : ROWS;
-    // Count empty cells above existing pieces
-    const newPieceCount = lowestExistingFrom;
-
-    // The new pieces are now at rows 0..newPieceCount-1
-    // They should animate from above the board
-    for (let i = 0; i < newPieceCount; i++) {
+    const newCount = emptyCounts[c];
+    if (newCount === 0) continue;
+    for (let i = 0; i < newCount; i++) {
       const toR = i;
       if (G.board[toR][c]) {
         fallEntries.push({
           c,
-          fromR: toR - newPieceCount, // from above the board
+          fromR: toR - newCount,
           toR,
           piece: G.board[toR][c]!,
         });
