@@ -116,6 +116,10 @@ export function updateVFX(): void {
   }
 }
 
+export function hasActiveVFX(): boolean {
+  return G.vfxParticles.length > 0 || G.vfxShockwaves.length > 0 || G.vfxFlashes.length > 0 || G.shakeIntensity > 0;
+}
+
 // --- Draw ---
 
 export function drawVFX(): void {
