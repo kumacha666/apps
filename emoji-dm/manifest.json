@@ -1,0 +1,13 @@
+{
+  "name": "emojidm",
+  "short_name": "emojidm",
+  "description": "絵文字だけで、伝わる。",
+  "start_url": "/emoji-dm/",
+  "display": "standalone",
+  "background_color": "#1a1025",
+  "theme_color": "#1a1025",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

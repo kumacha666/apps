@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>emojidm — 絵文字だけで、伝わる。</title>
+  <meta name="description" content="テキスト禁止。絵文字とスタンプだけで会話する、ふたりだけのメッセージアプリ。">
+  <meta name="theme-color" content="#1a1025">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="emojidm — 絵文字だけで、伝わる。">
+  <meta property="og:description" content="テキスト禁止。絵文字とスタンプだけで会話する、ふたりだけのメッセージアプリ。">
+  <meta property="og:url" content="https://honeypawlab.com/emoji-dm/">
+  <meta name="twitter:card" content="summary">
+
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Setup Screen -->
+    <div id="setup-screen" class="screen active">
+      <div class="setup-container">
+        <div class="logo">💬</div>
+        <h1>emojidm</h1>
+        <p class="tagline">絵文字だけで、伝わる。</p>
+
+        <div class="setup-form">
+          <div class="avatar-pick">
+            <p>あなたのアイコンを選んでね</p>
+            <div id="avatar-options" class="avatar-grid"></div>
+          </div>
+
+          <div class="room-section">
+            <button id="btn-create" class="btn btn-primary">ルームを作る</button>
+            <div class="divider"><span>または</span></div>
+            <div class="join-row">
+              <input id="room-input" type="text" placeholder="ルームIDを入力" maxlength="6" autocomplete="off">
+              <button id="btn-join" class="btn btn-secondary">入る</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chat Screen -->
+    <div id="chat-screen" class="screen">
+      <header id="chat-header">
+        <button id="btn-back" class="header-btn">←</button>
+        <div class="header-info">
+          <span id="partner-avatar" class="partner-icon"></span>
+          <span id="room-id-display" class="room-code"></span>
+        </div>
+        <button id="btn-copy-room" class="header-btn" title="ルームIDをコピー">📋</button>
+      </header>
+
+      <div id="messages" class="messages"></div>
+
+      <div id="waiting-banner" class="waiting-banner hidden">
+        相手を待っています…ルームIDを共有してね
+      </div>
+
+      <div id="emoji-bar" class="emoji-bar">
+        <div id="category-tabs" class="category-tabs"></div>
+        <div id="emoji-grid" class="emoji-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
