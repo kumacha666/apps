@@ -140,6 +140,17 @@ function captureAndApplyGravity(): FallEntry[] {
   return fallEntries;
 }
 
+function boardHasHoles(): boolean {
+  for (let c = 0; c < COLS; c++) {
+    let foundEmpty = false;
+    for (let r = 0; r < ROWS; r++) {
+      if (!G.board[r][c]) foundEmpty = true;
+      else if (foundEmpty) return true;
+    }
+  }
+  return false;
+}
+
 export async function doMove(r1: number, c1: number, r2: number, c2: number): Promise<void> {
   if (G.animating) return;
   if (!isAdjacentAllowed(r1, c1, r2, c2)) return;
@@ -381,6 +392,12 @@ async function resolveBoard(): Promise<void> {
       }
       const detFalls = captureAndApplyGravity();
       await animateDrop(detFalls);
+    }
+
+    // Safety: ensure no holes remain before next match check
+    if (boardHasHoles()) {
+      const safetyFalls = captureAndApplyGravity();
+      if (safetyFalls.length > 0) await animateDrop(safetyFalls);
     }
 
     updateHUD();
