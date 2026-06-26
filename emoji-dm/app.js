@@ -313,10 +313,25 @@ function registerSW() {
         }
       });
     });
-    // Check for updates every 30 minutes
     setInterval(() => reg.update(), 30 * 60 * 1000);
     reg.update();
   }).catch(() => {});
+  checkForUpdate();
+}
+
+async function checkForUpdate() {
+  try {
+    const res = await fetch('version.json?t=' + Date.now());
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.version !== APP_VERSION) {
+      const cacheNames = await caches.keys();
+      await Promise.all(cacheNames.map(name => caches.delete(name)));
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) await reg.unregister();
+      window.location.reload();
+    }
+  } catch (e) {}
 }
 
 init();
