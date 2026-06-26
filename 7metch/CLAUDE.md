@@ -35,8 +35,9 @@
 ## ビルド・デプロイ
 
 - `npm run build` — テスト → ビルド → ポインタイベントチェック
-- ビルド後は `dist/` の成果物をルートにコピーし、SW キャッシュバージョンを更新してからコミットする
-- SW バージョンは `sw.js` と `public/sw.js` の両方を更新すること
+- `npm run deploy` — ビルド → dist/ コピー → SW バージョン自動更新（1コマンドで完結）
+- deploy 後にコミットするだけで GitHub Pages にデプロイされる
+- vite.config.js の entry-rewrite プラグインが root index.html の `./game.js` を自動的に `./src/main.ts` に書き換えるので、index.html の手動編集は不要
 
 ## 難易度パラメータ (stages.js)
 
@@ -78,18 +79,8 @@
 
 ## 現在のタスク
 
-### Phase G: ガードレール構築（Phase 6 の前に完了させること）
-
-詳細は `ai-workspace/projects/7metch/IMPROVEMENT_PLAN.md` Phase G を参照
-
-1. **Step 1**: G.animating デッドロック修正 — game.ts の5関数に try/finally 追加
-2. **Step 2**: テスト拡充 — game.test.ts, stages.test.ts 新規作成、board.test.ts 拡充
-3. **Step 3**: 型ガードレール — isMatchable, getComboType に exhaustive check
-4. **Step 4**: デプロイ自動化 + CLAUDE.md テストセクション更新
-
 ### Phase 6: 新機能 — コイン経済（完全無課金）
 
-- Phase G 完了後に着手
 - ショップUI・永続アップグレード（手数+1, スコア倍率UP, アイテム割引, コイン獲得UP）
 - 一手巻き戻しアイテム（undo）
 - チート級能力（99,999コイン）
@@ -99,5 +90,6 @@
 
 ## 完了済み
 
+- Phase G: ガードレール構築 完了（try/finally, テスト109件, exhaustive check, deploy自動化）
 - TypeScript 移行完了（strict: true、全14ファイル変換済み）— PR #182
 - Phase 0-5 完了 — PR #151-#177
