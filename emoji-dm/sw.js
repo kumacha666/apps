@@ -13,17 +13,8 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-messaging.onBackgroundMessage((payload) => {
-  const title = payload.notification?.title || '💬 emojidm';
-  const body = payload.notification?.body || '';
-  self.registration.showNotification(title, {
-    body,
-    icon: '/emoji-dm/icon-192.png',
-    badge: '/emoji-dm/icon-192.png',
-    tag: 'emoji-dm-msg',
-    renotify: true,
-  });
-});
+// notification payload is auto-displayed by FCM; no manual showNotification needed
+messaging.onBackgroundMessage(() => {});
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
@@ -39,7 +30,7 @@ self.addEventListener('notificationclick', (e) => {
   );
 });
 
-const CACHE = 'emoji-dm-1.1.0';
+const CACHE = 'emoji-dm-1.1.1';
 const ASSETS = ['/emoji-dm/', '/emoji-dm/index.html', '/emoji-dm/style.css', '/emoji-dm/app.js'];
 
 self.addEventListener('install', (e) => {
