@@ -16,7 +16,7 @@ const firebaseConfig = {
   appId: "1:125384370581:web:6a23a3b5e83442af106e9c"
 };
 
-const VAPID_KEY = 'REPLACE_WITH_YOUR_VAPID_KEY';
+const VAPID_KEY = 'BMC5k_Xn-c9pSSCvYcRWYWRm7nrSZG3smrMQWtYgnGB3mnKNCbL2RxhUlfqVi_jWYNk6yYd8Yy6tCK286DlZjo4';
 
 let app;
 let db;
