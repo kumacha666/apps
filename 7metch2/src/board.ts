@@ -47,14 +47,14 @@ export function findAllMatches(matchMin?: number): [number, number][] {
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const p = G.board[r][c];
-      if (!p || p.special) continue;
+      if (!p) continue;
       const color = p.color;
       for (const [dr, dc] of directions) {
         const line: [number, number][] = [[r, c]];
         let nr = r + dr, nc = c + dc;
         while (inBounds(nr, nc)) {
           const np = G.board[nr][nc];
-          if (!np || np.special || np.color !== color) break;
+          if (!np || np.color !== color) break;
           line.push([nr, nc]);
           nr += dr;
           nc += dc;
@@ -71,7 +71,7 @@ export function findAllMatches(matchMin?: number): [number, number][] {
     for (let r = 0; r < ROWS - 1; r++) {
       for (let c = 0; c < COLS - 1; c++) {
         const cells: [number, number][] = [[r, c], [r, c + 1], [r + 1, c], [r + 1, c + 1]];
-        if (cells.some(([cr, cc]) => !G.board[cr][cc] || G.board[cr][cc]!.special)) continue;
+        if (cells.some(([cr, cc]) => !G.board[cr][cc])) continue;
         const color = G.board[r][c]!.color;
         if (cells.every(([cr, cc]) => G.board[cr][cc]!.color === color)) {
           cells.forEach(([cr, cc]) => matched.add(cr * COLS + cc));
