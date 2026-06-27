@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 vi.mock("../rendering", () => ({
   drawBoard: vi.fn(),
   startChainLabel: vi.fn(),
+  resizeCanvas: vi.fn(),
 }));
 vi.mock("../animations", () => ({
   animateSwap: vi.fn().mockResolvedValue(undefined),
@@ -18,7 +19,7 @@ vi.mock("../vfx", () => ({
 import { G, COLS, ROWS } from "../state";
 import type { Piece, UpgradeId } from "../types";
 import { applyGravity, findAllMatches } from "../board";
-import { getStageTarget, getStageMoves } from "../game";
+import { getStageTarget, getStageMoves, getStageBoardSize } from "../game";
 
 function mkPiece(color: number, special: Piece["special"] = null): Piece {
   return { color, special };
@@ -182,5 +183,14 @@ describe("Stage target and moves", () => {
     expect(getStageMoves(0)).toBe(20);
     expect(getStageMoves(3)).toBe(19);
     expect(getStageMoves(100)).toBe(8);
+  });
+
+  it("board size grows with stage", () => {
+    const s0 = getStageBoardSize(0);
+    expect(s0).toEqual({ cols: 7, rows: 8 });
+    const s10 = getStageBoardSize(10);
+    expect(s10).toEqual({ cols: 17, rows: 18 });
+    const s30 = getStageBoardSize(30);
+    expect(s30).toEqual({ cols: 37, rows: 38 });
   });
 });

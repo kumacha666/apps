@@ -1,11 +1,11 @@
-import { G, COLS, ROWS } from "./state";
+import { G, COLS, ROWS, setBoardSize } from "./state";
 import {
   findAllMatches, findSpecialCreations, activateSpecial, applyGravity,
   swapPieces, isAdjacentAllowed, createBoard, autoDetonateCheck, tickCountdowns,
   inBounds,
 } from "./board";
 import { has } from "./upgrades";
-import { drawBoard, startChainLabel } from "./rendering";
+import { drawBoard, startChainLabel, resizeCanvas } from "./rendering";
 import { animateSwap, animateStandardClear, animateDrop, sleep } from "./animations";
 import type { FallEntry } from "./animations";
 import { addScreenShake } from "./vfx";
@@ -40,6 +40,12 @@ export function getStageMoves(stage: number): number {
   return Math.max(8, 20 - Math.floor(stage / 3));
 }
 
+export function getStageBoardSize(stage: number): { cols: number; rows: number } {
+  const cols = 7 + stage;
+  const rows = 8 + stage;
+  return { cols, rows };
+}
+
 export function startRun(): void {
   G.run = { stage: 0, score: 0, totalCleared: 0, upgrades: [], resonanceCounts: new Array(7).fill(0) };
   startStage();
@@ -52,6 +58,10 @@ export function startStage(): void {
   G.maxChain = 0;
   G.proliferationColor = null;
   G.clearCountThisTurn = 0;
+  const size = getStageBoardSize(G.run.stage);
+  setBoardSize(size.cols, size.rows);
+  resizeCanvas();
+
   G.stageTarget = getStageTarget(G.run.stage);
   G.movesLeft = getStageMoves(G.run.stage);
   G.animating = false;
