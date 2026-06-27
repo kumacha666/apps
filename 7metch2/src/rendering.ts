@@ -31,7 +31,7 @@ export function initCanvas(): void {
   window.addEventListener("resize", resizeCanvas);
 }
 
-function resizeCanvas(): void {
+export function resizeCanvas(): void {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const hudH = 50;
