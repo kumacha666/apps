@@ -51,12 +51,12 @@ export function pickUpgradeChoices(owned: UpgradeId[], count: number): UpgradeDe
 
   const weights: Record<string, number> = { common: 40, rare: 30, epic: 20, legendary: 10 };
   const weighted = available.map(u => ({ u, w: weights[u.rarity] }));
-  const totalW = weighted.reduce((s, x) => s + x.w, 0);
 
   const picked: UpgradeDef[] = [];
   const used = new Set<number>();
   while (picked.length < count && used.size < weighted.length) {
-    let roll = Math.random() * totalW;
+    const remainingW = weighted.reduce((s, x, i) => s + (used.has(i) ? 0 : x.w), 0);
+    let roll = Math.random() * remainingW;
     for (let i = 0; i < weighted.length; i++) {
       if (used.has(i)) continue;
       roll -= weighted[i].w;

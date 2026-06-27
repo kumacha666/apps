@@ -2,6 +2,7 @@ import type { Piece } from "./types";
 import { G, COLS, ROWS, PIECE_COLORS } from "./state";
 import { drawBoard, drawBoardBase, drawPieceAt } from "./rendering";
 import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, updateVFX } from "./vfx";
+import { SFX } from "./audio";
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -136,6 +137,7 @@ export async function animateDrop(fallMap: FallEntry[]): Promise<void> {
     drawBoard();
     return;
   }
+  SFX.drop();
 
   const maxDist = Math.max(...fallMap.map((f) => f.toR - f.fromR));
   const dropSpeed = 0.22;
