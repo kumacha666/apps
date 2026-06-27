@@ -169,9 +169,9 @@ describe("Stage target and moves", () => {
     expect(t5).toBeGreaterThan(t1);
   });
 
-  it("stage target formula: 200 + stage*150 + floor(stage^2*10)", () => {
-    expect(getStageTarget(3)).toBe(200 + 3 * 150 + Math.floor(9 * 10));
-    expect(getStageTarget(10)).toBe(200 + 10 * 150 + Math.floor(100 * 10));
+  it("stage target formula: 200 + stage*150 + floor(stage^2*40)", () => {
+    expect(getStageTarget(3)).toBe(200 + 3 * 150 + Math.floor(9 * 40));
+    expect(getStageTarget(10)).toBe(200 + 10 * 150 + Math.floor(100 * 40));
   });
 
   it("stage 0 moves is 20", () => {

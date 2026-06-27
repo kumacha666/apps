@@ -33,7 +33,7 @@ function updateUpgradeList(): void {
 }
 
 export function getStageTarget(stage: number): number {
-  return 200 + stage * 150 + Math.floor(stage * stage * 10);
+  return 200 + stage * 150 + Math.floor(stage * stage * 40);
 }
 
 export function getStageMoves(stage: number): number {
