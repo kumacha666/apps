@@ -281,8 +281,30 @@ async function resolveBoard(): Promise<void> {
       }
     }
 
-    // Resonance
+    // Resonance: expand clear range based on accumulated counts, then increment
     if (has(G.run.upgrades, "resonance")) {
+      const resonanceExpand: [number, number][] = [];
+      for (const [r, c] of clearList) {
+        if (!G.board[r]?.[c]) continue;
+        const ci = G.board[r][c]!.color;
+        const radius = Math.min(G.run.resonanceCounts[ci] || 0, 3);
+        if (radius === 0) continue;
+        for (let dr = -radius; dr <= radius; dr++) {
+          for (let dc = -radius; dc <= radius; dc++) {
+            if (dr === 0 && dc === 0) continue;
+            const nr = r + dr, nc = c + dc;
+            if (inBounds(nr, nc) && G.board[nr][nc] && !cleared.has(nr * COLS + nc)) {
+              resonanceExpand.push([nr, nc]);
+            }
+          }
+        }
+      }
+      for (const [nr, nc] of resonanceExpand) {
+        if (!cleared.has(nr * COLS + nc)) {
+          cleared.add(nr * COLS + nc);
+          clearList.push([nr, nc]);
+        }
+      }
       for (const [r, c] of clearList) {
         if (G.board[r]?.[c]) {
           const ci = G.board[r][c]!.color;
