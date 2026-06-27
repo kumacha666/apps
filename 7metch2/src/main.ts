@@ -1,6 +1,7 @@
 import { initCanvas, drawBoard } from "./rendering";
 import { initInput } from "./input";
 import { startRun, showScreen } from "./game";
+import { initAudio } from "./audio";
 import { updateVFX, hasActiveVFX } from "./vfx";
 const VERSION = "0.2.3";
 
@@ -22,10 +23,12 @@ function init(): void {
   showScreen("title");
 
   document.getElementById("btn-start")!.addEventListener("click", () => {
+    initAudio();
     startRun();
   });
 
   document.getElementById("btn-retry")!.addEventListener("click", () => {
+    initAudio();
     startRun();
   });
 

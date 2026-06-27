@@ -9,6 +9,7 @@ import { drawBoard, startChainLabel } from "./rendering";
 import { animateSwap, animateStandardClear, animateDrop, sleep } from "./animations";
 import type { FallEntry } from "./animations";
 import { addScreenShake } from "./vfx";
+import { SFX } from "./audio";
 
 function updateHUD(): void {
   document.getElementById("hud-stage")!.textContent = `Stage ${G.run.stage + 1}`;
@@ -157,15 +158,14 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
   try {
     G.lastSwapDir = { dr: r2 - r1, dc: c2 - c1 };
 
-    // Animate swap
+    SFX.swap();
     await animateSwap(r1, c1, r2, c2);
 
-    // Actually swap
     swapPieces(r1, c1, r2, c2);
     const matches = findAllMatches();
 
     if (matches.length === 0) {
-      // Invalid move: animate swap back
+      SFX.invalidSwap();
       await animateSwap(r2, c2, r1, c1);
       swapPieces(r1, c1, r2, c2);
       G.lastSwapDir = null;
@@ -315,7 +315,19 @@ async function resolveBoard(): Promise<void> {
     G.run.totalCleared += clearList.length;
     G.clearCountThisTurn += clearList.length;
 
-    // Animate clear
+    // Check for specials in clearList for sound
+    const hasActiveBomb = clearList.some(([r, c]) => G.board[r]?.[c]?.special === "bomb");
+    const hasActiveLine = clearList.some(([r, c]) => {
+      const s = G.board[r]?.[c]?.special;
+      return s === "line_h" || s === "line_v" || s === "line_d";
+    });
+    const hasActiveRainbow = clearList.some(([r, c]) => G.board[r]?.[c]?.special === "rainbow");
+
+    if (hasActiveRainbow) SFX.rainbow();
+    else if (hasActiveBomb) SFX.bomb();
+    else if (hasActiveLine) SFX.line();
+    else SFX.clear(G.chainCount);
+
     await animateStandardClear(clearList);
 
     // Clear pieces
@@ -464,7 +476,8 @@ async function blackholeEffect(clearList: [number, number][]): Promise<void> {
 async function meltdownEffect(): Promise<void> {
   for (let c = 0; c < COLS; c++) {
     for (let r = ROWS - 1; r > 0; r--) {
-      G.board[r][c] = G.board[r - 1][c];
+      const src = G.board[r - 1][c];
+      G.board[r][c] = src ? { ...src } : null;
     }
     G.board[0][c] = { color: Math.floor(Math.random() * 5), special: null };
   }
@@ -474,8 +487,11 @@ async function meltdownEffect(): Promise<void> {
 
 function checkWinLose(): void {
   if (G.score >= G.stageTarget) {
+    G.run.score += G.score;
+    SFX.stageClear();
     setTimeout(() => showStageClear(), 300);
   } else if (G.movesLeft <= 0) {
+    SFX.stageFail();
     setTimeout(() => showGameOver(), 300);
   }
 }
