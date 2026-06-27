@@ -416,6 +416,10 @@ async function resolveBoard(): Promise<void> {
     }
 
     updateHUD();
+
+    // クリア条件達成で連鎖を強制終了
+    if (G.score >= G.stageTarget) break;
+
     matches = findAllMatches();
   }
 
