@@ -222,8 +222,9 @@ async function resolveBoard(): Promise<void> {
     if (preFalls.length > 0) await animateDrop(preFalls);
   }
 
+  const MAX_CHAIN = 50;
   let matches = findAllMatches();
-  while (matches.length > 0) {
+  while (matches.length > 0 && G.chainCount < MAX_CHAIN) {
     G.chainCount++;
     if (G.chainCount > G.maxChain) G.maxChain = G.chainCount;
 
@@ -246,9 +247,10 @@ async function resolveBoard(): Promise<void> {
       }
     }
 
-    // Chain reaction
+    // Chain reaction (capped to prevent split-induced infinite loop)
     const clearList = [...cleared].map(v => [Math.floor(v / COLS), v % COLS] as [number, number]);
-    for (let i = 0; i < clearList.length; i++) {
+    const maxChainExpand = ROWS * COLS;
+    for (let i = 0; i < clearList.length && clearList.length < maxChainExpand; i++) {
       const [cr, cc] = clearList[i];
       if (G.board[cr]?.[cc]?.special && !matches.some(([mr, mc]) => mr === cr && mc === cc)) {
         const extra = activateSpecial(cr, cc, cleared);
