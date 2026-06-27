@@ -2,14 +2,6 @@ import type { Piece, CellPos } from "./types";
 import { G, COLS, ROWS, PIECE_COLORS } from "./state";
 import { drawVFX } from "./vfx";
 
-const SPECIAL_SYMBOLS: Record<string, string> = {
-  bomb: "\u{1f4a3}",
-  line_h: "↔",
-  line_v: "↕",
-  line_d: "↗",
-  rainbow: "\u{1f308}",
-};
-
 // --- Color utilities ---
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
@@ -102,15 +94,96 @@ export function drawPieceAt(piece: Piece, cx: number, cy: number, scale?: number
   const s = scale ?? 1;
   const radius = G.cellSize * 0.36 * s;
   const ctx = G.ctx!;
+  const color = PIECE_COLORS[piece.color];
+  const t = performance.now() / 1000;
 
   if (piece.special) {
-    // Draw special with glow
     ctx.save();
+
+    // Animated outer glow ring
+    const pulseAlpha = 0.3 + 0.2 * Math.sin(t * 3);
+    const pulseR = radius * (1.3 + 0.1 * Math.sin(t * 4));
+    ctx.globalAlpha = pulseAlpha;
+    ctx.strokeStyle = piece.special === "rainbow" ? `hsl(${(t * 120) % 360},100%,70%)` : color;
+    ctx.lineWidth = 2.5 * s;
+    ctx.beginPath();
+    ctx.arc(cx, cy, pulseR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Draw the planet
     drawPlanet(ctx, piece.color, cx, cy, radius);
-    ctx.font = `${G.cellSize * 0.35 * s}px sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(SPECIAL_SYMBOLS[piece.special] || "?", cx, cy);
+
+    // Special-specific overlays
+    const sp = piece.special;
+    if (sp === "bomb") {
+      // Rotating spikes
+      const spikes = 6;
+      const innerR = radius * 0.55;
+      const outerR = radius * 0.95;
+      ctx.strokeStyle = "rgba(255,200,50,0.7)";
+      ctx.lineWidth = 1.5 * s;
+      for (let i = 0; i < spikes; i++) {
+        const a = t * 2 + (Math.PI * 2 * i) / spikes;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * innerR, cy + Math.sin(a) * innerR);
+        ctx.lineTo(cx + Math.cos(a) * outerR, cy + Math.sin(a) * outerR);
+        ctx.stroke();
+      }
+      // Center dot
+      ctx.fillStyle = "rgba(255,100,0,0.8)";
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius * 0.15, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (sp === "line_h" || sp === "line_v" || sp === "line_d") {
+      // Arrow line through center
+      ctx.strokeStyle = "rgba(255,255,255,0.8)";
+      ctx.lineWidth = 2 * s;
+      ctx.lineCap = "round";
+      const len = radius * 0.8;
+      let dx = len, dy = 0;
+      if (sp === "line_v") { dx = 0; dy = len; }
+      else if (sp === "line_d") { dx = len * 0.7; dy = -len * 0.7; }
+      ctx.beginPath();
+      ctx.moveTo(cx - dx, cy - dy);
+      ctx.lineTo(cx + dx, cy + dy);
+      ctx.stroke();
+      // Arrowheads
+      const aSize = radius * 0.25;
+      for (const dir of [1, -1]) {
+        const ax = cx + dx * dir, ay = cy + dy * dir;
+        const angle = Math.atan2(dy * dir, dx * dir);
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax - Math.cos(angle - 0.5) * aSize, ay - Math.sin(angle - 0.5) * aSize);
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax - Math.cos(angle + 0.5) * aSize, ay - Math.sin(angle + 0.5) * aSize);
+        ctx.stroke();
+      }
+    } else if (sp === "rainbow") {
+      // Rotating rainbow ring
+      const ringR = radius * 0.75;
+      ctx.lineWidth = 3 * s;
+      for (let i = 0; i < 6; i++) {
+        const startA = t * 1.5 + (Math.PI * 2 * i) / 6;
+        const endA = startA + Math.PI / 4;
+        ctx.strokeStyle = `hsl(${i * 60},100%,65%)`;
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringR, startA, endA);
+        ctx.stroke();
+      }
+      // White star center
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      const starR = radius * 0.2;
+      ctx.beginPath();
+      for (let i = 0; i < 4; i++) {
+        const a = t * 2 + (Math.PI * 2 * i) / 4;
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(a) * starR, cy + Math.sin(a) * starR);
+      }
+      ctx.fill();
+    }
+
     ctx.restore();
   } else {
     drawPlanet(ctx, piece.color, cx, cy, radius);
