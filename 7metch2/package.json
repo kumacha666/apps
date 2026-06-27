@@ -4,8 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "vite",
+    "test": "vitest run",
+    "prebuild": "npm test",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "npm run build && cp dist/game.js . && echo 'Deploy complete. Commit and push to deploy.'"
   },
   "devDependencies": {
     "playwright": "^1.61.1",
