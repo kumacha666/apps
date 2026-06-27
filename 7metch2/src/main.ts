@@ -3,7 +3,8 @@ import { initInput } from "./input";
 import { startRun, showScreen } from "./game";
 import { initAudio } from "./audio";
 import { updateVFX, hasActiveVFX } from "./vfx";
-const VERSION = "0.2.3";
+declare const __APP_VERSION__: string;
+const VERSION = __APP_VERSION__;
 
 function gameLoop(): void {
   if (hasActiveVFX()) {
