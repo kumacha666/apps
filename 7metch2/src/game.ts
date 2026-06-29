@@ -280,11 +280,7 @@ async function resolveBoard(): Promise<void> {
     G.chainCount++;
     if (G.chainCount > G.maxChain) G.maxChain = G.chainCount;
 
-    // Show chain label for chains >= 2
-    if (G.chainCount >= 2) {
-      startChainLabel(G.chainCount);
-      if (G.chainCount >= 3) addScreenShake(Math.min(G.chainCount * 0.8, 4));
-    }
+    if (G.chainCount >= 3) addScreenShake(Math.min(G.chainCount * 0.8, 4));
 
     const specials = findSpecialCreations(matches);
 
@@ -495,6 +491,11 @@ async function resolveBoard(): Promise<void> {
     if (G.score >= G.stageTarget) break;
 
     matches = findAllMatches();
+  }
+
+  // Show chain label after all chains resolve
+  if (G.chainCount >= 2) {
+    startChainLabel(G.chainCount);
   }
 
   // Tick countdowns
