@@ -5,7 +5,7 @@ export interface Piece {
   resonanceBonus?: number;
 }
 
-export type SpecialType = "bomb" | "line_h" | "line_v" | "line_d" | "rainbow";
+export type SpecialType = "bomb" | "line_h" | "line_v" | "line_d" | "rainbow" | "debris";
 
 export interface CellPos {
   r: number;

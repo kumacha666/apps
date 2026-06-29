@@ -97,6 +97,32 @@ export function drawPieceAt(piece: Piece, cx: number, cy: number, scale?: number
   const color = PIECE_COLORS[piece.color];
   const t = performance.now() / 1000;
 
+  if (piece.special === "debris") {
+    ctx.save();
+    const grad = ctx.createRadialGradient(cx - radius * 0.2, cy - radius * 0.2, radius * 0.1, cx, cy, radius);
+    grad.addColorStop(0, "#888");
+    grad.addColorStop(0.6, "#555");
+    grad.addColorStop(1, "#333");
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.lineWidth = 1.5 * s;
+    ctx.stroke();
+    // Crack lines
+    ctx.strokeStyle = "rgba(0,0,0,0.3)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx - radius * 0.3, cy - radius * 0.1);
+    ctx.lineTo(cx + radius * 0.1, cy + radius * 0.3);
+    ctx.moveTo(cx + radius * 0.2, cy - radius * 0.3);
+    ctx.lineTo(cx - radius * 0.1, cy + radius * 0.1);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
   if (piece.special) {
     ctx.save();
 
