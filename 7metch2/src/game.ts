@@ -369,6 +369,17 @@ async function resolveBoard(): Promise<void> {
       G.board[r][c] = null;
     }
 
+    // Break adjacent debris
+    const debrisDirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    for (const [r, c] of clearList) {
+      for (const [dr, dc] of debrisDirs) {
+        const nr = r + dr, nc = c + dc;
+        if (inBounds(nr, nc) && G.board[nr]?.[nc]?.special === "debris") {
+          G.board[nr][nc]!.special = null;
+        }
+      }
+    }
+
     // Place specials
     for (const sp of specials) {
       if (G.board[sp.r]?.[sp.c] === null) {

@@ -47,14 +47,14 @@ export function findAllMatches(matchMin?: number): [number, number][] {
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const p = G.board[r][c];
-      if (!p) continue;
+      if (!p || p.special === "debris") continue;
       const color = p.color;
       for (const [dr, dc] of directions) {
         const line: [number, number][] = [[r, c]];
         let nr = r + dr, nc = c + dc;
         while (inBounds(nr, nc)) {
           const np = G.board[nr][nc];
-          if (!np || np.color !== color) break;
+          if (!np || np.special === "debris" || np.color !== color) break;
           line.push([nr, nc]);
           nr += dr;
           nc += dc;
@@ -71,7 +71,7 @@ export function findAllMatches(matchMin?: number): [number, number][] {
     for (let r = 0; r < ROWS - 1; r++) {
       for (let c = 0; c < COLS - 1; c++) {
         const cells: [number, number][] = [[r, c], [r, c + 1], [r + 1, c], [r + 1, c + 1]];
-        if (cells.some(([cr, cc]) => !G.board[cr][cc])) continue;
+        if (cells.some(([cr, cc]) => !G.board[cr][cc] || G.board[cr][cc]!.special === "debris")) continue;
         const color = G.board[r][c]!.color;
         if (cells.every(([cr, cc]) => G.board[cr][cc]!.color === color)) {
           cells.forEach(([cr, cc]) => matched.add(cr * COLS + cc));
@@ -315,6 +315,12 @@ export function applyGravity(): void {
     }
     // Fill from top
     for (let r = writeRow; r >= 0; r--) {
+      // Debris: chance increases with chain count (starts at chain 3)
+      const debrisChance = G.chainCount >= 3 ? Math.min(0.6, (G.chainCount - 2) * 0.08) : 0;
+      if (debrisChance > 0 && Math.random() < debrisChance) {
+        G.board[r][c] = { color: Math.floor(Math.random() * NUM_COLORS), special: "debris" };
+        continue;
+      }
       const p = randomPiece();
       // Proliferation: double the chance of last cleared color
       if (has(ups, "proliferation") && G.proliferationColor !== null && Math.random() < 0.4) {
