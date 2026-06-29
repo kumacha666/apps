@@ -7,7 +7,11 @@ export function setBoardSize(cols: number, rows: number): void {
   COLS = cols;
   ROWS = rows;
 }
-export const NUM_COLORS = 5;
+export let NUM_COLORS = 5;
+
+export function setNumColors(n: number): void {
+  NUM_COLORS = n;
+}
 export const PIECE_COLORS = ["#e94560", "#4ecdc4", "#ffd700", "#c0c8d8", "#ff8a5c", "#1e4fff", "#ff6bb3"];
 
 export interface VfxParticle {

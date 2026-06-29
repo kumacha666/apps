@@ -1,4 +1,4 @@
-import { G, COLS, ROWS, setBoardSize } from "./state";
+import { G, COLS, ROWS, setBoardSize, setNumColors } from "./state";
 import {
   findAllMatches, findSpecialCreations, activateSpecial, applyGravity,
   swapPieces, isAdjacentAllowed, createBoard, autoDetonateCheck, tickCountdowns,
@@ -41,9 +41,16 @@ export function getStageMoves(stage: number): number {
 }
 
 export function getStageBoardSize(stage: number): { cols: number; rows: number } {
-  const cols = 7 + stage;
-  const rows = 8 + stage;
+  const grow = Math.floor(stage / 3);
+  const cols = 7 + grow;
+  const rows = 8 + grow;
   return { cols, rows };
+}
+
+export function getStageNumColors(stage: number): number {
+  if (stage >= 15) return 7;
+  if (stage >= 8) return 6;
+  return 5;
 }
 
 export function startRun(): void {
@@ -60,6 +67,7 @@ export function startStage(): void {
   G.clearCountThisTurn = 0;
   const size = getStageBoardSize(G.run.stage);
   setBoardSize(size.cols, size.rows);
+  setNumColors(getStageNumColors(G.run.stage));
   resizeCanvas();
 
   G.stageTarget = getStageTarget(G.run.stage);
@@ -257,21 +265,8 @@ async function resolveBoard(): Promise<void> {
       }
     }
 
-    // Chain reaction (capped to prevent split-induced infinite loop)
+    // No chain reaction: specials caught in explosions are destroyed without activating
     const clearList = [...cleared].map(v => [Math.floor(v / COLS), v % COLS] as [number, number]);
-    const maxChainExpand = ROWS * COLS;
-    for (let i = 0; i < clearList.length && clearList.length < maxChainExpand; i++) {
-      const [cr, cc] = clearList[i];
-      if (G.board[cr]?.[cc]?.special && !matches.some(([mr, mc]) => mr === cr && mc === cc)) {
-        const extra = activateSpecial(cr, cc, cleared);
-        extra.forEach(([er, ec]) => {
-          if (!cleared.has(er * COLS + ec)) {
-            cleared.add(er * COLS + ec);
-            clearList.push([er, ec]);
-          }
-        });
-      }
-    }
 
     // Infection (capped to prevent infinite loops)
     if (has(G.run.upgrades, "infection") && G.chainCount <= 8) {
