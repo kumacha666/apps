@@ -1,4 +1,5 @@
 import type { UpgradeDef, UpgradeId } from "./types";
+import { G } from "./state";
 
 export const ALL_UPGRADES: UpgradeDef[] = [
   // Basic unlocks
@@ -39,6 +40,7 @@ export const ALL_UPGRADES: UpgradeDef[] = [
 export function getAvailableUpgrades(owned: UpgradeId[]): UpgradeDef[] {
   const ownedSet = new Set(owned);
   return ALL_UPGRADES.filter(u => {
+    if (G.disabledUpgrades.has(u.id)) return false;
     if (ownedSet.has(u.id)) return false;
     if (u.requires && !u.requires.every(r => ownedSet.has(r))) return false;
     return true;

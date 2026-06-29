@@ -77,6 +77,7 @@ export interface GameState {
   shakeIntensity: number;
   // Chain label
   activeChainLabel: ChainLabel | null;
+  disabledUpgrades: Set<string>;
 }
 
 export const G: GameState = {
@@ -111,4 +112,5 @@ export const G: GameState = {
   shakeIntensity: 0,
   // Chain label
   activeChainLabel: null,
+  disabledUpgrades: new Set<string>(),
 };
