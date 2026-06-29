@@ -8,6 +8,14 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function chainSpeedScale(): number {
+  const c = G.chainCount;
+  if (c <= 1) return 1;
+  if (c === 2) return 0.6;
+  if (c === 3) return 0.3;
+  return 0.1;
+}
+
 function animateFrames(totalFrames: number, callback: (frame: number, t: number) => void): Promise<void> {
   return new Promise<void>((resolve) => {
     let frame = 0;
@@ -69,7 +77,7 @@ export async function animateSwap(r1: number, c1: number, r2: number, c2: number
 // --- Standard clear animation (glow -> shrink+burst) ---
 
 export async function animateStandardClear(cells: [number, number][]): Promise<void> {
-  const totalFrames = 24;
+  const totalFrames = Math.max(2, Math.round(24 * chainSpeedScale()));
   const phase1End = Math.floor(totalFrames * 0.25);
 
   await animateFrames(totalFrames, (frame, _t) => {
@@ -139,10 +147,11 @@ export async function animateDrop(fallMap: FallEntry[]): Promise<void> {
   }
   SFX.drop();
 
+  const scale = chainSpeedScale();
   const maxDist = Math.max(...fallMap.map((f) => f.toR - f.fromR));
-  const dropSpeed = 0.22;
-  const fallFrames = Math.ceil(maxDist / dropSpeed);
-  const bounceFrames = 10;
+  const dropSpeed = 0.22 / scale;
+  const fallFrames = Math.max(1, Math.ceil(maxDist / dropSpeed));
+  const bounceFrames = Math.max(1, Math.round(10 * scale));
   const totalFrames = fallFrames + bounceFrames;
   const cs = G.cellSize;
   const ox = G.offsetX;
