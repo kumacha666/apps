@@ -315,8 +315,8 @@ export function applyGravity(): void {
     }
     // Fill from top
     for (let r = writeRow; r >= 0; r--) {
-      // Debris: chance increases with chain count (starts at chain 3)
-      const debrisChance = G.chainCount >= 3 ? Math.min(0.6, (G.chainCount - 2) * 0.08) : 0;
+      // Debris: chance increases with chain count (starts at chain 1)
+      const debrisChance = G.chainCount >= 1 ? Math.min(0.6, G.chainCount * 0.05) : 0;
       if (debrisChance > 0 && Math.random() < debrisChance) {
         G.board[r][c] = { color: Math.floor(Math.random() * NUM_COLORS), special: "debris" };
         continue;
