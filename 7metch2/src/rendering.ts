@@ -267,7 +267,7 @@ export function startChainLabel(chain: number): void {
     chain,
     label: `${chain} Chain!`,
     startTime: performance.now(),
-    duration: 550,
+    duration: 1200,
   };
 }
 
