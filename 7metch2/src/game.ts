@@ -34,15 +34,15 @@ function updateUpgradeList(): void {
 }
 
 export function getStageTarget(stage: number): number {
-  return 200 + stage * 150 + Math.floor(stage * stage * 40);
+  return Math.floor((200 + stage * 150 + Math.floor(stage * stage * 40)) * G.targetMultiplier);
 }
 
 export function getStageMoves(stage: number): number {
-  return Math.max(8, 20 - Math.floor(stage / 3));
+  return Math.max(8, G.baseMoves - Math.floor(stage / 3));
 }
 
 export function getStageBoardSize(stage: number): { cols: number; rows: number } {
-  const grow = Math.floor(stage / 3);
+  const grow = Math.floor(stage / G.boardGrowthRate);
   const cols = 7 + grow;
   const rows = 8 + grow;
   return { cols, rows };
@@ -376,7 +376,7 @@ async function resolveBoard(): Promise<void> {
     }
 
     // Score
-    const pointsPerCell = Math.max(1, 10 - G.chainCount * 3);
+    const pointsPerCell = Math.max(1, 10 - G.chainCount * G.scoreDiminish);
     const baseScore = clearList.length * pointsPerCell;
     G.score += baseScore;
     G.totalCleared += clearList.length;
