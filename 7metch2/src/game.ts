@@ -26,6 +26,7 @@ function updateUpgradeList(): void {
   }
   el.classList.remove("hidden");
   import("./upgrades").then(({ ALL_UPGRADES }) => {
+    if (el.classList.contains("hidden")) return;
     el.innerHTML = G.run.upgrades.map(id => {
       const def = ALL_UPGRADES.find(u => u.id === id);
       return `<span class="upgrade-badge" title="${def?.name ?? id}">${def?.icon ?? "?"}</span>`;
@@ -67,6 +68,7 @@ export function startStage(): void {
   G.proliferationColor = null;
   G.clearCountThisTurn = 0;
   G.shuffledThisStage = false;
+  G.stalemated = false;
   const size = getStageBoardSize(G.run.stage);
   setBoardSize(size.cols, size.rows);
   setNumColors(getStageNumColors(G.run.stage));
@@ -253,6 +255,7 @@ function handleStalemateCheck(): void {
     drawBoard();
   } else {
     G.movesLeft = 0;
+    G.stalemated = true;
   }
 }
 
@@ -626,8 +629,11 @@ function showUpgradeScreen(): void {
 }
 
 function showGameOver(): void {
+  const title = document.querySelector("#gameover-screen h2")!;
+  title.textContent = G.stalemated ? "盤面が詰みました" : "ゲームオーバー";
   const stats = document.getElementById("gameover-stats")!;
   stats.innerHTML = `
+    ${G.stalemated ? "マッチ可能な手がありません<br><br>" : ""}
     到達ステージ: ${G.run.stage + 1}<br>
     総スコア: ${G.run.score + G.score}<br>
     総消去: ${G.run.totalCleared}個<br>
