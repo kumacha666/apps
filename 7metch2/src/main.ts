@@ -3,11 +3,12 @@ import { initInput } from "./input";
 import { startRun, showScreen } from "./game";
 import { initAudio } from "./audio";
 import { updateVFX, hasActiveVFX } from "./vfx";
+import { G } from "./state";
 declare const __APP_VERSION__: string;
 const VERSION = __APP_VERSION__;
 
 function gameLoop(): void {
-  if (hasActiveVFX()) {
+  if (hasActiveVFX() || G.activeChainLabel) {
     updateVFX();
     drawBoard();
   }

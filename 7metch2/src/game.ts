@@ -337,7 +337,7 @@ async function resolveBoard(): Promise<void> {
     }
 
     // Score
-    const pointsPerCell = Math.max(1, 12 - G.chainCount * 2);
+    const pointsPerCell = Math.max(1, 10 - G.chainCount * 3);
     const baseScore = clearList.length * pointsPerCell;
     G.score += baseScore;
     G.totalCleared += clearList.length;
