@@ -67,6 +67,7 @@ export interface GameState {
   stageTarget: number;
   proliferationColor: number | null;
   clearCountThisTurn: number;
+  shuffledThisStage: boolean;
   // VFX
   vfxParticles: VfxParticle[];
   vfxShockwaves: VfxShockwave[];
@@ -100,6 +101,7 @@ export const G: GameState = {
   stageTarget: 0,
   proliferationColor: null,
   clearCountThisTurn: 0,
+  shuffledThisStage: false,
   // VFX
   vfxParticles: [],
   vfxShockwaves: [],
