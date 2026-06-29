@@ -78,6 +78,12 @@ export interface GameState {
   // Chain label
   activeChainLabel: ChainLabel | null;
   disabledUpgrades: Set<string>;
+  // Tuning parameters (settings screen)
+  debrisRate: number;
+  scoreDiminish: number;
+  boardGrowthRate: number;
+  baseMoves: number;
+  targetMultiplier: number;
 }
 
 export const G: GameState = {
@@ -113,4 +119,9 @@ export const G: GameState = {
   // Chain label
   activeChainLabel: null,
   disabledUpgrades: new Set<string>(),
+  debrisRate: 1.0,
+  scoreDiminish: 3,
+  boardGrowthRate: 3,
+  baseMoves: 20,
+  targetMultiplier: 1.0,
 };
