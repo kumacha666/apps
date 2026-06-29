@@ -279,7 +279,7 @@ function drawChainLabel(): void {
 
   const popT = Math.min(t / 0.15, 1);
   const scale = popT < 1 ? 0.3 + popT * 1.0 : 1.3 - (t - 0.15) * 0.35;
-  const yOffset = -t * G.cellSize * 0.6;
+  const yOffset = -t * 30;
   const alpha = t < 0.65 ? 1 : 1 - (t - 0.65) / 0.35;
   const chainColor = chain >= 5 ? "#ff4444" : chain >= 3 ? "#ff8800" : "#ffd700";
 
@@ -290,8 +290,9 @@ function drawChainLabel(): void {
   ctx.strokeStyle = "#000";
   ctx.lineWidth = 4;
   ctx.shadowColor = chainColor;
-  ctx.shadowBlur = 8 + chain * 3;
-  ctx.font = `bold ${G.cellSize * (0.7 + chain * 0.05) * scale}px sans-serif`;
+  ctx.shadowBlur = 8 + Math.min(chain, 10) * 3;
+  const fontSize = Math.min(48, 28 + Math.min(chain, 10) * 2) * scale;
+  ctx.font = `bold ${fontSize}px sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   const x = G.offsetX + G.boardPixelW / 2;
