@@ -79,6 +79,7 @@ export function startStage(): void {
   createBoard();
 
   showScreen("game");
+  handleStalemateCheck();
   updateHUD();
   updateUpgradeList();
   drawBoard();
@@ -227,16 +228,7 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
 
     G.lastSwapDir = null;
 
-    // 詰み検知: 有効な手がなければシャッフル（1回だけ）
-    if (countAvailableMoves() === 0) {
-      if (!G.shuffledThisStage) {
-        G.shuffledThisStage = true;
-        shuffleBoard();
-      } else {
-        // 2回目の詰み → ゲームオーバー
-        G.movesLeft = 0;
-      }
-    }
+    handleStalemateCheck();
 
     updateHUD();
     drawBoard();
@@ -244,6 +236,23 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
     checkWinLose();
   } finally {
     G.animating = false;
+  }
+}
+
+function handleStalemateCheck(): void {
+  if (countAvailableMoves() > 0) return;
+  if (!G.shuffledThisStage) {
+    G.shuffledThisStage = true;
+    G.activeChainLabel = {
+      chain: 0,
+      label: "シャッフル！",
+      startTime: performance.now(),
+      duration: 1200,
+    };
+    shuffleBoard();
+    drawBoard();
+  } else {
+    G.movesLeft = 0;
   }
 }
 
