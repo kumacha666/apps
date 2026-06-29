@@ -8,7 +8,7 @@ declare const __APP_VERSION__: string;
 const VERSION = __APP_VERSION__;
 
 function gameLoop(): void {
-  if (hasActiveVFX() || G.activeChainLabel) {
+  if (!G.animating && (hasActiveVFX() || G.activeChainLabel)) {
     updateVFX();
     drawBoard();
   }
