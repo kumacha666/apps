@@ -281,7 +281,7 @@ function drawChainLabel(): void {
   const scale = popT < 1 ? 0.3 + popT * 1.0 : 1.3 - (t - 0.15) * 0.35;
   const yOffset = -t * 30;
   const alpha = t < 0.65 ? 1 : 1 - (t - 0.65) / 0.35;
-  const chainColor = chain >= 5 ? "#ff4444" : chain >= 3 ? "#ff8800" : "#ffd700";
+  const chainColor = chain === 0 ? "#44aaff" : chain >= 5 ? "#ff4444" : chain >= 3 ? "#ff8800" : "#ffd700";
 
   const ctx = G.ctx!;
   ctx.save();
