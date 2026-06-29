@@ -2,12 +2,13 @@ import { G, COLS, ROWS, setBoardSize, setNumColors } from "./state";
 import {
   findAllMatches, findSpecialCreations, activateSpecial, applyGravity,
   swapPieces, isAdjacentAllowed, createBoard, autoDetonateCheck, tickCountdowns,
-  inBounds,
+  inBounds, countAvailableMoves,
 } from "./board";
 import { has } from "./upgrades";
 import { drawBoard, startChainLabel, resizeCanvas } from "./rendering";
 import { animateSwap, animateStandardClear, animateDrop, sleep } from "./animations";
 import type { FallEntry } from "./animations";
+import type { Piece } from "./types";
 import { addScreenShake } from "./vfx";
 import { SFX } from "./audio";
 
@@ -65,6 +66,7 @@ export function startStage(): void {
   G.maxChain = 0;
   G.proliferationColor = null;
   G.clearCountThisTurn = 0;
+  G.shuffledThisStage = false;
   const size = getStageBoardSize(G.run.stage);
   setBoardSize(size.cols, size.rows);
   setNumColors(getStageNumColors(G.run.stage));
@@ -224,12 +226,44 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
     }
 
     G.lastSwapDir = null;
+
+    // 詰み検知: 有効な手がなければシャッフル（1回だけ）
+    if (countAvailableMoves() === 0) {
+      if (!G.shuffledThisStage) {
+        G.shuffledThisStage = true;
+        shuffleBoard();
+      } else {
+        // 2回目の詰み → ゲームオーバー
+        G.movesLeft = 0;
+      }
+    }
+
     updateHUD();
     drawBoard();
 
     checkWinLose();
   } finally {
     G.animating = false;
+  }
+}
+
+function shuffleBoard(): void {
+  const pieces: (Piece | null)[] = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      pieces.push(G.board[r][c]);
+    }
+  }
+  // Fisher-Yates shuffle
+  for (let i = pieces.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pieces[i], pieces[j]] = [pieces[j], pieces[i]];
+  }
+  let idx = 0;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      G.board[r][c] = pieces[idx++];
+    }
   }
 }
 
