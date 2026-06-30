@@ -29,8 +29,19 @@
 
     <div id="screen-combat" class="screen">
       <div id="combat-units">
-        <div id="combat-player" class="combat-unit"></div>
-        <div id="combat-enemy" class="combat-unit"></div>
+        <div id="combat-player" class="combat-unit">
+          <div class="unit-sprite"><span class="unit-icon"></span></div>
+          <div class="unit-name"></div>
+          <div class="unit-hpbar-outer"><div class="unit-hpbar-inner"></div></div>
+          <div class="unit-hptext"></div>
+        </div>
+        <div id="combat-vs">VS</div>
+        <div id="combat-enemy" class="combat-unit">
+          <div class="unit-sprite"><span class="unit-icon"></span></div>
+          <div class="unit-name"></div>
+          <div class="unit-hpbar-outer"><div class="unit-hpbar-inner"></div></div>
+          <div class="unit-hptext"></div>
+        </div>
       </div>
       <div id="combat-log"></div>
       <button id="btn-combat-next" class="btn-primary hidden">つぎへ</button>

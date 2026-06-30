@@ -11,7 +11,7 @@
     "sim": "npx vite-node scripts/simulate.mjs",
     "preview": "vite preview",
     "test:e2e": "playwright test",
-    "deploy": "npm run build && cp dist/game.js dist/style.css dist/manifest.json . && node scripts/update-sw-version.mjs && echo 'Deploy complete.'"
+    "deploy": "npm run build && cp dist/game.js dist/style.css dist/manifest.json dist/index.html . && node scripts/update-sw-version.mjs && echo 'Deploy complete.'"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

@@ -1,5 +1,5 @@
 import "./style.css";
-import type { CombatUnit, Stats } from "./types";
+import type { CombatUnit, Stats, WeaponType } from "./types";
 import { basicClasses, advancedClasses, getClassById } from "./data/classes";
 import { generateEnemyStats, enemyName, isBossStage } from "./data/enemies";
 import { rollUpgradeChoices } from "./data/upgrades";
@@ -21,6 +21,14 @@ interface RunState {
 }
 
 let run: RunState | null = null;
+
+const WEAPON_ICON: Record<WeaponType, string> = {
+  sword: "⚔️",
+  lance: "🔱",
+  bow: "🏹",
+  tome: "📖",
+};
+const ENEMY_ICON = "👹";
 
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -62,6 +70,56 @@ function startRun(classId: string): void {
   startCombat();
 }
 
+function renderUnitSprite(containerId: string, icon: string, name: string, maxHp: number): void {
+  const container = $(containerId);
+  container.querySelector(".unit-icon")!.textContent = icon;
+  container.querySelector(".unit-name")!.textContent = name;
+  (container.querySelector(".unit-hpbar-inner") as HTMLElement).style.width = "100%";
+  (container.querySelector(".unit-hpbar-inner") as HTMLElement).style.background = "#4caf50";
+  container.querySelector(".unit-hptext")!.textContent = `HP ${maxHp}/${maxHp}`;
+}
+
+function updateUnitHp(containerId: string, hp: number, maxHp: number): void {
+  const container = $(containerId);
+  const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
+  const bar = container.querySelector(".unit-hpbar-inner") as HTMLElement;
+  bar.style.width = `${pct}%`;
+  bar.style.background = pct <= 25 ? "#e53935" : pct <= 50 ? "#fbc02d" : "#4caf50";
+  container.querySelector(".unit-hptext")!.textContent = `HP ${Math.max(0, hp)}/${maxHp}`;
+}
+
+function showDamagePopup(containerId: string, text: string, variant: "" | "crit" | "miss"): void {
+  const container = $(containerId);
+  const popup = document.createElement("div");
+  popup.className = `dmg-popup ${variant}`.trim();
+  popup.textContent = text;
+  container.appendChild(popup);
+  setTimeout(() => popup.remove(), 650);
+}
+
+function playAttackAnimation(attackerId: string, defenderId: string, attackerSide: "player" | "enemy", ev: AttackEvent): void {
+  const attackerSprite = $(attackerId).querySelector(".unit-sprite") as HTMLElement;
+  const defenderSprite = $(defenderId).querySelector(".unit-sprite") as HTMLElement;
+  const lungeClass = attackerSide === "player" ? "lunge-right" : "lunge-left";
+  attackerSprite.classList.add(lungeClass);
+  setTimeout(() => attackerSprite.classList.remove(lungeClass), 230);
+
+  if (ev.hit) {
+    const flashClass = ev.crit ? "crit-flash" : "hit-flash";
+    defenderSprite.classList.add(flashClass);
+    setTimeout(() => defenderSprite.classList.remove(flashClass), 330);
+    if (ev.crit) {
+      $("screen-combat").classList.add("shake");
+      setTimeout(() => $("screen-combat").classList.remove("shake"), 230);
+    }
+    showDamagePopup(defenderId, ev.crit ? `会心 ${ev.damage}!` : `${ev.damage}`, ev.crit ? "crit" : "");
+  } else {
+    defenderSprite.classList.add("dodge");
+    setTimeout(() => defenderSprite.classList.remove("dodge"), 230);
+    showDamagePopup(defenderId, "MISS", "miss");
+  }
+}
+
 function startCombat(): void {
   if (!run) return;
   const classDef = getClassById(run.classId);
@@ -69,14 +127,14 @@ function startCombat(): void {
   const player: CombatUnit = { classId: run.classId, name: classDef.name, stats: run.stats };
   const enemy: CombatUnit = { classId: "enemy", name: enemyName(run.stage), stats: enemyStats };
 
-  $("combat-player").textContent = `${player.name} HP:${player.stats.hp}`;
-  $("combat-enemy").textContent = `${enemy.name} HP:${enemy.stats.hp}`;
+  renderUnitSprite("combat-player", WEAPON_ICON[classDef.weaponType], player.name, player.stats.hp);
+  renderUnitSprite("combat-enemy", ENEMY_ICON, enemy.name, enemy.stats.hp);
   $("combat-log").textContent = "";
   $("btn-combat-next").classList.add("hidden");
   showScreen("screen-combat");
 
   const result = simulateCombat(player, enemy, Math.random);
-  playLog(result.log, () => {
+  playLog(player.name, player.stats.hp, enemy.stats.hp, result.log, () => {
     if (result.winner === "player") {
       onCombatWin();
     } else {
@@ -85,7 +143,7 @@ function startCombat(): void {
   });
 }
 
-function playLog(log: AttackEvent[], onDone: () => void): void {
+function playLog(playerName: string, playerMaxHp: number, enemyMaxHp: number, log: AttackEvent[], onDone: () => void): void {
   const logEl = $("combat-log");
   let i = 0;
   const step = () => {
@@ -94,18 +152,26 @@ function playLog(log: AttackEvent[], onDone: () => void): void {
       return;
     }
     const ev = log[i];
+    const attackerIsPlayer = ev.attackerName === playerName;
+    const attackerId = attackerIsPlayer ? "combat-player" : "combat-enemy";
+    const defenderId = attackerIsPlayer ? "combat-enemy" : "combat-player";
+    const defenderMaxHp = attackerIsPlayer ? enemyMaxHp : playerMaxHp;
+
     const line = ev.hit
       ? `${ev.attackerName}の攻撃！${ev.crit ? "会心の一撃！ " : ""}ダメージ${ev.damage}（残りHP ${ev.defenderHpAfter}）`
       : `${ev.attackerName}の攻撃は外れた`;
     logEl.textContent += line + "\n";
     logEl.scrollTop = logEl.scrollHeight;
+
+    playAttackAnimation(attackerId, defenderId, attackerIsPlayer ? "player" : "enemy", ev);
     if (ev.hit) {
+      updateUnitHp(defenderId, ev.defenderHpAfter, defenderMaxHp);
       ev.crit ? SFX.crit() : SFX.hit();
     } else {
       SFX.miss();
     }
     i += 1;
-    setTimeout(step, 220);
+    setTimeout(step, 420);
   };
   step();
 }

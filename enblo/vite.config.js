@@ -7,15 +7,6 @@ export default defineConfig(() => ({
   root: ".",
   base: "./",
   publicDir: "public",
-  plugins: [{
-    name: "entry-rewrite",
-    transformIndexHtml(html) {
-      return html.replace(
-        /<script type="module"[^>]*src="[^"]*game\.js"/,
-        '<script type="module" src="./src/main.ts"'
-      );
-    },
-  }],
   build: {
     outDir: "dist",
     emptyOutDir: true,
