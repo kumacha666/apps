@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Endless Bloodline — enblo</title>
+  <link rel="manifest" href="./manifest.json">
+  <script type="module" crossorigin src="./src/main.ts"></script>
+</head>
+<body>
+  <div id="app">
+    <div id="screen-title" class="screen active">
+      <h1 class="title-logo">Endless Bloodline</h1>
+      <p class="title-sub">死ぬまで戦う、自動戦闘ローグライク闘技場</p>
+      <button id="btn-start" class="btn-primary">はじめる</button>
+      <button id="btn-permanent" class="btn-secondary">永続強化</button>
+      <div id="gold-display"></div>
+      <div id="credits">Honeypaw Lab.</div>
+    </div>
+
+    <div id="screen-class-select" class="screen">
+      <h2>クラス選択</h2>
+      <div id="class-grid"></div>
+      <button id="btn-class-back" class="btn-secondary">もどる</button>
+    </div>
+
+    <div id="screen-combat" class="screen">
+      <div id="combat-units">
+        <div id="combat-player" class="combat-unit"></div>
+        <div id="combat-enemy" class="combat-unit"></div>
+      </div>
+      <div id="combat-log"></div>
+      <button id="btn-combat-next" class="btn-primary hidden">つぎへ</button>
+    </div>
+
+    <div id="screen-upgrade" class="screen">
+      <h2 id="upgrade-title">強化を選択</h2>
+      <div id="upgrade-options"></div>
+    </div>
+
+    <div id="screen-result" class="screen">
+      <h2 id="result-title"></h2>
+      <div id="result-details"></div>
+      <button id="btn-result-permanent" class="btn-primary">永続強化へ</button>
+    </div>
+
+    <div id="screen-permanent" class="screen">
+      <h2>永続強化</h2>
+      <div id="permanent-gold"></div>
+      <div id="permanent-options"></div>
+      <button id="btn-permanent-back" class="btn-secondary">タイトルへ</button>
+    </div>
+  </div>
+
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js");
+    }
+  </script>
+</body>
+</html>

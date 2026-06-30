@@ -1,0 +1,235 @@
+import "./style.css";
+import type { CombatUnit, Stats } from "./types";
+import { basicClasses, advancedClasses, getClassById } from "./data/classes";
+import { generateEnemyStats, enemyName, isBossStage } from "./data/enemies";
+import { rollUpgradeChoices } from "./data/upgrades";
+import { rollRelicChoices } from "./data/relics";
+import { PERMANENT_UPGRADE_POOL, applyPermanentUpgrades } from "./data/permanentUpgrades";
+import { simulateCombat } from "./combat";
+import { goldForStage } from "./run";
+import { loadSave, writeSave, addGold, purchasePermanentUpgrade, unlockDifficulty, unlockClass } from "./save";
+import { SFX } from "./audio";
+import type { AttackEvent } from "./types";
+
+let save = loadSave();
+
+interface RunState {
+  classId: string;
+  stats: Stats;
+  stage: number;
+  goldEarned: number;
+}
+
+let run: RunState | null = null;
+
+function $(id: string): HTMLElement {
+  const el = document.getElementById(id);
+  if (!el) throw new Error(`Missing element #${id}`);
+  return el;
+}
+
+function showScreen(id: string): void {
+  document.querySelectorAll(".screen").forEach((el) => el.classList.remove("active"));
+  $(id).classList.add("active");
+}
+
+function renderTitle(): void {
+  $("gold-display").textContent = `所持ゴールド: ${save.totalGold}`;
+  showScreen("screen-title");
+}
+
+function renderClassSelect(): void {
+  const grid = $("class-grid");
+  grid.innerHTML = "";
+  const classes = basicClasses();
+  for (const c of classes) {
+    const card = document.createElement("div");
+    card.className = "option-card";
+    card.textContent = `${c.name}（HP${c.baseStats.hp} 攻${c.baseStats.atk} 防${c.baseStats.def} 速${c.baseStats.spd}）`;
+    card.addEventListener("click", () => {
+      SFX.select();
+      startRun(c.id);
+    });
+    grid.appendChild(card);
+  }
+  showScreen("screen-class-select");
+}
+
+function startRun(classId: string): void {
+  const classDef = getClassById(classId);
+  const stats = applyPermanentUpgrades(classDef.baseStats, save.purchasedPermanentUpgrades);
+  run = { classId, stats, stage: 1, goldEarned: 0 };
+  startCombat();
+}
+
+function startCombat(): void {
+  if (!run) return;
+  const classDef = getClassById(run.classId);
+  const enemyStats = generateEnemyStats(run.stage);
+  const player: CombatUnit = { classId: run.classId, name: classDef.name, stats: run.stats };
+  const enemy: CombatUnit = { classId: "enemy", name: enemyName(run.stage), stats: enemyStats };
+
+  $("combat-player").textContent = `${player.name} HP:${player.stats.hp}`;
+  $("combat-enemy").textContent = `${enemy.name} HP:${enemy.stats.hp}`;
+  $("combat-log").textContent = "";
+  $("btn-combat-next").classList.add("hidden");
+  showScreen("screen-combat");
+
+  const result = simulateCombat(player, enemy, Math.random);
+  playLog(result.log, () => {
+    if (result.winner === "player") {
+      onCombatWin();
+    } else {
+      onCombatLose();
+    }
+  });
+}
+
+function playLog(log: AttackEvent[], onDone: () => void): void {
+  const logEl = $("combat-log");
+  let i = 0;
+  const step = () => {
+    if (i >= log.length) {
+      onDone();
+      return;
+    }
+    const ev = log[i];
+    const line = ev.hit
+      ? `${ev.attackerName}の攻撃！${ev.crit ? "会心の一撃！ " : ""}ダメージ${ev.damage}（残りHP ${ev.defenderHpAfter}）`
+      : `${ev.attackerName}の攻撃は外れた`;
+    logEl.textContent += line + "\n";
+    logEl.scrollTop = logEl.scrollHeight;
+    if (ev.hit) {
+      ev.crit ? SFX.crit() : SFX.hit();
+    } else {
+      SFX.miss();
+    }
+    i += 1;
+    setTimeout(step, 220);
+  };
+  step();
+}
+
+function onCombatWin(): void {
+  if (!run) return;
+  SFX.win();
+  run.goldEarned += goldForStage(run.stage);
+
+  if (isBossStage(run.stage)) {
+    renderRelicSelect();
+  } else {
+    renderUpgradeSelect();
+  }
+}
+
+function onCombatLose(): void {
+  if (!run) return;
+  SFX.lose();
+  save = addGold(save, run.goldEarned);
+  writeSave(save);
+
+  $("result-title").textContent = "戦闘不能…";
+  $("result-details").textContent = `到達: 第${run.stage}層 / 獲得ゴールド: ${run.goldEarned}`;
+  showScreen("screen-result");
+}
+
+function renderUpgradeSelect(): void {
+  if (!run) return;
+  $("upgrade-title").textContent = "強化を選択";
+  const container = $("upgrade-options");
+  container.innerHTML = "";
+  const choices = rollUpgradeChoices(3, run.classId, Math.random);
+  for (const choice of choices) {
+    const card = document.createElement("div");
+    card.className = "option-card";
+    card.textContent = `${choice.name}（${choice.rarity}） — ${choice.description}`;
+    card.addEventListener("click", () => {
+      if (!run) return;
+      SFX.select();
+      run.stats = choice.apply(run.stats);
+      run.stage += 1;
+      startCombat();
+    });
+    container.appendChild(card);
+  }
+  showScreen("screen-upgrade");
+}
+
+function renderRelicSelect(): void {
+  if (!run) return;
+  $("upgrade-title").textContent = "レリックを選択（ボス報酬）";
+  const container = $("upgrade-options");
+  container.innerHTML = "";
+  const choices = rollRelicChoices(3, Math.random);
+  for (const choice of choices) {
+    const card = document.createElement("div");
+    card.className = "option-card";
+    card.textContent = `${choice.name} — ${choice.description}`;
+    card.addEventListener("click", () => {
+      if (!run) return;
+      SFX.select();
+      run.stats = choice.apply(run.stats);
+      if (!save.unlockedDifficulties.includes("hard")) {
+        save = unlockDifficulty(save, "hard");
+        for (const adv of advancedClasses()) {
+          save = unlockClass(save, adv.id);
+        }
+        writeSave(save);
+      }
+      run.stage += 1;
+      startCombat();
+    });
+    container.appendChild(card);
+  }
+  showScreen("screen-upgrade");
+}
+
+function renderPermanentScreen(): void {
+  $("permanent-gold").textContent = `所持ゴールド: ${save.totalGold}`;
+  const container = $("permanent-options");
+  container.innerHTML = "";
+  for (const upgrade of PERMANENT_UPGRADE_POOL) {
+    const owned = save.purchasedPermanentUpgrades.includes(upgrade.id);
+    const card = document.createElement("div");
+    card.className = "option-card";
+    card.textContent = owned
+      ? `${upgrade.name}（取得済み） — ${upgrade.description}`
+      : `${upgrade.name}（${upgrade.cost}G） — ${upgrade.description}`;
+    if (!owned) {
+      card.addEventListener("click", () => {
+        SFX.select();
+        save = purchasePermanentUpgrade(save, upgrade.id, upgrade.cost);
+        writeSave(save);
+        renderPermanentScreen();
+      });
+    }
+    container.appendChild(card);
+  }
+  showScreen("screen-permanent");
+}
+
+function init(): void {
+  $("btn-start").addEventListener("click", () => {
+    SFX.select();
+    renderClassSelect();
+  });
+  $("btn-permanent").addEventListener("click", () => {
+    SFX.select();
+    renderPermanentScreen();
+  });
+  $("btn-class-back").addEventListener("click", () => {
+    SFX.select();
+    renderTitle();
+  });
+  $("btn-result-permanent").addEventListener("click", () => {
+    SFX.select();
+    renderPermanentScreen();
+  });
+  $("btn-permanent-back").addEventListener("click", () => {
+    SFX.select();
+    renderTitle();
+  });
+  renderTitle();
+}
+
+init();
