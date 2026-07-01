@@ -33,12 +33,20 @@
   <button onclick="sfxDefault()">❓ デフォルト ヒット</button>
 </div>
 
-<h2>効果音 — 武器攻撃（会心）</h2>
+<h2>効果音 — 武器攻撃（会心 A: ヒット10連射）</h2>
 <div class="row">
-  <button onclick="sfxCrit('sword')">⚔️ 剣 会心</button>
-  <button onclick="sfxCrit('lance')">🔱 槍 会心</button>
-  <button onclick="sfxCrit('bow')">🏹 弓 会心</button>
-  <button onclick="sfxCrit('tome')">📖 魔道書 会心</button>
+  <button onclick="sfxCrit('sword')">⚔️ 剣 会心A</button>
+  <button onclick="sfxCrit('lance')">🔱 槍 会心A</button>
+  <button onclick="sfxCrit('bow')">🏹 弓 会心A</button>
+  <button onclick="sfxCrit('tome')">📖 魔道書 会心A</button>
+</div>
+
+<h2>効果音 — 武器攻撃（会心 B: 3連撃）</h2>
+<div class="row">
+  <button onclick="sfxCritB('sword')">⚔️ 剣 会心B</button>
+  <button onclick="sfxCritB('lance')">🔱 槍 会心B</button>
+  <button onclick="sfxCritB('bow')">🏹 弓 会心B</button>
+  <button onclick="sfxCritB('tome')">📖 魔道書 会心B</button>
 </div>
 
 <h2>効果音 — その他</h2>
@@ -313,7 +321,15 @@ function sfxCritExtra(wt) {
 function sfxCrit(wt) {
   doHit(wt);
   setTimeout(() => sfxCritExtra(wt), 45);
-  log(`${wt} 会心`);
+  log(`${wt} 会心A`);
+}
+
+function sfxCritB(wt) {
+  // 3連撃：1撃目→少し間→2撃目→少し間→3撃目（やや速め）
+  doHit(wt);
+  setTimeout(() => doHit(wt), 160);
+  setTimeout(() => doHit(wt), 300);
+  log(`${wt} 会心B`);
 }
 
 function sfxMiss() {
