@@ -123,7 +123,18 @@ function playAttackAnimation(attackerId: string, defenderId: string, attackerSid
 }
 
 function renderStatsBar(id: string, stats: Stats): void {
-  $(id).textContent = `HP:${stats.hp}  攻:${stats.atk}  防:${stats.def}  速:${stats.spd}  命中:${stats.hit}  会心:${stats.crit}`;
+  const el = $(id);
+  const entries: [string, number][] = [
+    ["HP",   stats.hp],
+    ["攻撃", stats.atk],
+    ["防御", stats.def],
+    ["速度", stats.spd],
+    ["命中", stats.hit],
+    ["会心", stats.crit],
+  ];
+  el.innerHTML = entries.map(([label, val]) =>
+    `<div class="stat-cell"><span class="stat-label">${label}</span><span class="stat-value">${val}</span></div>`
+  ).join("");
 }
 
 function startCombat(): void {
@@ -270,6 +281,15 @@ function renderPermanentScreen(classId?: string): void {
   if (!permanentSelectedClass) permanentSelectedClass = basicClasses()[0].id;
 
   $("permanent-gold").textContent = `所持ゴールド: ${save.totalGold}`;
+
+  // 選択中クラスの永続強化込みステータスを表示
+  const classDef = getClassById(permanentSelectedClass);
+  const permanentStats = applyStatBoosts(
+    applyPermanentUpgrades(classDef.baseStats, save.purchasedPermanentUpgrades),
+    getStatBoosts(save, permanentSelectedClass)
+  );
+  renderStatsBar("permanent-stats-bar", permanentStats);
+
   const container = $("permanent-options");
   container.innerHTML = "";
 
