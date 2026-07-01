@@ -49,6 +49,14 @@
   <button onclick="sfxCritB('tome')">📖 魔道書 会心B</button>
 </div>
 
+<h2>効果音 — 武器攻撃（会心 C: 2連撃+Aフィニッシュ）</h2>
+<div class="row">
+  <button onclick="sfxCritC('sword')">⚔️ 剣 会心C</button>
+  <button onclick="sfxCritC('lance')">🔱 槍 会心C</button>
+  <button onclick="sfxCritC('bow')">🏹 弓 会心C</button>
+  <button onclick="sfxCritC('tome')">📖 魔道書 会心C</button>
+</div>
+
 <h2>効果音 — その他</h2>
 <div class="row">
   <button onclick="sfxMiss()">💨 MISS</button>
@@ -330,6 +338,14 @@ function sfxCritB(wt) {
   setTimeout(() => doHit(wt), 160);
   setTimeout(() => doHit(wt), 300);
   log(`${wt} 会心B`);
+}
+
+function sfxCritC(wt) {
+  // 3連撃：1・2撃目は通常ヒット、3撃目でAバージョン（ヒット10連射）をフィニッシュ
+  doHit(wt);
+  setTimeout(() => doHit(wt), 160);
+  setTimeout(() => { doHit(wt); setTimeout(() => sfxCritExtra(wt), 45); }, 300);
+  log(`${wt} 会心C`);
 }
 
 function sfxMiss() {
