@@ -1,3 +1,5 @@
+import type { WeaponType } from "./types";
+
 let ctx: AudioContext | null = null;
 
 function getContext(): AudioContext | null {
@@ -26,11 +28,78 @@ function beep(freq: number, duration: number, type: OscillatorType = "square", g
   osc.stop(now + duration);
 }
 
+// ─── 武器ごとの効果音 ────────────────────────────────────────────────────────
+
+function sfxSword(): void {
+  const audioCtx = getContext(); if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.type = "sawtooth"; osc.frequency.value = 660;
+  g.gain.setValueAtTime(0.22, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(now); osc.stop(now + 0.07);
+}
+
+function sfxLance(): void {
+  const audioCtx = getContext(); if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.type = "sawtooth";
+  osc.frequency.setValueAtTime(260, now);
+  osc.frequency.exponentialRampToValueAtTime(80, now + 0.14);
+  g.gain.setValueAtTime(0.28, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(now); osc.stop(now + 0.14);
+}
+
+function sfxBow(): void {
+  const audioCtx = getContext(); if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.type = "triangle";
+  osc.frequency.setValueAtTime(1400, now);
+  osc.frequency.exponentialRampToValueAtTime(350, now + 0.11);
+  g.gain.setValueAtTime(0.2, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(now); osc.stop(now + 0.11);
+}
+
+function sfxTome(): void {
+  const audioCtx = getContext(); if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(380, now);
+  osc.frequency.exponentialRampToValueAtTime(1100, now + 0.1);
+  g.gain.setValueAtTime(0.18, now);
+  g.gain.setValueAtTime(0.18, now + 0.07);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(now); osc.stop(now + 0.13);
+}
+
+function doHit(weaponType?: WeaponType): void {
+  switch (weaponType) {
+    case "sword": sfxSword(); break;
+    case "lance": sfxLance(); break;
+    case "bow":   sfxBow();   break;
+    case "tome":  sfxTome();  break;
+    default:      beep(220, 0.08, "square", 0.18); break;
+  }
+}
+
 export const SFX = {
-  hit: () => beep(220, 0.08, "square", 0.18),
-  crit: () => {
-    beep(440, 0.05, "sawtooth", 0.2);
-    setTimeout(() => beep(660, 0.08, "sawtooth", 0.2), 50);
+  hit: (weaponType?: WeaponType) => doHit(weaponType),
+  crit: (weaponType?: WeaponType) => {
+    doHit(weaponType);
+    setTimeout(() => beep(880, 0.07, "square", 0.13), 35);
   },
   miss: () => beep(120, 0.12, "triangle", 0.08),
   win: () => {
@@ -115,60 +184,53 @@ const TITLE_PULSE: [number, number][] = [
 ];
 
 // ──────────────────────────────────────────────
-// 戦闘BGM（Aマイナー、BPM=168、疾走感のあるマーチ）
+// 戦闘BGM（Aフリジアン、BPM=104、FE闘技場風の重厚な緊張感）
+// E→F の半音上行（フリジアン特有の不安感）を軸に構成
 // ──────────────────────────────────────────────
-const BATTLE_BPM = 168;
+const BATTLE_BPM = 104;
 const BATTLE_E = (60 / BATTLE_BPM) / 2; // 8分音符
 
+// 8小節ループ（64 eighth notes）
 const BATTLE_MELODY: [number, number][] = [
-  // A部
-  [N.A4,1],[N.C5,1],[N.E5,1],[N.A5,1],[N.G5,1],[N.F5,1],[N.E5,2],
-  [N.D5,1],[N.E5,1],[N.F5,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,2],
-  [N.C5,1],[N.E5,1],[N.G5,1],[N.C6,1],[N.B5,1],[N.A5,1],[N.G5,2],
-  [N.F5,1],[N.G5,1],[N.A5,1],[N.G5,1],[N.E5,4],
-  [N.A4,1],[N.C5,1],[N.E5,1],[N.A5,1],[N.G5,1],[N.F5,1],[N.E5,2],
-  [N.D5,1],[N.F5,1],[N.A5,1],[N.G5,1],[N.F5,1],[N.E5,1],[N.D5,2],
-  [N.E5,1],[N.D5,1],[N.C5,1],[N.B4,1],[N.C5,1],[N.D5,1],[N.E5,1],[N.F5,1],
-  [N.E5,1],[N.D5,1],[N.C5,1],[N.B4,1],[N.A4,4],
-  // B部
-  [N.E5,2],[N.E5,1],[N.F5,1],[N.G5,2],[N.G5,2],
-  [N.F5,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,2],[N.A4,2],
-  [N.B4,2],[N.D5,2],[N.G5,2],[N.F5,2],
-  [N.E5,1],[N.D5,1],[N.C5,1],[N.B4,1],[N.A4,4],
+  // A部：フリジアン上行→下降
+  [N.E4,2],[N.F4,2],[N.G4,2],[N.A4,2],
+  [N.B4,2],[N.A4,2],[N.G4,2],[N.F4,2],
+  [N.E4,2],[N.D4,2],[N.E4,2],[N.F4,2],
+  [N.E4,6],[N.R,2],
+  // B部：Aから下降して解決
+  [N.A4,2],[N.G4,1],[N.F4,1],[N.E4,2],[N.D4,2],
+  [N.C4,2],[N.D4,2],[N.E4,4],
+  [N.F4,2],[N.E4,1],[N.D4,1],[N.C4,2],[N.B3,2],
+  [N.A3,8],
 ];
 
 const BATTLE_BASS: [number, number][] = [
-  [N.A3,2],[N.E3,2],[N.A3,2],[N.E3,2],
-  [N.G3,2],[N.D4,2],[N.G3,2],[N.D4,2],
-  [N.C4,2],[N.G3,2],[N.C4,2],[N.G3,2],
-  [N.E3,2],[N.A3,2],[N.E3,4],
-  [N.A3,2],[N.E3,2],[N.A3,2],[N.E3,2],
-  [N.D4,2],[N.A3,2],[N.D4,2],[N.A3,2],
-  [N.C4,2],[N.G3,2],[N.C4,2],[N.G3,2],
-  [N.E3,4],[N.A3,4],
-  [N.C4,2],[N.G3,2],[N.C4,2],[N.G3,2],
-  [N.D4,2],[N.A3,2],[N.D4,2],[N.A3,2],
-  [N.G3,2],[N.D4,2],[N.B3,2],[N.F3,2],
-  [N.E3,4],[N.A3,4],
+  [N.A3,4],[N.E3,4],
+  [N.F3,4],[N.G3,4],
+  [N.G3,4],[N.D3,4],
+  [N.A3,8],
+
+  [N.F3,4],[N.G3,4],
+  [N.D3,4],[N.A3,4],
+  [N.E3,4],[N.B3,4],
+  [N.A3,8],
 ];
 
 const BATTLE_PULSE: [number, number][] = [
-  [N.E4,1],[N.G4,1],[N.A4,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,2],
-  [N.A4,1],[N.B4,1],[N.C5,1],[N.B4,1],[N.A4,1],[N.G4,1],[N.F4,2],
-  [N.G4,1],[N.B4,1],[N.D5,1],[N.G5,1],[N.F5,1],[N.E5,1],[N.D5,2],
-  [N.C5,1],[N.D5,1],[N.E5,1],[N.D5,1],[N.B4,4],
-  [N.E4,1],[N.G4,1],[N.A4,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,2],
-  [N.A4,1],[N.C5,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,1],[N.A4,2],
-  [N.B4,1],[N.A4,1],[N.G4,1],[N.F4,1],[N.G4,1],[N.A4,1],[N.B4,1],[N.C5,1],
-  [N.B4,1],[N.A4,1],[N.G4,1],[N.F4,1],[N.E4,4],
-  [N.G4,2],[N.G4,1],[N.A4,1],[N.B4,2],[N.B4,2],
-  [N.C5,1],[N.B4,1],[N.A4,1],[N.G4,1],[N.F4,2],[N.E4,2],
-  [N.F4,2],[N.A4,2],[N.D5,2],[N.C5,2],
-  [N.B4,1],[N.A4,1],[N.G4,1],[N.F4,1],[N.E4,4],
+  [N.C5,4],[N.B4,4],
+  [N.D5,4],[N.C5,4],
+  [N.B4,4],[N.C5,4],
+  [N.B4,6],[N.R,2],
+
+  [N.E5,4],[N.D5,4],
+  [N.E5,4],[N.A4,4],
+  [N.A4,4],[N.G4,4],
+  [N.A4,8],
 ];
 
-const BATTLE_KICK =  [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0];
-const BATTLE_SNARE = [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,0];
+// マーチ風: 1・3拍にキック、2・4拍にスネア
+const BATTLE_KICK =  [1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0];
+const BATTLE_SNARE = [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0];
 
 // ──────────────────────────────────────────────
 // スケジューラ共通関数
