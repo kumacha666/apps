@@ -197,7 +197,7 @@ function onCombatLose(): void {
   save = addGold(save, run.goldEarned);
   writeSave(save);
 
-  BGM.play("title");
+  BGM.play("lose");
   $("result-title").textContent = "戦闘不能…";
   $("result-details").textContent = `到達: 第${run.stage}層 / 獲得ゴールド: ${run.goldEarned}`;
   showScreen("screen-result");

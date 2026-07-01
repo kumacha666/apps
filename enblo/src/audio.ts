@@ -217,10 +217,44 @@ function loopDuration(pattern: [number, number][], eighth: number): number {
 }
 
 // ──────────────────────────────────────────────
+// 敗戦BGM（Cマイナー、BPM=60、静かで悲しげ）
+// ──────────────────────────────────────────────
+const LOSE_BPM = 60;
+const LOSE_Q = 60 / LOSE_BPM;   // 4分音符
+const LOSE_E = LOSE_Q / 2;      // 8分音符
+
+// メロディのみ（triangle波で寂しさを出す）
+// C → Eb → G → F → Eb → D → C の下降感
+const LOSE_MELODY: [number, number][] = [
+  // イントロ：静かに始まる
+  [N.C5, 3], [N.R, 1],
+  [N.A4, 2], [N.G4, 2],
+  [N.F4, 3], [N.R, 1],
+
+  // A部：嘆きのフレーズ
+  [N.C5, 2], [N.D5, 1], [N.C5, 1],
+  [N.A4, 4],
+  [N.G4, 2], [N.A4, 1], [N.G4, 1],
+  [N.F4, 3], [N.G4, 1],
+  [N.A4, 2], [N.G4, 1], [N.F4, 1],
+  [N.E4, 4],
+  [N.F4, 2], [N.E4, 2],
+  [N.C4, 6], [N.R, 2],
+];
+
+// 低音の和音補助（triangle、さらに下）
+const LOSE_PAD: [number, number][] = [
+  [N.C4, 4], [N.A3, 4], [N.F3, 4],
+  [N.C4, 4], [N.A3, 4], [N.G3, 4], [N.F3, 4],
+  [N.A3, 4], [N.G3, 4], [N.F3, 4],
+  [N.E3, 4], [N.F3, 4], [N.C3, 8],
+];
+
+// ──────────────────────────────────────────────
 // BGMプレーヤー（トラック切り替え対応）
 // ──────────────────────────────────────────────
 
-type BgmTrack = "title" | "battle";
+type BgmTrack = "title" | "battle" | "lose";
 
 let currentTrack: BgmTrack | null = null;
 let bgmTimer: ReturnType<typeof setTimeout> | null = null;
@@ -305,17 +339,41 @@ function scheduleBattleLoop(audioCtx: AudioContext, startTime: number): void {
   }
 }
 
+function scheduleLoseLoop(audioCtx: AudioContext, startTime: number): void {
+  const Q = LOSE_Q;
+
+  let t = startTime;
+  for (const [freq, dur] of LOSE_MELODY) {
+    scheduleNote(audioCtx, freq, t, dur * Q * 0.90, "triangle", 0.10);
+    t += dur * Q;
+  }
+  t = startTime;
+  for (const [freq, dur] of LOSE_PAD) {
+    scheduleNote(audioCtx, freq, t, dur * Q * 0.95, "triangle", 0.055);
+    t += dur * Q;
+  }
+
+  const dur = loopDuration(LOSE_MELODY, Q);
+  if (currentTrack === "lose") {
+    bgmTimer = setTimeout(
+      () => scheduleLoseLoop(audioCtx, startTime + dur),
+      (dur - 0.2) * 1000,
+    );
+  }
+}
+
 export const BGM = {
   play(track: BgmTrack): void {
     const audioCtx = getContext();
     if (!audioCtx) return;
-    if (currentTrack === track) return; // 同じトラックなら何もしない
+    if (currentTrack === track) return;
     stopBgm();
     currentTrack = track;
     if (audioCtx.state === "suspended") audioCtx.resume();
     const startTime = audioCtx.currentTime + 0.05;
     if (track === "title")  scheduleTitleLoop(audioCtx, startTime);
     if (track === "battle") scheduleBattleLoop(audioCtx, startTime);
+    if (track === "lose")   scheduleLoseLoop(audioCtx, startTime);
   },
   stop: stopBgm,
 };
