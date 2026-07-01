@@ -9,7 +9,7 @@ import { simulateCombat } from "./combat";
 import { goldForStage } from "./run";
 import { loadSave, writeSave, addGold, purchasePermanentUpgrade, purchaseStatBoost, unlockDifficulty, unlockClass } from "./save";
 import type { StatBoosts } from "./types";
-import { SFX } from "./audio";
+import { SFX, BGM } from "./audio";
 import type { AttackEvent } from "./types";
 
 let save = loadSave();
@@ -44,6 +44,7 @@ function showScreen(id: string): void {
 
 function renderTitle(): void {
   $("gold-display").textContent = `所持ゴールド: ${save.totalGold}`;
+  BGM.play();
   showScreen("screen-title");
 }
 
