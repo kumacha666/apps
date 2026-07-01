@@ -52,7 +52,8 @@
 <h2>BGM</h2>
 <div class="row">
   <button id="btn-title"  onclick="toggleBgm('title')">🎵 タイトル</button>
-  <button id="btn-battle" onclick="toggleBgm('battle')">⚔️ 戦闘</button>
+  <button id="btn-battle" onclick="toggleBgm('battle')">⚔️ 戦闘（新）</button>
+  <button id="btn-field"  onclick="toggleBgm('field')">🌍 フィールド（旧戦闘）</button>
   <button id="btn-lose"   onclick="toggleBgm('lose')">😢 敗戦</button>
   <button onclick="stopBgm()">⏹ BGM停止</button>
 </div>
@@ -84,21 +85,31 @@ function beep(freq, duration, type = 'square', gain = 0.15) {
 
 function sfxSword() {
   const ac = getCtx(), now = ac.currentTime;
-  // ノイズをバンドパスでフィルタ → 空気を切る「シュッ」
-  const buf = ac.createBuffer(1, ac.sampleRate * 0.09, ac.sampleRate);
+  // 振り音：高域ノイズで鋭い空気切り
+  const buf = ac.createBuffer(1, ac.sampleRate * 0.06, ac.sampleRate);
   const d = buf.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   const src = ac.createBufferSource(); src.buffer = buf;
   const filt = ac.createBiquadFilter();
   filt.type = 'bandpass';
-  filt.frequency.setValueAtTime(5000, now);
-  filt.frequency.exponentialRampToValueAtTime(1800, now + 0.09);
-  filt.Q.value = 1.5;
+  filt.frequency.setValueAtTime(8000, now);
+  filt.frequency.exponentialRampToValueAtTime(2500, now + 0.06);
+  filt.Q.value = 1.2;
   const g = ac.createGain();
-  g.gain.setValueAtTime(0.7, now);
-  g.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+  g.gain.setValueAtTime(1.2, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
   src.connect(filt).connect(g).connect(ac.destination);
-  src.start(now); src.stop(now + 0.09);
+  src.start(now); src.stop(now + 0.06);
+  // 衝撃：金属的なサウンド
+  const osc = ac.createOscillator(), g2 = ac.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(2800, now + 0.03);
+  osc.frequency.exponentialRampToValueAtTime(700, now + 0.11);
+  g2.gain.setValueAtTime(0, now);
+  g2.gain.setValueAtTime(0.25, now + 0.03);
+  g2.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+  osc.connect(g2).connect(ac.destination);
+  osc.start(now); osc.stop(now + 0.12);
   log('⚔️ 剣 ヒット');
 }
 
@@ -145,34 +156,44 @@ function sfxBow() {
 
 function sfxTome() {
   const ac = getCtx(), now = ac.currentTime;
-  // 電撃ノイズ（バンドパス急上昇）
-  const buf = ac.createBuffer(1, ac.sampleRate * 0.22, ac.sampleRate);
+  // 低音ドーン（ズ成分）
+  const osc0 = ac.createOscillator(), g0 = ac.createGain();
+  osc0.type = 'sine';
+  osc0.frequency.setValueAtTime(90, now);
+  osc0.frequency.exponentialRampToValueAtTime(30, now + 0.18);
+  g0.gain.setValueAtTime(0.6, now);
+  g0.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+  osc0.connect(g0).connect(ac.destination);
+  osc0.start(now); osc0.stop(now + 0.18);
+  // 全域ノイズ爆発（シャーン成分）
+  const buf = ac.createBuffer(1, ac.sampleRate * 0.28, ac.sampleRate);
   const d = buf.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   const src = ac.createBufferSource(); src.buffer = buf;
   const filt = ac.createBiquadFilter();
   filt.type = 'bandpass';
-  filt.frequency.setValueAtTime(600, now);
-  filt.frequency.exponentialRampToValueAtTime(4000, now + 0.06);
-  filt.frequency.exponentialRampToValueAtTime(800, now + 0.18);
-  filt.Q.value = 4;
+  filt.frequency.setValueAtTime(300, now);
+  filt.frequency.exponentialRampToValueAtTime(6000, now + 0.04);
+  filt.frequency.exponentialRampToValueAtTime(900, now + 0.25);
+  filt.Q.value = 2;
   const g = ac.createGain();
-  g.gain.setValueAtTime(0.55, now);
-  g.gain.setValueAtTime(0.45, now + 0.06);
-  g.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+  g.gain.setValueAtTime(0.9, now);
+  g.gain.setValueAtTime(0.7, now + 0.04);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
   src.connect(filt).connect(g).connect(ac.destination);
-  src.start(now); src.stop(now + 0.22);
-  // 稲妻の高周波バズ
-  const osc = ac.createOscillator(), g2 = ac.createGain();
-  osc.type = 'sawtooth';
-  osc.frequency.setValueAtTime(1400, now);
-  osc.frequency.setValueAtTime(900, now + 0.04);
-  osc.frequency.setValueAtTime(2000, now + 0.08);
-  osc.frequency.setValueAtTime(600, now + 0.13);
-  g2.gain.setValueAtTime(0.13, now);
-  g2.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-  osc.connect(g2).connect(ac.destination);
-  osc.start(now); osc.stop(now + 0.18);
+  src.start(now); src.stop(now + 0.28);
+  // 高周波電撃バズ（ほとばしる）
+  const osc2 = ac.createOscillator(), g2 = ac.createGain();
+  osc2.type = 'sawtooth';
+  osc2.frequency.setValueAtTime(2000, now);
+  osc2.frequency.setValueAtTime(1100, now + 0.03);
+  osc2.frequency.setValueAtTime(3000, now + 0.07);
+  osc2.frequency.setValueAtTime(800, now + 0.12);
+  osc2.frequency.setValueAtTime(2200, now + 0.17);
+  g2.gain.setValueAtTime(0.2, now);
+  g2.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+  osc2.connect(g2).connect(ac.destination);
+  osc2.start(now); osc2.stop(now + 0.24);
   log('📖 魔道書 ヒット');
 }
 
@@ -212,47 +233,77 @@ const N = {
 };
 
 const TITLE_Q = 60/76;
-const BATTLE_E = (60/136)/2;
-const LOSE_Q = 60/60;
+const FIELD_E  = (60/136)/2;  // 旧戦闘BGM → フィールド用に保存
+const BATTLE_E = (60/176)/2;  // 新戦闘BGM：BPM176、激しく
+const LOSE_Q   = 60/60;
 
 const TITLE_MELODY = [[N.D5,2],[N.C5,1],[N.D5,1],[N.F5,2],[N.E5,2],[N.D5,2],[N.A4,1],[N.B4,1],[N.C5,4],[N.A4,2],[N.G4,1],[N.A4,1],[N.C5,2],[N.B4,2],[N.A4,2],[N.F4,1],[N.G4,1],[N.A4,4],[N.F5,1],[N.G5,1],[N.A5,2],[N.G5,1],[N.F5,1],[N.E5,2],[N.D5,2],[N.E5,1],[N.F5,1],[N.G5,2],[N.F5,2],[N.E5,1],[N.F5,1],[N.G5,2],[N.F5,1],[N.E5,1],[N.D5,2],[N.C5,2],[N.B4,2],[N.A4,4]];
 const TITLE_BASS = [[N.D3,2],[N.A3,2],[N.D3,2],[N.A3,2],[N.F3,2],[N.C4,2],[N.F3,2],[N.C4,2],[N.G3,2],[N.D4,2],[N.G3,2],[N.D4,2],[N.A3,4],[N.A3,4],[N.D3,2],[N.A3,2],[N.D3,2],[N.A3,2],[N.F3,2],[N.C4,2],[N.F3,2],[N.C4,2],[N.G3,2],[N.D4,2],[N.G3,2],[N.E3,2],[N.A3,8],[N.D4,2],[N.A3,2],[N.D4,2],[N.A3,2],[N.G3,2],[N.D4,2],[N.G3,2],[N.D4,2],[N.A3,2],[N.E3,2],[N.A3,2],[N.E3,2],[N.F3,2],[N.G3,2],[N.A3,4]];
 const TITLE_PULSE = [[N.F4,2],[N.E4,1],[N.F4,1],[N.A4,2],[N.G4,2],[N.F4,2],[N.G4,2],[N.A4,4],[N.E4,2],[N.D4,1],[N.E4,1],[N.G4,2],[N.F4,2],[N.E4,2],[N.D4,2],[N.C4,4],[N.D4,2],[N.A4,2],[N.D4,2],[N.A4,2],[N.C4,2],[N.G4,2],[N.C4,2],[N.G4,2],[N.D4,2],[N.A4,2],[N.D4,2],[N.A4,2],[N.E4,4],[N.A4,4],[N.A4,1],[N.B4,1],[N.C5,2],[N.B4,1],[N.A4,1],[N.G4,2],[N.F4,2],[N.G4,1],[N.A4,1],[N.B4,2],[N.A4,2],[N.G4,1],[N.A4,1],[N.B4,2],[N.A4,1],[N.G4,1],[N.F4,2],[N.E4,2],[N.F4,2],[N.E4,4]];
 
-// BPM=136、Aナチュラルマイナー、アップテンポ・ダーク
-const BATTLE_MELODY = [
-  // A部（32 eighth notes = 4小節）
+// ── フィールドBGM（旧戦闘曲、BPM=136、Aマイナー） ───────────────────────────
+const FIELD_MELODY = [
   [N.A4,1],[N.B4,1],[N.C5,1],[N.D5,1],[N.E5,2],[N.D5,1],[N.C5,1],
   [N.B4,1],[N.C5,1],[N.D5,2],[N.E5,1],[N.D5,1],[N.C5,2],
   [N.D5,2],[N.E5,1],[N.F5,1],[N.E5,2],[N.D5,1],[N.C5,1],
   [N.B4,2],[N.A4,2],[N.G4,2],[N.A4,2],
-  // B部（32 eighth notes）
   [N.E5,2],[N.D5,2],[N.C5,2],[N.B4,2],
   [N.A4,1],[N.B4,1],[N.C5,1],[N.D5,1],[N.E5,2],[N.F5,2],
   [N.G5,1],[N.F5,1],[N.E5,1],[N.D5,1],[N.C5,2],[N.B4,2],
   [N.A4,6],[N.R,2],
 ];
+const FIELD_BASS = [
+  [N.A3,2],[N.E3,2],[N.A3,2],[N.E3,2],[N.F3,2],[N.C4,2],[N.F3,2],[N.C4,2],
+  [N.G3,2],[N.D4,2],[N.G3,2],[N.D4,2],[N.A3,4],[N.A3,4],
+  [N.E3,2],[N.B3,2],[N.E3,2],[N.B3,2],[N.D3,2],[N.A3,2],[N.D3,2],[N.A3,2],
+  [N.E3,2],[N.G3,2],[N.F3,2],[N.G3,2],[N.A3,8],
+];
+const FIELD_PULSE = [
+  [N.C5,2],[N.B4,2],[N.A4,2],[N.G4,2],[N.D5,2],[N.C5,2],[N.B4,2],[N.A4,2],
+  [N.B4,2],[N.C5,2],[N.B4,2],[N.A4,2],[N.E4,4],[N.A4,4],
+  [N.G5,2],[N.F5,2],[N.E5,2],[N.D5,2],[N.C5,2],[N.D5,2],[N.E5,2],[N.F5,2],
+  [N.E5,2],[N.D5,2],[N.C5,2],[N.B4,2],[N.A4,8],
+];
+const FIELD_KICK  = [1,0,0,0, 1,0,0,0, 1,0,0,0, 0,0,0,0];
+const FIELD_SNARE = [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0];
+
+// ── 戦闘BGM（BPM=176、Aマイナー、ジェットコースター） ───────────────────────
+// 音域を大きく跳躍させ、短いフレーズと休符で緊張感を演出
+const BATTLE_MELODY = [
+  // A部：高音↓低音の大跳躍、速いパッセージ
+  [N.A5,1],[N.R,1],[N.E4,1],[N.R,1],[N.A5,1],[N.R,1],[N.F5,2],     // 7
+  [N.E5,1],                                                            // 1 → 8
+  [N.D5,1],[N.E5,1],[N.F5,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,2],   // 8
+  [N.A4,1],[N.R,1],[N.E5,1],[N.R,1],[N.A4,1],[N.R,1],[N.G5,2],      // 8
+  [N.F5,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,2],[N.R,2],             // 8
+  // B部：下から駆け上がりクライマックス
+  [N.A3,1],[N.C4,1],[N.E4,1],[N.G4,1],[N.A4,1],[N.C5,1],[N.E5,1],[N.G5,1], // 8: 高速アルペジオ
+  [N.A5,2],[N.G5,1],[N.F5,1],[N.E5,2],[N.D5,2],                     // 8
+  [N.C5,1],[N.B4,1],[N.A4,1],[N.B4,1],[N.C5,1],[N.D5,1],[N.E5,2],   // 8
+  [N.A4,6],[N.R,2],                                                    // 8
+];
 const BATTLE_BASS = [
-  [N.A3,2],[N.E3,2],[N.A3,2],[N.E3,2],
-  [N.F3,2],[N.C4,2],[N.F3,2],[N.C4,2],
-  [N.G3,2],[N.D4,2],[N.G3,2],[N.D4,2],
-  [N.A3,4],[N.A3,4],
-  [N.E3,2],[N.B3,2],[N.E3,2],[N.B3,2],
-  [N.D3,2],[N.A3,2],[N.D3,2],[N.A3,2],
-  [N.E3,2],[N.G3,2],[N.F3,2],[N.G3,2],
-  [N.A3,8],
+  // ルート+5度を交互に刻む駆動型ベース
+  [N.A3,1],[N.A3,1],[N.E3,1],[N.E3,1],[N.A3,1],[N.A3,1],[N.E3,2],   // 8
+  [N.F3,1],[N.F3,1],[N.C4,1],[N.C4,1],[N.F3,1],[N.F3,1],[N.C4,2],   // 8
+  [N.G3,1],[N.G3,1],[N.D4,1],[N.D4,1],[N.G3,1],[N.G3,1],[N.D4,2],   // 8
+  [N.A3,2],[N.G3,2],[N.F3,2],[N.E3,2],                                // 8
+  [N.A3,1],[N.A3,1],[N.A3,1],[N.A3,1],[N.A3,1],[N.A3,1],[N.A3,2],   // 8: 連打
+  [N.D3,2],[N.A3,2],[N.D3,2],[N.A3,2],                                // 8
+  [N.E3,2],[N.B3,2],[N.E3,2],[N.B3,2],                                // 8
+  [N.A3,8],                                                             // 8
 ];
 const BATTLE_PULSE = [
-  [N.C5,2],[N.B4,2],[N.A4,2],[N.G4,2],
-  [N.D5,2],[N.C5,2],[N.B4,2],[N.A4,2],
-  [N.B4,2],[N.C5,2],[N.B4,2],[N.A4,2],
-  [N.E4,4],[N.A4,4],
-  [N.G5,2],[N.F5,2],[N.E5,2],[N.D5,2],
-  [N.C5,2],[N.D5,2],[N.E5,2],[N.F5,2],
-  [N.E5,2],[N.D5,2],[N.C5,2],[N.B4,2],
-  [N.A4,8],
+  [N.C5,2],[N.B4,2],[N.A5,2],[N.G5,2],   // 8: 上で対旋律
+  [N.F5,2],[N.E5,2],[N.D5,2],[N.C5,2],   // 8
+  [N.E5,2],[N.D5,2],[N.C5,2],[N.B4,2],   // 8
+  [N.A4,2],[N.B4,2],[N.C5,2],[N.B4,2],   // 8
+  [N.A5,1],[N.G5,1],[N.F5,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,2], // 8: 速い下降
+  [N.C5,2],[N.E5,2],[N.G5,2],[N.A5,2],   // 8
+  [N.G5,2],[N.F5,2],[N.E5,2],[N.D5,2],   // 8
+  [N.A4,8],                                // 8
 ];
-const BATTLE_KICK  = [1,0,0,0, 1,0,0,0, 1,0,0,0, 0,0,0,0];
+const BATTLE_KICK  = [1,0,1,0, 1,0,0,0, 1,0,1,0, 0,0,0,0];  // より頻繁
 const BATTLE_SNARE = [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0];
 
 const LOSE_MELODY = [[N.C5,3],[N.R,1],[N.A4,2],[N.G4,2],[N.F4,3],[N.R,1],[N.C5,2],[N.D5,1],[N.C5,1],[N.A4,4],[N.G4,2],[N.A4,1],[N.G4,1],[N.F4,3],[N.G4,1],[N.A4,2],[N.G4,1],[N.F4,1],[N.E4,4],[N.F4,2],[N.E4,2],[N.C4,6],[N.R,2]];
@@ -266,11 +317,19 @@ const TRACKS = {
       { notes: TITLE_BASS,   unit: TITLE_Q, type: 'triangle', gain: 0.13,  gate: 0.78 },
     ],
   },
+  field: {
+    channels: [
+      { notes: FIELD_MELODY, unit: FIELD_E, type: 'square', gain: 0.10, gate: 0.9  },
+      { notes: FIELD_PULSE,  unit: FIELD_E, type: 'square', gain: 0.06, gate: 0.85 },
+      { notes: FIELD_BASS,   unit: FIELD_E, type: 'square', gain: 0.12, gate: 0.80 },
+    ],
+    kick: FIELD_KICK, snare: FIELD_SNARE, beatUnit: FIELD_E * 2,
+  },
   battle: {
     channels: [
-      { notes: BATTLE_MELODY, unit: BATTLE_E, type: 'square', gain: 0.10, gate: 0.9  },
-      { notes: BATTLE_PULSE,  unit: BATTLE_E, type: 'square', gain: 0.06, gate: 0.85 },
-      { notes: BATTLE_BASS,   unit: BATTLE_E, type: 'square', gain: 0.12, gate: 0.80 },
+      { notes: BATTLE_MELODY, unit: BATTLE_E, type: 'square', gain: 0.11, gate: 0.88 },
+      { notes: BATTLE_PULSE,  unit: BATTLE_E, type: 'square', gain: 0.07, gate: 0.83 },
+      { notes: BATTLE_BASS,   unit: BATTLE_E, type: 'square', gain: 0.13, gate: 0.80 },
     ],
     kick: BATTLE_KICK, snare: BATTLE_SNARE, beatUnit: BATTLE_E * 2,
   },
