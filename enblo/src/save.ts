@@ -12,8 +12,12 @@ function defaultSaveData(): SaveData {
     purchasedPermanentUpgrades: [],
     unlockedDifficulties: ["normal"],
     unlockedClasses: [],
-    statBoosts: defaultStatBoosts(),
+    statBoosts: {},
   };
+}
+
+export function getStatBoosts(data: SaveData, classId: string): StatBoosts {
+  return data.statBoosts[classId] ?? defaultStatBoosts();
 }
 
 export function loadSave(): SaveData {
@@ -21,7 +25,15 @@ export function loadSave(): SaveData {
   if (!raw) return defaultSaveData();
   try {
     const parsed = JSON.parse(raw);
-    return { ...defaultSaveData(), ...parsed };
+    const base = defaultSaveData();
+    // 旧フォーマット（statBoostsがフラットなStatBoosts）からの移行
+    const rawBoosts = parsed.statBoosts;
+    const isOldFormat = rawBoosts && typeof rawBoosts.hp === "number";
+    return {
+      ...base,
+      ...parsed,
+      statBoosts: isOldFormat ? {} : (rawBoosts ?? {}),
+    };
   } catch {
     return defaultSaveData();
   }
@@ -55,11 +67,15 @@ export function unlockClass(data: SaveData, classId: string): SaveData {
   return { ...data, unlockedClasses: [...data.unlockedClasses, classId] };
 }
 
-export function purchaseStatBoost(data: SaveData, stat: keyof StatBoosts, cost: number): SaveData {
+export function purchaseStatBoost(data: SaveData, classId: string, stat: keyof StatBoosts, cost: number): SaveData {
   if (data.totalGold < cost) return data;
+  const current = getStatBoosts(data, classId);
   return {
     ...data,
     totalGold: data.totalGold - cost,
-    statBoosts: { ...data.statBoosts, [stat]: data.statBoosts[stat] + 1 },
+    statBoosts: {
+      ...data.statBoosts,
+      [classId]: { ...current, [stat]: current[stat] + 1 },
+    },
   };
 }

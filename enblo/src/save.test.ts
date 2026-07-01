@@ -6,6 +6,9 @@ import {
   purchasePermanentUpgrade,
   unlockDifficulty,
   unlockClass,
+  purchaseStatBoost,
+  getStatBoosts,
+  defaultStatBoosts,
 } from "./save";
 
 class MemoryStorage {
@@ -66,6 +69,41 @@ describe("purchasePermanentUpgrade", () => {
     const result = purchasePermanentUpgrade(data, "perm_hp_1", 20);
     expect(result.totalGold).toBe(80);
     expect(result.purchasedPermanentUpgrades.length).toBe(1);
+  });
+});
+
+describe("purchaseStatBoost", () => {
+  it("deducts gold and increments the specified stat for the class", () => {
+    const data = addGold(loadSave(), 200);
+    const result = purchaseStatBoost(data, "warrior", "atk", 100);
+    expect(result.totalGold).toBe(100);
+    expect(getStatBoosts(result, "warrior").atk).toBe(1);
+    expect(getStatBoosts(result, "warrior").hp).toBe(0);
+  });
+
+  it("keeps each class's boosts independent", () => {
+    let data = addGold(loadSave(), 300);
+    data = purchaseStatBoost(data, "warrior", "atk", 100);
+    data = purchaseStatBoost(data, "archer", "spd", 100);
+    expect(getStatBoosts(data, "warrior").atk).toBe(1);
+    expect(getStatBoosts(data, "archer").spd).toBe(1);
+    expect(getStatBoosts(data, "lancer")).toEqual(defaultStatBoosts());
+  });
+
+  it("does nothing when gold is insufficient", () => {
+    const data = loadSave();
+    const result = purchaseStatBoost(data, "warrior", "atk", 100);
+    expect(result).toEqual(data);
+  });
+
+  it("migrates old flat statBoosts format to empty record on load", () => {
+    localStorage.setItem("enblo-save-v1", JSON.stringify({
+      totalGold: 50,
+      statBoosts: { hp: 3, atk: 1, def: 0, spd: 0, hit: 0, crit: 0 },
+    }));
+    const data = loadSave();
+    expect(data.statBoosts).toEqual({});
+    expect(data.totalGold).toBe(50);
   });
 });
 
