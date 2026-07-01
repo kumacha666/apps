@@ -174,6 +174,25 @@ const BATTLE_SNARE = [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,0];
 // スケジューラ共通関数
 // ──────────────────────────────────────────────
 
+// マスターゲインノード（即時ミュートでトラック切替時の重なりを防ぐ）
+let masterGain: GainNode | null = null;
+
+function getMasterGain(audioCtx: AudioContext): GainNode {
+  if (!masterGain || masterGain.context !== audioCtx) {
+    masterGain = audioCtx.createGain();
+    masterGain.connect(audioCtx.destination);
+  }
+  return masterGain;
+}
+
+function muteMaster(audioCtx: AudioContext): void {
+  getMasterGain(audioCtx).gain.setValueAtTime(0, audioCtx.currentTime);
+}
+
+function unmuteMaster(audioCtx: AudioContext): void {
+  getMasterGain(audioCtx).gain.setValueAtTime(1, audioCtx.currentTime);
+}
+
 function scheduleNote(
   audioCtx: AudioContext,
   freq: number,
@@ -190,7 +209,7 @@ function scheduleNote(
   g.gain.setValueAtTime(gainVal, startTime);
   g.gain.setValueAtTime(gainVal, startTime + duration * 0.85);
   g.gain.exponentialRampToValueAtTime(0.001, startTime + duration * 0.99);
-  osc.connect(g).connect(audioCtx.destination);
+  osc.connect(g).connect(getMasterGain(audioCtx));
   osc.start(startTime);
   osc.stop(startTime + duration);
 }
@@ -207,13 +226,13 @@ function scheduleNoise(audioCtx: AudioContext, startTime: number, type: "kick" |
   filt.frequency.value = type === "kick" ? 120 : 1800;
   g.gain.setValueAtTime(type === "kick" ? 0.25 : 0.12, startTime);
   g.gain.exponentialRampToValueAtTime(0.001, startTime + (type === "kick" ? 0.08 : 0.04));
-  src.connect(filt).connect(g).connect(audioCtx.destination);
+  src.connect(filt).connect(g).connect(getMasterGain(audioCtx));
   src.start(startTime);
   src.stop(startTime + 0.1);
 }
 
-function loopDuration(pattern: [number, number][], eighth: number): number {
-  return pattern.reduce((s, [, d]) => s + d * eighth, 0);
+function loopDuration(pattern: [number, number][], unit: number): number {
+  return pattern.reduce((s, [, d]) => s + d * unit, 0);
 }
 
 // ──────────────────────────────────────────────
@@ -251,115 +270,113 @@ const LOSE_PAD: [number, number][] = [
 ];
 
 // ──────────────────────────────────────────────
-// BGMプレーヤー（トラック切り替え対応）
+// BGMプレーヤー（ルックアヘッドスケジューラ）
 // ──────────────────────────────────────────────
+// 一度に全ノートをスケジュールするとHeadless ChromiumのJSイベントループを
+// ブロックするため、1.5秒先読み・150ms毎補充のスケジューラを使用する。
 
 type BgmTrack = "title" | "battle" | "lose";
 
+const LOOKAHEAD = 1.5;  // 先読み秒数
+const TICK_MS   = 150;  // 補充間隔
+
+interface ChannelDef {
+  notes: [number, number][];
+  unit: number;
+  type: OscillatorType;
+  gain: number;
+  gate: number;
+}
+
+interface TrackDef {
+  channels: ChannelDef[];
+  kick?: number[];
+  snare?: number[];
+  beatUnit?: number;
+}
+
+const TRACKS: Record<BgmTrack, TrackDef> = {
+  title: {
+    channels: [
+      { notes: TITLE_MELODY, unit: TITLE_Q, type: "square",   gain: 0.11,  gate: 0.88 },
+      { notes: TITLE_PULSE,  unit: TITLE_Q, type: "square",   gain: 0.065, gate: 0.82 },
+      { notes: TITLE_BASS,   unit: TITLE_Q, type: "triangle", gain: 0.13,  gate: 0.78 },
+    ],
+  },
+  battle: {
+    channels: [
+      { notes: BATTLE_MELODY, unit: BATTLE_E, type: "square", gain: 0.10, gate: 0.9  },
+      { notes: BATTLE_PULSE,  unit: BATTLE_E, type: "square", gain: 0.06, gate: 0.85 },
+      { notes: BATTLE_BASS,   unit: BATTLE_E, type: "square", gain: 0.12, gate: 0.80 },
+    ],
+    kick:     BATTLE_KICK,
+    snare:    BATTLE_SNARE,
+    beatUnit: BATTLE_E * 2,
+  },
+  lose: {
+    channels: [
+      { notes: LOSE_MELODY, unit: LOSE_Q, type: "triangle", gain: 0.10,  gate: 0.90 },
+      { notes: LOSE_PAD,    unit: LOSE_Q, type: "triangle", gain: 0.055, gate: 0.95 },
+    ],
+  },
+};
+
+interface ChannelState {
+  noteIdx: number;
+  nextTime: number;
+  loopStart: number;
+}
+
 let currentTrack: BgmTrack | null = null;
 let bgmTimer: ReturnType<typeof setTimeout> | null = null;
+let channelStates: ChannelState[][] = [];
+let kickNextTime = 0;
+let kickIdx      = 0;
 
 function stopBgm(): void {
   currentTrack = null;
-  if (bgmTimer !== null) {
-    clearTimeout(bgmTimer);
-    bgmTimer = null;
-  }
+  if (bgmTimer !== null) { clearTimeout(bgmTimer); bgmTimer = null; }
 }
 
-function scheduleTitleLoop(audioCtx: AudioContext, startTime: number): void {
-  const E = TITLE_E;
-  const Q = TITLE_Q;
+function tickBgm(audioCtx: AudioContext, track: BgmTrack): void {
+  if (currentTrack !== track) return;
+  const def = TRACKS[track];
+  const horizon = audioCtx.currentTime + LOOKAHEAD;
 
-  let t = startTime;
-  for (const [freq, dur] of TITLE_MELODY) {
-    scheduleNote(audioCtx, freq, t, dur * Q * 0.88, "square", 0.11);
-    t += dur * Q;
-  }
-  t = startTime;
-  for (const [freq, dur] of TITLE_PULSE) {
-    scheduleNote(audioCtx, freq, t, dur * Q * 0.82, "square", 0.065);
-    t += dur * Q;
-  }
-  t = startTime;
-  for (const [freq, dur] of TITLE_BASS) {
-    scheduleNote(audioCtx, freq, t, dur * Q * 0.78, "triangle", 0.13);
-    t += dur * Q;
-  }
+  // 各チャンネルのノートを補充
+  def.channels.forEach((ch, ci) => {
+    const st = channelStates[ci];
+    const loopDur = loopDuration(ch.notes, ch.unit);
+    while (st.nextTime < horizon) {
+      const [freq, dur] = ch.notes[st.noteIdx];
+      const noteDur = dur * ch.unit;
+      scheduleNote(audioCtx, freq, st.nextTime, noteDur * ch.gate, ch.type, ch.gain);
+      st.nextTime += noteDur;
+      st.noteIdx++;
+      if (st.noteIdx >= ch.notes.length) {
+        st.noteIdx = 0;
+        st.loopStart += loopDur;
+        st.nextTime = st.loopStart;
+      }
+    }
+  });
 
-  void E; // triangle bassはQ単位なのでEは未使用
-
-  const dur = loopDuration(TITLE_MELODY, Q);
-  if (currentTrack === "title") {
-    bgmTimer = setTimeout(
-      () => scheduleTitleLoop(audioCtx, startTime + dur),
-      (dur - 0.2) * 1000,
-    );
-  }
-}
-
-function scheduleBattleLoop(audioCtx: AudioContext, startTime: number): void {
-  const E = BATTLE_E;
-
-  let t = startTime;
-  for (const [freq, dur] of BATTLE_MELODY) {
-    scheduleNote(audioCtx, freq, t, dur * E * 0.9, "square", 0.10);
-    t += dur * E;
-  }
-  t = startTime;
-  for (const [freq, dur] of BATTLE_PULSE) {
-    scheduleNote(audioCtx, freq, t, dur * E * 0.85, "square", 0.06);
-    t += dur * E;
-  }
-  t = startTime;
-  for (const [freq, dur] of BATTLE_BASS) {
-    scheduleNote(audioCtx, freq, t, dur * E * 0.80, "square", 0.12);
-    t += dur * E;
-  }
-
-  // ノイズ打楽器（1ループ分）
-  const totalEighths = BATTLE_MELODY.reduce((s, [, d]) => s + d, 0);
-  const totalBars = Math.floor(totalEighths / 8);
-  const beatSec = E * 2;
-  const div = BATTLE_KICK.length;
-  for (let bar = 0; bar < totalBars; bar++) {
-    for (let i = 0; i < div; i++) {
-      const bt = startTime + (bar * 4 + i / (div / 4)) * beatSec;
-      if (BATTLE_KICK[i])  scheduleNoise(audioCtx, bt, "kick");
-      if (BATTLE_SNARE[i]) scheduleNoise(audioCtx, bt, "snare");
+  // ドラム補充（battleのみ）
+  if (def.kick && def.snare && def.beatUnit) {
+    const kick = def.kick;
+    const snare = def.snare;
+    const beatUnit = def.beatUnit;
+    const div = kick.length;
+    while (kickNextTime < horizon) {
+      const i = kickIdx % div;
+      if (kick[i])  scheduleNoise(audioCtx, kickNextTime, "kick");
+      if (snare[i]) scheduleNoise(audioCtx, kickNextTime, "snare");
+      kickIdx++;
+      kickNextTime += beatUnit / (div / 4);
     }
   }
 
-  const dur = loopDuration(BATTLE_MELODY, E);
-  if (currentTrack === "battle") {
-    bgmTimer = setTimeout(
-      () => scheduleBattleLoop(audioCtx, startTime + dur),
-      (dur - 0.2) * 1000,
-    );
-  }
-}
-
-function scheduleLoseLoop(audioCtx: AudioContext, startTime: number): void {
-  const Q = LOSE_Q;
-
-  let t = startTime;
-  for (const [freq, dur] of LOSE_MELODY) {
-    scheduleNote(audioCtx, freq, t, dur * Q * 0.90, "triangle", 0.10);
-    t += dur * Q;
-  }
-  t = startTime;
-  for (const [freq, dur] of LOSE_PAD) {
-    scheduleNote(audioCtx, freq, t, dur * Q * 0.95, "triangle", 0.055);
-    t += dur * Q;
-  }
-
-  const dur = loopDuration(LOSE_MELODY, Q);
-  if (currentTrack === "lose") {
-    bgmTimer = setTimeout(
-      () => scheduleLoseLoop(audioCtx, startTime + dur),
-      (dur - 0.2) * 1000,
-    );
-  }
+  bgmTimer = setTimeout(() => tickBgm(audioCtx, track), TICK_MS);
 }
 
 export const BGM = {
@@ -367,13 +384,17 @@ export const BGM = {
     const audioCtx = getContext();
     if (!audioCtx) return;
     if (currentTrack === track) return;
+    muteMaster(audioCtx);
     stopBgm();
+    unmuteMaster(audioCtx);
     currentTrack = track;
     if (audioCtx.state === "suspended") audioCtx.resume();
-    const startTime = audioCtx.currentTime + 0.05;
-    if (track === "title")  scheduleTitleLoop(audioCtx, startTime);
-    if (track === "battle") scheduleBattleLoop(audioCtx, startTime);
-    if (track === "lose")   scheduleLoseLoop(audioCtx, startTime);
+    const start = audioCtx.currentTime + 0.05;
+    const def = TRACKS[track];
+    channelStates = def.channels.map(() => ({ noteIdx: 0, nextTime: start, loopStart: start }));
+    kickNextTime = start;
+    kickIdx      = 0;
+    tickBgm(audioCtx, track);
   },
   stop: stopBgm,
 };
