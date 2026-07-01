@@ -138,7 +138,7 @@ function startCombat(): void {
   renderStatsBar("combat-stats-bar", run.stats);
   $("combat-log").textContent = "";
   $("btn-combat-next").classList.add("hidden");
-  BGM.play("battle");
+  BGM.play(isBossStage(run.stage) ? "boss" : "battle");
   showScreen("screen-combat");
 
   const result = simulateCombat(player, enemy, Math.random);
