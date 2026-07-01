@@ -242,13 +242,73 @@ function doHit(wt) {
   else sfxDefault();
 }
 
+function sfxCritExtra() {
+  const ac = getCtx(), now = ac.currentTime;
+  // ズザザザザ：ノイズバーストを30ms間隔で8連射、周波数を落としながら
+  for (let i = 0; i < 8; i++) {
+    const t = now + i * 0.032;
+    const dur = 0.028;
+    const buf = ac.createBuffer(1, Math.ceil(ac.sampleRate * dur), ac.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let j = 0; j < d.length; j++) d[j] = Math.random() * 2 - 1;
+    const src = ac.createBufferSource(); src.buffer = buf;
+    const filt = ac.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.frequency.value = 3500 * Math.pow(0.72, i);
+    filt.Q.value = 2.8;
+    const g = ac.createGain();
+    const vol = Math.max(0.12, 0.88 - i * 0.09);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(filt).connect(g).connect(ac.destination);
+    src.start(t); src.stop(t + dur);
+  }
+  // ズーンとした余韻
+  const osc = ac.createOscillator(), og = ac.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(220, now + 0.22);
+  osc.frequency.exponentialRampToValueAtTime(55, now + 0.46);
+  og.gain.setValueAtTime(0.28, now + 0.22);
+  og.gain.exponentialRampToValueAtTime(0.001, now + 0.46);
+  osc.connect(og).connect(ac.destination);
+  osc.start(now + 0.22); osc.stop(now + 0.47);
+}
+
 function sfxCrit(wt) {
   doHit(wt);
-  setTimeout(() => beep(880, 0.07, 'square', 0.13), 35);
+  setTimeout(sfxCritExtra, 40);
   log(`${wt} 会心`);
 }
 
-function sfxMiss() { beep(120, 0.12, 'triangle', 0.08); log('MISS'); }
+function sfxMiss() {
+  const ac = getCtx(), now = ac.currentTime;
+  // 攻撃をかわされた空振り風切り音
+  const buf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.18), ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const filt = ac.createBiquadFilter();
+  filt.type = 'bandpass';
+  filt.frequency.setValueAtTime(2800, now);
+  filt.frequency.exponentialRampToValueAtTime(700, now + 0.18);
+  filt.Q.value = 1.8;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.75, now + 0.05);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+  src.connect(filt).connect(g).connect(ac.destination);
+  src.start(now); src.stop(now + 0.18);
+  // ひゅっとした低音（空振り感）
+  const osc = ac.createOscillator(), og = ac.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(200, now);
+  osc.frequency.exponentialRampToValueAtTime(75, now + 0.16);
+  og.gain.setValueAtTime(0.38, now);
+  og.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+  osc.connect(og).connect(ac.destination);
+  osc.start(now); osc.stop(now + 0.17);
+  log('MISS');
+}
 function sfxWin() {
   [523, 659, 784].forEach((f, i) => setTimeout(() => beep(f, 0.15, 'square', 0.15), i * 90));
   log('WIN');
