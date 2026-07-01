@@ -86,31 +86,65 @@ function beep(freq, duration, type = 'square', gain = 0.15) {
 
 function sfxSword() {
   const ac = getCtx(), now = ac.currentTime;
-  // 振り音：高域ノイズでシュッとした風切り（v3から復活）
-  const buf = ac.createBuffer(1, ac.sampleRate * 0.06, ac.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-  const src = ac.createBufferSource(); src.buffer = buf;
-  const filt = ac.createBiquadFilter();
-  filt.type = 'bandpass';
-  filt.frequency.setValueAtTime(8000, now);
-  filt.frequency.exponentialRampToValueAtTime(2500, now + 0.06);
-  filt.Q.value = 1.2;
-  const g = ac.createGain();
-  g.gain.setValueAtTime(1.2, now);
-  g.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
-  src.connect(filt).connect(g).connect(ac.destination);
-  src.start(now); src.stop(now + 0.06);
-  // 斬撃音：重みのある低い鉄の響き
-  const osc = ac.createOscillator(), g2 = ac.createGain();
-  osc.type = 'sawtooth';
-  osc.frequency.setValueAtTime(750, now + 0.03);
-  osc.frequency.exponentialRampToValueAtTime(140, now + 0.17);
-  g2.gain.setValueAtTime(0, now);
-  g2.gain.setValueAtTime(0.3, now + 0.03);
-  g2.gain.exponentialRampToValueAtTime(0.001, now + 0.17);
-  osc.connect(g2).connect(ac.destination);
-  osc.start(now); osc.stop(now + 0.18);
+
+  // Phase 1: 振り被り〜振り下ろし（重い剣が加速する風切り）
+  // 最初は静かに始まり、グワッと大きく加速する
+  const buf1 = ac.createBuffer(1, ac.sampleRate * 0.2, ac.sampleRate);
+  const d1 = buf1.getChannelData(0);
+  for (let i = 0; i < d1.length; i++) d1[i] = Math.random() * 2 - 1;
+  const sw = ac.createBufferSource(); sw.buffer = buf1;
+  const sf = ac.createBiquadFilter();
+  sf.type = 'bandpass';
+  sf.frequency.setValueAtTime(1500, now);
+  sf.frequency.exponentialRampToValueAtTime(280, now + 0.2);
+  sf.Q.value = 1.3;
+  const sg = ac.createGain();
+  sg.gain.setValueAtTime(0.0, now);
+  sg.gain.linearRampToValueAtTime(0.85, now + 0.12);  // 加速して最大に
+  sg.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+  sw.connect(sf).connect(sg).connect(ac.destination);
+  sw.start(now); sw.stop(now + 0.2);
+
+  // Phase 2: 切り裂き瞬間（中高域バースト）
+  const buf2 = ac.createBuffer(1, ac.sampleRate * 0.07, ac.sampleRate);
+  const d2 = buf2.getChannelData(0);
+  for (let i = 0; i < d2.length; i++) d2[i] = Math.random() * 2 - 1;
+  const sl = ac.createBufferSource(); sl.buffer = buf2;
+  const lf = ac.createBiquadFilter();
+  lf.type = 'bandpass';
+  lf.frequency.setValueAtTime(3000, now + 0.13);
+  lf.frequency.exponentialRampToValueAtTime(650, now + 0.20);
+  lf.Q.value = 2.5;
+  const lg = ac.createGain();
+  lg.gain.setValueAtTime(1.2, now + 0.13);
+  lg.gain.exponentialRampToValueAtTime(0.001, now + 0.20);
+  sl.connect(lf).connect(lg).connect(ac.destination);
+  sl.start(now + 0.13); sl.stop(now + 0.20);
+
+  // Phase 2b: シュパッとした切り裂き感（高域）
+  const buf3 = ac.createBuffer(1, ac.sampleRate * 0.045, ac.sampleRate);
+  const d3 = buf3.getChannelData(0);
+  for (let i = 0; i < d3.length; i++) d3[i] = Math.random() * 2 - 1;
+  const sh = ac.createBufferSource(); sh.buffer = buf3;
+  const hf = ac.createBiquadFilter();
+  hf.type = 'highpass'; hf.frequency.value = 4500;
+  const hg = ac.createGain();
+  hg.gain.setValueAtTime(0.65, now + 0.13);
+  hg.gain.exponentialRampToValueAtTime(0.001, now + 0.175);
+  sh.connect(hf).connect(hg).connect(ac.destination);
+  sh.start(now + 0.13); sh.stop(now + 0.175);
+
+  // Phase 3: ブレードの重量感（低音ズシン）
+  const osc = ac.createOscillator(), og = ac.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(95, now + 0.13);
+  osc.frequency.exponentialRampToValueAtTime(32, now + 0.27);
+  og.gain.setValueAtTime(0, now);
+  og.gain.setValueAtTime(0.5, now + 0.13);
+  og.gain.exponentialRampToValueAtTime(0.001, now + 0.27);
+  osc.connect(og).connect(ac.destination);
+  osc.start(now); osc.stop(now + 0.28);
+
   log('⚔️ 剣 ヒット');
 }
 
