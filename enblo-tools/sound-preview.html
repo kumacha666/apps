@@ -245,62 +245,51 @@ function doHit(wt) {
 function sfxCritExtra() {
   const ac = getCtx(), now = ac.currentTime;
 
-  // === 層1: ズバッ — 鋭い斬撃の確定感 ===
-  const slashBuf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.07), ac.sampleRate);
-  const slashD = slashBuf.getChannelData(0);
-  for (let i = 0; i < slashD.length; i++) slashD[i] = Math.random() * 2 - 1;
-  const slashSrc = ac.createBufferSource(); slashSrc.buffer = slashBuf;
-  const slashF = ac.createBiquadFilter(); slashF.type = 'bandpass';
-  slashF.frequency.setValueAtTime(2400, now);
-  slashF.frequency.exponentialRampToValueAtTime(800, now + 0.07);
-  slashF.Q.value = 2.0;
-  const slashG = ac.createGain();
-  slashG.gain.setValueAtTime(0.65, now);
-  slashG.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
-  slashSrc.connect(slashF).connect(slashG).connect(ac.destination);
-  slashSrc.start(now); slashSrc.stop(now + 0.07);
+  // === 層1: ドスッ — 致命的な重い打撃（中低音ノイズ） ===
+  const hitBuf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.10), ac.sampleRate);
+  const hitD = hitBuf.getChannelData(0);
+  for (let i = 0; i < hitD.length; i++) hitD[i] = Math.random() * 2 - 1;
+  const hitSrc = ac.createBufferSource(); hitSrc.buffer = hitBuf;
+  const hitF = ac.createBiquadFilter(); hitF.type = 'bandpass';
+  hitF.frequency.setValueAtTime(600, now);
+  hitF.frequency.exponentialRampToValueAtTime(150, now + 0.10);
+  hitF.Q.value = 1.2;
+  const hitG = ac.createGain();
+  hitG.gain.setValueAtTime(0.70, now);
+  hitG.gain.exponentialRampToValueAtTime(0.001, now + 0.10);
+  hitSrc.connect(hitF).connect(hitG).connect(ac.destination);
+  hitSrc.start(now); hitSrc.stop(now + 0.10);
 
-  // === 層2: キーン — 刃の金属共鳴（長めに引いて"決まった"感） ===
-  const keenOsc = ac.createOscillator(), keenG = ac.createGain();
-  keenOsc.type = 'sine';
-  keenOsc.frequency.setValueAtTime(2600, now + 0.01);
-  keenOsc.frequency.exponentialRampToValueAtTime(1100, now + 0.55);
-  keenG.gain.setValueAtTime(0.0, now + 0.01);
-  keenG.gain.linearRampToValueAtTime(0.55, now + 0.03);
-  keenG.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
-  keenOsc.connect(keenG).connect(ac.destination);
-  keenOsc.start(now + 0.01); keenOsc.stop(now + 0.56);
-
-  // === 層3: ズザザザ — ダメージが走る感触（12発、抑えたゲイン） ===
-  for (let i = 0; i < 12; i++) {
-    const t = now + 0.04 + i * 0.033;
-    const dur = 0.04;
+  // === 層2: ズザザザ — ダメージが肉体を貫く感触（中域、落ち着いた周波数） ===
+  for (let i = 0; i < 10; i++) {
+    const t = now + 0.05 + i * 0.038;
+    const dur = 0.045;
     const buf = ac.createBuffer(1, Math.ceil(ac.sampleRate * dur), ac.sampleRate);
     const d = buf.getChannelData(0);
     for (let j = 0; j < d.length; j++) d[j] = Math.random() * 2 - 1;
     const src = ac.createBufferSource(); src.buffer = buf;
     const filt = ac.createBiquadFilter();
     filt.type = 'bandpass';
-    filt.frequency.value = 3800 * Math.pow(0.78, i);
-    filt.Q.value = 2.2;
+    filt.frequency.value = 900 * Math.pow(0.80, i);  // 高域を使わず中低域のみ
+    filt.Q.value = 1.5;
     const g = ac.createGain();
-    const vol = Math.max(0.04, 0.52 - i * 0.04);
+    const vol = Math.max(0.04, 0.48 - i * 0.04);
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     src.connect(filt).connect(g).connect(ac.destination);
     src.start(t); src.stop(t + dur);
   }
 
-  // === 層4: ズン — 低音の余韻（重さの名残） ===
+  // === 層3: ズウウン — 深い低音の余韻（致命傷の重量感） ===
   const rumOsc = ac.createOscillator(), rumG = ac.createGain();
   rumOsc.type = 'sine';
-  rumOsc.frequency.setValueAtTime(120, now + 0.02);
-  rumOsc.frequency.exponentialRampToValueAtTime(38, now + 0.45);
+  rumOsc.frequency.setValueAtTime(90, now + 0.02);
+  rumOsc.frequency.exponentialRampToValueAtTime(28, now + 0.65);
   rumG.gain.setValueAtTime(0.0, now + 0.02);
-  rumG.gain.linearRampToValueAtTime(0.42, now + 0.06);
-  rumG.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+  rumG.gain.linearRampToValueAtTime(0.55, now + 0.07);
+  rumG.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
   rumOsc.connect(rumG).connect(ac.destination);
-  rumOsc.start(now + 0.02); rumOsc.stop(now + 0.46);
+  rumOsc.start(now + 0.02); rumOsc.stop(now + 0.66);
 }
 
 function sfxCrit(wt) {
