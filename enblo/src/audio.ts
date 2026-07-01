@@ -43,63 +43,101 @@ export const SFX = {
 };
 
 // ─── BGM ───────────────────────────────────────────────────────────────────
+// 音符: [Hz, 8分音符の個数]  0Hz = 休符
 
-// ファミコン風 闘技場マーチ（Aマイナー、BPM=168）
-// melody: square wave / bass: square wave / pulse: square wave（和音）
-//
-// 音符: [Hz, 拍数] (0 = 休符)  拍単位 = 8分音符
-
-const BPM = 168;
-const EIGHTH = (60 / BPM) / 2; // 8分音符の秒数
-
-// 周波数定義
 const N: Record<string, number> = {
   R:  0,
-  E3: 164.81, F3: 174.61, G3: 196.00, A3: 220.00, B3: 246.94,
-  C4: 261.63, D4: 293.66, E4: 329.63, F4: 349.23, G4: 392.00,
-  A4: 440.00, B4: 493.88, C5: 523.25, D5: 587.33, E5: 659.25,
-  F5: 698.46, G5: 783.99, A5: 880.00, B5: 987.77, C6: 1046.50,
+  D3: 146.83, E3: 164.81, F3: 174.61, G3: 196.00, A3: 220.00, B3: 246.94,
+  C4: 261.63, D4: 293.66, E4: 329.63, F4: 349.23, G4: 392.00, A4: 440.00,
+  B4: 493.88, C5: 523.25, D5: 587.33, E5: 659.25, F5: 698.46, G5: 783.99,
+  A5: 880.00, B5: 987.77, C6: 1046.50,
 };
 
-// メロディ（8分音符単位）
-// FE闘技場風: Aマイナー、駆け足のマーチ感
-// A部（8小節）
-const MELODY_A: [number, number][] = [
-  // bar1: 緊張感のある上昇フレーズ
-  [N.A4,1],[N.C5,1],[N.E5,1],[N.A5,1],[N.G5,1],[N.F5,1],[N.E5,2],
-  // bar2
-  [N.D5,1],[N.E5,1],[N.F5,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,2],
-  // bar3
-  [N.C5,1],[N.E5,1],[N.G5,1],[N.C6,1],[N.B5,1],[N.A5,1],[N.G5,2],
-  // bar4: 半終止
-  [N.F5,1],[N.G5,1],[N.A5,1],[N.G5,1],[N.E5,4],
-  // bar5
-  [N.A4,1],[N.C5,1],[N.E5,1],[N.A5,1],[N.G5,1],[N.F5,1],[N.E5,2],
-  // bar6
-  [N.D5,1],[N.F5,1],[N.A5,1],[N.G5,1],[N.F5,1],[N.E5,1],[N.D5,2],
-  // bar7
-  [N.E5,1],[N.D5,1],[N.C5,1],[N.B4,1],[N.C5,1],[N.D5,1],[N.E5,1],[N.F5,1],
-  // bar8: 完全終止→ループ
-  [N.E5,1],[N.D5,1],[N.C5,1],[N.B4,1],[N.A4,4],
+// ──────────────────────────────────────────────
+// タイトルBGM（Dマイナー、BPM=76、荘厳・重厚）
+// ──────────────────────────────────────────────
+const TITLE_BPM = 76;
+const TITLE_Q = 60 / TITLE_BPM;       // 4分音符
+const TITLE_E = TITLE_Q / 2;          // 8分音符
+
+// メロディ（quarter単位で表記、[Hz, 4分音符数]）
+const TITLE_MELODY: [number, number][] = [
+  // intro / A部: D → F → A → D（Dm和音感）
+  [N.D5,2],[N.C5,1],[N.D5,1],
+  [N.F5,2],[N.E5,2],
+  [N.D5,2],[N.A4,1],[N.B4,1],
+  [N.C5,4],
+
+  [N.A4,2],[N.G4,1],[N.A4,1],
+  [N.C5,2],[N.B4,2],
+  [N.A4,2],[N.F4,1],[N.G4,1],
+  [N.A4,4],
+
+  // B部: 緊張感を上げる
+  [N.F5,1],[N.G5,1],[N.A5,2],[N.G5,1],[N.F5,1],[N.E5,2],
+  [N.D5,2],[N.E5,1],[N.F5,1],[N.G5,2],[N.F5,2],
+  [N.E5,1],[N.F5,1],[N.G5,2],[N.F5,1],[N.E5,1],[N.D5,2],
+  [N.C5,2],[N.B4,2],[N.A4,4],
 ];
 
-// B部（4小節、少し動きを変えてメリハリ）
-const MELODY_B: [number, number][] = [
-  // bar1
-  [N.E5,2],[N.E5,1],[N.F5,1],[N.G5,2],[N.G5,2],
-  // bar2
-  [N.F5,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,2],[N.A4,2],
-  // bar3
-  [N.B4,2],[N.D5,2],[N.G5,2],[N.F5,2],
-  // bar4
-  [N.E5,1],[N.D5,1],[N.C5,1],[N.B4,1],[N.A4,4],
+const TITLE_BASS: [number, number][] = [
+  [N.D3,2],[N.A3,2],[N.D3,2],[N.A3,2],
+  [N.F3,2],[N.C4,2],[N.F3,2],[N.C4,2],
+  [N.G3,2],[N.D4,2],[N.G3,2],[N.D4,2],
+  [N.A3,4],[N.A3,4],
+
+  [N.D3,2],[N.A3,2],[N.D3,2],[N.A3,2],
+  [N.F3,2],[N.C4,2],[N.F3,2],[N.C4,2],
+  [N.G3,2],[N.D4,2],[N.G3,2],[N.E3,2],
+  [N.A3,8],
+
+  [N.D4,2],[N.A3,2],[N.D4,2],[N.A3,2],
+  [N.G3,2],[N.D4,2],[N.G3,2],[N.D4,2],
+  [N.A3,2],[N.E3,2],[N.A3,2],[N.E3,2],
+  [N.F3,2],[N.G3,2],[N.A3,4],
 ];
 
-const MELODY = [...MELODY_A, ...MELODY_B];
+const TITLE_PULSE: [number, number][] = [
+  [N.F4,2],[N.E4,1],[N.F4,1],[N.A4,2],[N.G4,2],
+  [N.F4,2],[N.G4,2],[N.A4,4],
+  [N.E4,2],[N.D4,1],[N.E4,1],[N.G4,2],[N.F4,2],
+  [N.E4,2],[N.D4,2],[N.C4,4],
 
-// ベース（2分音符単位、ルート＋5度を刻む）
-const BASS_PATTERN: [number, number][] = [
+  [N.D4,2],[N.A4,2],[N.D4,2],[N.A4,2],
+  [N.C4,2],[N.G4,2],[N.C4,2],[N.G4,2],
+  [N.D4,2],[N.A4,2],[N.D4,2],[N.A4,2],
+  [N.E4,4],[N.A4,4],
+
+  [N.A4,1],[N.B4,1],[N.C5,2],[N.B4,1],[N.A4,1],[N.G4,2],
+  [N.F4,2],[N.G4,1],[N.A4,1],[N.B4,2],[N.A4,2],
+  [N.G4,1],[N.A4,1],[N.B4,2],[N.A4,1],[N.G4,1],[N.F4,2],
+  [N.E4,2],[N.F4,2],[N.E4,4],
+];
+
+// ──────────────────────────────────────────────
+// 戦闘BGM（Aマイナー、BPM=168、疾走感のあるマーチ）
+// ──────────────────────────────────────────────
+const BATTLE_BPM = 168;
+const BATTLE_E = (60 / BATTLE_BPM) / 2; // 8分音符
+
+const BATTLE_MELODY: [number, number][] = [
   // A部
+  [N.A4,1],[N.C5,1],[N.E5,1],[N.A5,1],[N.G5,1],[N.F5,1],[N.E5,2],
+  [N.D5,1],[N.E5,1],[N.F5,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,2],
+  [N.C5,1],[N.E5,1],[N.G5,1],[N.C6,1],[N.B5,1],[N.A5,1],[N.G5,2],
+  [N.F5,1],[N.G5,1],[N.A5,1],[N.G5,1],[N.E5,4],
+  [N.A4,1],[N.C5,1],[N.E5,1],[N.A5,1],[N.G5,1],[N.F5,1],[N.E5,2],
+  [N.D5,1],[N.F5,1],[N.A5,1],[N.G5,1],[N.F5,1],[N.E5,1],[N.D5,2],
+  [N.E5,1],[N.D5,1],[N.C5,1],[N.B4,1],[N.C5,1],[N.D5,1],[N.E5,1],[N.F5,1],
+  [N.E5,1],[N.D5,1],[N.C5,1],[N.B4,1],[N.A4,4],
+  // B部
+  [N.E5,2],[N.E5,1],[N.F5,1],[N.G5,2],[N.G5,2],
+  [N.F5,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,2],[N.A4,2],
+  [N.B4,2],[N.D5,2],[N.G5,2],[N.F5,2],
+  [N.E5,1],[N.D5,1],[N.C5,1],[N.B4,1],[N.A4,4],
+];
+
+const BATTLE_BASS: [number, number][] = [
   [N.A3,2],[N.E3,2],[N.A3,2],[N.E3,2],
   [N.G3,2],[N.D4,2],[N.G3,2],[N.D4,2],
   [N.C4,2],[N.G3,2],[N.C4,2],[N.G3,2],
@@ -108,16 +146,13 @@ const BASS_PATTERN: [number, number][] = [
   [N.D4,2],[N.A3,2],[N.D4,2],[N.A3,2],
   [N.C4,2],[N.G3,2],[N.C4,2],[N.G3,2],
   [N.E3,4],[N.A3,4],
-  // B部
   [N.C4,2],[N.G3,2],[N.C4,2],[N.G3,2],
   [N.D4,2],[N.A3,2],[N.D4,2],[N.A3,2],
   [N.G3,2],[N.D4,2],[N.B3,2],[N.F3,2],
   [N.E3,4],[N.A3,4],
 ];
 
-// パルス（ハーモニー補助、メロディより少し下）
-const PULSE_PATTERN: [number, number][] = [
-  // A部
+const BATTLE_PULSE: [number, number][] = [
   [N.E4,1],[N.G4,1],[N.A4,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,2],
   [N.A4,1],[N.B4,1],[N.C5,1],[N.B4,1],[N.A4,1],[N.G4,1],[N.F4,2],
   [N.G4,1],[N.B4,1],[N.D5,1],[N.G5,1],[N.F5,1],[N.E5,1],[N.D5,2],
@@ -126,16 +161,18 @@ const PULSE_PATTERN: [number, number][] = [
   [N.A4,1],[N.C5,1],[N.E5,1],[N.D5,1],[N.C5,1],[N.B4,1],[N.A4,2],
   [N.B4,1],[N.A4,1],[N.G4,1],[N.F4,1],[N.G4,1],[N.A4,1],[N.B4,1],[N.C5,1],
   [N.B4,1],[N.A4,1],[N.G4,1],[N.F4,1],[N.E4,4],
-  // B部
   [N.G4,2],[N.G4,1],[N.A4,1],[N.B4,2],[N.B4,2],
   [N.C5,1],[N.B4,1],[N.A4,1],[N.G4,1],[N.F4,2],[N.E4,2],
   [N.F4,2],[N.A4,2],[N.D5,2],[N.C5,2],
   [N.B4,1],[N.A4,1],[N.G4,1],[N.F4,1],[N.E4,4],
 ];
 
-// ノイズ打楽器（クォーター毎に刻む）
-const KICK_PATTERN = [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]; // 4分音符
-const SNARE_PATTERN= [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,0]; // 裏拍
+const BATTLE_KICK =  [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0];
+const BATTLE_SNARE = [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,0];
+
+// ──────────────────────────────────────────────
+// スケジューラ共通関数
+// ──────────────────────────────────────────────
 
 function scheduleNote(
   audioCtx: AudioContext,
@@ -165,78 +202,120 @@ function scheduleNoise(audioCtx: AudioContext, startTime: number, type: "kick" |
   const src = audioCtx.createBufferSource();
   src.buffer = buf;
   const g = audioCtx.createGain();
-  const freq = audioCtx.createBiquadFilter();
-  freq.type = type === "kick" ? "lowpass" : "bandpass";
-  freq.frequency.value = type === "kick" ? 120 : 1800;
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = type === "kick" ? "lowpass" : "bandpass";
+  filt.frequency.value = type === "kick" ? 120 : 1800;
   g.gain.setValueAtTime(type === "kick" ? 0.25 : 0.12, startTime);
   g.gain.exponentialRampToValueAtTime(0.001, startTime + (type === "kick" ? 0.08 : 0.04));
-  src.connect(freq).connect(g).connect(audioCtx.destination);
+  src.connect(filt).connect(g).connect(audioCtx.destination);
   src.start(startTime);
   src.stop(startTime + 0.1);
 }
 
-function calcLoopDuration(pattern: [number, number][]): number {
-  return pattern.reduce((s, [, dur]) => s + dur * EIGHTH, 0);
+function loopDuration(pattern: [number, number][], eighth: number): number {
+  return pattern.reduce((s, [, d]) => s + d * eighth, 0);
 }
 
+// ──────────────────────────────────────────────
+// BGMプレーヤー（トラック切り替え対応）
+// ──────────────────────────────────────────────
+
+type BgmTrack = "title" | "battle";
+
+let currentTrack: BgmTrack | null = null;
 let bgmTimer: ReturnType<typeof setTimeout> | null = null;
-let bgmPlaying = false;
 
-function scheduleBgmLoop(audioCtx: AudioContext, startTime: number): void {
+function stopBgm(): void {
+  currentTrack = null;
+  if (bgmTimer !== null) {
+    clearTimeout(bgmTimer);
+    bgmTimer = null;
+  }
+}
+
+function scheduleTitleLoop(audioCtx: AudioContext, startTime: number): void {
+  const E = TITLE_E;
+  const Q = TITLE_Q;
+
   let t = startTime;
-  for (const [freq, dur] of MELODY) {
-    scheduleNote(audioCtx, freq, t, dur * EIGHTH * 0.9, "square", 0.10);
-    t += dur * EIGHTH;
+  for (const [freq, dur] of TITLE_MELODY) {
+    scheduleNote(audioCtx, freq, t, dur * Q * 0.88, "square", 0.11);
+    t += dur * Q;
   }
-
   t = startTime;
-  for (const [freq, dur] of PULSE_PATTERN) {
-    scheduleNote(audioCtx, freq, t, dur * EIGHTH * 0.85, "square", 0.06);
-    t += dur * EIGHTH;
+  for (const [freq, dur] of TITLE_PULSE) {
+    scheduleNote(audioCtx, freq, t, dur * Q * 0.82, "square", 0.065);
+    t += dur * Q;
   }
-
   t = startTime;
-  for (const [freq, dur] of BASS_PATTERN) {
-    scheduleNote(audioCtx, freq, t, dur * EIGHTH * 0.8, "square", 0.12);
-    t += dur * EIGHTH;
+  for (const [freq, dur] of TITLE_BASS) {
+    scheduleNote(audioCtx, freq, t, dur * Q * 0.78, "triangle", 0.13);
+    t += dur * Q;
   }
 
-  // キック＆スネア（1ループ分）
-  const loopBars = MELODY.reduce((s, [, d]) => s + d, 0) / 8; // 何小節か
-  const beatSec = EIGHTH * 2;
-  const totalBeats = Math.round(loopBars * 4);
-  const sixteenthCount = KICK_PATTERN.length;
-  for (let bar = 0; bar < Math.floor(loopBars); bar++) {
-    for (let i = 0; i < sixteenthCount; i++) {
-      const beatTime = startTime + (bar * 4 + i / (sixteenthCount / 4)) * beatSec;
-      if (KICK_PATTERN[i]) scheduleNoise(audioCtx, beatTime, "kick");
-      if (SNARE_PATTERN[i]) scheduleNoise(audioCtx, beatTime, "snare");
+  void E; // triangle bassはQ単位なのでEは未使用
+
+  const dur = loopDuration(TITLE_MELODY, Q);
+  if (currentTrack === "title") {
+    bgmTimer = setTimeout(
+      () => scheduleTitleLoop(audioCtx, startTime + dur),
+      (dur - 0.2) * 1000,
+    );
+  }
+}
+
+function scheduleBattleLoop(audioCtx: AudioContext, startTime: number): void {
+  const E = BATTLE_E;
+
+  let t = startTime;
+  for (const [freq, dur] of BATTLE_MELODY) {
+    scheduleNote(audioCtx, freq, t, dur * E * 0.9, "square", 0.10);
+    t += dur * E;
+  }
+  t = startTime;
+  for (const [freq, dur] of BATTLE_PULSE) {
+    scheduleNote(audioCtx, freq, t, dur * E * 0.85, "square", 0.06);
+    t += dur * E;
+  }
+  t = startTime;
+  for (const [freq, dur] of BATTLE_BASS) {
+    scheduleNote(audioCtx, freq, t, dur * E * 0.80, "square", 0.12);
+    t += dur * E;
+  }
+
+  // ノイズ打楽器（1ループ分）
+  const totalEighths = BATTLE_MELODY.reduce((s, [, d]) => s + d, 0);
+  const totalBars = Math.floor(totalEighths / 8);
+  const beatSec = E * 2;
+  const div = BATTLE_KICK.length;
+  for (let bar = 0; bar < totalBars; bar++) {
+    for (let i = 0; i < div; i++) {
+      const bt = startTime + (bar * 4 + i / (div / 4)) * beatSec;
+      if (BATTLE_KICK[i])  scheduleNoise(audioCtx, bt, "kick");
+      if (BATTLE_SNARE[i]) scheduleNoise(audioCtx, bt, "snare");
     }
   }
-  void totalBeats;
 
-  const loopDuration = calcLoopDuration(MELODY);
-  if (bgmPlaying) {
-    bgmTimer = setTimeout(() => scheduleBgmLoop(audioCtx, startTime + loopDuration), (loopDuration - 0.2) * 1000);
+  const dur = loopDuration(BATTLE_MELODY, E);
+  if (currentTrack === "battle") {
+    bgmTimer = setTimeout(
+      () => scheduleBattleLoop(audioCtx, startTime + dur),
+      (dur - 0.2) * 1000,
+    );
   }
 }
 
 export const BGM = {
-  play(): void {
+  play(track: BgmTrack): void {
     const audioCtx = getContext();
-    if (!audioCtx || bgmPlaying) return;
-    bgmPlaying = true;
+    if (!audioCtx) return;
+    if (currentTrack === track) return; // 同じトラックなら何もしない
+    stopBgm();
+    currentTrack = track;
     if (audioCtx.state === "suspended") audioCtx.resume();
-    scheduleBgmLoop(audioCtx, audioCtx.currentTime + 0.05);
+    const startTime = audioCtx.currentTime + 0.05;
+    if (track === "title")  scheduleTitleLoop(audioCtx, startTime);
+    if (track === "battle") scheduleBattleLoop(audioCtx, startTime);
   },
-  stop(): void {
-    bgmPlaying = false;
-    if (bgmTimer !== null) {
-      clearTimeout(bgmTimer);
-      bgmTimer = null;
-    }
-  },
-  isPlaying(): boolean {
-    return bgmPlaying;
-  },
+  stop: stopBgm,
 };

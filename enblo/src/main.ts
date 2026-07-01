@@ -44,7 +44,7 @@ function showScreen(id: string): void {
 
 function renderTitle(): void {
   $("gold-display").textContent = `所持ゴールド: ${save.totalGold}`;
-  BGM.play();
+  BGM.play("title");
   showScreen("screen-title");
 }
 
@@ -133,6 +133,7 @@ function startCombat(): void {
   renderUnitSprite("combat-enemy", ENEMY_ICON, enemy.name, enemy.stats.hp);
   $("combat-log").textContent = "";
   $("btn-combat-next").classList.add("hidden");
+  BGM.play("battle");
   showScreen("screen-combat");
 
   const result = simulateCombat(player, enemy, Math.random);
@@ -196,6 +197,7 @@ function onCombatLose(): void {
   save = addGold(save, run.goldEarned);
   writeSave(save);
 
+  BGM.play("title");
   $("result-title").textContent = "戦闘不能…";
   $("result-details").textContent = `到達: 第${run.stage}層 / 獲得ゴールド: ${run.goldEarned}`;
   showScreen("screen-result");
