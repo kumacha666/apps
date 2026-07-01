@@ -244,34 +244,99 @@ function doHit(wt) {
 
 function sfxCritExtra() {
   const ac = getCtx(), now = ac.currentTime;
-  // ズザザザザ：ノイズバーストを30ms間隔で8連射、周波数を落としながら
-  for (let i = 0; i < 8; i++) {
-    const t = now + i * 0.032;
-    const dur = 0.028;
+
+  // === 層1: 爆発的インパクト（最初の一撃） ===
+  // 低音ドカーン
+  const boomBuf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.12), ac.sampleRate);
+  const boomD = boomBuf.getChannelData(0);
+  for (let i = 0; i < boomD.length; i++) boomD[i] = Math.random() * 2 - 1;
+  const boomSrc = ac.createBufferSource(); boomSrc.buffer = boomBuf;
+  const boomF = ac.createBiquadFilter(); boomF.type = 'lowpass'; boomF.frequency.value = 300;
+  const boomG = ac.createGain();
+  boomG.gain.setValueAtTime(3.5, now);
+  boomG.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+  boomSrc.connect(boomF).connect(boomG).connect(ac.destination);
+  boomSrc.start(now); boomSrc.stop(now + 0.12);
+
+  // 高域ホワイトノイズ爆発
+  const expBuf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.08), ac.sampleRate);
+  const expD = expBuf.getChannelData(0);
+  for (let i = 0; i < expD.length; i++) expD[i] = Math.random() * 2 - 1;
+  const expSrc = ac.createBufferSource(); expSrc.buffer = expBuf;
+  const expF = ac.createBiquadFilter(); expF.type = 'highpass'; expF.frequency.value = 4000;
+  const expG = ac.createGain();
+  expG.gain.setValueAtTime(2.8, now);
+  expG.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+  expSrc.connect(expF).connect(expG).connect(ac.destination);
+  expSrc.start(now); expSrc.stop(now + 0.08);
+
+  // === 層2: エネルギー上昇シマー（必殺技チャージ感） ===
+  const shimOsc = ac.createOscillator(), shimG = ac.createGain();
+  shimOsc.type = 'sawtooth';
+  shimOsc.frequency.setValueAtTime(180, now);
+  shimOsc.frequency.exponentialRampToValueAtTime(1400, now + 0.14);
+  shimG.gain.setValueAtTime(0.0, now);
+  shimG.gain.linearRampToValueAtTime(1.4, now + 0.06);
+  shimG.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+  shimOsc.connect(shimG).connect(ac.destination);
+  shimOsc.start(now); shimOsc.stop(now + 0.15);
+
+  // === 層3: ズザザザ連射（16発、間隔を縮めて密度アップ） ===
+  for (let i = 0; i < 16; i++) {
+    const t = now + 0.06 + i * 0.038;
+    const dur = 0.05;
     const buf = ac.createBuffer(1, Math.ceil(ac.sampleRate * dur), ac.sampleRate);
     const d = buf.getChannelData(0);
     for (let j = 0; j < d.length; j++) d[j] = Math.random() * 2 - 1;
     const src = ac.createBufferSource(); src.buffer = buf;
     const filt = ac.createBiquadFilter();
     filt.type = 'bandpass';
-    filt.frequency.value = 3500 * Math.pow(0.72, i);
-    filt.Q.value = 2.8;
+    filt.frequency.value = 5000 * Math.pow(0.76, i);
+    filt.Q.value = 1.8;
     const g = ac.createGain();
-    const vol = Math.max(0.12, 0.88 - i * 0.09);
+    const vol = Math.max(0.08, 1.6 - i * 0.09);
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     src.connect(filt).connect(g).connect(ac.destination);
     src.start(t); src.stop(t + dur);
   }
-  // ズーンとした余韻
-  const osc = ac.createOscillator(), og = ac.createGain();
-  osc.type = 'sawtooth';
-  osc.frequency.setValueAtTime(220, now + 0.22);
-  osc.frequency.exponentialRampToValueAtTime(55, now + 0.46);
-  og.gain.setValueAtTime(0.28, now + 0.22);
-  og.gain.exponentialRampToValueAtTime(0.001, now + 0.46);
-  osc.connect(og).connect(ac.destination);
-  osc.start(now + 0.22); osc.stop(now + 0.47);
+
+  // === 層4: 金属的キーン（刃の共鳴） ===
+  const keenOsc = ac.createOscillator(), keenG = ac.createGain();
+  keenOsc.type = 'sine';
+  keenOsc.frequency.setValueAtTime(3200, now + 0.04);
+  keenOsc.frequency.exponentialRampToValueAtTime(1800, now + 0.55);
+  keenG.gain.setValueAtTime(0.0, now + 0.04);
+  keenG.gain.linearRampToValueAtTime(0.9, now + 0.08);
+  keenG.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+  keenOsc.connect(keenG).connect(ac.destination);
+  keenOsc.start(now + 0.04); keenOsc.stop(now + 0.56);
+
+  // === 層5: 重低音うなり（ズーーン） ===
+  const rumOsc = ac.createOscillator(), rumG = ac.createGain();
+  rumOsc.type = 'sawtooth';
+  rumOsc.frequency.setValueAtTime(140, now + 0.10);
+  rumOsc.frequency.exponentialRampToValueAtTime(28, now + 0.80);
+  rumG.gain.setValueAtTime(0.0, now + 0.10);
+  rumG.gain.linearRampToValueAtTime(1.8, now + 0.16);
+  rumG.gain.exponentialRampToValueAtTime(0.001, now + 0.80);
+  rumOsc.connect(rumG).connect(ac.destination);
+  rumOsc.start(now + 0.10); rumOsc.stop(now + 0.81);
+
+  // === 層6: 最後の余韻ノイズ引き（ザーっ） ===
+  const tailBuf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.35), ac.sampleRate);
+  const tailD = tailBuf.getChannelData(0);
+  for (let i = 0; i < tailD.length; i++) tailD[i] = Math.random() * 2 - 1;
+  const tailSrc = ac.createBufferSource(); tailSrc.buffer = tailBuf;
+  const tailF = ac.createBiquadFilter(); tailF.type = 'bandpass';
+  tailF.frequency.setValueAtTime(1200, now + 0.55);
+  tailF.frequency.exponentialRampToValueAtTime(200, now + 0.90);
+  tailF.Q.value = 0.8;
+  const tailG = ac.createGain();
+  tailG.gain.setValueAtTime(0.9, now + 0.55);
+  tailG.gain.exponentialRampToValueAtTime(0.001, now + 0.90);
+  tailSrc.connect(tailF).connect(tailG).connect(ac.destination);
+  tailSrc.start(now + 0.55); tailSrc.stop(now + 0.91);
 }
 
 function sfxCrit(wt) {
