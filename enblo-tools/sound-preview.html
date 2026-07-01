@@ -400,7 +400,7 @@ const TITLE_Q  = 60/76;
 const FIELD_E  = (60/136)/2;   // フィールド用
 const BATTLE_E = (60/176)/2;   // 戦闘 BPM176
 const BOSS_E   = (60/196)/2;   // ボス戦 BPM196
-const LOSE_Q   = 60/60;
+const LOSE_Q   = 60/50;  // BPM50 重く緩やか
 
 const TITLE_MELODY = [[N.D5,2],[N.C5,1],[N.D5,1],[N.F5,2],[N.E5,2],[N.D5,2],[N.A4,1],[N.B4,1],[N.C5,4],[N.A4,2],[N.G4,1],[N.A4,1],[N.C5,2],[N.B4,2],[N.A4,2],[N.F4,1],[N.G4,1],[N.A4,4],[N.F5,1],[N.G5,1],[N.A5,2],[N.G5,1],[N.F5,1],[N.E5,2],[N.D5,2],[N.E5,1],[N.F5,1],[N.G5,2],[N.F5,2],[N.E5,1],[N.F5,1],[N.G5,2],[N.F5,1],[N.E5,1],[N.D5,2],[N.C5,2],[N.B4,2],[N.A4,4]];
 const TITLE_BASS = [[N.D3,2],[N.A3,2],[N.D3,2],[N.A3,2],[N.F3,2],[N.C4,2],[N.F3,2],[N.C4,2],[N.G3,2],[N.D4,2],[N.G3,2],[N.D4,2],[N.A3,4],[N.A3,4],[N.D3,2],[N.A3,2],[N.D3,2],[N.A3,2],[N.F3,2],[N.C4,2],[N.F3,2],[N.C4,2],[N.G3,2],[N.D4,2],[N.G3,2],[N.E3,2],[N.A3,8],[N.D4,2],[N.A3,2],[N.D4,2],[N.A3,2],[N.G3,2],[N.D4,2],[N.G3,2],[N.D4,2],[N.A3,2],[N.E3,2],[N.A3,2],[N.E3,2],[N.F3,2],[N.G3,2],[N.A3,4]];
@@ -535,8 +535,27 @@ const BOSS_PULSE = [
 const BOSS_KICK  = [1,0,1,0, 0,0,1,0, 1,0,1,0, 0,0,0,0];
 const BOSS_SNARE = [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,1,0];
 
-const LOSE_MELODY = [[N.C5,3],[N.R,1],[N.A4,2],[N.G4,2],[N.F4,3],[N.R,1],[N.C5,2],[N.D5,1],[N.C5,1],[N.A4,4],[N.G4,2],[N.A4,1],[N.G4,1],[N.F4,3],[N.G4,1],[N.A4,2],[N.G4,1],[N.F4,1],[N.E4,4],[N.F4,2],[N.E4,2],[N.C4,6],[N.R,2]];
-const LOSE_PAD = [[N.C4,4],[N.A3,4],[N.F3,4],[N.C4,4],[N.A3,4],[N.G3,4],[N.F3,4],[N.A3,4],[N.G3,4],[N.F3,4],[N.E3,4],[N.F3,4],[N.C3,8]];
+// 敗戦BGM: Dマイナー BPM50 葬送風、下降するラメント
+// 各チャンネルは32拍で揃えてループ
+const LOSE_MELODY = [
+  [N.A4,2],[N.G4,2],      // ラ ソ（高い位置から始まり）
+  [N.F4,3],[N.R,1],       // ファー（吐息の休符）
+  [N.E4,2],[N.D4,2],      // ミ レ（下降）
+  [N.C4,4],[N.R,4],       // ドー（長い沈黙）
+  [N.Bb3,2],[N.A3,2],     // シ♭ ラ
+  [N.G3,2],[N.F3,2],      // ソ ファ（さらに沈む）
+  [N.E3,3],[N.R,1],       // ミ（吐息）
+  [N.D3,4],               // レ（最低音、沈みきる）
+]; // 計32拍
+
+const LOSE_BASS = [
+  [N.D3,4],[N.A3,4],[N.F3,4],[N.E3,4],  // Dm分散和音（重く）
+  [N.D3,4],[N.A3,4],[N.F3,4],[N.E3,4],
+]; // 計32拍
+
+const LOSE_PAD = [
+  [N.D3,8],[N.A3,8],[N.Bb3,8],[N.A3,8],  // 長く伸ばす和音（暗い背景）
+]; // 計32拍
 
 const TRACKS = {
   title: {
@@ -572,8 +591,9 @@ const TRACKS = {
   },
   lose: {
     channels: [
-      { notes: LOSE_MELODY, unit: LOSE_Q, type: 'triangle', gain: 0.10,  gate: 0.90 },
-      { notes: LOSE_PAD,    unit: LOSE_Q, type: 'triangle', gain: 0.055, gate: 0.95 },
+      { notes: LOSE_MELODY, unit: LOSE_Q, type: 'sine',     gain: 0.13,  gate: 0.82 },
+      { notes: LOSE_BASS,   unit: LOSE_Q, type: 'sawtooth', gain: 0.07,  gate: 0.75 },
+      { notes: LOSE_PAD,    unit: LOSE_Q, type: 'triangle', gain: 0.055, gate: 0.98 },
     ],
   },
 };
