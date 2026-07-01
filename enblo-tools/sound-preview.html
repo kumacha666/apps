@@ -86,31 +86,31 @@ function beep(freq, duration, type = 'square', gain = 0.15) {
 
 function sfxSword() {
   const ac = getCtx(), now = ac.currentTime;
-  // 振り音：中低域ノイズで重みのある空気切り
-  const buf = ac.createBuffer(1, ac.sampleRate * 0.11, ac.sampleRate);
+  // 振り音：高域ノイズでシュッとした風切り（v3から復活）
+  const buf = ac.createBuffer(1, ac.sampleRate * 0.06, ac.sampleRate);
   const d = buf.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   const src = ac.createBufferSource(); src.buffer = buf;
   const filt = ac.createBiquadFilter();
   filt.type = 'bandpass';
-  filt.frequency.setValueAtTime(2200, now);
-  filt.frequency.exponentialRampToValueAtTime(420, now + 0.11);
-  filt.Q.value = 1.8;
+  filt.frequency.setValueAtTime(8000, now);
+  filt.frequency.exponentialRampToValueAtTime(2500, now + 0.06);
+  filt.Q.value = 1.2;
   const g = ac.createGain();
-  g.gain.setValueAtTime(1.0, now);
-  g.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+  g.gain.setValueAtTime(1.2, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
   src.connect(filt).connect(g).connect(ac.destination);
-  src.start(now); src.stop(now + 0.11);
-  // 衝撃：低めの鉄の響き
+  src.start(now); src.stop(now + 0.06);
+  // 斬撃音：重みのある低い鉄の響き
   const osc = ac.createOscillator(), g2 = ac.createGain();
   osc.type = 'sawtooth';
-  osc.frequency.setValueAtTime(520, now + 0.04);
-  osc.frequency.exponentialRampToValueAtTime(100, now + 0.18);
+  osc.frequency.setValueAtTime(750, now + 0.03);
+  osc.frequency.exponentialRampToValueAtTime(140, now + 0.17);
   g2.gain.setValueAtTime(0, now);
-  g2.gain.setValueAtTime(0.32, now + 0.04);
-  g2.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+  g2.gain.setValueAtTime(0.3, now + 0.03);
+  g2.gain.exponentialRampToValueAtTime(0.001, now + 0.17);
   osc.connect(g2).connect(ac.destination);
-  osc.start(now); osc.stop(now + 0.19);
+  osc.start(now); osc.stop(now + 0.18);
   log('⚔️ 剣 ヒット');
 }
 
@@ -230,7 +230,7 @@ const N = {
   R:0,
   D3:146.83, Eb3:155.56, E3:164.81, F3:174.61, G3:196, Ab3:207.65, A3:220, Bb3:233.08, B3:246.94,
   C4:261.63, D4:293.66, Eb4:311.13, E4:329.63, F4:349.23, G4:392, Ab4:415.30, A4:440, Bb4:466.16, B4:493.88,
-  C5:523.25, D5:587.33, Eb5:622.25, E5:659.25, F5:698.46, G5:783.99, Ab5:830.61, A5:880, Bb5:932.33, B5:987.77,
+  C5:523.25, Db5:554.37, D5:587.33, Eb5:622.25, E5:659.25, F5:698.46, Gb5:739.99, G5:783.99, Ab5:830.61, A5:880, Bb5:932.33, B5:987.77,
   C6:1046.5,
 };
 
@@ -309,22 +309,29 @@ const BATTLE_PULSE = [
 const BATTLE_KICK  = [1,0,1,0, 1,0,0,0, 1,0,1,0, 0,0,0,0];  // より頻繁
 const BATTLE_SNARE = [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0];
 
-// ── ボス戦BGM（BPM=196、トリトーン・半音階多用、強大・不気味） ─────────────
-// 三全音（A→Eb）の不協和で威圧感、大きな音域跳躍で混沌
+// ── ボス戦BGM（BPM=196、16小節ループ、トリトーン・半音階多用） ─────────────
 const BOSS_MELODY = [
-  // A部：低音↔高音の大跳躍＋半音階下降
+  // A部8小節：低音↔高音の大跳躍＋半音階下降
   [N.A3,2],[N.R,2],[N.A5,2],[N.R,2],
   [N.Eb5,1],[N.D5,1],[N.C5,1],[N.B4,1],[N.Bb4,1],[N.A4,1],[N.G4,1],[N.F4,1],
   [N.E4,1],[N.R,1],[N.Bb4,1],[N.R,1],[N.E5,2],[N.Eb5,2],
   [N.A4,4],[N.R,4],
-  // B部：高速半音階登攀→一気に落下
   [N.A4,1],[N.Bb4,1],[N.B4,1],[N.C5,1],[N.Db5,1],[N.D5,1],[N.Eb5,1],[N.E5,1],
   [N.F5,1],[N.G5,1],[N.Ab5,1],[N.A5,1],[N.Bb5,1],[N.R,1],[N.A5,1],[N.R,1],
   [N.R,2],[N.Eb5,1],[N.R,1],[N.A4,1],[N.R,1],[N.Eb5,2],
   [N.A4,6],[N.R,2],
+  // B部8小節：トリトーン連打→さらなる狂騒→沈黙→クライマックス
+  [N.A5,1],[N.R,1],[N.Eb5,1],[N.R,1],[N.A5,1],[N.R,1],[N.Eb5,1],[N.R,1],
+  [N.G5,1],[N.F5,1],[N.Eb5,1],[N.D5,1],[N.Eb5,1],[N.D5,1],[N.C5,1],[N.B4,1],
+  [N.Bb4,1],[N.A4,1],[N.Bb4,1],[N.A4,1],[N.G4,1],[N.F4,1],[N.E4,1],[N.Eb4,1],
+  [N.A4,4],[N.R,4],
+  [N.E4,1],[N.F4,1],[N.G4,1],[N.Ab4,1],[N.A4,1],[N.Bb4,1],[N.B4,1],[N.C5,1],
+  [N.Db5,1],[N.D5,1],[N.Eb5,1],[N.E5,1],[N.F5,1],[N.Gb5,1],[N.G5,1],[N.Ab5,1],
+  [N.A5,2],[N.R,2],[N.Eb5,2],[N.R,2],
+  [N.A4,6],[N.R,2],
 ];
 const BOSS_BASS = [
-  // 連打＋トリトーンベース
+  // A部8小節
   [N.A3,1],[N.A3,1],[N.R,2],[N.A3,1],[N.A3,1],[N.R,2],
   [N.F3,2],[N.Eb3,2],[N.F3,2],[N.Eb3,2],
   [N.E3,2],[N.Bb3,2],[N.E3,2],[N.Bb3,2],
@@ -333,9 +340,18 @@ const BOSS_BASS = [
   [N.D3,2],[N.Ab3,2],[N.D3,2],[N.Ab3,2],
   [N.E3,2],[N.Bb3,2],[N.Eb3,2],[N.A3,2],
   [N.A3,8],
+  // B部8小節
+  [N.A3,2],[N.Eb3,2],[N.A3,2],[N.Eb3,2],
+  [N.A3,2],[N.Eb3,2],[N.A3,2],[N.Eb3,2],
+  [N.D3,2],[N.Ab3,2],[N.D3,2],[N.Ab3,2],
+  [N.A3,8],
+  [N.E3,1],[N.E3,1],[N.E3,1],[N.E3,1],[N.E3,1],[N.E3,1],[N.E3,2],
+  [N.F3,2],[N.Bb3,2],[N.F3,2],[N.Bb3,2],
+  [N.E3,2],[N.Bb3,2],[N.A3,2],[N.Eb3,2],
+  [N.A3,8],
 ];
 const BOSS_PULSE = [
-  // 不協和トリル
+  // A部8小節
   [N.Eb5,2],[N.D5,2],[N.Eb5,2],[N.D5,2],
   [N.C5,2],[N.Bb4,2],[N.Ab4,2],[N.G4,2],
   [N.Bb4,2],[N.Eb5,2],[N.Bb4,2],[N.Eb5,2],
@@ -343,6 +359,15 @@ const BOSS_PULSE = [
   [N.A5,2],[N.Ab5,2],[N.G5,2],[N.F5,2],
   [N.Eb5,2],[N.D5,2],[N.Eb5,2],[N.F5,2],
   [N.Eb5,2],[N.Bb4,2],[N.Eb5,2],[N.A4,2],
+  [N.A4,8],
+  // B部8小節
+  [N.Eb5,1],[N.A5,1],[N.Eb5,1],[N.A5,1],[N.Eb5,1],[N.A5,1],[N.Eb5,2],
+  [N.D5,2],[N.Eb5,2],[N.D5,2],[N.Eb5,2],
+  [N.C5,2],[N.B4,2],[N.Bb4,2],[N.A4,2],
+  [N.Ab4,4],[N.A4,4],
+  [N.C5,2],[N.Eb5,2],[N.G5,2],[N.Bb5,2],
+  [N.A5,2],[N.Ab5,2],[N.G5,2],[N.F5,2],
+  [N.Eb5,2],[N.D5,2],[N.Eb5,2],[N.A4,2],
   [N.A4,8],
 ];
 const BOSS_KICK  = [1,0,1,0, 0,0,1,0, 1,0,1,0, 0,0,0,0];
