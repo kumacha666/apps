@@ -53,11 +53,21 @@ export interface PermanentUpgrade {
 
 export type Difficulty = "normal" | "hard";
 
+export interface StatBoosts {
+  hp: number;
+  atk: number;
+  def: number;
+  spd: number;
+  hit: number;
+  crit: number;
+}
+
 export interface SaveData {
   totalGold: number;
   purchasedPermanentUpgrades: string[];
   unlockedDifficulties: Difficulty[];
   unlockedClasses: string[];
+  statBoosts: StatBoosts;
 }
 
 export interface AttackEvent {

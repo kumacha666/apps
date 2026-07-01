@@ -1,6 +1,10 @@
-import type { Difficulty, SaveData } from "./types";
+import type { Difficulty, SaveData, StatBoosts } from "./types";
 
 const STORAGE_KEY = "enblo-save-v1";
+
+export function defaultStatBoosts(): StatBoosts {
+  return { hp: 0, atk: 0, def: 0, spd: 0, hit: 0, crit: 0 };
+}
 
 function defaultSaveData(): SaveData {
   return {
@@ -8,6 +12,7 @@ function defaultSaveData(): SaveData {
     purchasedPermanentUpgrades: [],
     unlockedDifficulties: ["normal"],
     unlockedClasses: [],
+    statBoosts: defaultStatBoosts(),
   };
 }
 
@@ -48,4 +53,13 @@ export function unlockDifficulty(data: SaveData, difficulty: Difficulty): SaveDa
 export function unlockClass(data: SaveData, classId: string): SaveData {
   if (data.unlockedClasses.includes(classId)) return data;
   return { ...data, unlockedClasses: [...data.unlockedClasses, classId] };
+}
+
+export function purchaseStatBoost(data: SaveData, stat: keyof StatBoosts, cost: number): SaveData {
+  if (data.totalGold < cost) return data;
+  return {
+    ...data,
+    totalGold: data.totalGold - cost,
+    statBoosts: { ...data.statBoosts, [stat]: data.statBoosts[stat] + 1 },
+  };
 }

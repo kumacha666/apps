@@ -1,4 +1,4 @@
-import type { PermanentUpgrade, Stats } from "../types";
+import type { PermanentUpgrade, StatBoosts, Stats } from "../types";
 
 function statUp(key: keyof Stats, amount: number) {
   return (stats: Stats): Stats => ({ ...stats, [key]: stats[key] + amount });
@@ -26,4 +26,26 @@ export function applyPermanentUpgrades(stats: Stats, purchasedIds: string[]): St
     const upgrade = PERMANENT_UPGRADE_POOL.find((u) => u.id === id);
     return upgrade ? upgrade.apply(acc) : acc;
   }, stats);
+}
+
+export const STAT_BOOST_COST = 100;
+
+export const STAT_BOOST_LABELS: Record<keyof StatBoosts, string> = {
+  hp: "HP",
+  atk: "攻撃力",
+  def: "防御力",
+  spd: "速さ",
+  hit: "命中",
+  crit: "必殺",
+};
+
+export function applyStatBoosts(stats: Stats, boosts: StatBoosts): Stats {
+  return {
+    hp: stats.hp + boosts.hp,
+    atk: stats.atk + boosts.atk,
+    def: stats.def + boosts.def,
+    spd: stats.spd + boosts.spd,
+    hit: stats.hit + boosts.hit,
+    crit: stats.crit + boosts.crit,
+  };
 }

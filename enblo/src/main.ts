@@ -4,11 +4,12 @@ import { basicClasses, advancedClasses, getClassById } from "./data/classes";
 import { generateEnemyStats, enemyName, isBossStage } from "./data/enemies";
 import { rollUpgradeChoices } from "./data/upgrades";
 import { rollRelicChoices } from "./data/relics";
-import { PERMANENT_UPGRADE_POOL, applyPermanentUpgrades } from "./data/permanentUpgrades";
+import { PERMANENT_UPGRADE_POOL, applyPermanentUpgrades, applyStatBoosts, STAT_BOOST_COST, STAT_BOOST_LABELS } from "./data/permanentUpgrades";
 import { simulateCombat } from "./combat";
 import { goldForStage } from "./run";
-import { loadSave, writeSave, addGold, purchasePermanentUpgrade, unlockDifficulty, unlockClass } from "./save";
-import { SFX } from "./audio";
+import { loadSave, writeSave, addGold, purchasePermanentUpgrade, purchaseStatBoost, unlockDifficulty, unlockClass } from "./save";
+import type { StatBoosts } from "./types";
+import { SFX, BGM } from "./audio";
 import type { AttackEvent } from "./types";
 
 let save = loadSave();
@@ -43,6 +44,7 @@ function showScreen(id: string): void {
 
 function renderTitle(): void {
   $("gold-display").textContent = `所持ゴールド: ${save.totalGold}`;
+  BGM.play("title");
   showScreen("screen-title");
 }
 
@@ -65,7 +67,7 @@ function renderClassSelect(): void {
 
 function startRun(classId: string): void {
   const classDef = getClassById(classId);
-  const stats = applyPermanentUpgrades(classDef.baseStats, save.purchasedPermanentUpgrades);
+  const stats = applyStatBoosts(applyPermanentUpgrades(classDef.baseStats, save.purchasedPermanentUpgrades), save.statBoosts);
   run = { classId, stats, stage: 1, goldEarned: 0 };
   startCombat();
 }
@@ -131,6 +133,7 @@ function startCombat(): void {
   renderUnitSprite("combat-enemy", ENEMY_ICON, enemy.name, enemy.stats.hp);
   $("combat-log").textContent = "";
   $("btn-combat-next").classList.add("hidden");
+  BGM.play("battle");
   showScreen("screen-combat");
 
   const result = simulateCombat(player, enemy, Math.random);
@@ -194,6 +197,7 @@ function onCombatLose(): void {
   save = addGold(save, run.goldEarned);
   writeSave(save);
 
+  BGM.play("lose");
   $("result-title").textContent = "戦闘不能…";
   $("result-details").textContent = `到達: 第${run.stage}層 / 獲得ゴールド: ${run.goldEarned}`;
   showScreen("screen-result");
@@ -254,6 +258,7 @@ function renderPermanentScreen(): void {
   $("permanent-gold").textContent = `所持ゴールド: ${save.totalGold}`;
   const container = $("permanent-options");
   container.innerHTML = "";
+
   for (const upgrade of PERMANENT_UPGRADE_POOL) {
     const owned = save.purchasedPermanentUpgrades.includes(upgrade.id);
     const card = document.createElement("div");
@@ -271,6 +276,29 @@ function renderPermanentScreen(): void {
     }
     container.appendChild(card);
   }
+
+  const allPurchased = PERMANENT_UPGRADE_POOL.every(u => save.purchasedPermanentUpgrades.includes(u.id));
+  if (allPurchased) {
+    const heading = document.createElement("h3");
+    heading.textContent = "── 血統の極意（上限なし・各100G）──";
+    heading.style.cssText = "color:#c0392b;margin-top:1.5rem;margin-bottom:0.5rem;font-size:0.95rem;text-align:center;";
+    container.appendChild(heading);
+
+    for (const stat of Object.keys(STAT_BOOST_LABELS) as (keyof StatBoosts)[]) {
+      const current = save.statBoosts[stat];
+      const card = document.createElement("div");
+      card.className = "option-card";
+      card.textContent = `${STAT_BOOST_LABELS[stat]} +1（${STAT_BOOST_COST}G）　現在の積み上げ: +${current}`;
+      card.addEventListener("click", () => {
+        SFX.select();
+        save = purchaseStatBoost(save, stat, STAT_BOOST_COST);
+        writeSave(save);
+        renderPermanentScreen();
+      });
+      container.appendChild(card);
+    }
+  }
+
   showScreen("screen-permanent");
 }
 
