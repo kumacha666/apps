@@ -127,7 +127,6 @@ const N: Record<string, number> = {
 // ──────────────────────────────────────────────
 const TITLE_BPM = 76;
 const TITLE_Q = 60 / TITLE_BPM;       // 4分音符
-const TITLE_E = TITLE_Q / 2;          // 8分音符
 
 // メロディ（quarter単位で表記、[Hz, 4分音符数]）
 const TITLE_MELODY: [number, number][] = [
@@ -236,24 +235,10 @@ const BATTLE_SNARE = [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0];
 // スケジューラ共通関数
 // ──────────────────────────────────────────────
 
-// マスターゲインノード（即時ミュートでトラック切替時の重なりを防ぐ）
-let masterGain: GainNode | null = null;
-
-function getMasterGain(audioCtx: AudioContext): GainNode {
-  if (!masterGain || masterGain.context !== audioCtx) {
-    masterGain = audioCtx.createGain();
-    masterGain.connect(audioCtx.destination);
-  }
-  return masterGain;
-}
-
-function muteMaster(audioCtx: AudioContext): void {
-  getMasterGain(audioCtx).gain.setValueAtTime(0, audioCtx.currentTime);
-}
-
-function unmuteMaster(audioCtx: AudioContext): void {
-  getMasterGain(audioCtx).gain.setValueAtTime(1, audioCtx.currentTime);
-}
+// スケジュール済みBGMノードを追跡し、トラック切替時に即時停止する
+// muteMaster/unmuteMasterを同一currentTimeで呼ぶ方式は
+// Web Audio APIが同時刻イベントとして処理しミュートが機能しないため使用しない
+const bgmNodes = new Set<AudioScheduledSourceNode>();
 
 function scheduleNote(
   audioCtx: AudioContext,
@@ -271,7 +256,9 @@ function scheduleNote(
   g.gain.setValueAtTime(gainVal, startTime);
   g.gain.setValueAtTime(gainVal, startTime + duration * 0.85);
   g.gain.exponentialRampToValueAtTime(0.001, startTime + duration * 0.99);
-  osc.connect(g).connect(getMasterGain(audioCtx));
+  osc.connect(g).connect(audioCtx.destination);
+  bgmNodes.add(osc);
+  osc.addEventListener("ended", () => bgmNodes.delete(osc));
   osc.start(startTime);
   osc.stop(startTime + duration);
 }
@@ -288,7 +275,9 @@ function scheduleNoise(audioCtx: AudioContext, startTime: number, type: "kick" |
   filt.frequency.value = type === "kick" ? 120 : 1800;
   g.gain.setValueAtTime(type === "kick" ? 0.25 : 0.12, startTime);
   g.gain.exponentialRampToValueAtTime(0.001, startTime + (type === "kick" ? 0.08 : 0.04));
-  src.connect(filt).connect(g).connect(getMasterGain(audioCtx));
+  src.connect(filt).connect(g).connect(audioCtx.destination);
+  bgmNodes.add(src);
+  src.addEventListener("ended", () => bgmNodes.delete(src));
   src.start(startTime);
   src.stop(startTime + 0.1);
 }
@@ -302,7 +291,6 @@ function loopDuration(pattern: [number, number][], unit: number): number {
 // ──────────────────────────────────────────────
 const LOSE_BPM = 60;
 const LOSE_Q = 60 / LOSE_BPM;   // 4分音符
-const LOSE_E = LOSE_Q / 2;      // 8分音符
 
 // メロディのみ（triangle波で寂しさを出す）
 // C → Eb → G → F → Eb → D → C の下降感
@@ -398,6 +386,9 @@ let kickIdx      = 0;
 function stopBgm(): void {
   currentTrack = null;
   if (bgmTimer !== null) { clearTimeout(bgmTimer); bgmTimer = null; }
+  const now = ctx?.currentTime ?? 0;
+  bgmNodes.forEach(node => { try { node.stop(now); } catch {} });
+  bgmNodes.clear();
 }
 
 function tickBgm(audioCtx: AudioContext, track: BgmTrack): void {
@@ -446,9 +437,7 @@ export const BGM = {
     const audioCtx = getContext();
     if (!audioCtx) return;
     if (currentTrack === track) return;
-    muteMaster(audioCtx);
     stopBgm();
-    unmuteMaster(audioCtx);
     currentTrack = track;
     if (audioCtx.state === "suspended") audioCtx.resume();
     const start = audioCtx.currentTime + 0.05;
