@@ -366,7 +366,7 @@ function sfxWin() {
   log('WIN');
 }
 function sfxLose() {
-  [392, 330, 261].forEach((f, i) => setTimeout(() => beep(f, 0.2, 'sawtooth', 0.15), i * 120));
+  [392, 330, 261].forEach((f, i) => setTimeout(() => beep(f, 0.18, 'sawtooth', 0.15), i * 75));
   log('LOSE');
 }
 function sfxSelect() { beep(880, 0.05, 'square', 0.1); log('選択'); }
