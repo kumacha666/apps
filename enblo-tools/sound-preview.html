@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>enblo 音確認ツール</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #1a1a2e; color: #e0e0e0; font-family: sans-serif; padding: 1.5rem; }
+    h1 { font-size: 1.2rem; color: #c0392b; margin-bottom: 1.5rem; }
+    h2 { font-size: 0.9rem; color: #aaa; margin: 1.5rem 0 0.6rem; text-transform: uppercase; letter-spacing: 1px; }
+    .row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
+    button {
+      padding: 0.5rem 1rem; font-size: 0.9rem; border: none; border-radius: 4px;
+      background: #2c2c4e; color: #e0e0e0; cursor: pointer; transition: background 0.1s;
+    }
+    button:hover { background: #3d3d6e; }
+    button:active { background: #c0392b; }
+    .bgm-active { background: #c0392b !important; }
+    #log { margin-top: 1.5rem; font-size: 0.75rem; color: #666; max-height: 120px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+<h1>enblo 音確認ツール</h1>
+<p style="font-size:0.8rem;color:#666;margin-bottom:1rem">ボタンを押すと音が鳴ります。BGMは同じボタンを再押しで停止。</p>
+
+<h2>効果音 — 武器攻撃（通常）</h2>
+<div class="row">
+  <button onclick="sfxSword()">⚔️ 剣 ヒット</button>
+  <button onclick="sfxLance()">🔱 槍 ヒット</button>
+  <button onclick="sfxBow()">🏹 弓 ヒット</button>
+  <button onclick="sfxTome()">📖 魔道書 ヒット</button>
+  <button onclick="sfxDefault()">❓ デフォルト ヒット</button>
+</div>
+
+<h2>効果音 — 武器攻撃（会心）</h2>
+<div class="row">
+  <button onclick="sfxCrit('sword')">⚔️ 剣 会心</button>
+  <button onclick="sfxCrit('lance')">🔱 槍 会心</button>
+  <button onclick="sfxCrit('bow')">🏹 弓 会心</button>
+  <button onclick="sfxCrit('tome')">📖 魔道書 会心</button>
+</div>
+
+<h2>効果音 — その他</h2>
+<div class="row">
+  <button onclick="sfxMiss()">💨 MISS</button>
+  <button onclick="sfxWin()">🏆 WIN</button>
+  <button onclick="sfxLose()">💀 LOSE</button>
+  <button onclick="sfxSelect()">🖱 選択</button>
+</div>
+
+<h2>BGM</h2>
+<div class="row">
+  <button id="btn-title"  onclick="toggleBgm('title')">🎵 タイトル</button>
+  <button id="btn-battle" onclick="toggleBgm('battle')">⚔️ 戦闘</button>
+  <button id="btn-lose"   onclick="toggleBgm('lose')">😢 敗戦</button>
+  <button onclick="stopBgm()">⏹ BGM停止</button>
+</div>
+
+<div id="log"></div>
+
+<script>
+// ─── AudioContext ─────────────────────────────────────────────
+let ctx = null;
+function getCtx() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === 'suspended') ctx.resume();
+  return ctx;
+}
+
+// ─── SFX ──────────────────────────────────────────────────────
+function beep(freq, duration, type = 'square', gain = 0.15) {
+  const ac = getCtx();
+  const osc = ac.createOscillator();
+  const g = ac.createGain();
+  osc.type = type; osc.frequency.value = freq;
+  g.gain.value = gain;
+  osc.connect(g).connect(ac.destination);
+  const now = ac.currentTime;
+  g.gain.setValueAtTime(gain, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + duration);
+  osc.start(now); osc.stop(now + duration);
+}
+
+function sfxSword() {
+  const ac = getCtx(), now = ac.currentTime;
+  const osc = ac.createOscillator(), g = ac.createGain();
+  osc.type = 'sawtooth'; osc.frequency.value = 660;
+  g.gain.setValueAtTime(0.22, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+  osc.connect(g).connect(ac.destination);
+  osc.start(now); osc.stop(now + 0.07);
+  log('⚔️ 剣 ヒット');
+}
+
+function sfxLance() {
+  const ac = getCtx(), now = ac.currentTime;
+  const osc = ac.createOscillator(), g = ac.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(260, now);
+  osc.frequency.exponentialRampToValueAtTime(80, now + 0.14);
+  g.gain.setValueAtTime(0.28, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+  osc.connect(g).connect(ac.destination);
+  osc.start(now); osc.stop(now + 0.14);
+  log('🔱 槍 ヒット');
+}
+
+function sfxBow() {
+  const ac = getCtx(), now = ac.currentTime;
+  const osc = ac.createOscillator(), g = ac.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(1400, now);
+  osc.frequency.exponentialRampToValueAtTime(350, now + 0.11);
+  g.gain.setValueAtTime(0.2, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+  osc.connect(g).connect(ac.destination);
+  osc.start(now); osc.stop(now + 0.11);
+  log('🏹 弓 ヒット');
+}
+
+function sfxTome() {
+  const ac = getCtx(), now = ac.currentTime;
+  const osc = ac.createOscillator(), g = ac.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(380, now);
+  osc.frequency.exponentialRampToValueAtTime(1100, now + 0.1);
+  g.gain.setValueAtTime(0.18, now);
+  g.gain.setValueAtTime(0.18, now + 0.07);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
+  osc.connect(g).connect(ac.destination);
+  osc.start(now); osc.stop(now + 0.13);
+  log('📖 魔道書 ヒット');
+}
+
+function sfxDefault() { beep(220, 0.08, 'square', 0.18); log('❓ デフォルト ヒット'); }
+
+function doHit(wt) {
+  if (wt === 'sword') sfxSword();
+  else if (wt === 'lance') sfxLance();
+  else if (wt === 'bow') sfxBow();
+  else if (wt === 'tome') sfxTome();
+  else sfxDefault();
+}
+
+function sfxCrit(wt) {
+  doHit(wt);
+  setTimeout(() => beep(880, 0.07, 'square', 0.13), 35);
+  log(`${wt} 会心`);
+}
+
+function sfxMiss() { beep(120, 0.12, 'triangle', 0.08); log('MISS'); }
+function sfxWin() {
+  [523, 659, 784].forEach((f, i) => setTimeout(() => beep(f, 0.15, 'square', 0.15), i * 90));
+  log('WIN');
+}
+function sfxLose() {
+  [392, 330, 261].forEach((f, i) => setTimeout(() => beep(f, 0.2, 'sawtooth', 0.15), i * 120));
+  log('LOSE');
+}
+function sfxSelect() { beep(880, 0.05, 'square', 0.1); log('選択'); }
+
+// ─── BGM ──────────────────────────────────────────────────────
+const N = {
+  R:0, D3:146.83,E3:164.81,F3:174.61,G3:196,A3:220,B3:246.94,
+  C4:261.63,D4:293.66,E4:329.63,F4:349.23,G4:392,A4:440,
+  B4:493.88,C5:523.25,D5:587.33,E5:659.25,F5:698.46,G5:783.99,
+  A5:880,B5:987.77,C6:1046.5,
+};
+
+const TITLE_Q = 60/76;
+const BATTLE_E = (60/104)/2;
+const LOSE_Q = 60/60;
+
+const TITLE_MELODY = [[N.D5,2],[N.C5,1],[N.D5,1],[N.F5,2],[N.E5,2],[N.D5,2],[N.A4,1],[N.B4,1],[N.C5,4],[N.A4,2],[N.G4,1],[N.A4,1],[N.C5,2],[N.B4,2],[N.A4,2],[N.F4,1],[N.G4,1],[N.A4,4],[N.F5,1],[N.G5,1],[N.A5,2],[N.G5,1],[N.F5,1],[N.E5,2],[N.D5,2],[N.E5,1],[N.F5,1],[N.G5,2],[N.F5,2],[N.E5,1],[N.F5,1],[N.G5,2],[N.F5,1],[N.E5,1],[N.D5,2],[N.C5,2],[N.B4,2],[N.A4,4]];
+const TITLE_BASS = [[N.D3,2],[N.A3,2],[N.D3,2],[N.A3,2],[N.F3,2],[N.C4,2],[N.F3,2],[N.C4,2],[N.G3,2],[N.D4,2],[N.G3,2],[N.D4,2],[N.A3,4],[N.A3,4],[N.D3,2],[N.A3,2],[N.D3,2],[N.A3,2],[N.F3,2],[N.C4,2],[N.F3,2],[N.C4,2],[N.G3,2],[N.D4,2],[N.G3,2],[N.E3,2],[N.A3,8],[N.D4,2],[N.A3,2],[N.D4,2],[N.A3,2],[N.G3,2],[N.D4,2],[N.G3,2],[N.D4,2],[N.A3,2],[N.E3,2],[N.A3,2],[N.E3,2],[N.F3,2],[N.G3,2],[N.A3,4]];
+const TITLE_PULSE = [[N.F4,2],[N.E4,1],[N.F4,1],[N.A4,2],[N.G4,2],[N.F4,2],[N.G4,2],[N.A4,4],[N.E4,2],[N.D4,1],[N.E4,1],[N.G4,2],[N.F4,2],[N.E4,2],[N.D4,2],[N.C4,4],[N.D4,2],[N.A4,2],[N.D4,2],[N.A4,2],[N.C4,2],[N.G4,2],[N.C4,2],[N.G4,2],[N.D4,2],[N.A4,2],[N.D4,2],[N.A4,2],[N.E4,4],[N.A4,4],[N.A4,1],[N.B4,1],[N.C5,2],[N.B4,1],[N.A4,1],[N.G4,2],[N.F4,2],[N.G4,1],[N.A4,1],[N.B4,2],[N.A4,2],[N.G4,1],[N.A4,1],[N.B4,2],[N.A4,1],[N.G4,1],[N.F4,2],[N.E4,2],[N.F4,2],[N.E4,4]];
+
+const BATTLE_MELODY = [[N.E4,2],[N.F4,2],[N.G4,2],[N.A4,2],[N.B4,2],[N.A4,2],[N.G4,2],[N.F4,2],[N.E4,2],[N.D4,2],[N.E4,2],[N.F4,2],[N.E4,6],[N.R,2],[N.A4,2],[N.G4,1],[N.F4,1],[N.E4,2],[N.D4,2],[N.C4,2],[N.D4,2],[N.E4,4],[N.F4,2],[N.E4,1],[N.D4,1],[N.C4,2],[N.B3,2],[N.A3,8]];
+const BATTLE_BASS = [[N.A3,4],[N.E3,4],[N.F3,4],[N.G3,4],[N.G3,4],[N.D3,4],[N.A3,8],[N.F3,4],[N.G3,4],[N.D3,4],[N.A3,4],[N.E3,4],[N.B3,4],[N.A3,8]];
+const BATTLE_PULSE = [[N.C5,4],[N.B4,4],[N.D5,4],[N.C5,4],[N.B4,4],[N.C5,4],[N.B4,6],[N.R,2],[N.E5,4],[N.D5,4],[N.E5,4],[N.A4,4],[N.A4,4],[N.G4,4],[N.A4,8]];
+const BATTLE_KICK  = [1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0];
+const BATTLE_SNARE = [0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0];
+
+const LOSE_MELODY = [[N.C5,3],[N.R,1],[N.A4,2],[N.G4,2],[N.F4,3],[N.R,1],[N.C5,2],[N.D5,1],[N.C5,1],[N.A4,4],[N.G4,2],[N.A4,1],[N.G4,1],[N.F4,3],[N.G4,1],[N.A4,2],[N.G4,1],[N.F4,1],[N.E4,4],[N.F4,2],[N.E4,2],[N.C4,6],[N.R,2]];
+const LOSE_PAD = [[N.C4,4],[N.A3,4],[N.F3,4],[N.C4,4],[N.A3,4],[N.G3,4],[N.F3,4],[N.A3,4],[N.G3,4],[N.F3,4],[N.E3,4],[N.F3,4],[N.C3,8]];
+
+const TRACKS = {
+  title: {
+    channels: [
+      { notes: TITLE_MELODY, unit: TITLE_Q, type: 'square',   gain: 0.11,  gate: 0.88 },
+      { notes: TITLE_PULSE,  unit: TITLE_Q, type: 'square',   gain: 0.065, gate: 0.82 },
+      { notes: TITLE_BASS,   unit: TITLE_Q, type: 'triangle', gain: 0.13,  gate: 0.78 },
+    ],
+  },
+  battle: {
+    channels: [
+      { notes: BATTLE_MELODY, unit: BATTLE_E, type: 'square', gain: 0.10, gate: 0.9  },
+      { notes: BATTLE_PULSE,  unit: BATTLE_E, type: 'square', gain: 0.06, gate: 0.85 },
+      { notes: BATTLE_BASS,   unit: BATTLE_E, type: 'square', gain: 0.12, gate: 0.80 },
+    ],
+    kick: BATTLE_KICK, snare: BATTLE_SNARE, beatUnit: BATTLE_E * 2,
+  },
+  lose: {
+    channels: [
+      { notes: LOSE_MELODY, unit: LOSE_Q, type: 'triangle', gain: 0.10,  gate: 0.90 },
+      { notes: LOSE_PAD,    unit: LOSE_Q, type: 'triangle', gain: 0.055, gate: 0.95 },
+    ],
+  },
+};
+
+const LOOKAHEAD = 1.5, TICK_MS = 150;
+const bgmNodes = new Set();
+let currentTrack = null, bgmTimer = null, channelStates = [], kickNextTime = 0, kickIdx = 0;
+
+function loopDur(notes, unit) { return notes.reduce((s,[,d]) => s + d*unit, 0); }
+
+function scheduleNote(ac, freq, t, dur, type, gainVal) {
+  if (freq === 0) return;
+  const osc = ac.createOscillator(), g = ac.createGain();
+  osc.type = type; osc.frequency.value = freq;
+  g.gain.setValueAtTime(gainVal, t);
+  g.gain.setValueAtTime(gainVal, t + dur*0.85);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur*0.99);
+  osc.connect(g).connect(ac.destination);
+  bgmNodes.add(osc);
+  osc.addEventListener('ended', () => bgmNodes.delete(osc));
+  osc.start(t); osc.stop(t + dur);
+}
+
+function scheduleNoise(ac, t, type) {
+  const buf = ac.createBuffer(1, ac.sampleRate*0.05, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i=0;i<data.length;i++) data[i]=Math.random()*2-1;
+  const src = ac.createBufferSource(), g = ac.createGain(), filt = ac.createBiquadFilter();
+  src.buffer = buf;
+  filt.type = type==='kick'?'lowpass':'bandpass';
+  filt.frequency.value = type==='kick'?120:1800;
+  g.gain.setValueAtTime(type==='kick'?0.25:0.12, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t+(type==='kick'?0.08:0.04));
+  src.connect(filt).connect(g).connect(ac.destination);
+  bgmNodes.add(src);
+  src.addEventListener('ended', () => bgmNodes.delete(src));
+  src.start(t); src.stop(t+0.1);
+}
+
+function stopBgm() {
+  currentTrack = null;
+  if (bgmTimer !== null) { clearTimeout(bgmTimer); bgmTimer = null; }
+  const now = ctx ? ctx.currentTime : 0;
+  bgmNodes.forEach(n => { try { n.stop(now); } catch{} });
+  bgmNodes.clear();
+  document.querySelectorAll('.bgm-active').forEach(b => b.classList.remove('bgm-active'));
+}
+
+function tickBgm(ac, track) {
+  if (currentTrack !== track) return;
+  const def = TRACKS[track];
+  const horizon = ac.currentTime + LOOKAHEAD;
+
+  def.channels.forEach((ch, ci) => {
+    const st = channelStates[ci];
+    const ld = loopDur(ch.notes, ch.unit);
+    while (st.nextTime < horizon) {
+      const [freq, dur] = ch.notes[st.noteIdx];
+      const nd = dur * ch.unit;
+      scheduleNote(ac, freq, st.nextTime, nd*ch.gate, ch.type, ch.gain);
+      st.nextTime += nd;
+      st.noteIdx++;
+      if (st.noteIdx >= ch.notes.length) {
+        st.noteIdx = 0;
+        st.loopStart += ld;
+        st.nextTime = st.loopStart;
+      }
+    }
+  });
+
+  if (def.kick && def.snare && def.beatUnit) {
+    const div = def.kick.length;
+    while (kickNextTime < horizon) {
+      const i = kickIdx % div;
+      if (def.kick[i])  scheduleNoise(ac, kickNextTime, 'kick');
+      if (def.snare[i]) scheduleNoise(ac, kickNextTime, 'snare');
+      kickIdx++;
+      kickNextTime += def.beatUnit / (div/4);
+    }
+  }
+  bgmTimer = setTimeout(() => tickBgm(ac, track), TICK_MS);
+}
+
+function playBgm(track) {
+  const ac = getCtx();
+  stopBgm();
+  currentTrack = track;
+  const start = ac.currentTime + 0.05;
+  const def = TRACKS[track];
+  channelStates = def.channels.map(() => ({ noteIdx:0, nextTime:start, loopStart:start }));
+  kickNextTime = start; kickIdx = 0;
+  tickBgm(ac, track);
+  document.getElementById('btn-'+track)?.classList.add('bgm-active');
+  log('BGM: ' + track);
+}
+
+function toggleBgm(track) {
+  if (currentTrack === track) { stopBgm(); log('BGM 停止'); }
+  else playBgm(track);
+}
+
+// ─── ログ ──────────────────────────────────────────────────────
+function log(msg) {
+  const el = document.getElementById('log');
+  const t = new Date().toLocaleTimeString('ja-JP', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  el.textContent = `[${t}] ${msg}\n` + el.textContent;
+}
+</script>
+</body>
+</html>
