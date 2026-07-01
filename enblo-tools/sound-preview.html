@@ -242,59 +242,77 @@ function doHit(wt) {
   else sfxDefault();
 }
 
-function sfxCritExtra() {
-  const ac = getCtx(), now = ac.currentTime;
-
-  // === 層1: ドスッ — 致命的な重い打撃（中低音ノイズ） ===
-  const hitBuf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.10), ac.sampleRate);
-  const hitD = hitBuf.getChannelData(0);
-  for (let i = 0; i < hitD.length; i++) hitD[i] = Math.random() * 2 - 1;
-  const hitSrc = ac.createBufferSource(); hitSrc.buffer = hitBuf;
-  const hitF = ac.createBiquadFilter(); hitF.type = 'bandpass';
-  hitF.frequency.setValueAtTime(600, now);
-  hitF.frequency.exponentialRampToValueAtTime(150, now + 0.10);
-  hitF.Q.value = 1.2;
-  const hitG = ac.createGain();
-  hitG.gain.setValueAtTime(0.70, now);
-  hitG.gain.exponentialRampToValueAtTime(0.001, now + 0.10);
-  hitSrc.connect(hitF).connect(hitG).connect(ac.destination);
-  hitSrc.start(now); hitSrc.stop(now + 0.10);
-
-  // === 層2: ズザザザ — ダメージが肉体を貫く感触（中域、落ち着いた周波数） ===
-  for (let i = 0; i < 10; i++) {
-    const t = now + 0.05 + i * 0.038;
-    const dur = 0.045;
-    const buf = ac.createBuffer(1, Math.ceil(ac.sampleRate * dur), ac.sampleRate);
+// 武器ごとのヒット瞬間（衝撃コア）を1発だけ鳴らす
+function fireHitCore(wt, t, vol) {
+  const ac = getCtx();
+  if (wt === 'sword') {
+    // 切り裂き瞬間（Phase2相当）: bandpass 3000→650Hz
+    const buf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.07), ac.sampleRate);
     const d = buf.getChannelData(0);
-    for (let j = 0; j < d.length; j++) d[j] = Math.random() * 2 - 1;
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     const src = ac.createBufferSource(); src.buffer = buf;
-    const filt = ac.createBiquadFilter();
-    filt.type = 'bandpass';
-    filt.frequency.value = 900 * Math.pow(0.80, i);  // 高域を使わず中低域のみ
-    filt.Q.value = 1.5;
+    const f = ac.createBiquadFilter(); f.type = 'bandpass';
+    f.frequency.setValueAtTime(3000, t); f.frequency.exponentialRampToValueAtTime(650, t + 0.07); f.Q.value = 2.5;
     const g = ac.createGain();
-    const vol = Math.max(0.04, 0.48 - i * 0.04);
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    src.connect(filt).connect(g).connect(ac.destination);
-    src.start(t); src.stop(t + dur);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+    src.connect(f).connect(g).connect(ac.destination);
+    src.start(t); src.stop(t + 0.07);
+    // 低音ズシン
+    const o = ac.createOscillator(), og = ac.createGain(); o.type = 'sine';
+    o.frequency.setValueAtTime(90, t); o.frequency.exponentialRampToValueAtTime(30, t + 0.08);
+    og.gain.setValueAtTime(vol * 0.6, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+    o.connect(og).connect(ac.destination); o.start(t); o.stop(t + 0.08);
+  } else if (wt === 'lance') {
+    // 突き衝撃: sine 130→40Hz
+    const o = ac.createOscillator(), og = ac.createGain(); o.type = 'sine';
+    o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.08);
+    og.gain.setValueAtTime(vol, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+    o.connect(og).connect(ac.destination); o.start(t); o.stop(t + 0.09);
+    // 風切りパルス: highpass 2500Hz
+    const buf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.04), ac.sampleRate);
+    const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const src = ac.createBufferSource(); src.buffer = buf;
+    const f = ac.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 2500;
+    const g = ac.createGain(); g.gain.setValueAtTime(vol * 0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+    src.connect(f).connect(g).connect(ac.destination); src.start(t); src.stop(t + 0.04);
+  } else if (wt === 'bow') {
+    // 矢の衝撃: triangle 1400→350Hz
+    const o = ac.createOscillator(), og = ac.createGain(); o.type = 'triangle';
+    o.frequency.setValueAtTime(1400, t); o.frequency.exponentialRampToValueAtTime(350, t + 0.06);
+    og.gain.setValueAtTime(vol, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+    o.connect(og).connect(ac.destination); o.start(t); o.stop(t + 0.06);
+  } else if (wt === 'tome') {
+    // 電撃衝撃: bandpass 300→6000→900Hz + 低音
+    const buf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.07), ac.sampleRate);
+    const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const src = ac.createBufferSource(); src.buffer = buf;
+    const f = ac.createBiquadFilter(); f.type = 'bandpass';
+    f.frequency.setValueAtTime(300, t); f.frequency.exponentialRampToValueAtTime(4000, t + 0.03); f.frequency.exponentialRampToValueAtTime(600, t + 0.07); f.Q.value = 2;
+    const g = ac.createGain(); g.gain.setValueAtTime(vol * 0.9, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+    src.connect(f).connect(g).connect(ac.destination); src.start(t); src.stop(t + 0.07);
+    const o = ac.createOscillator(), og = ac.createGain(); o.type = 'sine';
+    o.frequency.setValueAtTime(80, t); o.frequency.exponentialRampToValueAtTime(25, t + 0.09);
+    og.gain.setValueAtTime(vol * 0.7, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+    o.connect(og).connect(ac.destination); o.start(t); o.stop(t + 0.09);
   }
+}
 
-  // === 層3: ズウウン — 深い低音の余韻（致命傷の重量感） ===
-  const rumOsc = ac.createOscillator(), rumG = ac.createGain();
-  rumOsc.type = 'sine';
-  rumOsc.frequency.setValueAtTime(90, now + 0.02);
-  rumOsc.frequency.exponentialRampToValueAtTime(28, now + 0.65);
-  rumG.gain.setValueAtTime(0.0, now + 0.02);
-  rumG.gain.linearRampToValueAtTime(0.55, now + 0.07);
-  rumG.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
-  rumOsc.connect(rumG).connect(ac.destination);
-  rumOsc.start(now + 0.02); rumOsc.stop(now + 0.66);
+function sfxCritExtra(wt) {
+  const ac = getCtx(), now = ac.currentTime;
+  // ヒット瞬間を10連射: ヒュッズズズズズズサササササ
+  // 最初は元のヒット音と同じ間隔（0ms）、徐々に間隔が詰まって密になる
+  const intervals = [0, 0.055, 0.048, 0.042, 0.037, 0.033, 0.030, 0.028, 0.026, 0.024];
+  let t = now;
+  for (let i = 0; i < 10; i++) {
+    t += intervals[i];
+    const vol = Math.max(0.06, 0.75 * Math.pow(0.80, i));
+    fireHitCore(wt, t, vol);
+  }
 }
 
 function sfxCrit(wt) {
   doHit(wt);
-  setTimeout(sfxCritExtra, 40);
+  setTimeout(() => sfxCritExtra(wt), 45);
   log(`${wt} 会心`);
 }
 
