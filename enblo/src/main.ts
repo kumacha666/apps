@@ -122,6 +122,10 @@ function playAttackAnimation(attackerId: string, defenderId: string, attackerSid
   }
 }
 
+function renderStatsBar(id: string, stats: Stats): void {
+  $(id).textContent = `HP:${stats.hp}  攻:${stats.atk}  防:${stats.def}  速:${stats.spd}  命中:${stats.hit}  会心:${stats.crit}`;
+}
+
 function startCombat(): void {
   if (!run) return;
   const classDef = getClassById(run.classId);
@@ -131,13 +135,14 @@ function startCombat(): void {
 
   renderUnitSprite("combat-player", WEAPON_ICON[classDef.weaponType], player.name, player.stats.hp);
   renderUnitSprite("combat-enemy", ENEMY_ICON, enemy.name, enemy.stats.hp);
+  renderStatsBar("combat-stats-bar", run.stats);
   $("combat-log").textContent = "";
   $("btn-combat-next").classList.add("hidden");
   BGM.play("battle");
   showScreen("screen-combat");
 
   const result = simulateCombat(player, enemy, Math.random);
-  playLog(player.name, player.stats.hp, enemy.stats.hp, result.log, () => {
+  playLog(player.name, player.stats.hp, enemy.stats.hp, result.log, classDef.weaponType, () => {
     if (result.winner === "player") {
       onCombatWin();
     } else {
@@ -146,7 +151,7 @@ function startCombat(): void {
   });
 }
 
-function playLog(playerName: string, playerMaxHp: number, enemyMaxHp: number, log: AttackEvent[], onDone: () => void): void {
+function playLog(playerName: string, playerMaxHp: number, enemyMaxHp: number, log: AttackEvent[], weaponType: WeaponType, onDone: () => void): void {
   const logEl = $("combat-log");
   let i = 0;
   const step = () => {
@@ -169,7 +174,8 @@ function playLog(playerName: string, playerMaxHp: number, enemyMaxHp: number, lo
     playAttackAnimation(attackerId, defenderId, attackerIsPlayer ? "player" : "enemy", ev);
     if (ev.hit) {
       updateUnitHp(defenderId, ev.defenderHpAfter, defenderMaxHp);
-      ev.crit ? SFX.crit() : SFX.hit();
+      const wt = attackerIsPlayer ? weaponType : undefined;
+      ev.crit ? SFX.crit(wt) : SFX.hit(wt);
     } else {
       SFX.miss();
     }
@@ -206,6 +212,7 @@ function onCombatLose(): void {
 function renderUpgradeSelect(): void {
   if (!run) return;
   $("upgrade-title").textContent = "強化を選択";
+  renderStatsBar("upgrade-stats-bar", run.stats);
   const container = $("upgrade-options");
   container.innerHTML = "";
   const choices = rollUpgradeChoices(3, run.classId, Math.random);
@@ -228,6 +235,7 @@ function renderUpgradeSelect(): void {
 function renderRelicSelect(): void {
   if (!run) return;
   $("upgrade-title").textContent = "レリックを選択（ボス報酬）";
+  renderStatsBar("upgrade-stats-bar", run.stats);
   const container = $("upgrade-options");
   container.innerHTML = "";
   const choices = rollRelicChoices(3, Math.random);
