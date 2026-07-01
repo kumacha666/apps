@@ -7,7 +7,7 @@ import { rollRelicChoices } from "./data/relics";
 import { PERMANENT_UPGRADE_POOL, applyPermanentUpgrades, applyStatBoosts, STAT_BOOST_COST, STAT_BOOST_LABELS } from "./data/permanentUpgrades";
 import { simulateCombat } from "./combat";
 import { goldForStage } from "./run";
-import { loadSave, writeSave, addGold, purchasePermanentUpgrade, purchaseStatBoost, unlockDifficulty, unlockClass } from "./save";
+import { loadSave, writeSave, addGold, purchasePermanentUpgrade, purchaseStatBoost, getStatBoosts, unlockDifficulty, unlockClass } from "./save";
 import type { StatBoosts } from "./types";
 import { SFX, BGM } from "./audio";
 import type { AttackEvent } from "./types";
@@ -67,7 +67,7 @@ function renderClassSelect(): void {
 
 function startRun(classId: string): void {
   const classDef = getClassById(classId);
-  const stats = applyStatBoosts(applyPermanentUpgrades(classDef.baseStats, save.purchasedPermanentUpgrades), save.statBoosts);
+  const stats = applyStatBoosts(applyPermanentUpgrades(classDef.baseStats, save.purchasedPermanentUpgrades), getStatBoosts(save, classId));
   run = { classId, stats, stage: 1, goldEarned: 0 };
   startCombat();
 }
@@ -262,7 +262,13 @@ function renderRelicSelect(): void {
   showScreen("screen-upgrade");
 }
 
-function renderPermanentScreen(): void {
+let permanentSelectedClass = "";
+
+function renderPermanentScreen(classId?: string): void {
+  // クラス選択の初期値：引数 → 前回選択 → 基本クラスの先頭
+  if (classId) permanentSelectedClass = classId;
+  if (!permanentSelectedClass) permanentSelectedClass = basicClasses()[0].id;
+
   $("permanent-gold").textContent = `所持ゴールド: ${save.totalGold}`;
   const container = $("permanent-options");
   container.innerHTML = "";
@@ -288,18 +294,35 @@ function renderPermanentScreen(): void {
   const allPurchased = PERMANENT_UPGRADE_POOL.every(u => save.purchasedPermanentUpgrades.includes(u.id));
   if (allPurchased) {
     const heading = document.createElement("h3");
-    heading.textContent = "── 血統の極意（上限なし・各100G）──";
+    heading.textContent = "── 血統の極意（クラスごと・上限なし・各100G）──";
     heading.style.cssText = "color:#c0392b;margin-top:1.5rem;margin-bottom:0.5rem;font-size:0.95rem;text-align:center;";
     container.appendChild(heading);
 
+    // クラス選択タブ
+    const allClasses = [...basicClasses(), ...advancedClasses().filter(c => save.unlockedClasses.includes(c.id))];
+    const tabRow = document.createElement("div");
+    tabRow.style.cssText = "display:flex;gap:0.5rem;flex-wrap:wrap;justify-content:center;margin-bottom:0.75rem;";
+    for (const c of allClasses) {
+      const btn = document.createElement("button");
+      btn.textContent = c.name;
+      btn.className = permanentSelectedClass === c.id ? "btn-primary" : "btn-secondary";
+      btn.style.cssText = "font-size:0.85rem;padding:0.4rem 0.75rem;margin:0;";
+      btn.addEventListener("click", () => {
+        SFX.select();
+        renderPermanentScreen(c.id);
+      });
+      tabRow.appendChild(btn);
+    }
+    container.appendChild(tabRow);
+
+    const boosts = getStatBoosts(save, permanentSelectedClass);
     for (const stat of Object.keys(STAT_BOOST_LABELS) as (keyof StatBoosts)[]) {
-      const current = save.statBoosts[stat];
       const card = document.createElement("div");
       card.className = "option-card";
-      card.textContent = `${STAT_BOOST_LABELS[stat]} +1（${STAT_BOOST_COST}G）　現在の積み上げ: +${current}`;
+      card.textContent = `${STAT_BOOST_LABELS[stat]} +1（${STAT_BOOST_COST}G）　現在の積み上げ: +${boosts[stat]}`;
       card.addEventListener("click", () => {
         SFX.select();
-        save = purchaseStatBoost(save, stat, STAT_BOOST_COST);
+        save = purchaseStatBoost(save, permanentSelectedClass, stat, STAT_BOOST_COST);
         writeSave(save);
         renderPermanentScreen();
       });

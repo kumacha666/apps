@@ -67,7 +67,7 @@ export interface SaveData {
   purchasedPermanentUpgrades: string[];
   unlockedDifficulties: Difficulty[];
   unlockedClasses: string[];
-  statBoosts: StatBoosts;
+  statBoosts: Record<string, StatBoosts>;
 }
 
 export interface AttackEvent {
