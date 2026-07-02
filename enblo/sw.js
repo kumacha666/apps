@@ -1,4 +1,4 @@
-const CACHE_NAME = "enblo-v0.1.17";
+const CACHE_NAME = "enblo-v0.1.19";
 const ASSETS = ["./", "./index.html", "./style.css", "./game.js", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {
