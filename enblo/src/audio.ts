@@ -1,6 +1,21 @@
 import type { WeaponType } from "./types";
 
 let ctx: AudioContext | null = null;
+let sfxGainNode: GainNode | null = null;
+let bgmGainNode: GainNode | null = null;
+
+interface AudioSettings { sfxVolume: number; bgmVolume: number; muted: boolean; }
+const AUDIO_SETTINGS_KEY = "enblo-audio-settings";
+
+function loadAudioSettings(): AudioSettings {
+  try {
+    const raw = localStorage.getItem(AUDIO_SETTINGS_KEY);
+    if (raw) return { sfxVolume: 1, bgmVolume: 0.5, muted: false, ...JSON.parse(raw) };
+  } catch {}
+  return { sfxVolume: 1, bgmVolume: 0.5, muted: false };
+}
+
+let audioSettings: AudioSettings = loadAudioSettings();
 
 function getContext(): AudioContext | null {
   if (typeof window === "undefined") return null;
@@ -8,13 +23,36 @@ function getContext(): AudioContext | null {
     const AudioCtor = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioCtor) return null;
     ctx = new AudioCtor();
+    sfxGainNode = ctx.createGain();
+    bgmGainNode = ctx.createGain();
+    sfxGainNode.connect(ctx.destination);
+    bgmGainNode.connect(ctx.destination);
+    applyAudioSettings();
   }
   return ctx;
 }
 
+function applyAudioSettings(): void {
+  if (!sfxGainNode || !bgmGainNode) return;
+  const vol = audioSettings.muted ? 0 : 1;
+  sfxGainNode.gain.value = audioSettings.sfxVolume * vol;
+  bgmGainNode.gain.value = audioSettings.bgmVolume * vol;
+}
+
+function getSfxDest(): AudioNode | null {
+  getContext();
+  return sfxGainNode;
+}
+
+function getBgmDest(): AudioNode | null {
+  getContext();
+  return bgmGainNode;
+}
+
 function beep(freq: number, duration: number, type: OscillatorType = "square", gain = 0.15): void {
   const ac = getContext();
-  if (!ac) return;
+  const dest = getSfxDest();
+  if (!ac || !dest) return;
   const osc = ac.createOscillator();
   const g = ac.createGain();
   osc.type = type;
@@ -22,15 +60,30 @@ function beep(freq: number, duration: number, type: OscillatorType = "square", g
   const now = ac.currentTime;
   g.gain.setValueAtTime(gain, now);
   g.gain.exponentialRampToValueAtTime(0.001, now + duration);
-  osc.connect(g).connect(ac.destination);
+  osc.connect(g).connect(dest);
   osc.start(now);
   osc.stop(now + duration);
 }
 
+export const AudioControl = {
+  getSettings: (): AudioSettings => ({ ...audioSettings }),
+  setSettings(s: Partial<AudioSettings>): void {
+    audioSettings = { ...audioSettings, ...s };
+    localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify(audioSettings));
+    applyAudioSettings();
+  },
+  toggleMute(): boolean {
+    audioSettings.muted = !audioSettings.muted;
+    localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify(audioSettings));
+    applyAudioSettings();
+    return audioSettings.muted;
+  },
+};
+
 // ─── 武器ごとの効果音 ────────────────────────────────────────────────────────
 
 function sfxSword(): void {
-  const ac = getContext(); if (!ac) return;
+  const ac = getContext(); const sfxDest = getSfxDest(); if (!ac || !sfxDest) return;
   const now = ac.currentTime;
 
   // Phase 1: 振り被り〜振り下ろし（重い剣が加速する風切り）
@@ -46,7 +99,7 @@ function sfxSword(): void {
   sg.gain.setValueAtTime(0.0, now);
   sg.gain.linearRampToValueAtTime(0.85, now + 0.12);
   sg.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
-  sw.connect(sf).connect(sg).connect(ac.destination);
+  sw.connect(sf).connect(sg).connect(sfxDest);
   sw.start(now); sw.stop(now + 0.2);
 
   // Phase 2: 切り裂き瞬間（中高域バースト）
@@ -61,7 +114,7 @@ function sfxSword(): void {
   const lg = ac.createGain();
   lg.gain.setValueAtTime(1.2, now + 0.13);
   lg.gain.exponentialRampToValueAtTime(0.001, now + 0.20);
-  sl.connect(lf).connect(lg).connect(ac.destination);
+  sl.connect(lf).connect(lg).connect(sfxDest);
   sl.start(now + 0.13); sl.stop(now + 0.20);
 
   // Phase 2b: 高域の切り裂き感
@@ -73,7 +126,7 @@ function sfxSword(): void {
   const hg = ac.createGain();
   hg.gain.setValueAtTime(0.65, now + 0.13);
   hg.gain.exponentialRampToValueAtTime(0.001, now + 0.175);
-  sh.connect(hf).connect(hg).connect(ac.destination);
+  sh.connect(hf).connect(hg).connect(sfxDest);
   sh.start(now + 0.13); sh.stop(now + 0.175);
 
   // Phase 3: ブレードの重量感（低音ズシン）
@@ -84,14 +137,13 @@ function sfxSword(): void {
   og.gain.setValueAtTime(0, now);
   og.gain.setValueAtTime(0.5, now + 0.13);
   og.gain.exponentialRampToValueAtTime(0.001, now + 0.27);
-  osc.connect(og).connect(ac.destination);
+  osc.connect(og).connect(sfxDest);
   osc.start(now); osc.stop(now + 0.28);
 }
 
 function sfxLance(): void {
-  const ac = getContext(); if (!ac) return;
+  const ac = getContext(); const sfxDest = getSfxDest(); if (!ac || !sfxDest) return;
   const now = ac.currentTime;
-  // 風切り音（ハイパスノイズ）
   const buf = ac.createBuffer(1, ac.sampleRate * 0.13, ac.sampleRate);
   const d = buf.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
@@ -101,9 +153,8 @@ function sfxLance(): void {
   g.gain.setValueAtTime(0.35, now);
   g.gain.setValueAtTime(0.35, now + 0.05);
   g.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
-  src.connect(filt).connect(g).connect(ac.destination);
+  src.connect(filt).connect(g).connect(sfxDest);
   src.start(now); src.stop(now + 0.13);
-  // 突き音（低音の衝撃）
   const osc = ac.createOscillator(), g2 = ac.createGain();
   osc.type = "sine";
   osc.frequency.setValueAtTime(130, now + 0.05);
@@ -111,12 +162,12 @@ function sfxLance(): void {
   g2.gain.setValueAtTime(0, now);
   g2.gain.setValueAtTime(0.4, now + 0.05);
   g2.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
-  osc.connect(g2).connect(ac.destination);
+  osc.connect(g2).connect(sfxDest);
   osc.start(now); osc.stop(now + 0.17);
 }
 
 function sfxBow(): void {
-  const ac = getContext(); if (!ac) return;
+  const ac = getContext(); const sfxDest = getSfxDest(); if (!ac || !sfxDest) return;
   const now = ac.currentTime;
   const osc = ac.createOscillator(), g = ac.createGain();
   osc.type = "triangle";
@@ -124,23 +175,21 @@ function sfxBow(): void {
   osc.frequency.exponentialRampToValueAtTime(350, now + 0.11);
   g.gain.setValueAtTime(0.2, now);
   g.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
-  osc.connect(g).connect(ac.destination);
+  osc.connect(g).connect(sfxDest);
   osc.start(now); osc.stop(now + 0.11);
 }
 
 function sfxTome(): void {
-  const ac = getContext(); if (!ac) return;
+  const ac = getContext(); const sfxDest = getSfxDest(); if (!ac || !sfxDest) return;
   const now = ac.currentTime;
-  // 低音ドーン
   const osc0 = ac.createOscillator(), g0 = ac.createGain();
   osc0.type = "sine";
   osc0.frequency.setValueAtTime(90, now);
   osc0.frequency.exponentialRampToValueAtTime(30, now + 0.18);
   g0.gain.setValueAtTime(0.6, now);
   g0.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-  osc0.connect(g0).connect(ac.destination);
+  osc0.connect(g0).connect(sfxDest);
   osc0.start(now); osc0.stop(now + 0.18);
-  // 全域ノイズ爆発
   const buf = ac.createBuffer(1, ac.sampleRate * 0.28, ac.sampleRate);
   const d = buf.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
@@ -154,9 +203,8 @@ function sfxTome(): void {
   g.gain.setValueAtTime(0.9, now);
   g.gain.setValueAtTime(0.7, now + 0.04);
   g.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
-  src.connect(filt).connect(g).connect(ac.destination);
+  src.connect(filt).connect(g).connect(sfxDest);
   src.start(now); src.stop(now + 0.28);
-  // 高周波電撃バズ
   const osc2 = ac.createOscillator(), g2 = ac.createGain();
   osc2.type = "sawtooth";
   osc2.frequency.setValueAtTime(2000, now);
@@ -166,7 +214,7 @@ function sfxTome(): void {
   osc2.frequency.setValueAtTime(2200, now + 0.17);
   g2.gain.setValueAtTime(0.2, now);
   g2.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
-  osc2.connect(g2).connect(ac.destination);
+  osc2.connect(g2).connect(sfxDest);
   osc2.start(now); osc2.stop(now + 0.24);
 }
 
@@ -182,7 +230,7 @@ function doHit(weaponType?: WeaponType): void {
 
 // 武器ごとのヒット瞬間（衝撃コア）を指定時刻・音量で1発鳴らす
 function fireHitCore(wt: WeaponType | undefined, t: number, vol: number): void {
-  const ac = getContext(); if (!ac) return;
+  const ac = getContext(); const sfxDest = getSfxDest(); if (!ac || !sfxDest) return;
   if (wt === "sword") {
     const buf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.07), ac.sampleRate);
     const d = buf.getChannelData(0);
@@ -192,28 +240,28 @@ function fireHitCore(wt: WeaponType | undefined, t: number, vol: number): void {
     f.frequency.setValueAtTime(3000, t); f.frequency.exponentialRampToValueAtTime(650, t + 0.07); f.Q.value = 2.5;
     const g = ac.createGain();
     g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
-    src.connect(f).connect(g).connect(ac.destination);
+    src.connect(f).connect(g).connect(sfxDest);
     src.start(t); src.stop(t + 0.07);
     const o = ac.createOscillator(), og = ac.createGain(); o.type = "sine";
     o.frequency.setValueAtTime(90, t); o.frequency.exponentialRampToValueAtTime(30, t + 0.08);
     og.gain.setValueAtTime(vol * 0.6, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
-    o.connect(og).connect(ac.destination); o.start(t); o.stop(t + 0.08);
+    o.connect(og).connect(sfxDest); o.start(t); o.stop(t + 0.08);
   } else if (wt === "lance") {
     const o = ac.createOscillator(), og = ac.createGain(); o.type = "sine";
     o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.08);
     og.gain.setValueAtTime(vol, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
-    o.connect(og).connect(ac.destination); o.start(t); o.stop(t + 0.09);
+    o.connect(og).connect(sfxDest); o.start(t); o.stop(t + 0.09);
     const buf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.04), ac.sampleRate);
     const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     const src = ac.createBufferSource(); src.buffer = buf;
     const f = ac.createBiquadFilter(); f.type = "highpass"; f.frequency.value = 2500;
     const g = ac.createGain(); g.gain.setValueAtTime(vol * 0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-    src.connect(f).connect(g).connect(ac.destination); src.start(t); src.stop(t + 0.04);
+    src.connect(f).connect(g).connect(sfxDest); src.start(t); src.stop(t + 0.04);
   } else if (wt === "bow") {
     const o = ac.createOscillator(), og = ac.createGain(); o.type = "triangle";
     o.frequency.setValueAtTime(1400, t); o.frequency.exponentialRampToValueAtTime(350, t + 0.06);
     og.gain.setValueAtTime(vol, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
-    o.connect(og).connect(ac.destination); o.start(t); o.stop(t + 0.06);
+    o.connect(og).connect(sfxDest); o.start(t); o.stop(t + 0.06);
   } else if (wt === "tome") {
     const buf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.07), ac.sampleRate);
     const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
@@ -221,11 +269,11 @@ function fireHitCore(wt: WeaponType | undefined, t: number, vol: number): void {
     const f = ac.createBiquadFilter(); f.type = "bandpass";
     f.frequency.setValueAtTime(300, t); f.frequency.exponentialRampToValueAtTime(4000, t + 0.03); f.frequency.exponentialRampToValueAtTime(600, t + 0.07); f.Q.value = 2;
     const g = ac.createGain(); g.gain.setValueAtTime(vol * 0.9, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
-    src.connect(f).connect(g).connect(ac.destination); src.start(t); src.stop(t + 0.07);
+    src.connect(f).connect(g).connect(sfxDest); src.start(t); src.stop(t + 0.07);
     const o = ac.createOscillator(), og = ac.createGain(); o.type = "sine";
     o.frequency.setValueAtTime(80, t); o.frequency.exponentialRampToValueAtTime(25, t + 0.09);
     og.gain.setValueAtTime(vol * 0.7, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
-    o.connect(og).connect(ac.destination); o.start(t); o.stop(t + 0.09);
+    o.connect(og).connect(sfxDest); o.start(t); o.stop(t + 0.09);
   } else {
     beep(220, 0.06, "square", vol * 0.18);
   }
@@ -256,7 +304,7 @@ export const SFX = {
     }, 300);
   },
   miss: () => {
-    const ac = getContext(); if (!ac) return;
+    const ac = getContext(); const sfxDest = getSfxDest(); if (!ac || !sfxDest) return;
     const now = ac.currentTime;
     const buf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.18), ac.sampleRate);
     const d = buf.getChannelData(0);
@@ -270,7 +318,7 @@ export const SFX = {
     g.gain.setValueAtTime(0, now);
     g.gain.linearRampToValueAtTime(0.75, now + 0.05);
     g.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-    src.connect(filt).connect(g).connect(ac.destination);
+    src.connect(filt).connect(g).connect(sfxDest);
     src.start(now); src.stop(now + 0.18);
     const osc = ac.createOscillator(), og = ac.createGain();
     osc.type = "sine";
@@ -278,7 +326,7 @@ export const SFX = {
     osc.frequency.exponentialRampToValueAtTime(75, now + 0.16);
     og.gain.setValueAtTime(0.38, now);
     og.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
-    osc.connect(og).connect(ac.destination);
+    osc.connect(og).connect(sfxDest);
     osc.start(now); osc.stop(now + 0.17);
   },
   win: () => {
@@ -438,6 +486,7 @@ function scheduleNote(
   gate: number,
 ): void {
   if (freq === 0) return;
+  const dest = getBgmDest(); if (!dest) return;
   const osc = ac.createOscillator();
   const g = ac.createGain();
   osc.type = type;
@@ -445,7 +494,7 @@ function scheduleNote(
   g.gain.setValueAtTime(gainVal, startTime);
   g.gain.setValueAtTime(gainVal, startTime + duration * gate);
   g.gain.exponentialRampToValueAtTime(0.001, startTime + duration * 0.99);
-  osc.connect(g).connect(ac.destination);
+  osc.connect(g).connect(dest);
   bgmNodes.add(osc);
   osc.addEventListener("ended", () => bgmNodes.delete(osc));
   osc.start(startTime);
@@ -453,6 +502,7 @@ function scheduleNote(
 }
 
 function scheduleNoise(ac: AudioContext, startTime: number, type: "kick" | "snare"): void {
+  const dest = getBgmDest(); if (!dest) return;
   const buf = ac.createBuffer(1, ac.sampleRate * 0.05, ac.sampleRate);
   const data = buf.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
@@ -464,7 +514,7 @@ function scheduleNoise(ac: AudioContext, startTime: number, type: "kick" | "snar
   filt.frequency.value = type === "kick" ? 120 : 1800;
   g.gain.setValueAtTime(type === "kick" ? 0.25 : 0.12, startTime);
   g.gain.exponentialRampToValueAtTime(0.001, startTime + (type === "kick" ? 0.08 : 0.04));
-  src.connect(filt).connect(g).connect(ac.destination);
+  src.connect(filt).connect(g).connect(dest);
   bgmNodes.add(src);
   src.addEventListener("ended", () => bgmNodes.delete(src));
   src.start(startTime);
