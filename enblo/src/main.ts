@@ -37,9 +37,12 @@ function $(id: string): HTMLElement {
   return el;
 }
 
+const SCREENS_WITHOUT_STATS = new Set(["screen-title", "screen-class-select", "screen-result"]);
+
 function showScreen(id: string): void {
   document.querySelectorAll(".screen").forEach((el) => el.classList.remove("active"));
   $(id).classList.add("active");
+  if (SCREENS_WITHOUT_STATS.has(id)) hideStatsBar();
 }
 
 function renderTitle(): void {
@@ -122,8 +125,8 @@ function playAttackAnimation(attackerId: string, defenderId: string, attackerSid
   }
 }
 
-function renderStatsBar(id: string, stats: Stats): void {
-  const el = $(id);
+function renderStatsBar(stats: Stats): void {
+  const el = $("global-stats-bar");
   const entries: [string, number][] = [
     ["HP",   stats.hp],
     ["攻撃", stats.atk],
@@ -135,6 +138,11 @@ function renderStatsBar(id: string, stats: Stats): void {
   el.innerHTML = entries.map(([label, val]) =>
     `<div class="stat-cell"><span class="stat-label">${label}</span><span class="stat-value">${val}</span></div>`
   ).join("");
+  el.classList.remove("hidden");
+}
+
+function hideStatsBar(): void {
+  $("global-stats-bar").classList.add("hidden");
 }
 
 function startCombat(): void {
@@ -146,7 +154,7 @@ function startCombat(): void {
 
   renderUnitSprite("combat-player", WEAPON_ICON[classDef.weaponType], player.name, player.stats.hp);
   renderUnitSprite("combat-enemy", ENEMY_ICON, enemy.name, enemy.stats.hp);
-  renderStatsBar("combat-stats-bar", run.stats);
+  renderStatsBar(run.stats);
   $("combat-log").textContent = "";
   $("btn-combat-next").classList.add("hidden");
   BGM.play(isBossStage(run.stage) ? "boss" : "battle");
@@ -223,7 +231,7 @@ function onCombatLose(): void {
 function renderUpgradeSelect(): void {
   if (!run) return;
   $("upgrade-title").textContent = "強化を選択";
-  renderStatsBar("upgrade-stats-bar", run.stats);
+  renderStatsBar(run.stats);
   const container = $("upgrade-options");
   container.innerHTML = "";
   const choices = rollUpgradeChoices(3, run.classId, Math.random);
@@ -246,7 +254,7 @@ function renderUpgradeSelect(): void {
 function renderRelicSelect(): void {
   if (!run) return;
   $("upgrade-title").textContent = "レリックを選択（ボス報酬）";
-  renderStatsBar("upgrade-stats-bar", run.stats);
+  renderStatsBar(run.stats);
   const container = $("upgrade-options");
   container.innerHTML = "";
   const choices = rollRelicChoices(3, Math.random);
@@ -288,7 +296,7 @@ function renderPermanentScreen(classId?: string): void {
     applyPermanentUpgrades(classDef.baseStats, save.purchasedPermanentUpgrades),
     getStatBoosts(save, permanentSelectedClass)
   );
-  renderStatsBar("permanent-stats-bar", permanentStats);
+  renderStatsBar(permanentStats);
 
   const container = $("permanent-options");
   container.innerHTML = "";
