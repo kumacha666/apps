@@ -343,6 +343,11 @@ function renderPermanentScreen(classId?: string): void {
     }
     container.appendChild(tabRow);
 
+    const goldLabel = document.createElement("div");
+    goldLabel.textContent = `所持ゴールド: ${save.totalGold}`;
+    goldLabel.style.cssText = "text-align:center;color:#e8d5a0;font-size:0.9rem;margin-bottom:0.5rem;";
+    container.appendChild(goldLabel);
+
     const boosts = getStatBoosts(save, permanentSelectedClass);
     for (const stat of Object.keys(STAT_BOOST_LABELS) as (keyof StatBoosts)[]) {
       const card = document.createElement("div");
