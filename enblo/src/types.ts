@@ -81,6 +81,6 @@ export interface AttackEvent {
 }
 
 export interface CombatResult {
-  winner: "player" | "enemy";
+  winner: "player" | "enemy" | "draw";
   log: AttackEvent[];
 }

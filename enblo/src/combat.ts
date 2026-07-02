@@ -80,6 +80,8 @@ export function simulateCombat(
     rounds += 1;
   }
 
-  const winner: CombatResult["winner"] = p.currentHp > 0 ? "player" : "enemy";
+  // タイムアウト（MAX_ROUNDS到達）は引き分け。敵を倒せれば勝利、倒されれば敗北。
+  const winner: CombatResult["winner"] =
+    e.currentHp <= 0 ? "player" : p.currentHp <= 0 ? "enemy" : "draw";
   return { winner, log };
 }
