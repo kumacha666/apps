@@ -80,6 +80,8 @@ export function simulateCombat(
     rounds += 1;
   }
 
-  const winner: CombatResult["winner"] = p.currentHp > 0 ? "player" : "enemy";
+  // タイムアウト（MAX_ROUNDS到達）は敵の勝利扱い。敵を倒せなければ撤退できない。
+  const winner: CombatResult["winner"] =
+    e.currentHp <= 0 ? "player" : "enemy";
   return { winner, log };
 }
