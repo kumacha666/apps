@@ -209,13 +209,21 @@ body {
 #combat-log {
   width: 100%;
   max-width: 480px;
-  min-height: 8rem;
+  height: 10rem;
+  overflow-y: auto;
   background: #221e28;
   border-radius: 0.5rem;
   padding: 1rem;
   margin-top: 1rem;
   font-size: 0.9rem;
   white-space: pre-line;
+}
+
+#btn-settings-combat {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 100;
 }
 
 #class-grid, #upgrade-options, #permanent-options {
