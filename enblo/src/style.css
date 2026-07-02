@@ -240,7 +240,7 @@ body {
 
 #global-stats-bar {
   position: fixed;
-  bottom: 0;
+  top: 0;
   left: 0;
   right: 0;
   z-index: 100;
@@ -249,7 +249,7 @@ body {
   gap: 0;
   padding: 6px 8px;
   background: rgba(10, 10, 15, 0.92);
-  border-top: 1px solid #444;
+  border-bottom: 1px solid #444;
   backdrop-filter: blur(4px);
   box-sizing: border-box;
 }
@@ -292,7 +292,7 @@ body {
   color: #e8d5a0;
 }
 
-/* グローバルバー表示時は画面下部との余白を確保 */
+/* グローバルバー表示時は画面上部との余白を確保 */
 body:has(#global-stats-bar:not(.hidden)) #app {
-  padding-bottom: 52px;
+  padding-top: 52px;
 }
