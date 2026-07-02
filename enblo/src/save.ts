@@ -79,3 +79,14 @@ export function purchaseStatBoost(data: SaveData, classId: string, stat: keyof S
     },
   };
 }
+
+export function resetStatBoosts(data: SaveData, classId: string, costPerBoost: number): SaveData {
+  const boosts = getStatBoosts(data, classId);
+  const totalBoosts = (Object.values(boosts) as number[]).reduce((s, v) => s + v, 0);
+  if (totalBoosts === 0) return data;
+  return {
+    ...data,
+    totalGold: data.totalGold + totalBoosts * costPerBoost,
+    statBoosts: { ...data.statBoosts, [classId]: defaultStatBoosts() },
+  };
+}

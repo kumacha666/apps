@@ -7,9 +7,9 @@ import { rollRelicChoices } from "./data/relics";
 import { PERMANENT_UPGRADE_POOL, applyPermanentUpgrades, applyStatBoosts, STAT_BOOST_COST, STAT_BOOST_LABELS } from "./data/permanentUpgrades";
 import { simulateCombat } from "./combat";
 import { goldForStage } from "./run";
-import { loadSave, writeSave, addGold, purchasePermanentUpgrade, purchaseStatBoost, getStatBoosts, unlockDifficulty, unlockClass } from "./save";
+import { loadSave, writeSave, addGold, purchasePermanentUpgrade, purchaseStatBoost, resetStatBoosts, getStatBoosts, unlockDifficulty, unlockClass } from "./save";
 import type { StatBoosts } from "./types";
-import { SFX, BGM } from "./audio";
+import { SFX, BGM, AudioControl } from "./audio";
 import type { AttackEvent } from "./types";
 
 let save = loadSave();
@@ -37,7 +37,7 @@ function $(id: string): HTMLElement {
   return el;
 }
 
-const SCREENS_WITHOUT_STATS = new Set(["screen-title", "screen-class-select", "screen-result"]);
+const SCREENS_WITHOUT_STATS = new Set(["screen-title", "screen-class-select", "screen-result", "screen-settings"]);
 
 function showScreen(id: string): void {
   document.querySelectorAll(".screen").forEach((el) => el.classList.remove("active"));
@@ -356,9 +356,58 @@ function renderPermanentScreen(classId?: string): void {
       });
       container.appendChild(card);
     }
+
+    const totalBoosts = (Object.values(boosts) as number[]).reduce((s, v) => s + v, 0);
+    if (totalBoosts > 0) {
+      const refundBtn = document.createElement("button");
+      refundBtn.className = "btn-secondary";
+      refundBtn.textContent = `血統をリセット（${totalBoosts * STAT_BOOST_COST}G 払い戻し）`;
+      refundBtn.style.cssText = "margin-top:1rem;width:100%;";
+      refundBtn.addEventListener("click", () => {
+        SFX.select();
+        save = resetStatBoosts(save, permanentSelectedClass, STAT_BOOST_COST);
+        writeSave(save);
+        renderPermanentScreen();
+      });
+      container.appendChild(refundBtn);
+    }
   }
 
   showScreen("screen-permanent");
+}
+
+function renderSettings(fromScreen: string): void {
+  const s = AudioControl.getSettings();
+
+  const bgmSlider = $("settings-bgm") as HTMLInputElement;
+  const sfxSlider = $("settings-sfx") as HTMLInputElement;
+  bgmSlider.value = String(Math.round(s.bgmVolume * 100));
+  sfxSlider.value = String(Math.round(s.sfxVolume * 100));
+  $("settings-bgm-val").textContent = bgmSlider.value;
+  $("settings-sfx-val").textContent = sfxSlider.value;
+
+  bgmSlider.oninput = () => {
+    AudioControl.setSettings({ bgmVolume: Number(bgmSlider.value) / 100 });
+    $("settings-bgm-val").textContent = bgmSlider.value;
+  };
+  sfxSlider.oninput = () => {
+    AudioControl.setSettings({ sfxVolume: Number(sfxSlider.value) / 100 });
+    $("settings-sfx-val").textContent = sfxSlider.value;
+    SFX.select();
+  };
+
+  ($("btn-settings-back") as HTMLButtonElement).onclick = () => {
+    SFX.select();
+    showScreen(fromScreen);
+    if (fromScreen === "screen-title") hideStatsBar();
+  };
+
+  showScreen("screen-settings");
+}
+
+function updateMuteButton(): void {
+  const muted = AudioControl.getSettings().muted;
+  $("btn-mute").textContent = muted ? "🔇 消音中" : "🔊 音あり";
 }
 
 function init(): void {
@@ -376,12 +425,25 @@ function init(): void {
   });
   $("btn-result-permanent").addEventListener("click", () => {
     SFX.select();
-    renderPermanentScreen();
+    renderPermanentScreen(run?.classId);
   });
   $("btn-permanent-back").addEventListener("click", () => {
     SFX.select();
     renderTitle();
   });
+  $("btn-mute").addEventListener("click", () => {
+    AudioControl.toggleMute();
+    updateMuteButton();
+  });
+  $("btn-settings-title").addEventListener("click", () => {
+    SFX.select();
+    renderSettings("screen-title");
+  });
+  $("btn-settings-combat").addEventListener("click", () => {
+    SFX.select();
+    renderSettings("screen-combat");
+  });
+  updateMuteButton();
   renderTitle();
 }
 
