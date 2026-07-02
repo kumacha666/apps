@@ -56,9 +56,29 @@ function renderClassSelect(): void {
   grid.innerHTML = "";
   const classes = basicClasses();
   for (const c of classes) {
+    const boosted = applyStatBoosts(applyPermanentUpgrades(c.baseStats, save.purchasedPermanentUpgrades), getStatBoosts(save, c.id));
+    const hasBoost = JSON.stringify(c.baseStats) !== JSON.stringify(boosted);
+
     const card = document.createElement("div");
     card.className = "option-card";
-    card.textContent = `${c.name}（HP${c.baseStats.hp} 攻${c.baseStats.atk} 防${c.baseStats.def} 速${c.baseStats.spd}）`;
+
+    const nameEl = document.createElement("div");
+    nameEl.style.cssText = "font-weight:bold;margin-bottom:0.4rem;";
+    nameEl.textContent = c.name;
+    card.appendChild(nameEl);
+
+    const baseRow = document.createElement("div");
+    baseRow.style.cssText = "font-size:0.8rem;color:#888;";
+    baseRow.textContent = `初期　HP${c.baseStats.hp} 攻${c.baseStats.atk} 防${c.baseStats.def} 速${c.baseStats.spd} 命${c.baseStats.hit} 会${c.baseStats.crit}`;
+    card.appendChild(baseRow);
+
+    if (hasBoost) {
+      const boostedRow = document.createElement("div");
+      boostedRow.style.cssText = "font-size:0.85rem;color:#e8d5a0;margin-top:0.2rem;";
+      boostedRow.textContent = `現在　HP${boosted.hp} 攻${boosted.atk} 防${boosted.def} 速${boosted.spd} 命${boosted.hit} 会${boosted.crit}`;
+      card.appendChild(boostedRow);
+    }
+
     card.addEventListener("click", () => {
       SFX.select();
       startRun(c.id);
