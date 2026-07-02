@@ -1,6 +1,9 @@
 import type { Difficulty, SaveData, StatBoosts } from "./types";
 
-const STORAGE_KEY = "enblo-save-v1";
+const STORAGE_KEY_PREFIX = "enblo-save-v1-slot";
+const SLOT_COUNT = 3;
+
+export { SLOT_COUNT };
 
 export function defaultStatBoosts(): StatBoosts {
   return { hp: 0, atk: 0, def: 0, spd: 0, hit: 0, crit: 0 };
@@ -13,38 +16,68 @@ function defaultSaveData(): SaveData {
     unlockedDifficulties: ["normal"],
     unlockedClasses: [],
     statBoosts: {},
+    playCount: 0,
+    bestFloor: 0,
   };
+}
+
+function storageKey(slot: number): string {
+  return `${STORAGE_KEY_PREFIX}${slot}`;
 }
 
 export function getStatBoosts(data: SaveData, classId: string): StatBoosts {
   return data.statBoosts[classId] ?? defaultStatBoosts();
 }
 
-export function loadSave(): SaveData {
-  const raw = localStorage.getItem(STORAGE_KEY);
+export function totalStatBoostCount(data: SaveData): number {
+  return Object.values(data.statBoosts).reduce(
+    (sum, boosts) => sum + (Object.values(boosts) as number[]).reduce((s, v) => s + v, 0),
+    0
+  );
+}
+
+export function loadSave(slot: number): SaveData {
+  const raw = localStorage.getItem(storageKey(slot));
   if (!raw) return defaultSaveData();
   try {
     const parsed = JSON.parse(raw);
     const base = defaultSaveData();
-    // 旧フォーマット（statBoostsがフラットなStatBoosts）からの移行
     const rawBoosts = parsed.statBoosts;
     const isOldFormat = rawBoosts && typeof rawBoosts.hp === "number";
     return {
       ...base,
       ...parsed,
       statBoosts: isOldFormat ? {} : (rawBoosts ?? {}),
+      playCount: parsed.playCount ?? 0,
+      bestFloor: parsed.bestFloor ?? 0,
     };
   } catch {
     return defaultSaveData();
   }
 }
 
-export function writeSave(data: SaveData): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+export function writeSave(data: SaveData, slot: number): void {
+  localStorage.setItem(storageKey(slot), JSON.stringify(data));
+}
+
+export function deleteSave(slot: number): void {
+  localStorage.removeItem(storageKey(slot));
+}
+
+export function slotExists(slot: number): boolean {
+  return localStorage.getItem(storageKey(slot)) !== null;
 }
 
 export function addGold(data: SaveData, amount: number): SaveData {
   return { ...data, totalGold: data.totalGold + amount };
+}
+
+export function recordRunEnd(data: SaveData, floorsCleared: number): SaveData {
+  return {
+    ...data,
+    playCount: data.playCount + 1,
+    bestFloor: Math.max(data.bestFloor, floorsCleared),
+  };
 }
 
 export function purchasePermanentUpgrade(data: SaveData, upgradeId: string, cost: number): SaveData {

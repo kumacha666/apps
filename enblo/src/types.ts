@@ -68,6 +68,8 @@ export interface SaveData {
   unlockedDifficulties: Difficulty[];
   unlockedClasses: string[];
   statBoosts: Record<string, StatBoosts>;
+  playCount: number;
+  bestFloor: number;
 }
 
 export interface AttackEvent {

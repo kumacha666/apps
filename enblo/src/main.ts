@@ -7,12 +7,13 @@ import { rollRelicChoices } from "./data/relics";
 import { PERMANENT_UPGRADE_POOL, applyPermanentUpgrades, applyStatBoosts, STAT_BOOST_COST, STAT_BOOST_LABELS } from "./data/permanentUpgrades";
 import { simulateCombat } from "./combat";
 import { goldForStage } from "./run";
-import { loadSave, writeSave, addGold, purchasePermanentUpgrade, purchaseStatBoost, resetStatBoosts, getStatBoosts, unlockDifficulty, unlockClass } from "./save";
+import { loadSave, writeSave, addGold, recordRunEnd, deleteSave, slotExists, totalStatBoostCount, purchasePermanentUpgrade, purchaseStatBoost, resetStatBoosts, getStatBoosts, unlockDifficulty, unlockClass, SLOT_COUNT } from "./save";
 import type { StatBoosts } from "./types";
 import { SFX, BGM, AudioControl } from "./audio";
 import type { AttackEvent } from "./types";
 
-let save = loadSave();
+let currentSlot = 0;
+let save = loadSave(0);
 
 interface RunState {
   classId: string;
@@ -37,7 +38,7 @@ function $(id: string): HTMLElement {
   return el;
 }
 
-const SCREENS_WITHOUT_STATS = new Set(["screen-title", "screen-class-select", "screen-result", "screen-settings"]);
+const SCREENS_WITHOUT_STATS = new Set(["screen-slot", "screen-title", "screen-class-select", "screen-result", "screen-settings"]);
 
 function showScreen(id: string): void {
   document.querySelectorAll(".screen").forEach((el) => el.classList.remove("active"));
@@ -45,8 +46,68 @@ function showScreen(id: string): void {
   if (SCREENS_WITHOUT_STATS.has(id)) hideStatsBar();
 }
 
+function renderSlotSelect(): void {
+  const list = $("slot-list");
+  list.innerHTML = "";
+  for (let i = 0; i < SLOT_COUNT; i++) {
+    const exists = slotExists(i);
+    const slotSave = exists ? loadSave(i) : null;
+
+    const card = document.createElement("div");
+    card.className = "option-card";
+    card.style.cssText = "display:flex;justify-content:space-between;align-items:center;gap:0.5rem;";
+
+    const info = document.createElement("div");
+    info.style.flex = "1";
+    const slotLabel = document.createElement("div");
+    slotLabel.style.cssText = "font-weight:bold;margin-bottom:0.3rem;";
+    slotLabel.textContent = `スロット ${i + 1}`;
+    info.appendChild(slotLabel);
+
+    if (slotSave) {
+      const boostCount = totalStatBoostCount(slotSave);
+      const detail = document.createElement("div");
+      detail.style.cssText = "font-size:0.8rem;color:#aaa;line-height:1.6;";
+      detail.innerHTML =
+        `所持金: ${slotSave.totalGold}G　血統強化: ${boostCount}回（${boostCount * 100}G相当）<br>` +
+        `プレイ: ${slotSave.playCount}回　最高: ${slotSave.bestFloor}層`;
+      info.appendChild(detail);
+    } else {
+      const empty = document.createElement("div");
+      empty.style.cssText = "font-size:0.8rem;color:#555;";
+      empty.textContent = "（空き）";
+      info.appendChild(empty);
+    }
+
+    card.appendChild(info);
+    card.addEventListener("click", () => {
+      SFX.select();
+      currentSlot = i;
+      save = loadSave(i);
+      renderTitle();
+    });
+
+    if (slotSave) {
+      const delBtn = document.createElement("button");
+      delBtn.className = "btn-secondary btn-small";
+      delBtn.textContent = "削除";
+      delBtn.style.cssText = "font-size:0.75rem;padding:0.3rem 0.6rem;flex-shrink:0;";
+      delBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!confirm(`スロット ${i + 1} のデータを削除しますか？`)) return;
+        deleteSave(i);
+        renderSlotSelect();
+      });
+      card.appendChild(delBtn);
+    }
+
+    list.appendChild(card);
+  }
+  showScreen("screen-slot");
+}
+
 function renderTitle(): void {
-  $("gold-display").textContent = `所持ゴールド: ${save.totalGold}`;
+  $("gold-display").textContent = `所持ゴールド: ${save.totalGold}　[スロット ${currentSlot + 1}]`;
   BGM.play("title");
   showScreen("screen-title");
 }
@@ -239,6 +300,8 @@ function onCombatWin(): void {
 function onCombatLose(): void {
   if (!run) return;
   SFX.lose();
+  save = recordRunEnd(save, run.stage);
+  writeSave(save, currentSlot);
   BGM.play("lose");
   $("result-title").textContent = "戦闘不能…";
   $("result-details").textContent = `到達: 第${run.stage}層 / 獲得ゴールド: ${run.goldEarned}G（没収）`;
@@ -249,7 +312,8 @@ function onFlee(): void {
   if (!run) return;
   SFX.win();
   save = addGold(save, run.goldEarned);
-  writeSave(save);
+  save = recordRunEnd(save, run.stage);
+  writeSave(save, currentSlot);
   BGM.play("lose");
   $("result-title").textContent = "逃走成功";
   $("result-details").textContent = `到達: 第${run.stage}層 / 獲得ゴールド: +${run.goldEarned}G`;
@@ -313,7 +377,7 @@ function renderRelicSelect(): void {
         for (const adv of advancedClasses()) {
           save = unlockClass(save, adv.id);
         }
-        writeSave(save);
+        writeSave(save, currentSlot);
       }
       run.stage += 1;
       startCombat();
@@ -355,7 +419,7 @@ function renderPermanentScreen(classId?: string): void {
       card.addEventListener("click", () => {
         SFX.select();
         save = purchasePermanentUpgrade(save, upgrade.id, upgrade.cost);
-        writeSave(save);
+        writeSave(save, currentSlot);
         renderPermanentScreen();
       });
     }
@@ -399,7 +463,7 @@ function renderPermanentScreen(classId?: string): void {
       card.addEventListener("click", () => {
         SFX.select();
         save = purchaseStatBoost(save, permanentSelectedClass, stat, STAT_BOOST_COST);
-        writeSave(save);
+        writeSave(save, currentSlot);
         renderPermanentScreen();
       });
       container.appendChild(card);
@@ -414,7 +478,7 @@ function renderPermanentScreen(classId?: string): void {
       refundBtn.addEventListener("click", () => {
         SFX.select();
         save = resetStatBoosts(save, permanentSelectedClass, STAT_BOOST_COST);
-        writeSave(save);
+        writeSave(save, currentSlot);
         renderPermanentScreen();
       });
       container.appendChild(refundBtn);
@@ -495,8 +559,12 @@ function init(): void {
     SFX.select();
     renderSettings("screen-combat");
   });
+  $("btn-slot-change").addEventListener("click", () => {
+    SFX.select();
+    renderSlotSelect();
+  });
   updateMuteButton();
-  renderTitle();
+  renderSlotSelect();
 }
 
 init();
