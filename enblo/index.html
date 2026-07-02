@@ -7,9 +7,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Endless Bloodline — enblo</title>
   <link rel="manifest" href="./manifest.json">
-                                                                                                                                                                                                                                                                <script type="module" crossorigin src="./game.js"></script>
-                                                                                                                                                                                                                                                                <link rel="stylesheet" crossorigin href="./style.css">
-                                                                                                                                                                                                                                                              </head>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                <script type="module" crossorigin src="./game.js"></script>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                <link rel="stylesheet" crossorigin href="./style.css">
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              </head>
 <body>
   <div id="global-stats-bar" class="stats-bar hidden"></div>
   <div id="app">
@@ -81,6 +81,10 @@
 
     <div id="screen-settings" class="screen">
       <h2>音量設定</h2>
+      <div id="settings-mute-banner" style="display:none;background:#3a2a2a;border:1px solid #c0392b;border-radius:0.5rem;padding:0.6rem 1rem;margin-bottom:1rem;text-align:center;font-size:0.9rem;color:#e88;max-width:480px;width:100%;">
+        🔇 消音中 — スライダーは消音解除後に有効になります
+        <button id="btn-settings-unmute" class="btn-secondary btn-small" style="display:block;margin:0.5rem auto 0;">消音を解除する</button>
+      </div>
       <div class="settings-row">
         <label class="settings-label">BGM</label>
         <input id="settings-bgm" type="range" min="0" max="100" class="settings-slider">

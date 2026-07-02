@@ -491,12 +491,22 @@ function renderPermanentScreen(classId?: string): void {
 function renderSettings(fromScreen: string): void {
   const s = AudioControl.getSettings();
 
+  const banner = $("settings-mute-banner");
+  banner.style.display = s.muted ? "block" : "none";
+
   const bgmSlider = $("settings-bgm") as HTMLInputElement;
   const sfxSlider = $("settings-sfx") as HTMLInputElement;
   bgmSlider.value = String(Math.round(s.bgmVolume * 100));
   sfxSlider.value = String(Math.round(s.sfxVolume * 100));
   $("settings-bgm-val").textContent = bgmSlider.value;
   $("settings-sfx-val").textContent = sfxSlider.value;
+
+  ($("btn-settings-unmute") as HTMLButtonElement).onclick = () => {
+    AudioControl.toggleMute();
+    updateMuteButton();
+    banner.style.display = "none";
+    SFX.select();
+  };
 
   bgmSlider.oninput = () => {
     AudioControl.setSettings({ bgmVolume: Number(bgmSlider.value) / 100 });
