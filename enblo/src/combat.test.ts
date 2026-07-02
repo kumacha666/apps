@@ -73,8 +73,8 @@ describe("simulateCombat", () => {
     const enemy = makeUnit("Enemy", { hit: 0 });
     const result = simulateCombat(player, enemy, () => 0.99);
     // MIN_HIT clamp guarantees some chance, but with rng always 0.99 (>=any clamped hit%), no hits land.
-    // Timeout (MAX_ROUNDS) counts as enemy victory — player failed to defeat the enemy.
+    // Timeout (MAX_ROUNDS) with both sides alive counts as draw.
     expect(result.log.length).toBeGreaterThan(0);
-    expect(result.winner).toBe("enemy");
+    expect(result.winner).toBe("draw");
   });
 });

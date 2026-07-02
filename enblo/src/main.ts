@@ -245,6 +245,8 @@ function startCombat(): void {
   playLog(player.name, player.stats.hp, enemy.stats.hp, result.log, classDef.weaponType, () => {
     if (result.winner === "player") {
       onCombatWin();
+    } else if (result.winner === "draw") {
+      onCombatDraw();
     } else {
       onCombatLose();
     }
@@ -305,6 +307,18 @@ function onCombatLose(): void {
   BGM.play("lose");
   $("result-title").textContent = "戦闘不能…";
   $("result-details").textContent = `到達: 第${run.stage}層 / 獲得ゴールド: ${run.goldEarned}G（没収）`;
+  showScreen("screen-result");
+}
+
+function onCombatDraw(): void {
+  if (!run) return;
+  SFX.win();
+  save = addGold(save, run.goldEarned);
+  save = recordRunEnd(save, run.stage - 1);
+  writeSave(save, currentSlot);
+  BGM.play("lose");
+  $("result-title").textContent = "引き分け…";
+  $("result-details").textContent = `到達: 第${run.stage}層（決着つかず撤退）/ 獲得ゴールド: +${run.goldEarned}G`;
   showScreen("screen-result");
 }
 

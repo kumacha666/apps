@@ -35,7 +35,9 @@ export function playRun(config: RunConfig): RunSummary {
     const enemy: CombatUnit = { classId: "enemy", name: enemyName(stage), stats: enemyStats };
     const result = simulateCombat(player, enemy, config.rng);
 
-    if (result.winner === "enemy") {
+    if (result.winner === "enemy" || result.winner === "draw") {
+      // 引き分けは直前までの報酬を確定して終了（goldはすでに加算済み）
+      if (result.winner === "draw") gold += goldForStage(stage);
       break;
     }
 
