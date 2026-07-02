@@ -239,13 +239,34 @@ function onCombatWin(): void {
 function onCombatLose(): void {
   if (!run) return;
   SFX.lose();
-  save = addGold(save, run.goldEarned);
-  writeSave(save);
-
   BGM.play("lose");
   $("result-title").textContent = "戦闘不能…";
-  $("result-details").textContent = `到達: 第${run.stage}層 / 獲得ゴールド: ${run.goldEarned}`;
+  $("result-details").textContent = `到達: 第${run.stage}層 / 獲得ゴールド: ${run.goldEarned}G（没収）`;
   showScreen("screen-result");
+}
+
+function onFlee(): void {
+  if (!run) return;
+  SFX.win();
+  save = addGold(save, run.goldEarned);
+  writeSave(save);
+  BGM.play("lose");
+  $("result-title").textContent = "逃走成功";
+  $("result-details").textContent = `到達: 第${run.stage}層 / 獲得ゴールド: +${run.goldEarned}G`;
+  showScreen("screen-result");
+}
+
+function addFleeButton(container: HTMLElement): void {
+  if (!run) return;
+  const btn = document.createElement("button");
+  btn.className = "btn-secondary";
+  btn.textContent = `逃走する（${run.goldEarned}G を持って帰る）`;
+  btn.style.cssText = "margin-top:1rem;width:100%;max-width:480px;";
+  btn.addEventListener("click", () => {
+    SFX.select();
+    onFlee();
+  });
+  container.appendChild(btn);
 }
 
 function renderUpgradeSelect(): void {
@@ -268,6 +289,7 @@ function renderUpgradeSelect(): void {
     });
     container.appendChild(card);
   }
+  addFleeButton(container);
   showScreen("screen-upgrade");
 }
 
@@ -298,6 +320,7 @@ function renderRelicSelect(): void {
     });
     container.appendChild(card);
   }
+  addFleeButton(container);
   showScreen("screen-upgrade");
 }
 
@@ -451,6 +474,10 @@ function init(): void {
   $("btn-result-permanent").addEventListener("click", () => {
     SFX.select();
     renderPermanentScreen(run?.classId);
+  });
+  $("btn-result-title").addEventListener("click", () => {
+    SFX.select();
+    renderTitle();
   });
   $("btn-permanent-back").addEventListener("click", () => {
     SFX.select();
