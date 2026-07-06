@@ -13,6 +13,8 @@
 /7metch/             パズルゲーム「ナナメッチ」— Vite+TS、ビルド有
 /7metch2/            ナナメッチ系列の新作（開発中）— Vite+TS、ビルド有
 /7metch-tools/       7metch用デバッグ・プレビュー用の単独HTMLツール群
+/enblo/              ローグライクバトラー（開発中）— Vite+TS、ビルド有、Playwright e2e有
+/enblo-tools/        enblo用デバッグ・プレビュー用の単独HTMLツール群
 /emoji-dm/           絵文字チャット — 静的PWA + Firebase (RTDB/Functions/FCM)
 /love-lab/           静的PWA
 /mhwilds-karikan/    モンハンワイルズ計算ツール — 静的PWA、JSONデータ駆動
@@ -33,15 +35,16 @@
 - `tapu-neko` はPWA化されていない最小構成（`manifest.json`はあるが`sw.js`なし）
 
 ### B. Vite+TypeScriptビルドアプリ
-`7metch`, `7metch2` が該当。共通構成:
+`7metch`, `7metch2`, `enblo` が該当。共通構成:
 - `src/` 配下にTypeScript、`vite.config.js` でビルド設定
 - `package.json` の `prebuild` フックで `npm test`（Vitest）を自動実行 → テスト失敗時はビルド自体が止まる
 - `npm run deploy` で「ビルド → dist/ を所定の場所にコピー → SWバージョン自動更新」まで1コマンドで完結（手動コピー・手動バージョン更新はしない方針）
 - ルート直下に存在する `game.js` / `style.css` / `sw.js` は **ビルド成果物のコピー**（dist/からコピーされたもの）。ソースは常に `src/` 配下を編集すること
-- 詳細なテスト方針・難易度パラメータ・変更時チェックリストはアプリごとの `CLAUDE.md`（例: `7metch/CLAUDE.md`）を参照
+- `enblo` のみ Playwright による E2E テスト（`e2e/`, `npm run test:e2e`）を持つ。画面遷移（起動→クラス選択→戦闘→強化選択→…→ゲームオーバー）の疎通確認用で、ユニットテストの代替ではない
+- 詳細なテスト方針・難易度パラメータ・変更時チェックリストはアプリごとの `CLAUDE.md`（例: `7metch/CLAUDE.md`, `enblo/CLAUDE.md`）を参照
 
 ### C. 補助ツール
-`7metch-tools` は本体アプリ（7metch）のデバッグ・プレビュー用に単独で動作するHTMLファイル群（ステージ選択プレビュー、特殊ピース確認等）。ビルド不要、ブラウザで直接開いて使う。
+`7metch-tools`（7metch用）、`enblo-tools`（enblo用、音確認ツール等）は本体アプリのデバッグ・プレビュー用に単独で動作するHTMLファイル群。ビルド不要、ブラウザで直接開いて使う。
 
 ## emoji-dm の特記事項
 - Firebase（Realtime Database / Cloud Functions v1 / Cloud Messaging）を使用するアプリ。フロントエンド (`app.js`, `sw.js`) は静的ホスティング（GitHub Pages）、バックエンド (`functions/index.js`) は別途 `firebase deploy` が必要（GitHub Pagesへのpushでは反映されない）
@@ -53,8 +56,9 @@
 - ブランチ：機能ごとにブランチを切る（命名例: `claude/<topic>-<id>`）
 - PR作成後、squash mergeでmainにマージ
 - mainへのマージで GitHub Pages に自動デプロイ（**GitHub Actionsワークフローは存在しない** — Pages設定がmainブランチ直下を直接配信するシンプルな静的ホスティング構成のため、push即反映）
-- ビルドが必要なアプリ（7metch, 7metch2）は、コミット前に `npm run deploy` を実行してビルド成果物をルート直下に反映させてからコミットする
+- ビルドが必要なアプリ（7metch, 7metch2, enblo）は、コミット前に `npm run deploy` を実行してビルド成果物をルート直下に反映させてからコミットする
 - 1PRに複数アプリ・複数の大きな変更を詰め込まない（`ai-workspace/CLAUDE.md` のAI開発ルール参照）
+- **新しいアプリディレクトリ（`apps/<name>/`）を追加したら、本CLAUDE.mdの「リポジトリ構成」「アプリ種別とアーキテクチャパターン」セクションに反映し、テスト・ビルド構成があればアプリ固有の`CLAUDE.md`を作成する**（`ai-workspace`の`save-tokens`スキル参照。過去にenblo追加時にこれを怠り、CLAUDE.mdが実態とズレた実績がある）
 
 ## コミュニケーション
 - 日本語でやりとり
