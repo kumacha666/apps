@@ -14,6 +14,7 @@
 /7metch2/            ナナメッチ系列の新作（開発中）— Vite+TS、ビルド有
 /7metch-tools/       7metch用デバッグ・プレビュー用の単独HTMLツール群
 /enblo/              ローグライクバトラー（開発中）— Vite+TS、ビルド有、Playwright e2e有
+/enblo-classic/      enbloの大規模再設計前の完成形（試作品v1）を凍結・独立公開したもの — Vite+TS、ビルド有
 /enblo-tools/        enblo用デバッグ・プレビュー用の単独HTMLツール群
 /emoji-dm/           絵文字チャット — 静的PWA + Firebase (RTDB/Functions/FCM)
 /love-lab/           静的PWA
@@ -35,13 +36,14 @@
 - `tapu-neko` はPWA化されていない最小構成（`manifest.json`はあるが`sw.js`なし）
 
 ### B. Vite+TypeScriptビルドアプリ
-`7metch`, `7metch2`, `enblo` が該当。共通構成:
+`7metch`, `7metch2`, `enblo`, `enblo-classic` が該当。共通構成:
 - `src/` 配下にTypeScript、`vite.config.js` でビルド設定
 - `package.json` の `prebuild` フックで `npm test`（Vitest）を自動実行 → テスト失敗時はビルド自体が止まる
 - `npm run deploy` で「ビルド → dist/ を所定の場所にコピー → SWバージョン自動更新」まで1コマンドで完結（手動コピー・手動バージョン更新はしない方針）
 - ルート直下に存在する `game.js` / `style.css` / `sw.js` は **ビルド成果物のコピー**（dist/からコピーされたもの）。ソースは常に `src/` 配下を編集すること
-- `enblo` のみ Playwright による E2E テスト（`e2e/`, `npm run test:e2e`）を持つ。画面遷移（起動→クラス選択→戦闘→強化選択→…→ゲームオーバー）の疎通確認用で、ユニットテストの代替ではない
-- 詳細なテスト方針・難易度パラメータ・変更時チェックリストはアプリごとの `CLAUDE.md`（例: `7metch/CLAUDE.md`, `enblo/CLAUDE.md`）を参照
+- `enblo`/`enblo-classic` のみ Playwright による E2E テスト（`e2e/`, `npm run test:e2e`）を持つ。画面遷移（起動→クラス選択→戦闘→強化選択→…→ゲームオーバー）の疎通確認用で、ユニットテストの代替ではない
+- **`enblo-classic`は凍結アプリ**。`enblo`の大規模再設計に着手する前の完成形をそのままコピーしたもので、以降は変更しない前提（バグ修正のみ最小対応）。SWバージョン自動更新スクリプトはcacheキー命名が異なるため動作しない（凍結アプリなので実害なし）
+- 詳細なテスト方針・難易度パラメータ・変更時チェックリストはアプリごとの `CLAUDE.md`（例: `7metch/CLAUDE.md`, `enblo/CLAUDE.md`, `enblo-classic/CLAUDE.md`）を参照
 
 ### C. 補助ツール
 `7metch-tools`（7metch用）、`enblo-tools`（enblo用、音確認ツール等）は本体アプリのデバッグ・プレビュー用に単独で動作するHTMLファイル群。ビルド不要、ブラウザで直接開いて使う。
