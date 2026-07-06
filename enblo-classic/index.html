@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Endless Bloodline Classic — enblo-classic</title>
+  <link rel="manifest" href="./manifest.json">
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                <script type="module" crossorigin src="./game.js"></script>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                <link rel="stylesheet" crossorigin href="./style.css">
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              </head>
+<body>
+  <div id="global-stats-bar" class="stats-bar hidden"></div>
+  <div id="app">
+    <div id="screen-slot" class="screen active">
+      <h1 class="title-logo">Endless Bloodline Classic</h1>
+      <h2 style="margin-bottom:1.5rem;font-size:1.1rem;color:#aaa;">セーブスロットを選択</h2>
+      <div id="slot-list" style="width:100%;max-width:480px;display:flex;flex-direction:column;gap:0.75rem;"></div>
+    </div>
+
+    <div id="screen-title" class="screen">
+      <h1 class="title-logo">Endless Bloodline Classic</h1>
+      <p class="title-sub">死ぬまで戦う、自動戦闘ローグライク闘技場</p>
+      <button id="btn-start" class="btn-primary">はじめる</button>
+      <button id="btn-permanent" class="btn-secondary">永続強化</button>
+      <div class="title-row">
+        <button id="btn-mute" class="btn-secondary btn-small">🔊 音あり</button>
+        <button id="btn-settings-title" class="btn-secondary btn-small">⚙ 音量設定</button>
+      </div>
+      <div id="gold-display"></div>
+      <button id="btn-slot-change" class="btn-secondary btn-small" style="margin-top:1.5rem;">スロット変更</button>
+      <div id="credits">Honeypaw Lab. by kumacha</div>
+    </div>
+
+    <div id="screen-class-select" class="screen">
+      <h2>クラス選択</h2>
+      <div id="class-grid"></div>
+      <button id="btn-class-back" class="btn-secondary">もどる</button>
+    </div>
+
+    <div id="screen-combat" class="screen">
+      <div id="combat-units">
+        <div id="combat-player" class="combat-unit">
+          <div class="unit-sprite"><span class="unit-icon"></span></div>
+          <div class="unit-name"></div>
+          <div class="unit-hpbar-outer"><div class="unit-hpbar-inner"></div></div>
+          <div class="unit-hptext"></div>
+        </div>
+        <div id="combat-vs">VS</div>
+        <div id="combat-enemy" class="combat-unit">
+          <div class="unit-sprite"><span class="unit-icon"></span></div>
+          <div class="unit-name"></div>
+          <div class="unit-hpbar-outer"><div class="unit-hpbar-inner"></div></div>
+          <div class="unit-hptext"></div>
+        </div>
+      </div>
+      <div id="combat-log"></div>
+      <button id="btn-combat-next" class="btn-primary hidden">つぎへ</button>
+      <button id="btn-settings-combat" class="btn-secondary btn-small">⚙ 音量設定</button>
+    </div>
+
+    <div id="screen-upgrade" class="screen">
+      <h2 id="upgrade-title">強化を選択</h2>
+      <div id="upgrade-options"></div>
+    </div>
+
+    <div id="screen-result" class="screen">
+      <h2 id="result-title"></h2>
+      <div id="result-details"></div>
+      <button id="btn-result-permanent" class="btn-primary">永続強化へ</button>
+      <button id="btn-result-title" class="btn-secondary">タイトルへ</button>
+    </div>
+
+    <div id="screen-permanent" class="screen">
+      <h2>永続強化</h2>
+      <div id="permanent-gold"></div>
+      <div id="permanent-options"></div>
+      <button id="btn-permanent-back" class="btn-secondary">タイトルへ</button>
+    </div>
+
+    <div id="screen-settings" class="screen">
+      <h2>音量設定</h2>
+      <div id="settings-mute-banner" style="display:none;background:#3a2a2a;border:1px solid #c0392b;border-radius:0.5rem;padding:0.6rem 1rem;margin-bottom:1rem;text-align:center;font-size:0.9rem;color:#e88;max-width:480px;width:100%;">
+        🔇 消音中 — スライダーは消音解除後に有効になります
+        <button id="btn-settings-unmute" class="btn-secondary btn-small" style="display:block;margin:0.5rem auto 0;">消音を解除する</button>
+      </div>
+      <div class="settings-row">
+        <label class="settings-label">BGM</label>
+        <input id="settings-bgm" type="range" min="0" max="100" class="settings-slider">
+        <span id="settings-bgm-val" class="settings-val">50</span>
+      </div>
+      <div class="settings-row">
+        <label class="settings-label">効果音</label>
+        <input id="settings-sfx" type="range" min="0" max="100" class="settings-slider">
+        <span id="settings-sfx-val" class="settings-val">100</span>
+      </div>
+      <button id="btn-settings-back" class="btn-secondary" style="margin-top:1.5rem;">もどる</button>
+    </div>
+  </div>
+
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js");
+    }
+  </script>
+</body>
+</html>
