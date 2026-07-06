@@ -58,6 +58,7 @@
 - mainへのマージで GitHub Pages に自動デプロイ（**GitHub Actionsワークフローは存在しない** — Pages設定がmainブランチ直下を直接配信するシンプルな静的ホスティング構成のため、push即反映）
 - ビルドが必要なアプリ（7metch, 7metch2, enblo）は、コミット前に `npm run deploy` を実行してビルド成果物をルート直下に反映させてからコミットする
 - 1PRに複数アプリ・複数の大きな変更を詰め込まない（`ai-workspace/CLAUDE.md` のAI開発ルール参照）
+- **新しいアプリディレクトリ（`apps/<name>/`）を追加したら、本CLAUDE.mdの「リポジトリ構成」「アプリ種別とアーキテクチャパターン」セクションに反映し、テスト・ビルド構成があればアプリ固有の`CLAUDE.md`を作成する**（`ai-workspace`の`save-tokens`スキル参照。過去にenblo追加時にこれを怠り、CLAUDE.mdが実態とズレた実績がある）
 
 ## コミュニケーション
 - 日本語でやりとり
