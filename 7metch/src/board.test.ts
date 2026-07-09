@@ -3,7 +3,7 @@ import { G, MATCH_MIN } from "./state";
 import {
   isMatchable, isIce, isHole, isRock, isPlayable,
   damageIce, damageAdjacentIce,
-  findAllMatches, getComboType, tickCountdowns,
+  findAllMatches, getComboType, tickCountdowns, applyGravityData,
   inBounds, isAdjacent, TAP_ACTIVATE_SPECIALS,
 } from "./board";
 
@@ -272,6 +272,52 @@ describe("findAllMatches", () => {
     G.board[1][1] = { color: 3, special: null };
     const matches = findAllMatches();
     expect(matches.length).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyGravityData — 重力の仕様: 岩・穴はピースが素通りして落下する
+// (SPEC「岩セル/穴を避けてピースが落下」。堰き止めに変更しないこと)
+// ---------------------------------------------------------------------------
+describe("applyGravityData", () => {
+  beforeEach(() => setupBoard(5, 1));
+
+  it("岩の上のピースは岩を素通りして下まで落下する（仕様）", () => {
+    G.board = [
+      [{ color: 1, special: "rainbow" }],
+      [null],
+      [null],
+      [null],
+      [null],
+    ];
+    G.cellState[2][0] = "rock";
+
+    applyGravityData();
+
+    expect(G.board[4][0]?.special).toBe("rainbow"); // 岩を越えて最下段へ
+    expect(G.board[2][0]).toBe(null);               // 岩セルにピースは入らない
+    expect(G.board[0][0]).not.toBe(null);           // 空いた上部は新ピースで補充
+    expect(G.board[1][0]).not.toBe(null);
+    expect(G.board[3][0]).not.toBe(null);
+  });
+
+  it("穴の上のピースは穴を素通りして下まで落下する（仕様）", () => {
+    G.board = [
+      [{ color: 1, special: "rainbow" }],
+      [null],
+      [null],
+      [null],
+      [null],
+    ];
+    G.cellState[2][0] = "hole";
+
+    applyGravityData();
+
+    expect(G.board[4][0]?.special).toBe("rainbow");
+    expect(G.board[2][0]).toBe(null);
+    expect(G.board[0][0]).not.toBe(null);
+    expect(G.board[1][0]).not.toBe(null);
+    expect(G.board[3][0]).not.toBe(null);
   });
 });
 
