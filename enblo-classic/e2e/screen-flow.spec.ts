@@ -1,7 +1,10 @@
 import { test, expect } from "@playwright/test";
 
-test("title -> class select -> combat -> next screen", async ({ page }) => {
+test("slot select -> title -> class select -> combat -> next screen", async ({ page }) => {
   await page.goto("/");
+  await expect(page.locator("#screen-slot")).toHaveClass(/active/);
+
+  await page.click("#slot-list .option-card >> nth=0");
   await expect(page.locator("#screen-title")).toHaveClass(/active/);
 
   await page.click("#btn-start");
@@ -24,6 +27,9 @@ test("title -> class select -> combat -> next screen", async ({ page }) => {
 
 test("permanent upgrade screen is reachable from title", async ({ page }) => {
   await page.goto("/");
+  await page.click("#slot-list .option-card >> nth=0");
+  await expect(page.locator("#screen-title")).toHaveClass(/active/);
+
   await page.click("#btn-permanent");
   await expect(page.locator("#screen-permanent")).toHaveClass(/active/);
   await expect(page.locator("#permanent-options .option-card").first()).toBeVisible();
