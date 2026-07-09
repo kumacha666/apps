@@ -3,7 +3,7 @@ import { G, MATCH_MIN } from "./state";
 import {
   isMatchable, isIce, isHole, isRock, isPlayable,
   damageIce, damageAdjacentIce,
-  findAllMatches, getComboType, tickCountdowns,
+  findAllMatches, getComboType, tickCountdowns, applyGravityData,
   inBounds, isAdjacent, TAP_ACTIVATE_SPECIALS,
 } from "./board";
 
@@ -272,6 +272,34 @@ describe("findAllMatches", () => {
     G.board[1][1] = { color: 3, special: null };
     const matches = findAllMatches();
     expect(matches.length).toBe(4);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// applyGravityData
+// ---------------------------------------------------------------------------
+describe("applyGravityData", () => {
+  beforeEach(() => setupBoard(5, 1));
+
+  it("岩で区切られた上側のピースは岩の下へ落下しない", () => {
+    G.STAGES = [{ features: {}, moves: 20, colors: 5 } as any];
+    G.board = [
+      [{ color: 1, special: "rainbow" }],
+      [null],
+      [null],
+      [null],
+      [null],
+    ];
+    G.cellState[2][0] = "rock";
+
+    applyGravityData();
+
+    expect(G.board[0][0]).not.toBe(null);
+    expect(G.board[1][0]?.special).toBe("rainbow");
+    expect(G.board[2][0]).toBe(null);
+    expect(G.board[3][0]?.special).not.toBe("rainbow");
+    expect(G.board[4][0]?.special).not.toBe("rainbow");
   });
 });
 

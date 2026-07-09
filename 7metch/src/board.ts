@@ -605,11 +605,11 @@ export function activateSpecial(r: number, c: number, alreadyCleared: Set<number
 export function applyGravityData(): FallEntry[] {
   const numColors = G.STAGES![G.currentStage].colors;
   const fallMap: FallEntry[] = [];
-  for (let c = 0; c < G.cols; c++) {
-    let writeRow = G.rows - 1;
-    while (writeRow >= 0 && (isHole(writeRow, c) || isRock(writeRow, c))) writeRow--;
-    for (let r = writeRow; r >= 0; r--) {
-      if (isHole(r, c) || isRock(r, c)) continue;
+
+  const collapseSegment = (c: number, top: number, bottom: number): void => {
+    if (top > bottom) return;
+    let writeRow = bottom;
+    for (let r = bottom; r >= top; r--) {
       if (G.board[r][c]) {
         if (r !== writeRow) {
           G.board[writeRow][c] = G.board[r][c];
@@ -617,16 +617,27 @@ export function applyGravityData(): FallEntry[] {
           fallMap.push({ c, fromR: r, toR: writeRow, piece: G.board[writeRow][c]! });
         }
         writeRow--;
-        while (writeRow >= 0 && (isHole(writeRow, c) || isRock(writeRow, c))) writeRow--;
       }
     }
+
     let newPieceOffset = 0;
-    for (let r = writeRow; r >= 0; r--) {
-      if (isHole(r, c) || isRock(r, c)) continue;
+    for (let r = writeRow; r >= top; r--) {
       G.board[r][c] = randomPiece(numColors);
       newPieceOffset++;
       fallMap.push({ c, fromR: -newPieceOffset, toR: r, piece: G.board[r][c]!, isNew: true });
     }
+  };
+
+  for (let c = 0; c < G.cols; c++) {
+    let segmentBottom = G.rows - 1;
+    for (let r = G.rows - 1; r >= 0; r--) {
+      if (isHole(r, c) || isRock(r, c)) {
+        G.board[r][c] = null;
+        collapseSegment(c, r + 1, segmentBottom);
+        segmentBottom = r - 1;
+      }
+    }
+    collapseSegment(c, 0, segmentBottom);
   }
   return fallMap;
 }
