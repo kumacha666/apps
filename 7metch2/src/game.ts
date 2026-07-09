@@ -4,7 +4,7 @@ import {
   swapPieces, isAdjacentAllowed, createBoard, autoDetonateCheck, tickCountdowns,
   inBounds, countAvailableMoves,
 } from "./board";
-import { has } from "./upgrades";
+import { has, ALL_UPGRADES, pickUpgradeChoices } from "./upgrades";
 import { drawBoard, startChainLabel, resizeCanvas } from "./rendering";
 import { animateSwap, animateStandardClear, animateDrop, sleep } from "./animations";
 import type { FallEntry } from "./animations";
@@ -25,13 +25,10 @@ function updateUpgradeList(): void {
     return;
   }
   el.classList.remove("hidden");
-  import("./upgrades").then(({ ALL_UPGRADES }) => {
-    if (el.classList.contains("hidden")) return;
-    el.innerHTML = G.run.upgrades.map(id => {
-      const def = ALL_UPGRADES.find(u => u.id === id);
-      return `<span class="upgrade-badge" title="${def?.name ?? id}">${def?.icon ?? "?"}</span>`;
-    }).join("");
-  });
+  el.innerHTML = G.run.upgrades.map(id => {
+    const def = ALL_UPGRADES.find(u => u.id === id);
+    return `<span class="upgrade-badge" title="${def?.name ?? id}">${def?.icon ?? "?"}</span>`;
+  }).join("");
 }
 
 export function getStageTarget(stage: number): number {
@@ -596,36 +593,34 @@ function showStageClear(): void {
 }
 
 function showUpgradeScreen(): void {
-  import("./upgrades").then(({ pickUpgradeChoices }) => {
-    const choices = pickUpgradeChoices(G.run.upgrades, 3);
+  const choices = pickUpgradeChoices(G.run.upgrades, 3);
 
-    if (choices.length === 0) {
+  if (choices.length === 0) {
+    G.run.stage++;
+    startStage();
+    return;
+  }
+
+  const container = document.getElementById("upgrade-cards")!;
+  container.innerHTML = "";
+
+  for (const choice of choices) {
+    const card = document.createElement("div");
+    card.className = `upgrade-card rarity-${choice.rarity}`;
+    card.innerHTML = `
+      <div class="icon">${choice.icon}</div>
+      <div class="name">${choice.name}</div>
+      <div class="desc">${choice.desc}</div>
+    `;
+    card.addEventListener("click", () => {
+      G.run.upgrades.push(choice.id);
       G.run.stage++;
       startStage();
-      return;
-    }
+    });
+    container.appendChild(card);
+  }
 
-    const container = document.getElementById("upgrade-cards")!;
-    container.innerHTML = "";
-
-    for (const choice of choices) {
-      const card = document.createElement("div");
-      card.className = `upgrade-card rarity-${choice.rarity}`;
-      card.innerHTML = `
-        <div class="icon">${choice.icon}</div>
-        <div class="name">${choice.name}</div>
-        <div class="desc">${choice.desc}</div>
-      `;
-      card.addEventListener("click", () => {
-        G.run.upgrades.push(choice.id);
-        G.run.stage++;
-        startStage();
-      });
-      container.appendChild(card);
-    }
-
-    showScreen("upgrade");
-  });
+  showScreen("upgrade");
 }
 
 function showGameOver(): void {
