@@ -1,5 +1,5 @@
 import type { AppContext } from "./context";
-import { isHost, onlineMembers } from "./context";
+import { isHost, currentHostId, onlineMembers } from "./context";
 import { ROLE_META } from "../roles";
 import { computeVillagerCount, isValidRoleConfig } from "../roles";
 import { DISCUSS_DURATION_OPTIONS_MS } from "../gameLogic";
@@ -26,7 +26,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
       ${members
         .map(
           (m) =>
-            `<li>${m.avatar} ${escapeHtml(m.name)}${m.id === ctx.state.hostId ? " 👑" : ""}</li>`
+            `<li>${m.avatar} ${escapeHtml(m.name)}${m.id === currentHostId(ctx) ? " 👑" : ""}</li>`
         )
         .join("")}
     </ul>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tallyVotes, determineWinner } from "../gameLogic";
+import { tallyVotes, determineWinner, effectiveHostId } from "../gameLogic";
 
 describe("tallyVotes", () => {
   it("最多得票の1人だけが脱落する", () => {
@@ -31,14 +31,26 @@ describe("tallyVotes", () => {
     expect(result.eliminatedIds).toEqual([]);
   });
 
-  it("存在しないIDへの投票は無視する", () => {
+  it("誰も2票以上を得なければ誰も脱落しない（平和村ルール）", () => {
+    // 3人が互いに別々の相手へ投票 → 全員1票ずつ
+    const members = [
+      { id: "a", vote: "b" },
+      { id: "b", vote: "c" },
+      { id: "c", vote: "a" },
+    ];
+    const result = tallyVotes(members);
+    expect(result.counts).toEqual({ a: 1, b: 1, c: 1 });
+    expect(result.eliminatedIds).toEqual([]);
+  });
+
+  it("存在しないIDへの投票は無視する（有効票が1票のみなら平和村ルールで脱落なし）", () => {
     const members = [
       { id: "a", vote: "ghost" },
       { id: "b", vote: "a" },
     ];
     const result = tallyVotes(members);
     expect(result.counts).toEqual({ a: 1, b: 0 });
-    expect(result.eliminatedIds).toEqual(["a"]);
+    expect(result.eliminatedIds).toEqual([]);
   });
 });
 
@@ -90,5 +102,57 @@ describe("determineWinner", () => {
       { id: "b", currentRole: "robber" as const },
     ];
     expect(determineWinner(members, ["a"])).toBe("forest");
+  });
+
+  it("場におおかみ不在で唯一のおおかみ陣営「子狼」が脱落したら森陣営の勝利", () => {
+    const members = [
+      { id: "a", currentRole: "minion" as const },
+      { id: "b", currentRole: "villager" as const },
+      { id: "c", currentRole: "seer" as const },
+    ];
+    expect(determineWinner(members, ["a"])).toBe("forest");
+  });
+
+  it("場におおかみ不在・子狼生存で別の人が脱落した場合はおおかみ陣営（子狼）の勝利", () => {
+    const members = [
+      { id: "a", currentRole: "minion" as const },
+      { id: "b", currentRole: "villager" as const },
+    ];
+    expect(determineWinner(members, ["b"])).toBe("wolf");
+  });
+
+  it("おおかみが場にいる場合、子狼が脱落してもおおかみ陣営の勝利", () => {
+    const members = [
+      { id: "a", currentRole: "werewolf" as const },
+      { id: "b", currentRole: "minion" as const },
+    ];
+    expect(determineWinner(members, ["b"])).toBe("wolf");
+  });
+});
+
+describe("effectiveHostId", () => {
+  it("ホストがオンラインならそのままホスト", () => {
+    const members = [
+      { id: "a", online: true, joinedAt: 100 },
+      { id: "b", online: true, joinedAt: 50 },
+    ];
+    expect(effectiveHostId(members, "a")).toBe("a");
+  });
+
+  it("ホストがオフラインなら最も早く入室したオンラインメンバーが引き継ぐ", () => {
+    const members = [
+      { id: "a", online: false, joinedAt: 10 },
+      { id: "b", online: true, joinedAt: 200 },
+      { id: "c", online: true, joinedAt: 100 },
+    ];
+    expect(effectiveHostId(members, "a")).toBe("c");
+  });
+
+  it("全員オフラインなら元のホストIDを維持する", () => {
+    const members = [
+      { id: "a", online: false, joinedAt: 10 },
+      { id: "b", online: false, joinedAt: 20 },
+    ];
+    expect(effectiveHostId(members, "a")).toBe("a");
   });
 });

@@ -58,14 +58,21 @@ export async function joinRoom(
     await set(stateRef, initialState);
   }
 
-  const member: Member = {
-    id: memberId,
-    name,
-    avatar,
-    online: true,
-    joinedAt: Date.now(),
-  };
-  await set(memberRef, member);
+  // 再入室（リロード）時にoriginalRole/currentRole/voteを消さないよう、
+  // 既存メンバーはプロフィール・プレゼンスのみをupdateする
+  const memberSnap = await get(memberRef);
+  if (memberSnap.exists()) {
+    await update(memberRef, { name, avatar, online: true });
+  } else {
+    const member: Member = {
+      id: memberId,
+      name,
+      avatar,
+      online: true,
+      joinedAt: Date.now(),
+    };
+    await set(memberRef, member);
+  }
   onDisconnect(ref(db, `rooms/${roomId}/members/${memberId}/online`)).set(false);
 }
 
@@ -110,18 +117,25 @@ export async function startGame(roomId: string): Promise<void> {
   await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
     if (!room || !room.state || room.state.phase !== "lobby") return room;
     const members: Record<string, Member> = room.members ?? {};
-    const memberIds = Object.keys(members);
-    if (memberIds.length < 3) return room; // 最低3人必要
+    // 配札はオンラインのメンバーのみが対象（切断した幽霊メンバーには配らない）
+    const onlineIds = Object.keys(members).filter((id) => members[id].online);
+    if (onlineIds.length < 3) return room; // 最低3人必要
 
-    const deck = buildRoleDeck(memberIds.length, room.state.roleConfig);
+    const deck = buildRoleDeck(onlineIds.length, room.state.roleConfig);
     const shuffled = shuffle(deck);
-    const dealt = shuffled.slice(0, memberIds.length);
-    const center = shuffled.slice(memberIds.length);
+    const dealt = shuffled.slice(0, onlineIds.length);
+    const center = shuffled.slice(onlineIds.length);
 
-    memberIds.forEach((id, i) => {
+    // RTDBはトランザクション結果にundefinedを含む値を拒否するため、
+    // フィールドのクリアは代入ではなくdeleteで行う
+    for (const id of Object.keys(members)) {
+      delete members[id].originalRole;
+      delete members[id].currentRole;
+      delete members[id].vote;
+    }
+    onlineIds.forEach((id, i) => {
       members[id].originalRole = dealt[i];
       members[id].currentRole = dealt[i];
-      members[id].vote = undefined;
     });
 
     const nightOrder = buildNightOrder(dealt);
@@ -158,9 +172,18 @@ export async function robberSwap(
   return targetRole;
 }
 
-/** 投票フェーズでの投票を書き込む。 */
+/**
+ * 投票フェーズでの投票を書き込む。
+ * フェーズがvoteでなくなった後の遅延書き込みが確定済みの結果を覆さないよう、
+ * 部屋ルートのトランザクションでフェーズを検証してから書き込む。
+ */
 export async function submitVote(roomId: string, memberId: string, targetId: string): Promise<void> {
-  await update(ref(db, `rooms/${roomId}/members/${memberId}`), { vote: targetId });
+  await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
+    if (!room || !room.state || room.state.phase !== "vote") return room;
+    if (!room.members?.[memberId]) return room;
+    room.members[memberId].vote = targetId;
+    return room;
+  });
 }
 
 /**
@@ -204,12 +227,12 @@ export async function maybeAdvancePhase(roomId: string): Promise<void> {
   });
 }
 
-/** 全員投票済みなら投票フェーズを早めに締め切る。 */
+/** 配札済みかつオンラインのプレイヤー全員が投票済みなら、投票フェーズを早めに締め切る。 */
 export async function maybeCloseVoteEarly(roomId: string): Promise<void> {
   const membersSnap = await get(ref(db, `rooms/${roomId}/members`));
   const members: Record<string, Member> = membersSnap.val() ?? {};
-  const online = Object.values(members).filter((m) => m.online);
-  if (online.length === 0 || !online.every((m) => m.vote)) return;
+  const onlineParticipants = Object.values(members).filter((m) => m.online && m.originalRole);
+  if (onlineParticipants.length === 0 || !onlineParticipants.every((m) => m.vote)) return;
 
   await runTransaction(ref(db, `rooms/${roomId}/state`), (state: RoomState | null) => {
     if (!state || state.phase !== "vote") return state;
@@ -222,10 +245,11 @@ export async function resetToLobby(roomId: string): Promise<void> {
   await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
     if (!room || !room.state) return room;
     const members: Record<string, Member> = room.members ?? {};
+    // undefined代入はRTDBに拒否されるためdeleteでクリアする
     for (const id of Object.keys(members)) {
-      members[id].originalRole = undefined;
-      members[id].currentRole = undefined;
-      members[id].vote = undefined;
+      delete members[id].originalRole;
+      delete members[id].currentRole;
+      delete members[id].vote;
     }
     room.members = members;
     room.centerCards = null;

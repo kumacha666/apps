@@ -34,9 +34,12 @@ lobby → night → discuss → vote → result → (もう一度あそぶ) → 
 ```
 
 - 遷移はCloud Functionsを使わず、各クライアントが1秒ごとに `maybeAdvancePhase()`（`src/roomSync.ts`）を呼び、RTDB上の期限タイムスタンプ（`nightStepEndsAt`/`discussEndsAt`/`voteEndsAt`）が過ぎていれば `runTransaction()` で進める。トランザクションなので複数クライアントが同時に呼んでも二重遷移しない
-- ゲーム開始（役職シャッフル・配布）は `startGame()` が部屋ルート（`rooms/{roomId}`）全体をトランザクションで一括更新する。`state` と `members` を同時に読んで書く必要があるため、`state`単体ではなく部屋ルートを対象にしている
-- 投票フェーズはタイムアウトに加え、オンライン全員が投票済みなら `maybeCloseVoteEarly()` で早期に締め切る
-- 勝敗判定・投票集計は `src/gameLogic.ts` の `tallyVotes` / `determineWinner`（**currentRole基準**。きつねの交換後の役職で判定する）
+- ゲーム開始（役職シャッフル・配布）は `startGame()` が部屋ルート（`rooms/{roomId}`）全体をトランザクションで一括更新する。`state` と `members` を同時に読んで書く必要があるため、`state`単体ではなく部屋ルートを対象にしている。**配札対象はオンラインのメンバーのみ**（切断した幽霊メンバーには配らない）。**RTDBはトランザクション結果に`undefined`を含む値を拒否する**ため、フィールドのクリアは代入ではなく`delete`で行うこと（`startGame`/`resetToLobby`参照）
+- 投票は `submitVote()` が部屋ルートのトランザクションで**フェーズがvoteであることを検証してから**書き込む（締切後の遅延票が確定済みの結果を覆さないため）。タイムアウトに加え、配札済みかつオンラインの全員が投票済みなら `maybeCloseVoteEarly()` で早期に締め切る
+- 勝敗判定・投票集計は `src/gameLogic.ts` の `tallyVotes` / `determineWinner`（**currentRole基準**。きつねの交換後の役職で判定する）。**誰も2票以上を得なければ誰も脱落しない（平和村ルール）**。おおかみ不在時は「誰も脱落しない」または「唯一のおおかみ陣営である子狼が脱落」で森陣営の勝利
+- 集計・結果表示・投票対象は**配札されたプレイヤー（`originalRole`を持つメンバー、`participants()`）**を基準にする。オンライン状態を基準にすると、切断しただけで集計や勝敗が変わってしまうため
+- ホスト（`state.hostId`）がオフラインの間は、`effectiveHostId()`（`src/gameLogic.ts`）により最古参のオンラインメンバーがホスト権限（ゲーム開始・設定変更・再戦）を引き継ぐ。全クライアントが同じ入力から決定的に同じ結果を得るため、RTDBへの書き込みは不要
+- リロード・再入室時（`joinRoom()`）は既存メンバーの `originalRole`/`currentRole`/`vote` を保持し、プロフィール・プレゼンスのみ更新する（`set`で上書きしない）
 
 ## 役職の秘密性について（重要）
 
@@ -50,6 +53,7 @@ lobby → night → discuss → vote → result → (もう一度あそぶ) → 
 2. Realtime Database を有効化（ロケーションは他アプリに合わせて `asia-southeast1` 推奨、テストモードで可。認証は使わない）
 3. プロジェクト設定でWebアプリを登録し、表示された `firebaseConfig`（apiKey・databaseURL等）を `src/firebase.ts` のプレースホルダーと置き換える
 4. `firebase deploy --only database`（Firebase CLIログイン後）でルール（`database.rules.json`）を反映。または Realtime Database のコンソール画面で直接貼り付けてもよい
+5. セットアップ完了・動作確認後に、ランディングページ（リポジトリルートの`index.html`）の`.apps`セクションにアプリカードを追加して公開する（**Firebase未設定のまま掲載すると、訪問者が部屋の作成・入室に失敗する壊れたアプリを見ることになるため、それまで未掲載**）
 
 GitHub Pagesへのpushではこのバックエンド設定は反映されない（`apps/emoji-dm`と同様、静的ホスティングとFirebase設定は別工程）。
 
@@ -59,7 +63,7 @@ Vite + TypeScript構成（`7metch`/`enblo`と同様）。
 
 - `npm test`: Vitestでユニットテスト実行。`src/roles.ts`（役職構成アルゴリズム、3〜8人の内訳・中央2/3枚・不正構成の検証）と `src/gameLogic.ts`（投票集計・勝敗判定）が対象。**ゲームロジックを変更する場合は必ず対応するテストも更新すること**（`apps/CLAUDE.md` AI開発ルール1）
 - `npm run build`: `prebuild`フックで自動的に`npm test`が走る。Vite entry rewriteプラグイン（`vite.config.js`）で `index.html` の `./game.js` 参照を `./src/main.ts` に差し替えてビルドする点に注意（他アプリと同じ7metchパターン）
-- `npm run deploy`: ビルド→`dist/game.js`/`style.css`/`manifest.json`をルート直下にコピー→`scripts/update-sw-version.mjs`でバージョン自動更新（`package.json`のパッチバージョンをインクリメントし、`sw.js`のキャッシュ名と`version.json`を同期）
+- `npm run deploy`: **先に**`scripts/update-sw-version.mjs`でバージョン自動更新（`package.json`のパッチバージョンをインクリメントし、`sw.js`のキャッシュ名と`version.json`を同期）→ビルド→`dist/game.js`/`style.css`/`manifest.json`をルート直下にコピー。**この順序は変えないこと**：ビルドは`package.json`のバージョンを`__APP_VERSION__`として`game.js`に焼き込むため、ビルド後にバージョンを上げると`game.js`と`version.json`が恒久的に食い違い、全クライアントが`checkForUpdate()`で無限リロードループに陥る
 - アイコン（`icon-192.png`/`icon-512.png`）は依存パッケージなしで`scripts/generate-icons.mjs`が生成する三日月アイコン。デザインを変更する場合はこのスクリプトを編集して再生成する
 
 ## 実装メモ

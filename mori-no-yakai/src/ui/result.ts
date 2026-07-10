@@ -1,11 +1,12 @@
 import type { AppContext } from "./context";
-import { isHost, onlineMembers } from "./context";
+import { isHost, participants } from "./context";
 import { ROLE_META } from "../roles";
 import { tallyVotes, determineWinner } from "../gameLogic";
 import { resetToLobby } from "../roomSync";
 
 export function render(container: HTMLElement, ctx: AppContext): void {
-  const members = onlineMembers(ctx);
+  // 配札された全プレイヤーで集計する（切断してもゲームからは消えない）
+  const members = participants(ctx);
   const { counts, eliminatedIds } = tallyVotes(members);
   const winner = determineWinner(members, eliminatedIds);
   const eliminatedSet = new Set(eliminatedIds);
