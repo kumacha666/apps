@@ -1,0 +1,22 @@
+{
+  "name": "mori-no-yakai",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest run",
+    "prebuild": "npm test",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "npm run build && cp dist/game.js dist/style.css dist/manifest.json . && node scripts/update-sw-version.mjs && echo 'Deploy complete.'"
+  },
+  "dependencies": {
+    "firebase": "^11.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^6.3.0",
+    "vitest": "^4.1.9"
+  }
+}

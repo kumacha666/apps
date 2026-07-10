@@ -1,0 +1,195 @@
+import type { AppContext } from "./ui/context";
+import type { Member, RoomState, RoleId, Phase } from "./types";
+import {
+  generateRoomId,
+  generateMemberId,
+  joinRoom,
+  listenRoomState,
+  listenMembers,
+  listenCenterCards,
+  maybeAdvancePhase,
+} from "./roomSync";
+import * as lobbyUi from "./ui/lobby";
+import * as nightUi from "./ui/night";
+import * as discussUi from "./ui/discuss";
+import * as voteUi from "./ui/vote";
+import * as resultUi from "./ui/result";
+
+const AVATARS = ["🐰", "🦊", "🐺", "🦉", "🦔", "🦌", "🐿️", "🦝", "🐻"];
+const STORAGE_KEY = "mori-no-yakai-session";
+declare const __APP_VERSION__: string;
+
+async function checkForUpdate(): Promise<void> {
+  try {
+    const res = await fetch("version.json?t=" + Date.now());
+    const data = await res.json();
+    if (data.version !== __APP_VERSION__) {
+      const cacheNames = await caches.keys();
+      await Promise.all(cacheNames.map((name) => caches.delete(name)));
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) await reg.unregister();
+      window.location.reload();
+    }
+  } catch {
+    // オフライン等では更新チェックをスキップ
+  }
+}
+
+let currentRoomId: string | null = null;
+let currentMemberId: string | null = null;
+let latestState: RoomState | null = null;
+let latestMembers: Record<string, Member> = {};
+let latestCenterCards: RoleId[] = [];
+let selectedAvatar = AVATARS[0];
+
+function screens(): Record<Phase | "home", HTMLElement> {
+  return {
+    home: document.getElementById("screen-home")!,
+    lobby: document.getElementById("screen-lobby")!,
+    night: document.getElementById("screen-night")!,
+    discuss: document.getElementById("screen-discuss")!,
+    vote: document.getElementById("screen-vote")!,
+    result: document.getElementById("screen-result")!,
+  };
+}
+
+function showScreen(name: Phase | "home"): void {
+  const all = screens();
+  for (const key of Object.keys(all) as Array<Phase | "home">) {
+    all[key].classList.toggle("active", key === name);
+  }
+}
+
+function setupAvatarPicker(): void {
+  const picker = document.getElementById("avatar-picker")!;
+  picker.innerHTML = AVATARS.map(
+    (a, i) => `<button data-avatar="${a}" class="avatar-btn ${i === 0 ? "active" : ""}">${a}</button>`
+  ).join("");
+  picker.querySelectorAll<HTMLButtonElement>("[data-avatar]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      selectedAvatar = btn.dataset.avatar!;
+      picker.querySelectorAll(".avatar-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+    });
+  });
+}
+
+async function enterRoom(roomId: string, name: string): Promise<void> {
+  const errorEl = document.getElementById("home-error")!;
+  errorEl.textContent = "";
+  if (!name.trim()) {
+    errorEl.textContent = "なまえを入力してください";
+    return;
+  }
+
+  const memberId = generateMemberId();
+  try {
+    await joinRoom(roomId, memberId, name.trim(), selectedAvatar);
+  } catch (e) {
+    errorEl.textContent = "入室に失敗しました。部屋コードを確認してください。";
+    return;
+  }
+
+  currentRoomId = roomId;
+  currentMemberId = memberId;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ roomId, memberId, name: name.trim(), avatar: selectedAvatar }));
+
+  startListening();
+}
+
+function startListening(): void {
+  if (!currentRoomId || !currentMemberId) return;
+  const roomId = currentRoomId;
+
+  listenRoomState(roomId, (state) => {
+    latestState = state;
+    renderCurrentPhase();
+  });
+  listenMembers(roomId, (members) => {
+    latestMembers = members;
+    renderCurrentPhase();
+  });
+  listenCenterCards(roomId, (cards) => {
+    latestCenterCards = cards;
+    renderCurrentPhase();
+  });
+
+  setInterval(() => {
+    if (currentRoomId) void maybeAdvancePhase(currentRoomId);
+    renderCurrentPhase(); // タイマー表示の更新のため
+  }, 1000);
+}
+
+function renderCurrentPhase(): void {
+  if (!latestState || !currentRoomId || !currentMemberId) return;
+  if (!latestMembers[currentMemberId]) return; // 自分のmember情報がまだ来ていない
+
+  const ctx: AppContext = {
+    roomId: currentRoomId,
+    memberId: currentMemberId,
+    state: latestState,
+    members: latestMembers,
+    centerCards: latestCenterCards,
+  };
+
+  showScreen(latestState.phase);
+  const target = screens()[latestState.phase];
+
+  switch (latestState.phase) {
+    case "lobby":
+      lobbyUi.render(target, ctx);
+      break;
+    case "night":
+      nightUi.render(target, ctx);
+      break;
+    case "discuss":
+      discussUi.render(target, ctx);
+      break;
+    case "vote":
+      voteUi.render(target, ctx);
+      break;
+    case "result":
+      resultUi.render(target, ctx);
+      break;
+  }
+}
+
+function init(): void {
+  setupAvatarPicker();
+
+  document.getElementById("btn-create-room")?.addEventListener("click", () => {
+    const name = (document.getElementById("input-name") as HTMLInputElement).value;
+    void enterRoom(generateRoomId(), name);
+  });
+
+  document.getElementById("btn-join-room")?.addEventListener("click", () => {
+    const name = (document.getElementById("input-name") as HTMLInputElement).value;
+    const code = (document.getElementById("input-room-code") as HTMLInputElement).value.trim().toUpperCase();
+    if (!code) {
+      document.getElementById("home-error")!.textContent = "部屋コードを入力してください";
+      return;
+    }
+    void enterRoom(code, name);
+  });
+
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) {
+    try {
+      const session = JSON.parse(saved);
+      (document.getElementById("input-name") as HTMLInputElement).value = session.name ?? "";
+      selectedAvatar = session.avatar ?? AVATARS[0];
+      if (session.roomId && session.memberId) {
+        currentRoomId = session.roomId;
+        currentMemberId = session.memberId;
+        void joinRoom(session.roomId, session.memberId, session.name, session.avatar).then(() => {
+          startListening();
+        });
+      }
+    } catch {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }
+}
+
+init();
+void checkForUpdate();

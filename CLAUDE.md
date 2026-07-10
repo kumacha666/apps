@@ -19,10 +19,11 @@
 /emoji-dm/           絵文字チャット — 静的PWA + Firebase (RTDB/Functions/FCM)
 /love-lab/           静的PWA
 /mhwilds-karikan/    モンハンワイルズ計算ツール — 静的PWA、JSONデータ駆動
+/mori-no-yakai/      「森の夜会」ワンナイト人狼系アプリ — Vite+TS、ビルド有、Firebase RTDB
 /tapu-neko/          シンプルな単独ウィジェット（PWA化なし）
 ```
 
-- ランディングページ（`index.html`）に掲載されているのは現状 `7metch` と `emoji-dm` のみ。他のアプリは未掲載／開発中で、URLを直接踏んで動作確認する運用。新しいアプリを公開する際は `index.html` の `.apps` セクションにカードを追加する。
+- ランディングページ（`index.html`）に掲載されているのは現状 `7metch` と `emoji-dm` と `mori-no-yakai` のみ。他のアプリは未掲載／開発中で、URLを直接踏んで動作確認する運用。新しいアプリを公開する際は `index.html` の `.apps` セクションにカードを追加する。
 - 各アプリディレクトリに固有の `CLAUDE.md` がある場合（例: `7metch/CLAUDE.md`）は、そのアプリを変更する際に必ず参照・遵守する。アプリ固有の開発ルール・テスト方針・チェックリストはそちらに記載されている。
 
 ## アプリ種別とアーキテクチャパターン
@@ -48,6 +49,9 @@
 
 ### C. 補助ツール
 `7metch-tools`（7metch用）、`enblo-tools`（enblo用、音確認ツール等）は本体アプリのデバッグ・プレビュー用に単独で動作するHTMLファイル群。ビルド不要、ブラウザで直接開いて使う。
+
+### D. Vite+TypeScriptビルド + Firebase RTDB（B系とemoji-dmのハイブリッド）
+`mori-no-yakai` が該当。ゲームロジック（役職構成・投票集計・勝敗判定）を持つためB系と同じVite+TS+Vitest構成（`prebuild`でテスト自動実行）を採るが、リアルタイム同期は`emoji-dm`と同じFirebase Realtime Databaseを使う（認証・Cloud Functionsは無し、役職の秘密性は信頼ベース）。Firebaseプロジェクトの新規作成・`firebaseConfig`取得は人間の手作業が必要（詳細は`mori-no-yakai/CLAUDE.md`）。詳細は`mori-no-yakai/CLAUDE.md`を参照。
 
 ## emoji-dm の特記事項
 - Firebase（Realtime Database / Cloud Functions v1 / Cloud Messaging）を使用するアプリ。フロントエンド (`app.js`, `sw.js`) は静的ホスティング（GitHub Pages）、バックエンド (`functions/index.js`) は別途 `firebase deploy` が必要（GitHub Pagesへのpushでは反映されない）
