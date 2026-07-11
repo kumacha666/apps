@@ -106,7 +106,19 @@ export function listenCenterCards(
   roomId: string,
   cb: (data: CenterCardsData | null) => void
 ): Unsubscribe {
-  return onValue(ref(db, `rooms/${roomId}/centerCards`), (snap) => cb(snap.val()));
+  return onValue(ref(db, `rooms/${roomId}/centerCards`), (snap) => {
+    const raw = snap.val();
+    if (Array.isArray(raw)) {
+      // roundNumber導入前の旧クライアントが書き込んだ配列形式（デプロイ切り替え直後、
+      // リロードしていない旧タブが残っている間に発生しうる）。roundと紐付けできないため
+      // round: -1として「今のラウンドとは一致しない」扱いにする。読み取り側
+      // （main.tsのrenderCurrentPhase）はこれを「まだ届いていない」として空配列扱いし、
+      // 誤った中央カードを表示したりmap等で例外を投げたりしない。
+      cb({ round: -1, cards: raw });
+      return;
+    }
+    cb(raw as CenterCardsData | null);
+  });
 }
 
 /** ホストがロビーで役職構成を変更する。 */
