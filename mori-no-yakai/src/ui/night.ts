@@ -36,6 +36,10 @@ export function render(container: HTMLElement, ctx: AppContext): void {
   const remainingSec = Math.max(0, Math.ceil((ctx.state.nightStepEndsAt - Date.now()) / 1000));
   const isMyTurn = self?.originalRole === currentRoleId;
   const alreadyReady = uiState.readyTapped || (self?.nightReadyStep ?? -1) >= stepIndex;
+  // きつねの交換（robberSwap）は非同期でRTDBに書き込む。書き込み中に「つぎへ」を押せてしまうと、
+  // 他の全員が先に準備完了して夜フェーズを抜けた後にcurrentRoleの書き込みが完了し、
+  // 議論開始後に役職が変わってしまう恐れがあるため、交換の完了まではボタンを無効化する。
+  const readyDisabled = alreadyReady || uiState.robberPending === true;
 
   const header = `
     <h2>🌙 夜がふけていく…</h2>
@@ -57,8 +61,8 @@ export function render(container: HTMLElement, ctx: AppContext): void {
   container.innerHTML = `
     ${header}
     ${body}
-    <button id="btn-night-ready" class="btn-primary" ${alreadyReady ? "disabled" : ""}>
-      ${alreadyReady ? "つぎを待っています…" : "つぎへ"}
+    <button id="btn-night-ready" class="btn-primary" ${readyDisabled ? "disabled" : ""}>
+      ${alreadyReady ? "つぎを待っています…" : uiState.robberPending ? "交換中…" : "つぎへ"}
     </button>
     <p class="hint-text">準備完了 ${readyCount}/${online.length}人</p>
     <p class="hint-text">全員がタップすると次に進みます（役職と関係なく全員タップしてください）</p>
@@ -67,7 +71,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
   if (isMyTurn && !alreadyReady) wireActions(container, currentRoleId, ctx);
 
   container.querySelector("#btn-night-ready")?.addEventListener("click", () => {
-    if (uiState.readyTapped) return;
+    if (uiState.readyTapped || uiState.robberPending) return;
     uiState.readyTapped = true;
     render(container, ctx);
     void markNightReady(ctx.roomId, ctx.memberId, stepIndex);
@@ -245,6 +249,7 @@ function wireActions(container: HTMLElement, roleId: RoleId, ctx: AppContext): v
         const targetId = btn.dataset.robberTarget!;
         render(container, ctx);
         void robberSwap(ctx.roomId, ctx.memberId, targetId).then((newRole) => {
+          uiState.robberPending = false;
           uiState.robberResult = newRole;
           render(container, ctx);
         });
