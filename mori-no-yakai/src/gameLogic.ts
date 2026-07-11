@@ -2,6 +2,14 @@ import type { Member, RoomState } from "./types";
 
 export const NIGHT_STEP_DURATION_OPTIONS_MS = [15000, 30000, 45000, 60000];
 export const DEFAULT_NIGHT_STEP_DURATION_MS = 30000;
+/**
+ * 該当役職が誰にも配られていない夜ステップは、実際に行動する人がいないため
+ * 全員が「つぎへ」を即タップでき、他のステップより明らかに早く終わってしまう。
+ * この所要時間の差自体が「この役職は中央カードにある」という手がかりになって
+ * しまうため、全員タップ済みでも最低この時間が経過するまでは次へ進めない
+ * （host設定の`nightStepDurationMs`とは独立の固定値）。
+ */
+export const NIGHT_STEP_MIN_DURATION_MS = 10000;
 export const VOTE_DURATION_MS = 60000;
 export const DISCUSS_DURATION_OPTIONS_MS = [3 * 60000, 5 * 60000, 8 * 60000];
 export const DEFAULT_DISCUSS_DURATION_MS = 5 * 60000;
@@ -89,6 +97,22 @@ export function isNightStepComplete(
   const online = participants.filter((m) => m.online);
   if (online.length === 0) return false;
   return online.every((m) => (m.nightReadyStep ?? -1) >= stepIndex);
+}
+
+/**
+ * 現在の夜ステップが開始してから`NIGHT_STEP_MIN_DURATION_MS`以上経過したか判定する。
+ * 全員タップによる早期進行（`maybeCloseNightStepEarly`）はこれを満たすまで待つ。
+ * タイムアウトによる自然な進行（`maybeAdvancePhase`）は`nightStepEndsAt`だけを見るため
+ * この関数を使わない（`nightStepDurationMs`が`NIGHT_STEP_MIN_DURATION_MS`以上である限り
+ * 自然に満たされる）。
+ */
+export function isNightStepMinElapsed(
+  state: Pick<RoomState, "nightStepEndsAt"> & { nightStepDurationMs?: number },
+  now: number
+): boolean {
+  const stepDurationMs = state.nightStepDurationMs ?? DEFAULT_NIGHT_STEP_DURATION_MS;
+  const stepStartedAt = state.nightStepEndsAt - stepDurationMs;
+  return now - stepStartedAt >= NIGHT_STEP_MIN_DURATION_MS;
 }
 
 /**

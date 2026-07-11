@@ -1,6 +1,5 @@
 import type { AppContext } from "./context";
-import { participants } from "./context";
-import { ROLE_META } from "../roles";
+import { participants, myRoleBanner } from "./context";
 import { submitVote, maybeCloseVoteEarly } from "../roomSync";
 
 export function render(container: HTMLElement, ctx: AppContext): void {
@@ -18,12 +17,10 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     return;
   }
 
-  const role = self.currentRole!;
-
   container.innerHTML = `
     <h2>🗳️ 投票</h2>
+    ${myRoleBanner(ctx)}
     <div class="vote-timer">${remainingSec}秒</div>
-    <p class="role-reminder">あなたの役職は ${ROLE_META[role].emoji} ${ROLE_META[role].name}</p>
     <p class="hint-text">あやしいと思う相手に1人投票しよう（${votedCount}/${dealt.length}人 投票済み）</p>
     <p class="hint-text">誰も2票以上を集めなければ、誰も脱落しません。</p>
     <div class="member-list vote-list">

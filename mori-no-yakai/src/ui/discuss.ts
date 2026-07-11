@@ -1,5 +1,5 @@
 import type { AppContext } from "./context";
-import { onlineMembers } from "./context";
+import { onlineMembers, myRoleBanner } from "./context";
 import { ROLE_META } from "../roles";
 import { markDiscussReady } from "../roomSync";
 
@@ -28,13 +28,9 @@ export function render(container: HTMLElement, ctx: AppContext): void {
 
   container.innerHTML = `
     <h2>🗣️ 議論タイム</h2>
+    ${myRoleBanner(ctx)}
     <div class="discuss-timer">${min}:${String(sec).padStart(2, "0")}</div>
-    ${
-      role
-        ? `<p class="role-reminder">あなたの最終的な役職は ${ROLE_META[role].emoji} ${ROLE_META[role].name}</p>
-           <p class="role-description">${ROLE_META[role].description}</p>`
-        : ""
-    }
+    ${role ? `<p class="role-description">${ROLE_META[role].description}</p>` : ""}
     <p class="hint-text">声に出して話し合おう。うそをついてもOK！</p>
     <button id="btn-discuss-ready" class="btn-primary" ${alreadyReady ? "disabled" : ""}>
       ${alreadyReady ? "投票を待っています…" : "話し合いおわり・投票へ"}

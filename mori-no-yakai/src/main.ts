@@ -10,6 +10,7 @@ import {
   listenMembers,
   listenCenterCards,
   maybeAdvancePhase,
+  maybeCloseNightStepEarly,
 } from "./roomSync";
 import * as lobbyUi from "./ui/lobby";
 import * as nightUi from "./ui/night";
@@ -120,7 +121,14 @@ function startListening(): void {
   );
 
   tickInterval = setInterval(() => {
-    if (currentRoomId) void maybeAdvancePhase(currentRoomId);
+    if (currentRoomId) {
+      void maybeAdvancePhase(currentRoomId);
+      // 全員が早期タップ済みでも、最短経過時間（NIGHT_STEP_MIN_DURATION_MS）に達するまでは
+      // maybeCloseNightStepEarly側で進行を保留する。ここで毎秒呼び直さないと、保留中に
+      // 一度だけ呼ばれたタップ時点のチェックが失敗したまま、自然タイムアウト（本来の
+      // 設定時間）まで進めなくなってしまう。
+      if (latestState?.phase === "night") void maybeCloseNightStepEarly(currentRoomId);
+    }
     renderCurrentPhase(); // タイマー表示の更新のため
   }, 1000);
 }

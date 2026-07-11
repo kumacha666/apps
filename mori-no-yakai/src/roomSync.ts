@@ -10,7 +10,7 @@ import {
 } from "firebase/database";
 import { db } from "./firebase";
 import type { Member, RoomState, RoleConfig, RoleId, CenterCardsData } from "./types";
-import { buildRoleDeck, buildNightOrder, shuffle, defaultRoleConfig } from "./roles";
+import { buildRoleDeck, buildNightOrderFromConfig, shuffle, defaultRoleConfig } from "./roles";
 import {
   DEFAULT_NIGHT_STEP_DURATION_MS,
   DEFAULT_DISCUSS_DURATION_MS,
@@ -18,6 +18,7 @@ import {
   advanceDiscussState,
   advanceVoteState,
   isNightStepComplete,
+  isNightStepMinElapsed,
   isDiscussComplete,
 } from "./gameLogic";
 
@@ -167,7 +168,9 @@ export async function startGame(roomId: string): Promise<void> {
       members[id].currentRole = dealt[i];
     });
 
-    const nightOrder = buildNightOrder(dealt);
+    // 配布結果ではなくroleConfigから夜順を決める（配布されなかった役職のフェーズを
+    // 省略すると「そのフェーズが無い＝その役職は中央カードにある」と伝わってしまうため）
+    const nightOrder = buildNightOrderFromConfig(room.state.roleConfig);
     // nightStepDurationMsはこの設定の追加前に作られた部屋には存在しない可能性があるため
     // デフォルトにフォールバックする（欠けたままだとDate.now()+undefinedがNaNになり、
     // RTDBがトランザクション結果を拒否してゲーム開始自体が失敗する）
@@ -273,11 +276,18 @@ export async function markNightReady(roomId: string, memberId: string, stepIndex
   await maybeCloseNightStepEarly(roomId);
 }
 
-/** 配札済みかつオンラインの全員が現在の夜ステップでタップ済みなら、早めに次のステップへ進める。 */
+/**
+ * 配札済みかつオンラインの全員が現在の夜ステップでタップ済みなら、早めに次のステップへ進める。
+ * ただしステップ開始からNIGHT_STEP_MIN_DURATION_MS未満の場合は進めない。
+ * 該当役職が誰にも配られていないステップ（中央カード行き）は行動する人がいないため
+ * 全員が即タップでき、他のステップより明らかに早く終わってしまう。この所要時間の差が
+ * 「この役職は中央カードにある」という手がかりになるため、最低時間を必ず確保する。
+ */
 export async function maybeCloseNightStepEarly(roomId: string): Promise<void> {
   const snap = await get(ref(db, `rooms/${roomId}`));
   const room = snap.val();
   if (!room?.state || room.state.phase !== "night") return;
+  if (!isNightStepMinElapsed(room.state, Date.now())) return;
   const members: Record<string, Member> = room.members ?? {};
   const participantsList = Object.values(members).filter((m) => m.originalRole);
   if (!isNightStepComplete(participantsList, room.state.nightStepIndex)) return;
@@ -286,6 +296,7 @@ export async function maybeCloseNightStepEarly(roomId: string): Promise<void> {
     if (!r?.state || r.state.phase !== "night" || r.state.nightStepIndex !== room.state.nightStepIndex) {
       return r;
     }
+    if (!isNightStepMinElapsed(r.state, Date.now())) return r;
     r.state = advanceNightState(r.state, Date.now());
     return r;
   });

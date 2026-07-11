@@ -1,5 +1,5 @@
 import type { AppContext } from "./context";
-import { isHost, participants } from "./context";
+import { isHost, participants, myRoleBanner } from "./context";
 import { ROLE_META } from "../roles";
 import { tallyVotes, determineWinner } from "../gameLogic";
 import { resetToLobby } from "../roomSync";
@@ -13,6 +13,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
 
   container.innerHTML = `
     <h2>${winner === "forest" ? "🌳 森陣営の勝利！" : "🐺 おおかみ陣営の勝利！"}</h2>
+    ${myRoleBanner(ctx)}
     <p class="hint-text">${
       eliminatedIds.length > 0
         ? `脱落したのは ${eliminatedIds.map((id) => escapeHtml(ctx.members[id]?.name ?? "?")).join("、")}`
@@ -34,11 +35,19 @@ export function render(container: HTMLElement, ctx: AppContext): void {
         .join("")}
     </ul>
 
-    ${isHost(ctx) ? `<button id="btn-play-again" class="btn-primary">もう一度あそぶ</button>` : ""}
+    ${
+      isHost(ctx)
+        ? `<button id="btn-play-again" class="btn-primary">もう一度あそぶ</button>`
+        : `<p class="waiting-text">ホストが「もう一度あそぶ」を押すのを待っています…</p>`
+    }
+    <button id="btn-leave-room" class="btn-link">トップに戻る</button>
   `;
 
   container.querySelector("#btn-play-again")?.addEventListener("click", () => {
     void resetToLobby(ctx.roomId);
+  });
+  container.querySelector("#btn-leave-room")?.addEventListener("click", () => {
+    ctx.requestLeaveRoom();
   });
 }
 

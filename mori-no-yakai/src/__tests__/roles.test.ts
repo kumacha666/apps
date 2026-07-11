@@ -4,7 +4,7 @@ import {
   computeVillagerCount,
   isValidRoleConfig,
   buildRoleDeck,
-  buildNightOrder,
+  buildNightOrderFromConfig,
   shuffle,
 } from "../roles";
 
@@ -90,18 +90,29 @@ describe("不正な役職構成の検証", () => {
   });
 });
 
-describe("buildNightOrder", () => {
-  it("配布された役職からNIGHT_ORDER準拠の順序を抽出する", () => {
-    const dealt = ["villager", "robber", "villager", "seer", "villager", "werewolf"] as const;
-    expect(buildNightOrder([...dealt])).toEqual(["werewolf", "seer", "robber"]);
+describe("buildNightOrderFromConfig", () => {
+  it("roleConfigに含まれる役職からNIGHT_ORDER準拠の順序を抽出する", () => {
+    const config = { centerCount: 3 as const, werewolfCount: 1, seer: true, robber: true, minion: false };
+    expect(buildNightOrderFromConfig(config)).toEqual(["werewolf", "seer", "robber"]);
   });
 
-  it("登場しない役職は含まない", () => {
-    expect(buildNightOrder(["villager", "villager", "villager"])).toEqual([]);
+  it("roleConfigに含まれない役職は夜順に含まない", () => {
+    const config = { centerCount: 3 as const, werewolfCount: 0, seer: false, robber: false, minion: false };
+    expect(buildNightOrderFromConfig(config)).toEqual([]);
   });
 
-  it("minionのみ登場する場合", () => {
-    expect(buildNightOrder(["villager", "minion"])).toEqual(["minion"]);
+  it("minionのみ含む場合", () => {
+    const config = { centerCount: 3 as const, werewolfCount: 0, seer: false, robber: false, minion: true };
+    expect(buildNightOrderFromConfig(config)).toEqual(["minion"]);
+  });
+
+  it("配布結果に関わらずroleConfigだけで決まる（該当役職が全員中央に行っても夜順から省かない）", () => {
+    // このテストはbuildNightOrderFromConfigが配布結果(dealtRoles)を一切引数に取らないことで
+    // 保証される。誰にも配られなかった役職のフェーズを省略すると「そのフェーズが無い＝
+    // その役職は中央カードにある」と全員に伝わってしまう（2026-07-11、実プレイで発覚した不具合）。
+    const config = { centerCount: 3 as const, werewolfCount: 1, seer: true, robber: true, minion: true };
+    // 実際に配られたかどうかにかかわらず、常に同じ夜順になる
+    expect(buildNightOrderFromConfig(config)).toEqual(["werewolf", "minion", "seer", "robber"]);
   });
 });
 
