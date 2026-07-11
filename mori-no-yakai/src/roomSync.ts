@@ -9,7 +9,7 @@ import {
   type Unsubscribe,
 } from "firebase/database";
 import { db } from "./firebase";
-import type { Member, RoomState, RoleConfig, RoleId } from "./types";
+import type { Member, RoomState, RoleConfig, RoleId, CenterCardsData } from "./types";
 import { buildRoleDeck, buildNightOrder, shuffle, defaultRoleConfig } from "./roles";
 import {
   DEFAULT_NIGHT_STEP_DURATION_MS,
@@ -104,9 +104,21 @@ export function listenMembers(
 
 export function listenCenterCards(
   roomId: string,
-  cb: (cards: RoleId[]) => void
+  cb: (data: CenterCardsData | null) => void
 ): Unsubscribe {
-  return onValue(ref(db, `rooms/${roomId}/centerCards`), (snap) => cb(snap.val() ?? []));
+  return onValue(ref(db, `rooms/${roomId}/centerCards`), (snap) => {
+    const raw = snap.val();
+    if (Array.isArray(raw)) {
+      // roundNumber導入前の旧クライアントが書き込んだ配列形式（デプロイ切り替え直後、
+      // リロードしていない旧タブが残っている間に発生しうる）。roundと紐付けできないため
+      // round: -1として「今のラウンドとは一致しない」扱いにする。読み取り側
+      // （main.tsのrenderCurrentPhase）はこれを「まだ届いていない」として空配列扱いし、
+      // 誤った中央カードを表示したりmap等で例外を投げたりしない。
+      cb({ round: -1, cards: raw });
+      return;
+    }
+    cb(raw as CenterCardsData | null);
+  });
 }
 
 /** ホストがロビーで役職構成を変更する。 */
@@ -160,9 +172,13 @@ export async function startGame(roomId: string): Promise<void> {
     // デフォルトにフォールバックする（欠けたままだとDate.now()+undefinedがNaNになり、
     // RTDBがトランザクション結果を拒否してゲーム開始自体が失敗する）
     const nightStepDurationMs = room.state.nightStepDurationMs ?? DEFAULT_NIGHT_STEP_DURATION_MS;
+    const roundNumber = (room.state.roundNumber ?? 0) + 1;
 
     room.members = members;
-    room.centerCards = center;
+    // centerCardsにroundNumberを紐付ける。stateとcenterCardsは別リスナーで届くため、
+    // 値だけでは前ラウンドの残りかどうかクライアント側で判別できない
+    // （読み取り側は state.roundNumber と centerCards.round を突き合わせて使う）。
+    room.centerCards = { round: roundNumber, cards: center } satisfies CenterCardsData;
     room.state = {
       ...room.state,
       phase: nightOrder.length > 0 ? "night" : "discuss",
@@ -171,7 +187,7 @@ export async function startGame(roomId: string): Promise<void> {
       nightStepDurationMs,
       nightStepEndsAt: Date.now() + nightStepDurationMs,
       discussEndsAt: Date.now() + room.state.discussDurationMs,
-      roundNumber: (room.state.roundNumber ?? 0) + 1,
+      roundNumber,
     };
     return room;
   });
