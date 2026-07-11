@@ -1,5 +1,5 @@
 import type { AppContext } from "./context";
-import { isHost, participants, myRoleBanner } from "./context";
+import { isHost, participants, myFinalRoleBanner } from "./context";
 import { ROLE_META } from "../roles";
 import { tallyVotes, determineWinner } from "../gameLogic";
 import { resetToLobby } from "../roomSync";
@@ -13,7 +13,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
 
   container.innerHTML = `
     <h2>${winner === "forest" ? "🌳 森陣営の勝利！" : "🐺 おおかみ陣営の勝利！"}</h2>
-    ${myRoleBanner(ctx)}
+    ${myFinalRoleBanner(ctx)}
     <p class="hint-text">${
       eliminatedIds.length > 0
         ? `脱落したのは ${eliminatedIds.map((id) => escapeHtml(ctx.members[id]?.name ?? "?")).join("、")}`

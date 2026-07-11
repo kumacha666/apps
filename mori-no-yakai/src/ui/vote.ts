@@ -1,5 +1,5 @@
 import type { AppContext } from "./context";
-import { participants, myRoleBanner } from "./context";
+import { participants, myKnownRoleBanner } from "./context";
 import { submitVote, maybeCloseVoteEarly } from "../roomSync";
 
 export function render(container: HTMLElement, ctx: AppContext): void {
@@ -19,7 +19,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
 
   container.innerHTML = `
     <h2>🗳️ 投票</h2>
-    ${myRoleBanner(ctx)}
+    ${myKnownRoleBanner(ctx)}
     <div class="vote-timer">${remainingSec}秒</div>
     <p class="hint-text">あやしいと思う相手に1人投票しよう（${votedCount}/${dealt.length}人 投票済み）</p>
     <p class="hint-text">誰も2票以上を集めなければ、誰も脱落しません。</p>

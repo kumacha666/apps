@@ -36,6 +36,15 @@ export interface Member {
   joinedAt: number;
   originalRole?: RoleId;
   currentRole?: RoleId;
+  /**
+   * 本人が「自分の役職だ」と認識している役職。公式ルール上、夜が明けたあとは
+   * 誰も自分のカードを見返さないため、怪盗に交換された側は自分が交換されたことに
+   * 気づかない。そのためcurrentRole（勝敗判定・最終結果表示に使う「本当の役職」）とは
+   * 別に、朝〜投票フェーズで本人に見せる役職はこちらを使う。デフォルトはoriginalRoleと
+   * 同じで、怪盗として交換を実行した本人の分だけ交換後の役職に更新される
+   * （交換された側のknownRoleは更新しない）。
+   */
+  knownRole?: RoleId;
   vote?: string;
   /** 直近でタップ済みの夜ステップindex。全員が現在のステップに追いつくと早期に次へ進む。 */
   nightReadyStep?: number;
