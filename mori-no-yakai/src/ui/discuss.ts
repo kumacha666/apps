@@ -1,5 +1,5 @@
 import type { AppContext } from "./context";
-import { onlineMembers, myRoleBanner } from "./context";
+import { onlineMembers, myKnownRoleBanner } from "./context";
 import { ROLE_META } from "../roles";
 import { markDiscussReady } from "../roomSync";
 
@@ -20,7 +20,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
   const remainingSec = Math.max(0, Math.ceil((ctx.state.discussEndsAt - Date.now()) / 1000));
   const min = Math.floor(remainingSec / 60);
   const sec = remainingSec % 60;
-  const role = self?.currentRole;
+  const role = self?.knownRole ?? self?.originalRole;
   const alreadyReady = uiState.readyTapped || self?.discussReadyRound === roundNumber;
 
   const online = onlineMembers(ctx).filter((m) => m.originalRole);
@@ -28,7 +28,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
 
   container.innerHTML = `
     <h2>🗣️ 議論タイム</h2>
-    ${myRoleBanner(ctx)}
+    ${myKnownRoleBanner(ctx)}
     <div class="discuss-timer">${min}:${String(sec).padStart(2, "0")}</div>
     ${role ? `<p class="role-description">${ROLE_META[role].description}</p>` : ""}
     <p class="hint-text">声に出して話し合おう。うそをついてもOK！</p>

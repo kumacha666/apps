@@ -159,6 +159,7 @@ export async function startGame(roomId: string): Promise<void> {
     for (const id of Object.keys(members)) {
       delete members[id].originalRole;
       delete members[id].currentRole;
+      delete members[id].knownRole;
       delete members[id].vote;
       delete members[id].nightReadyStep;
       delete members[id].discussReadyRound;
@@ -166,6 +167,7 @@ export async function startGame(roomId: string): Promise<void> {
     onlineIds.forEach((id, i) => {
       members[id].originalRole = dealt[i];
       members[id].currentRole = dealt[i];
+      members[id].knownRole = dealt[i];
     });
 
     // 配布結果ではなくroleConfigから夜順を決める（配布されなかった役職のフェーズを
@@ -201,7 +203,13 @@ export async function updateNightStepDuration(roomId: string, nightStepDurationM
   await update(ref(db, `rooms/${roomId}/state`), { nightStepDurationMs });
 }
 
-/** きつねが他プレイヤーと自分のカードを交換する。 */
+/**
+ * きつねが他プレイヤーと自分のカードを交換する。
+ * currentRole（勝敗判定・最終結果表示に使う「本当の役職」）は両者とも入れ替えるが、
+ * knownRole（本人が自分の役職だと認識している値）は交換を実行した本人（selfId）の分だけ
+ * 更新する。公式ルール上、夜が明けた後は誰も自分のカードを見返さないため、
+ * 交換対象になった側（targetId）は自分が交換されたことに気づかない。
+ */
 export async function robberSwap(
   roomId: string,
   selfId: string,
@@ -215,6 +223,7 @@ export async function robberSwap(
   await update(ref(db, `rooms/${roomId}/members`), {
     [`${selfId}/currentRole`]: targetRole,
     [`${targetId}/currentRole`]: selfRole,
+    [`${selfId}/knownRole`]: targetRole,
   });
   return targetRole;
 }
@@ -359,6 +368,7 @@ export async function resetToLobby(roomId: string): Promise<void> {
     for (const id of Object.keys(members)) {
       delete members[id].originalRole;
       delete members[id].currentRole;
+      delete members[id].knownRole;
       delete members[id].vote;
       delete members[id].nightReadyStep;
       delete members[id].discussReadyRound;
