@@ -34,11 +34,19 @@ export function render(container: HTMLElement, ctx: AppContext): void {
         .join("")}
     </ul>
 
-    ${isHost(ctx) ? `<button id="btn-play-again" class="btn-primary">もう一度あそぶ</button>` : ""}
+    ${
+      isHost(ctx)
+        ? `<button id="btn-play-again" class="btn-primary">もう一度あそぶ</button>`
+        : `<p class="waiting-text">ホストが「もう一度あそぶ」を押すのを待っています…</p>`
+    }
+    <button id="btn-leave-room" class="btn-link">トップに戻る</button>
   `;
 
   container.querySelector("#btn-play-again")?.addEventListener("click", () => {
     void resetToLobby(ctx.roomId);
+  });
+  container.querySelector("#btn-leave-room")?.addEventListener("click", () => {
+    ctx.requestLeaveRoom();
   });
 }
 
