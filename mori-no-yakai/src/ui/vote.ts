@@ -26,7 +26,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
       ${others
         .map(
           (m) =>
-            `<button data-vote-target="${m.id}" class="btn-card ${self?.vote === m.id ? "active" : ""}">${m.avatar} ${escapeHtml(
+            `<button data-vote-target="${m.id}" class="btn-card ${self?.vote === m.id ? "active" : ""}">${escapeHtml(
               m.name
             )}${m.online ? "" : "（切断中）"}</button>`
         )

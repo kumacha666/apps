@@ -21,12 +21,13 @@ export type Phase = "lobby" | "night" | "discuss" | "vote" | "result";
 export interface Member {
   id: string;
   name: string;
-  avatar: string;
   online: boolean;
   joinedAt: number;
   originalRole?: RoleId;
   currentRole?: RoleId;
   vote?: string;
+  /** 直近でタップ済みの夜ステップindex。全員が現在のステップに追いつくと早期に次へ進む。 */
+  nightReadyStep?: number;
 }
 
 export interface RoomState {
@@ -36,8 +37,12 @@ export interface RoomState {
   roleConfig: RoleConfig;
   nightOrder: RoleId[];
   nightStepIndex: number;
+  nightStepDurationMs: number;
   nightStepEndsAt: number;
   discussDurationMs: number;
   discussEndsAt: number;
   voteEndsAt: number;
+  /** startGame()が呼ばれるたびにインクリメントする。夜ステップUIの状態を「新しい対局」として
+   *  正しくリセットするために使う（同じstepIndex=0で始まる対局が連続すると区別できないため）。 */
+  roundNumber: number;
 }

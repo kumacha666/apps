@@ -1,11 +1,13 @@
 import type { AppContext } from "./context";
-import { participants } from "./context";
+import { participants, onlineMembers } from "./context";
 import { ROLE_META } from "../roles";
-import { robberSwap } from "../roomSync";
+import { robberSwap, markNightReady } from "../roomSync";
 import type { RoleId } from "../types";
 
 interface NightUiState {
   step: number;
+  round: number;
+  readyTapped?: boolean;
   wolfPeekIndex?: number;
   seerChoice?: "player" | "center" | "skip";
   seerTargetId?: string;
@@ -16,34 +18,85 @@ interface NightUiState {
   robberResult?: RoleId;
 }
 
-let uiState: NightUiState = { step: -1 };
+let uiState: NightUiState = { step: -1, round: -1 };
 
 export function render(container: HTMLElement, ctx: AppContext): void {
   const stepIndex = ctx.state.nightStepIndex;
-  if (uiState.step !== stepIndex) {
-    uiState = { step: stepIndex };
+  const roundNumber = ctx.state.roundNumber;
+  // stepIndexだけを見て比較すると、対局を跨いで両方とも最初のステップが0の場合に
+  // リセットされず、前回の対局でタップ済みのローカル状態が残ってしまう（サーバー側は
+  // startGame()でnightReadyStepを消しているのにボタンが押せないままになる）ため、
+  // roundNumberも合わせて比較する。
+  if (uiState.step !== stepIndex || uiState.round !== roundNumber) {
+    uiState = { step: stepIndex, round: roundNumber };
   }
 
   const currentRoleId = ctx.state.nightOrder[stepIndex];
   const self = ctx.members[ctx.memberId];
   const remainingSec = Math.max(0, Math.ceil((ctx.state.nightStepEndsAt - Date.now()) / 1000));
   const isMyTurn = self?.originalRole === currentRoleId;
+  const alreadyReady = uiState.readyTapped || (self?.nightReadyStep ?? -1) >= stepIndex;
+  // きつねの交換（robberSwap）は非同期でRTDBに書き込む。書き込み中に「つぎへ」を押せてしまうと、
+  // 他の全員が先に準備完了して夜フェーズを抜けた後にcurrentRoleの書き込みが完了し、
+  // 議論開始後に役職が変わってしまう恐れがあるため、交換の完了まではボタンを無効化する。
+  const readyDisabled = alreadyReady || uiState.robberPending === true;
 
   const header = `
     <h2>🌙 夜がふけていく…</h2>
     <div class="night-timer">${remainingSec}秒</div>
   `;
 
-  if (!isMyTurn) {
-    container.innerHTML = `
-      ${header}
-      <p class="waiting-text">${ROLE_META[currentRoleId].emoji} だれかが行動中…しずかに待とう</p>
-    `;
-    return;
-  }
+  // 「つぎへ」タップ後もアクションボタンを押せるままにすると、既に他の全員が
+  // 準備完了で夜フェーズを抜けた後にきつねの交換などが実行されてしまう恐れがあるため、
+  // タップ後は読み取り専用の表示に切り替え、ボタンは配線しない。
+  const body = isMyTurn
+    ? alreadyReady
+      ? renderReadOnly(currentRoleId, ctx)
+      : renderActionFor(currentRoleId, ctx)
+    : `<p class="waiting-text">${ROLE_META[currentRoleId].emoji} だれかが行動中…しずかに待とう</p>`;
 
-  container.innerHTML = `${header}${renderActionFor(currentRoleId, ctx)}`;
-  wireActions(container, currentRoleId, ctx);
+  const online = onlineMembers(ctx).filter((m) => m.originalRole);
+  const readyCount = online.filter((m) => (m.nightReadyStep ?? -1) >= stepIndex).length;
+
+  container.innerHTML = `
+    ${header}
+    ${body}
+    <button id="btn-night-ready" class="btn-primary" ${readyDisabled ? "disabled" : ""}>
+      ${alreadyReady ? "つぎを待っています…" : uiState.robberPending ? "交換中…" : "つぎへ"}
+    </button>
+    <p class="hint-text">準備完了 ${readyCount}/${online.length}人</p>
+    <p class="hint-text">全員がタップすると次に進みます（役職と関係なく全員タップしてください）</p>
+  `;
+
+  if (isMyTurn && !alreadyReady) wireActions(container, currentRoleId, ctx);
+
+  container.querySelector("#btn-night-ready")?.addEventListener("click", () => {
+    if (uiState.readyTapped || uiState.robberPending) return;
+    uiState.readyTapped = true;
+    render(container, ctx);
+    void markNightReady(ctx.roomId, ctx.memberId, stepIndex);
+  });
+}
+
+/** 「つぎへ」タップ後の読み取り専用表示。すでに決めた結果があればそれを見せ、なければ何もしなかった旨を表示する。 */
+function renderReadOnly(roleId: RoleId, ctx: AppContext): string {
+  switch (roleId) {
+    case "werewolf": {
+      const wolves = participants(ctx).filter((m) => m.originalRole === "werewolf");
+      if (wolves.length >= 2 || uiState.wolfPeekIndex !== undefined) return renderWerewolf(ctx);
+      return `<p>${ROLE_META.werewolf.emoji} 中央カードは見ませんでした。</p>`;
+    }
+    case "minion":
+      return renderMinion(ctx);
+    case "seer":
+      if (uiState.seerChoice) return renderSeer(ctx);
+      return `<p>${ROLE_META.seer.emoji} 何も見ませんでした。</p>`;
+    case "robber":
+      if (uiState.robberResult) return renderRobber(ctx);
+      return `<p>${ROLE_META.robber.emoji} 誰とも交換しませんでした。</p>`;
+    case "villager":
+      return `<p>あなたはうさぎ。することはありません。</p>`;
+  }
 }
 
 function renderActionFor(roleId: RoleId, ctx: AppContext): string {
@@ -67,7 +120,7 @@ function renderWerewolf(ctx: AppContext): string {
   if (wolves.length >= 2) {
     return `
       <p>${ROLE_META.werewolf.emoji} あなたはおおかみ。仲間は…</p>
-      <ul class="member-list">${others.map((m) => `<li>${m.avatar} ${escapeHtml(m.name)}</li>`).join("")}</ul>
+      <ul class="member-list">${others.map((m) => `<li>${escapeHtml(m.name)}</li>`).join("")}</ul>
     `;
   }
   if (uiState.wolfPeekIndex !== undefined) {
@@ -92,7 +145,7 @@ function renderMinion(ctx: AppContext): string {
     <p>${ROLE_META.minion.emoji} あなたは子狼。おおかみ陣営の仲間は…</p>
     ${
       wolves.length > 0
-        ? `<ul class="member-list">${wolves.map((m) => `<li>${m.avatar} ${escapeHtml(m.name)}</li>`).join("")}</ul>`
+        ? `<ul class="member-list">${wolves.map((m) => `<li>${escapeHtml(m.name)}</li>`).join("")}</ul>`
         : `<p>場にはおおかみがいません。あなただけがおおかみ陣営です。</p>`
     }
   `;
@@ -119,7 +172,7 @@ function renderSeer(ctx: AppContext): string {
     <p class="hint-text">他の1人 か 中央カード2枚、どちらか片方だけ見られます。</p>
     <div class="member-list">
       ${others
-        .map((m) => `<button data-seer-player="${m.id}" class="btn-card" ${picked.length > 0 ? "disabled" : ""}>${m.avatar} ${escapeHtml(m.name)}</button>`)
+        .map((m) => `<button data-seer-player="${m.id}" class="btn-card" ${picked.length > 0 ? "disabled" : ""}>${escapeHtml(m.name)}</button>`)
         .join("")}
     </div>
     <div class="center-card-row">
@@ -141,7 +194,7 @@ function renderRobber(ctx: AppContext): string {
     <p>${ROLE_META.robber.emoji} あなたはきつね。誰かと役職を交換しますか？</p>
     <div class="member-list">
       ${others
-        .map((m) => `<button data-robber-target="${m.id}" class="btn-card">${m.avatar} ${escapeHtml(m.name)}</button>`)
+        .map((m) => `<button data-robber-target="${m.id}" class="btn-card">${escapeHtml(m.name)}</button>`)
         .join("")}
     </div>
     <button data-robber-skip class="btn-link">だれとも交換しない</button>
@@ -196,6 +249,7 @@ function wireActions(container: HTMLElement, roleId: RoleId, ctx: AppContext): v
         const targetId = btn.dataset.robberTarget!;
         render(container, ctx);
         void robberSwap(ctx.roomId, ctx.memberId, targetId).then((newRole) => {
+          uiState.robberPending = false;
           uiState.robberResult = newRole;
           render(container, ctx);
         });

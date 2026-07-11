@@ -4,6 +4,7 @@ import {
   generateRoomId,
   generateMemberId,
   joinRoom,
+  markOnline,
   listenRoomState,
   listenMembers,
   listenCenterCards,
@@ -15,7 +16,6 @@ import * as discussUi from "./ui/discuss";
 import * as voteUi from "./ui/vote";
 import * as resultUi from "./ui/result";
 
-const AVATARS = ["🐰", "🦊", "🐺", "🦉", "🦔", "🦌", "🐿️", "🦝", "🐻"];
 const STORAGE_KEY = "mori-no-yakai-session";
 declare const __APP_VERSION__: string;
 
@@ -40,7 +40,6 @@ let currentMemberId: string | null = null;
 let latestState: RoomState | null = null;
 let latestMembers: Record<string, Member> = {};
 let latestCenterCards: RoleId[] = [];
-let selectedAvatar = AVATARS[0];
 
 function screens(): Record<Phase | "home", HTMLElement> {
   return {
@@ -60,20 +59,6 @@ function showScreen(name: Phase | "home"): void {
   }
 }
 
-function setupAvatarPicker(): void {
-  const picker = document.getElementById("avatar-picker")!;
-  picker.innerHTML = AVATARS.map(
-    (a, i) => `<button data-avatar="${a}" class="avatar-btn ${i === 0 ? "active" : ""}">${a}</button>`
-  ).join("");
-  picker.querySelectorAll<HTMLButtonElement>("[data-avatar]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      selectedAvatar = btn.dataset.avatar!;
-      picker.querySelectorAll(".avatar-btn").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-    });
-  });
-}
-
 async function enterRoom(roomId: string, name: string): Promise<void> {
   const errorEl = document.getElementById("home-error")!;
   errorEl.textContent = "";
@@ -84,7 +69,7 @@ async function enterRoom(roomId: string, name: string): Promise<void> {
 
   const memberId = generateMemberId();
   try {
-    await joinRoom(roomId, memberId, name.trim(), selectedAvatar);
+    await joinRoom(roomId, memberId, name.trim());
   } catch (e) {
     errorEl.textContent = "入室に失敗しました。部屋コードを確認してください。";
     return;
@@ -92,7 +77,7 @@ async function enterRoom(roomId: string, name: string): Promise<void> {
 
   currentRoomId = roomId;
   currentMemberId = memberId;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ roomId, memberId, name: name.trim(), avatar: selectedAvatar }));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ roomId, memberId, name: name.trim() }));
 
   startListening();
 }
@@ -118,6 +103,17 @@ function startListening(): void {
     if (currentRoomId) void maybeAdvancePhase(currentRoomId);
     renderCurrentPhase(); // タイマー表示の更新のため
   }, 1000);
+}
+
+/**
+ * スマホのスリープ・タブのバックグラウンド化からの復帰時に呼ぶ。
+ * WebSocket切断でonDisconnectが発火しoffline化していても、復帰時に
+ * 明示的にonline:trueへ書き戻さないと他プレイヤーからは退室したまま見えてしまう。
+ */
+function reconnectPresence(): void {
+  if (currentRoomId && currentMemberId) {
+    void markOnline(currentRoomId, currentMemberId);
+  }
 }
 
 function renderCurrentPhase(): void {
@@ -155,8 +151,6 @@ function renderCurrentPhase(): void {
 }
 
 function init(): void {
-  setupAvatarPicker();
-
   document.getElementById("btn-create-room")?.addEventListener("click", () => {
     const name = (document.getElementById("input-name") as HTMLInputElement).value;
     void enterRoom(generateRoomId(), name);
@@ -172,16 +166,21 @@ function init(): void {
     void enterRoom(code, name);
   });
 
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") reconnectPresence();
+  });
+  window.addEventListener("pageshow", reconnectPresence);
+  window.addEventListener("online", reconnectPresence);
+
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) {
     try {
       const session = JSON.parse(saved);
       (document.getElementById("input-name") as HTMLInputElement).value = session.name ?? "";
-      selectedAvatar = session.avatar ?? AVATARS[0];
       if (session.roomId && session.memberId) {
         currentRoomId = session.roomId;
         currentMemberId = session.memberId;
-        void joinRoom(session.roomId, session.memberId, session.name, session.avatar).then(() => {
+        void joinRoom(session.roomId, session.memberId, session.name).then(() => {
           startListening();
         });
       }

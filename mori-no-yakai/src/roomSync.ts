@@ -12,9 +12,12 @@ import { db } from "./firebase";
 import type { Member, RoomState, RoleConfig, RoleId } from "./types";
 import { buildRoleDeck, buildNightOrder, shuffle, defaultRoleConfig } from "./roles";
 import {
-  NIGHT_STEP_DURATION_MS,
-  VOTE_DURATION_MS,
+  DEFAULT_NIGHT_STEP_DURATION_MS,
   DEFAULT_DISCUSS_DURATION_MS,
+  advanceNightState,
+  advanceDiscussState,
+  advanceVoteState,
+  isNightStepComplete,
 } from "./gameLogic";
 
 const ROOM_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -32,12 +35,7 @@ export function generateMemberId(): string {
 }
 
 /** 部屋に入室する。まだ部屋が存在しなければロビー状態として初期化する。 */
-export async function joinRoom(
-  roomId: string,
-  memberId: string,
-  name: string,
-  avatar: string
-): Promise<void> {
+export async function joinRoom(roomId: string, memberId: string, name: string): Promise<void> {
   const memberRef = ref(db, `rooms/${roomId}/members/${memberId}`);
   const stateRef = ref(db, `rooms/${roomId}/state`);
 
@@ -50,10 +48,12 @@ export async function joinRoom(
       roleConfig: defaultRoleConfig(1),
       nightOrder: [],
       nightStepIndex: 0,
+      nightStepDurationMs: DEFAULT_NIGHT_STEP_DURATION_MS,
       nightStepEndsAt: 0,
       discussDurationMs: DEFAULT_DISCUSS_DURATION_MS,
       discussEndsAt: 0,
       voteEndsAt: 0,
+      roundNumber: 0,
     };
     await set(stateRef, initialState);
   }
@@ -62,17 +62,26 @@ export async function joinRoom(
   // 既存メンバーはプロフィール・プレゼンスのみをupdateする
   const memberSnap = await get(memberRef);
   if (memberSnap.exists()) {
-    await update(memberRef, { name, avatar, online: true });
+    await update(memberRef, { name, online: true });
   } else {
     const member: Member = {
       id: memberId,
       name,
-      avatar,
       online: true,
       joinedAt: Date.now(),
     };
     await set(memberRef, member);
   }
+  onDisconnect(ref(db, `rooms/${roomId}/members/${memberId}/online`)).set(false);
+}
+
+/**
+ * スマホのスリープ・タブのバックグラウンド復帰時に再接続を明示する。
+ * WebSocket切断でonDisconnectが発火しoffline化した後、復帰時に自動ではonline:trueに
+ * 戻らないため、visibilitychange等から呼び出してプレゼンスとonDisconnectを再登録する。
+ */
+export async function markOnline(roomId: string, memberId: string): Promise<void> {
+  await update(ref(db, `rooms/${roomId}/members/${memberId}`), { online: true });
   onDisconnect(ref(db, `rooms/${roomId}/members/${memberId}/online`)).set(false);
 }
 
@@ -132,6 +141,7 @@ export async function startGame(roomId: string): Promise<void> {
       delete members[id].originalRole;
       delete members[id].currentRole;
       delete members[id].vote;
+      delete members[id].nightReadyStep;
     }
     onlineIds.forEach((id, i) => {
       members[id].originalRole = dealt[i];
@@ -139,6 +149,10 @@ export async function startGame(roomId: string): Promise<void> {
     });
 
     const nightOrder = buildNightOrder(dealt);
+    // nightStepDurationMsはこの設定の追加前に作られた部屋には存在しない可能性があるため
+    // デフォルトにフォールバックする（欠けたままだとDate.now()+undefinedがNaNになり、
+    // RTDBがトランザクション結果を拒否してゲーム開始自体が失敗する）
+    const nightStepDurationMs = room.state.nightStepDurationMs ?? DEFAULT_NIGHT_STEP_DURATION_MS;
 
     room.members = members;
     room.centerCards = center;
@@ -147,11 +161,18 @@ export async function startGame(roomId: string): Promise<void> {
       phase: nightOrder.length > 0 ? "night" : "discuss",
       nightOrder,
       nightStepIndex: 0,
-      nightStepEndsAt: Date.now() + NIGHT_STEP_DURATION_MS,
+      nightStepDurationMs,
+      nightStepEndsAt: Date.now() + nightStepDurationMs,
       discussEndsAt: Date.now() + room.state.discussDurationMs,
+      roundNumber: (room.state.roundNumber ?? 0) + 1,
     };
     return room;
   });
+}
+
+/** ホストがロビーで夜アクションの制限時間を変更する。 */
+export async function updateNightStepDuration(roomId: string, nightStepDurationMs: number): Promise<void> {
+  await update(ref(db, `rooms/${roomId}/state`), { nightStepDurationMs });
 }
 
 /** きつねが他プレイヤーと自分のカードを交換する。 */
@@ -189,41 +210,61 @@ export async function submitVote(roomId: string, memberId: string, targetId: str
 /**
  * 各クライアントが定期的に呼び出し、期限切れのフェーズをトランザクションで進める。
  * 複数クライアントが同時に呼んでも、トランザクションにより二重遷移は起きない。
+ *
+ * startGame/resetToLobby/submitVote等と同じ部屋ルート（rooms/{roomId}）を
+ * トランザクション対象にすること。RTDBは異なるパスに対するトランザクション同士の
+ * 排他性を保証しないため、`state`だけを対象にすると親を書き換える他の操作と
+ * 競合し、フェーズが巻き戻る・メンバー情報が消えるといった不整合が起きうる。
  */
 export async function maybeAdvancePhase(roomId: string): Promise<void> {
-  await runTransaction(ref(db, `rooms/${roomId}/state`), (state: RoomState | null) => {
-    if (!state) return state;
+  await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
+    if (!room || !room.state) return room;
+    const state: RoomState = room.state;
     const now = Date.now();
 
     if (state.phase === "night" && now >= state.nightStepEndsAt) {
-      const nextIndex = state.nightStepIndex + 1;
-      if (nextIndex >= state.nightOrder.length) {
-        return {
-          ...state,
-          phase: "discuss",
-          discussEndsAt: now + state.discussDurationMs,
-        };
-      }
-      return {
-        ...state,
-        nightStepIndex: nextIndex,
-        nightStepEndsAt: now + NIGHT_STEP_DURATION_MS,
-      };
+      room.state = advanceNightState(state, now);
+    } else if (state.phase === "discuss" && now >= state.discussEndsAt) {
+      room.state = advanceDiscussState(state, now);
+    } else if (state.phase === "vote" && now >= state.voteEndsAt) {
+      room.state = advanceVoteState(state);
     }
 
-    if (state.phase === "discuss" && now >= state.discussEndsAt) {
-      return {
-        ...state,
-        phase: "vote",
-        voteEndsAt: now + VOTE_DURATION_MS,
-      };
-    }
+    return room;
+  });
+}
 
-    if (state.phase === "vote" && now >= state.voteEndsAt) {
-      return { ...state, phase: "result" };
+/**
+ * 夜アクション画面で「つぎへ」をタップしたことを記録する。該当役職の人だけがタップすると
+ * 誰が誰か推測できてしまうため、全員（待機中の人も含む）がタップする想定。
+ */
+export async function markNightReady(roomId: string, memberId: string, stepIndex: number): Promise<void> {
+  await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
+    if (!room?.state || room.state.phase !== "night" || room.state.nightStepIndex !== stepIndex) {
+      return room;
     }
+    if (!room.members?.[memberId]) return room;
+    room.members[memberId].nightReadyStep = stepIndex;
+    return room;
+  });
+  await maybeCloseNightStepEarly(roomId);
+}
 
-    return state;
+/** 配札済みかつオンラインの全員が現在の夜ステップでタップ済みなら、早めに次のステップへ進める。 */
+export async function maybeCloseNightStepEarly(roomId: string): Promise<void> {
+  const snap = await get(ref(db, `rooms/${roomId}`));
+  const room = snap.val();
+  if (!room?.state || room.state.phase !== "night") return;
+  const members: Record<string, Member> = room.members ?? {};
+  const participantsList = Object.values(members).filter((m) => m.originalRole);
+  if (!isNightStepComplete(participantsList, room.state.nightStepIndex)) return;
+
+  await runTransaction(ref(db, `rooms/${roomId}`), (r) => {
+    if (!r?.state || r.state.phase !== "night" || r.state.nightStepIndex !== room.state.nightStepIndex) {
+      return r;
+    }
+    r.state = advanceNightState(r.state, Date.now());
+    return r;
   });
 }
 
@@ -234,9 +275,10 @@ export async function maybeCloseVoteEarly(roomId: string): Promise<void> {
   const onlineParticipants = Object.values(members).filter((m) => m.online && m.originalRole);
   if (onlineParticipants.length === 0 || !onlineParticipants.every((m) => m.vote)) return;
 
-  await runTransaction(ref(db, `rooms/${roomId}/state`), (state: RoomState | null) => {
-    if (!state || state.phase !== "vote") return state;
-    return { ...state, phase: "result" };
+  await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
+    if (!room?.state || room.state.phase !== "vote") return room;
+    room.state = advanceVoteState(room.state);
+    return room;
   });
 }
 
@@ -250,6 +292,7 @@ export async function resetToLobby(roomId: string): Promise<void> {
       delete members[id].originalRole;
       delete members[id].currentRole;
       delete members[id].vote;
+      delete members[id].nightReadyStep;
     }
     room.members = members;
     room.centerCards = null;
