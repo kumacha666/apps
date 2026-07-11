@@ -10,7 +10,7 @@ import {
 } from "firebase/database";
 import { db } from "./firebase";
 import type { Member, RoomState, RoleConfig, RoleId, CenterCardsData } from "./types";
-import { buildRoleDeck, buildNightOrder, shuffle, defaultRoleConfig } from "./roles";
+import { buildRoleDeck, buildNightOrderFromConfig, shuffle, defaultRoleConfig } from "./roles";
 import {
   DEFAULT_NIGHT_STEP_DURATION_MS,
   DEFAULT_DISCUSS_DURATION_MS,
@@ -167,7 +167,9 @@ export async function startGame(roomId: string): Promise<void> {
       members[id].currentRole = dealt[i];
     });
 
-    const nightOrder = buildNightOrder(dealt);
+    // 配布結果ではなくroleConfigから夜順を決める（配布されなかった役職のフェーズを
+    // 省略すると「そのフェーズが無い＝その役職は中央カードにある」と伝わってしまうため）
+    const nightOrder = buildNightOrderFromConfig(room.state.roleConfig);
     // nightStepDurationMsはこの設定の追加前に作られた部屋には存在しない可能性があるため
     // デフォルトにフォールバックする（欠けたままだとDate.now()+undefinedがNaNになり、
     // RTDBがトランザクション結果を拒否してゲーム開始自体が失敗する）

@@ -82,9 +82,22 @@ export function buildRoleDeck(playerCount: number, config: RoleConfig): RoleId[]
   return deck;
 }
 
-/** 配布された役職一覧から、実際に登場する夜順を抽出する。 */
-export function buildNightOrder(dealtRoles: RoleId[]): RoleId[] {
-  const present = new Set(dealtRoles);
+/**
+ * 役職構成（roleConfig）から、そのゲームで実施する夜順を抽出する。
+ *
+ * **配布結果（dealtRoles）ではなく、必ずroleConfigから決めること。** 例えば
+ * 「ふくろう・きつねを含む構成」でおおかみが中央カードに行った（誰にも配られなかった）
+ * 場合でも、おおかみのフェーズ自体は実施しなければならない（該当者がいないので誰も行動せず
+ * 待機画面のまま次に進むだけ）。配布結果を見て「誰にも配られなかった役職のフェーズを省略する」
+ * と、フェーズがスキップされたこと自体から「その役職は中央カードにある」と全員に伝わって
+ * しまい、正体隠匿ゲームとして致命的な情報漏洩になる（2026-07-11、実プレイで発覚）。
+ */
+export function buildNightOrderFromConfig(config: RoleConfig): RoleId[] {
+  const present = new Set<RoleId>();
+  if (config.werewolfCount > 0) present.add("werewolf");
+  if (config.minion) present.add("minion");
+  if (config.seer) present.add("seer");
+  if (config.robber) present.add("robber");
   return NIGHT_ORDER.filter((role) => present.has(role));
 }
 
