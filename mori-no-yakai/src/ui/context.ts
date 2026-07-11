@@ -37,10 +37,28 @@ export function otherMembers(ctx: AppContext): Member[] {
 /**
  * 自分の役職を常に画面の一番上に固定表示するためのバナーHTML。
  * 役職未確定（ロビー・配札前・不参加）なら空文字を返す。
- * night/discuss/vote/resultの各画面はこれを他のコンテンツより前に置くこと。
+ * discuss/vote/resultの各画面はこれを他のコンテンツより前に置くこと。
+ *
+ * **night画面ではこれを使わず`myNightRoleBanner()`を使うこと。** currentRoleは
+ * きつねの交換で即座に変わるため、この関数（currentRole基準）を夜フェーズ中に
+ * そのまま出すと、交換された側のプレイヤーが自分のバナーの変化だけで
+ * 「今きつねに交換された」と気づいてしまう（2026-07-11、Codexレビュー指摘）。
  */
 export function myRoleBanner(ctx: AppContext): string {
-  const role = ctx.members[ctx.memberId]?.currentRole;
+  return roleBannerFor(ctx.members[ctx.memberId]?.currentRole);
+}
+
+/**
+ * night画面専用の役職バナー。**originalRole基準**で表示する。
+ * currentRoleを使うと、きつねの交換が完了した瞬間に交換された側のバナーが
+ * 書き換わり、まだ夜が明けていないのに「今交換された」と伝わってしまう。
+ * 交換を行った本人には、きつねの行動画面自体で新しい役職が明示される。
+ */
+export function myNightRoleBanner(ctx: AppContext): string {
+  return roleBannerFor(ctx.members[ctx.memberId]?.originalRole);
+}
+
+function roleBannerFor(role: RoleId | undefined): string {
   if (!role) return "";
   const meta = ROLE_META[role];
   return `<p class="role-reminder">${meta.emoji} あなたは ${meta.name}</p>`;

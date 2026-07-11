@@ -4,11 +4,13 @@ import {
   determineWinner,
   effectiveHostId,
   isNightStepComplete,
+  isNightStepMinElapsed,
   isDiscussComplete,
   advanceNightState,
   advanceDiscussState,
   advanceVoteState,
   DEFAULT_NIGHT_STEP_DURATION_MS,
+  NIGHT_STEP_MIN_DURATION_MS,
 } from "../gameLogic";
 import type { RoomState } from "../types";
 
@@ -200,6 +202,35 @@ describe("isNightStepComplete", () => {
 
   it("オンラインの参加者が誰もいなければfalse", () => {
     expect(isNightStepComplete([{ id: "a", online: false }], 0)).toBe(false);
+  });
+});
+
+describe("isNightStepMinElapsed", () => {
+  it("ステップ開始からNIGHT_STEP_MIN_DURATION_MS未満ならfalse", () => {
+    // ステップ開始 = nightStepEndsAt(1000+30000) - nightStepDurationMs(30000) = 1000
+    const state = { nightStepEndsAt: 31000, nightStepDurationMs: 30000 };
+    expect(isNightStepMinElapsed(state, 1000 + NIGHT_STEP_MIN_DURATION_MS - 1)).toBe(false);
+  });
+
+  it("ステップ開始からNIGHT_STEP_MIN_DURATION_MS以上経過していればtrue", () => {
+    const state = { nightStepEndsAt: 31000, nightStepDurationMs: 30000 };
+    expect(isNightStepMinElapsed(state, 1000 + NIGHT_STEP_MIN_DURATION_MS)).toBe(true);
+  });
+
+  it("該当役職がおらず全員が即タップしても、最短経過時間までは早期進行しない（情報漏洩対策）", () => {
+    // ホストが30秒設定でも、全員タップ直後（経過1秒）ではまだ進めない
+    const state = { nightStepEndsAt: 30000, nightStepDurationMs: 30000 };
+    expect(isNightStepMinElapsed(state, 1000)).toBe(false);
+    expect(isNightStepMinElapsed(state, NIGHT_STEP_MIN_DURATION_MS)).toBe(true);
+  });
+
+  it("nightStepDurationMsが欠けている（設定追加前の部屋データ）場合もデフォルト値でフォールバックする", () => {
+    const state = { nightStepEndsAt: DEFAULT_NIGHT_STEP_DURATION_MS } as {
+      nightStepEndsAt: number;
+      nightStepDurationMs?: number;
+    };
+    expect(isNightStepMinElapsed(state, NIGHT_STEP_MIN_DURATION_MS - 1)).toBe(false);
+    expect(isNightStepMinElapsed(state, NIGHT_STEP_MIN_DURATION_MS)).toBe(true);
   });
 });
 

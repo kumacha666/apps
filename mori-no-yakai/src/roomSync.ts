@@ -18,6 +18,7 @@ import {
   advanceDiscussState,
   advanceVoteState,
   isNightStepComplete,
+  isNightStepMinElapsed,
   isDiscussComplete,
 } from "./gameLogic";
 
@@ -275,11 +276,18 @@ export async function markNightReady(roomId: string, memberId: string, stepIndex
   await maybeCloseNightStepEarly(roomId);
 }
 
-/** 配札済みかつオンラインの全員が現在の夜ステップでタップ済みなら、早めに次のステップへ進める。 */
+/**
+ * 配札済みかつオンラインの全員が現在の夜ステップでタップ済みなら、早めに次のステップへ進める。
+ * ただしステップ開始からNIGHT_STEP_MIN_DURATION_MS未満の場合は進めない。
+ * 該当役職が誰にも配られていないステップ（中央カード行き）は行動する人がいないため
+ * 全員が即タップでき、他のステップより明らかに早く終わってしまう。この所要時間の差が
+ * 「この役職は中央カードにある」という手がかりになるため、最低時間を必ず確保する。
+ */
 export async function maybeCloseNightStepEarly(roomId: string): Promise<void> {
   const snap = await get(ref(db, `rooms/${roomId}`));
   const room = snap.val();
   if (!room?.state || room.state.phase !== "night") return;
+  if (!isNightStepMinElapsed(room.state, Date.now())) return;
   const members: Record<string, Member> = room.members ?? {};
   const participantsList = Object.values(members).filter((m) => m.originalRole);
   if (!isNightStepComplete(participantsList, room.state.nightStepIndex)) return;
@@ -288,6 +296,7 @@ export async function maybeCloseNightStepEarly(roomId: string): Promise<void> {
     if (!r?.state || r.state.phase !== "night" || r.state.nightStepIndex !== room.state.nightStepIndex) {
       return r;
     }
+    if (!isNightStepMinElapsed(r.state, Date.now())) return r;
     r.state = advanceNightState(r.state, Date.now());
     return r;
   });
