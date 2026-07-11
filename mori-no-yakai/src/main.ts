@@ -1,5 +1,5 @@
 import type { AppContext } from "./ui/context";
-import type { Member, RoomState, RoleId, Phase } from "./types";
+import type { Member, RoomState, Phase, CenterCardsData } from "./types";
 import {
   generateRoomId,
   generateMemberId,
@@ -40,7 +40,7 @@ let currentRoomId: string | null = null;
 let currentMemberId: string | null = null;
 let latestState: RoomState | null = null;
 let latestMembers: Record<string, Member> = {};
-let latestCenterCards: RoleId[] = [];
+let latestCenterCardsData: CenterCardsData | null = null;
 let unsubscribers: Array<() => void> = [];
 let tickInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -113,8 +113,8 @@ function startListening(): void {
     })
   );
   unsubscribers.push(
-    listenCenterCards(roomId, (cards) => {
-      latestCenterCards = cards;
+    listenCenterCards(roomId, (data) => {
+      latestCenterCardsData = data;
       renderCurrentPhase();
     })
   );
@@ -146,7 +146,7 @@ function leaveCurrentRoom(): void {
   currentMemberId = null;
   latestState = null;
   latestMembers = {};
-  latestCenterCards = [];
+  latestCenterCardsData = null;
   localStorage.removeItem(STORAGE_KEY);
   showScreen("home");
 }
@@ -155,12 +155,18 @@ function renderCurrentPhase(): void {
   if (!latestState || !currentRoomId || !currentMemberId) return;
   if (!latestMembers[currentMemberId]) return; // 自分のmember情報がまだ来ていない
 
+  // centerCardsとstateは別々のFirebaseリスナーで届くため、届いたcenterCardsが
+  // 現在のroundNumberのものとは限らない（前ラウンドの残りが一時的に見えることがある）。
+  // roundNumberが一致する場合のみ採用し、一致しなければ「まだ届いていない」として扱う。
+  const centerCards =
+    latestCenterCardsData?.round === latestState.roundNumber ? latestCenterCardsData.cards : [];
+
   const ctx: AppContext = {
     roomId: currentRoomId,
     memberId: currentMemberId,
     state: latestState,
     members: latestMembers,
-    centerCards: latestCenterCards,
+    centerCards,
     requestLeaveRoom: leaveCurrentRoom,
   };
 

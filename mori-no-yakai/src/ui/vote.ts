@@ -41,11 +41,11 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     <ul class="role-legend">
       <li>
         <strong>🌳 森陣営（うさぎ・ふくろう・きつね）</strong>
-        <span class="hint-text">おおかみを1人でも脱落させれば勝利。または、場におおかみが1匹もいない状態で誰も脱落しなければ勝利。</span>
+        <span class="hint-text">おおかみを1人でも脱落させれば勝利。場におおかみが1匹もいなければ、誰も脱落させないか、子狼を脱落させれば勝利。</span>
       </li>
       <li>
         <strong>🐺 おおかみ陣営（おおかみ・子狼）</strong>
-        <span class="hint-text">おおかみが1人も脱落しなければ勝利。</span>
+        <span class="hint-text">上の森陣営の条件を満たせなければ勝利（例: おおかみが生き残る。場におおかみがいない場合は子狼以外の誰かが脱落する）。</span>
       </li>
     </ul>
   `;

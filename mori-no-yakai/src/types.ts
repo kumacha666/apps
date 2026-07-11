@@ -18,6 +18,17 @@ export interface RoleConfig {
 
 export type Phase = "lobby" | "night" | "discuss" | "vote" | "result";
 
+/**
+ * 中央カードはroundNumberと一緒に保存する。stateとcenterCardsは別々のFirebase
+ * リスナーで届くため、値だけでは「前ラウンドの残り」か「今ラウンドの新しいデータ」かを
+ * クライアント側で判別できない。roundを紐付けることで、読み取り側がstate.roundNumberと
+ * 突き合わせて古いデータを弾けるようにする。
+ */
+export interface CenterCardsData {
+  round: number;
+  cards: RoleId[];
+}
+
 export interface Member {
   id: string;
   name: string;
