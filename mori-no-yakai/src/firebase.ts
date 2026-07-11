@@ -3,22 +3,18 @@ import { getDatabase } from "firebase/database";
 
 /**
  * このapiKey等はクライアント向けの公開鍵であり機密情報ではない（Firebase Web SDKの仕様、
- * apps/emoji-dm/CLAUDE.md参照）。ただし値そのものはFirebaseコンソールでプロジェクトを
- * 作成してから取得する必要があるため、下記はプレースホルダー。
- *
- * セットアップ手順は CLAUDE.md を参照。
- *   1. Firebaseコンソール（AI学習用アカウント）で新規プロジェクト作成
- *   2. Realtime Database を有効化（認証は使わない）
- *   3. Web アプリを登録し、表示された設定値をここに貼り付ける
+ * apps/emoji-dm/CLAUDE.md参照）。プロジェクト「mori-no-yakai」（AI学習用アカウント、
+ * asia-southeast1）をFirebaseコンソールで作成済み。
  */
 const firebaseConfig = {
-  apiKey: "REPLACE_ME",
-  authDomain: "REPLACE_ME.firebaseapp.com",
-  databaseURL: "https://REPLACE_ME-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "REPLACE_ME",
-  storageBucket: "REPLACE_ME.firebasestorage.app",
-  messagingSenderId: "REPLACE_ME",
-  appId: "REPLACE_ME",
+  apiKey: "AIzaSyBUWOun6Fc6R58T_FAxDB217kypYi_Y59c",
+  authDomain: "mori-no-yakai.firebaseapp.com",
+  databaseURL: "https://mori-no-yakai-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "mori-no-yakai",
+  storageBucket: "mori-no-yakai.firebasestorage.app",
+  messagingSenderId: "126231981141",
+  appId: "1:126231981141:web:b593b219aeec9f8a7078dc",
+  measurementId: "G-TK8226P7P9",
 };
 
 const app = initializeApp(firebaseConfig);
