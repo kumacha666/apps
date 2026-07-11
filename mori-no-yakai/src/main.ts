@@ -4,6 +4,7 @@ import {
   generateRoomId,
   generateMemberId,
   joinRoom,
+  leaveRoom,
   markOnline,
   listenRoomState,
   listenMembers,
@@ -40,6 +41,8 @@ let currentMemberId: string | null = null;
 let latestState: RoomState | null = null;
 let latestMembers: Record<string, Member> = {};
 let latestCenterCards: RoleId[] = [];
+let unsubscribers: Array<() => void> = [];
+let tickInterval: ReturnType<typeof setInterval> | null = null;
 
 function screens(): Record<Phase | "home", HTMLElement> {
   return {
@@ -82,24 +85,41 @@ async function enterRoom(roomId: string, name: string): Promise<void> {
   startListening();
 }
 
+function stopListening(): void {
+  unsubscribers.forEach((unsub) => unsub());
+  unsubscribers = [];
+  if (tickInterval !== null) {
+    clearInterval(tickInterval);
+    tickInterval = null;
+  }
+}
+
 function startListening(): void {
   if (!currentRoomId || !currentMemberId) return;
   const roomId = currentRoomId;
 
-  listenRoomState(roomId, (state) => {
-    latestState = state;
-    renderCurrentPhase();
-  });
-  listenMembers(roomId, (members) => {
-    latestMembers = members;
-    renderCurrentPhase();
-  });
-  listenCenterCards(roomId, (cards) => {
-    latestCenterCards = cards;
-    renderCurrentPhase();
-  });
+  stopListening(); // 前の部屋のリスナー・タイマーが残っていれば止める
 
-  setInterval(() => {
+  unsubscribers.push(
+    listenRoomState(roomId, (state) => {
+      latestState = state;
+      renderCurrentPhase();
+    })
+  );
+  unsubscribers.push(
+    listenMembers(roomId, (members) => {
+      latestMembers = members;
+      renderCurrentPhase();
+    })
+  );
+  unsubscribers.push(
+    listenCenterCards(roomId, (cards) => {
+      latestCenterCards = cards;
+      renderCurrentPhase();
+    })
+  );
+
+  tickInterval = setInterval(() => {
     if (currentRoomId) void maybeAdvancePhase(currentRoomId);
     renderCurrentPhase(); // タイマー表示の更新のため
   }, 1000);
@@ -116,6 +136,21 @@ function reconnectPresence(): void {
   }
 }
 
+/** ロビーの「トップに戻る」から呼ばれる。退室してホーム画面に戻り、名前を入力し直せるようにする。 */
+function leaveCurrentRoom(): void {
+  if (currentRoomId && currentMemberId) {
+    void leaveRoom(currentRoomId, currentMemberId);
+  }
+  stopListening();
+  currentRoomId = null;
+  currentMemberId = null;
+  latestState = null;
+  latestMembers = {};
+  latestCenterCards = [];
+  localStorage.removeItem(STORAGE_KEY);
+  showScreen("home");
+}
+
 function renderCurrentPhase(): void {
   if (!latestState || !currentRoomId || !currentMemberId) return;
   if (!latestMembers[currentMemberId]) return; // 自分のmember情報がまだ来ていない
@@ -126,6 +161,7 @@ function renderCurrentPhase(): void {
     state: latestState,
     members: latestMembers,
     centerCards: latestCenterCards,
+    requestLeaveRoom: leaveCurrentRoom,
   };
 
   showScreen(latestState.phase);

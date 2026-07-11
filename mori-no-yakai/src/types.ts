@@ -28,6 +28,8 @@ export interface Member {
   vote?: string;
   /** 直近でタップ済みの夜ステップindex。全員が現在のステップに追いつくと早期に次へ進む。 */
   nightReadyStep?: number;
+  /** 議論フェーズで「つぎへ」をタップしたときのroundNumber。全員が現在のroundNumberに追いつくと早期に次へ進む。 */
+  discussReadyRound?: number;
 }
 
 export interface RoomState {

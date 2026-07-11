@@ -23,6 +23,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
 
   container.innerHTML = `
     <h2>🌙 森の夜会</h2>
+    <button id="btn-leave-room" class="btn-link">← トップに戻る</button>
     <div class="room-code-box">
       部屋コード
       <div class="room-code">${ctx.roomId}</div>
@@ -44,6 +45,8 @@ export function render(container: HTMLElement, ctx: AppContext): void {
         : `<p class="waiting-text">ホストの開始を待っています…</p>`
     }
 
+    ${renderRoleLegend(config)}
+
     ${
       host
         ? `<button id="btn-start-game" class="btn-primary" ${valid ? "" : "disabled"}>ゲーム開始</button>
@@ -53,12 +56,37 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     }
   `;
 
+  container.querySelector("#btn-leave-room")?.addEventListener("click", () => {
+    ctx.requestLeaveRoom();
+  });
+
   if (host) {
     wireHostControls(container, ctx, config, members.length);
     container.querySelector<HTMLButtonElement>("#btn-start-game")?.addEventListener("click", () => {
       void startGame(ctx.roomId);
     });
   }
+}
+
+function renderRoleLegend(config: RoleConfig): string {
+  const included: Array<keyof typeof ROLE_META> = ["villager", "werewolf"];
+  if (config.seer) included.push("seer");
+  if (config.robber) included.push("robber");
+  if (config.minion) included.push("minion");
+
+  return `
+    <h3>役職の説明</h3>
+    <ul class="role-legend">
+      ${included
+        .map(
+          (id) => `<li>
+            <strong>${ROLE_META[id].emoji} ${ROLE_META[id].name}</strong>
+            <span class="hint-text">${ROLE_META[id].description}</span>
+          </li>`
+        )
+        .join("")}
+    </ul>
+  `;
 }
 
 function renderHostSettings(

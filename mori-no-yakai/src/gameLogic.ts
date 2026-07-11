@@ -115,6 +115,20 @@ export function advanceDiscussState(state: RoomState, now: number): RoomState {
   return { ...state, phase: "vote", voteEndsAt: now + VOTE_DURATION_MS };
 }
 
+/**
+ * オンラインの参加者全員が、現在のroundNumberについて議論フェーズの「つぎへ」を
+ * タップ済みか判定する。夜ステップと異なり議論は1ラウンドにつき1回しかないため、
+ * ステップindexではなくroundNumberをキーにする。
+ */
+export function isDiscussComplete(
+  participants: Pick<Member, "id" | "online" | "discussReadyRound">[],
+  roundNumber: number
+): boolean {
+  const online = participants.filter((m) => m.online);
+  if (online.length === 0) return false;
+  return online.every((m) => m.discussReadyRound === roundNumber);
+}
+
 /** 投票フェーズから結果フェーズへ進める。 */
 export function advanceVoteState(state: RoomState): RoomState {
   return { ...state, phase: "result" };
