@@ -157,10 +157,17 @@ function startListening(): void {
  * または1人で複数端末を切り替えてテストする、といった場面で発生しうる）。
  * フォアグラウンド復帰時に即座に一度チェックし直すことで、tickIntervalの
  * 次の発火を待たずに取り残されたフェーズを進められるようにする。
+ *
+ * **`markOnline()`の書き込みが完了するのを待ってから早期進行チェックを呼ぶこと。**
+ * 並行に呼ぶと、復帰した本人がまだ`online:false`のままの状態で早期進行チェックが
+ * 部屋を読みに行ってしまい、他の全員が既にタップ/投票済みだった場合、
+ * オンライン参加者の集計から復帰した本人が除外されたまま「全員完了」と判定されて
+ * フェーズが進んでしまう——つまり、復帰した本人の夜アクション・議論・投票の順番が
+ * 本人の書き込みが反映される前に飛ばされてしまう（2026-07-11、Codexレビュー指摘）。
  */
-function reconnectPresence(): void {
+async function reconnectPresence(): Promise<void> {
   if (currentRoomId && currentMemberId) {
-    void markOnline(currentRoomId, currentMemberId);
+    await markOnline(currentRoomId, currentMemberId);
     void maybeAdvancePhase(currentRoomId);
     if (latestState?.phase === "night") void maybeCloseNightStepEarly(currentRoomId);
     if (latestState?.phase === "discuss") void maybeCloseDiscussEarly(currentRoomId);
@@ -241,10 +248,10 @@ function init(): void {
   });
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") reconnectPresence();
+    if (document.visibilityState === "visible") void reconnectPresence();
   });
-  window.addEventListener("pageshow", reconnectPresence);
-  window.addEventListener("online", reconnectPresence);
+  window.addEventListener("pageshow", () => void reconnectPresence());
+  window.addEventListener("online", () => void reconnectPresence());
 
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) {

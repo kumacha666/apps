@@ -14,6 +14,7 @@ import { buildRoleDeck, buildNightOrderFromConfig, shuffle, defaultRoleConfig } 
 import {
   DEFAULT_NIGHT_STEP_DURATION_MS,
   DEFAULT_DISCUSS_DURATION_MS,
+  NIGHT_STEP_MIN_DURATION_MS,
   advanceNightState,
   advanceDiscussState,
   advanceVoteState,
@@ -286,6 +287,38 @@ export async function markNightReady(roomId: string, memberId: string, stepIndex
 }
 
 /**
+ * 全員タップ済みだが最低経過時間(NIGHT_STEP_MIN_DURATION_MS)未満で保留された場合に、
+ * その最低時間に達した時点で再チェックを1回スケジュールする。ルームID+ステップindexで
+ * 重複スケジュールを防ぐ（同じステップに対して複数のタイマーが積み上がらないようにする）。
+ *
+ * これが無いと、全員タップ済みかつ最低時間未達で保留された直後に全員の端末が
+ * バックグラウンドになった場合（新たなmembersの更新イベントも発生せず、tickIntervalも
+ * ブラウザに間引かれる）、最低時間に達した瞬間を検知する手段が無くなり、自然タイムアウト
+ * （ホスト設定の本来の時間、最低時間よりずっと長いことが多い）まで進行が止まってしまう
+ * （2026-07-11、Codexレビュー指摘）。
+ */
+let pendingFloorRetry: { key: string; timer: ReturnType<typeof setTimeout> } | null = null;
+
+function scheduleNightStepFloorRetry(
+  roomId: string,
+  state: Pick<RoomState, "nightStepEndsAt" | "nightStepIndex"> & { nightStepDurationMs?: number }
+): void {
+  const key = `${roomId}:${state.nightStepIndex}`;
+  if (pendingFloorRetry?.key === key) return;
+  if (pendingFloorRetry) clearTimeout(pendingFloorRetry.timer);
+
+  const stepDurationMs = state.nightStepDurationMs ?? DEFAULT_NIGHT_STEP_DURATION_MS;
+  const stepStartedAt = state.nightStepEndsAt - stepDurationMs;
+  const remainingMs = Math.max(0, NIGHT_STEP_MIN_DURATION_MS - (Date.now() - stepStartedAt));
+
+  const timer = setTimeout(() => {
+    pendingFloorRetry = null;
+    void maybeCloseNightStepEarly(roomId);
+  }, remainingMs + 50);
+  pendingFloorRetry = { key, timer };
+}
+
+/**
  * 配札済みかつオンラインの全員が現在の夜ステップでタップ済みなら、早めに次のステップへ進める。
  * ただしステップ開始からNIGHT_STEP_MIN_DURATION_MS未満の場合は進めない。
  * 該当役職が誰にも配られていないステップ（中央カード行き）は行動する人がいないため
@@ -296,10 +329,13 @@ export async function maybeCloseNightStepEarly(roomId: string): Promise<void> {
   const snap = await get(ref(db, `rooms/${roomId}`));
   const room = snap.val();
   if (!room?.state || room.state.phase !== "night") return;
-  if (!isNightStepMinElapsed(room.state, Date.now())) return;
   const members: Record<string, Member> = room.members ?? {};
   const participantsList = Object.values(members).filter((m) => m.originalRole);
   if (!isNightStepComplete(participantsList, room.state.nightStepIndex)) return;
+  if (!isNightStepMinElapsed(room.state, Date.now())) {
+    scheduleNightStepFloorRetry(roomId, room.state);
+    return;
+  }
 
   await runTransaction(ref(db, `rooms/${roomId}`), (r) => {
     if (!r?.state || r.state.phase !== "night" || r.state.nightStepIndex !== room.state.nightStepIndex) {
