@@ -1,6 +1,7 @@
-import type { Member } from "./types";
+import type { Member, RoomState } from "./types";
 
-export const NIGHT_STEP_DURATION_MS = 8000;
+export const NIGHT_STEP_DURATION_OPTIONS_MS = [15000, 30000, 45000, 60000];
+export const DEFAULT_NIGHT_STEP_DURATION_MS = 30000;
 export const VOTE_DURATION_MS = 60000;
 export const DISCUSS_DURATION_OPTIONS_MS = [3 * 60000, 5 * 60000, 8 * 60000];
 export const DEFAULT_DISCUSS_DURATION_MS = 5 * 60000;
@@ -75,4 +76,40 @@ export function effectiveHostId(
     .filter((m) => m.online)
     .sort((a, b) => a.joinedAt - b.joinedAt);
   return online.length > 0 ? online[0].id : hostId;
+}
+
+/**
+ * 現在の夜ステップについて、オンラインの参加者全員が「つぎへ」をタップ済みか判定する。
+ * 該当役職の人だけがタップすると誰が誰か推測できてしまうため、全員のタップを揃える。
+ */
+export function isNightStepComplete(
+  participants: Pick<Member, "id" | "online" | "nightReadyStep">[],
+  stepIndex: number
+): boolean {
+  const online = participants.filter((m) => m.online);
+  if (online.length === 0) return false;
+  return online.every((m) => (m.nightReadyStep ?? -1) >= stepIndex);
+}
+
+/** 夜ステップを1つ進める（最終ステップなら議論フェーズへ）。タイマー満了・全員タップ完了の両方から使う。 */
+export function advanceNightState(state: RoomState, now: number): RoomState {
+  const nextIndex = state.nightStepIndex + 1;
+  if (nextIndex >= state.nightOrder.length) {
+    return { ...state, phase: "discuss", discussEndsAt: now + state.discussDurationMs };
+  }
+  return {
+    ...state,
+    nightStepIndex: nextIndex,
+    nightStepEndsAt: now + state.nightStepDurationMs,
+  };
+}
+
+/** 議論フェーズから投票フェーズへ進める。 */
+export function advanceDiscussState(state: RoomState, now: number): RoomState {
+  return { ...state, phase: "vote", voteEndsAt: now + VOTE_DURATION_MS };
+}
+
+/** 投票フェーズから結果フェーズへ進める。 */
+export function advanceVoteState(state: RoomState): RoomState {
+  return { ...state, phase: "result" };
 }

@@ -1,11 +1,12 @@
 import type { AppContext } from "./context";
-import { participants } from "./context";
+import { participants, onlineMembers } from "./context";
 import { ROLE_META } from "../roles";
-import { robberSwap } from "../roomSync";
+import { robberSwap, markNightReady } from "../roomSync";
 import type { RoleId } from "../types";
 
 interface NightUiState {
   step: number;
+  readyTapped?: boolean;
   wolfPeekIndex?: number;
   seerChoice?: "player" | "center" | "skip";
   seerTargetId?: string;
@@ -34,16 +35,32 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     <div class="night-timer">${remainingSec}秒</div>
   `;
 
-  if (!isMyTurn) {
-    container.innerHTML = `
-      ${header}
-      <p class="waiting-text">${ROLE_META[currentRoleId].emoji} だれかが行動中…しずかに待とう</p>
-    `;
-    return;
-  }
+  const body = isMyTurn
+    ? renderActionFor(currentRoleId, ctx)
+    : `<p class="waiting-text">${ROLE_META[currentRoleId].emoji} だれかが行動中…しずかに待とう</p>`;
 
-  container.innerHTML = `${header}${renderActionFor(currentRoleId, ctx)}`;
-  wireActions(container, currentRoleId, ctx);
+  const alreadyReady = uiState.readyTapped || (self?.nightReadyStep ?? -1) >= stepIndex;
+  const online = onlineMembers(ctx).filter((m) => m.originalRole);
+  const readyCount = online.filter((m) => (m.nightReadyStep ?? -1) >= stepIndex).length;
+
+  container.innerHTML = `
+    ${header}
+    ${body}
+    <button id="btn-night-ready" class="btn-primary" ${alreadyReady ? "disabled" : ""}>
+      ${alreadyReady ? "つぎを待っています…" : "つぎへ"}
+    </button>
+    <p class="hint-text">準備完了 ${readyCount}/${online.length}人</p>
+    <p class="hint-text">全員がタップすると次に進みます（役職と関係なく全員タップしてください）</p>
+  `;
+
+  if (isMyTurn) wireActions(container, currentRoleId, ctx);
+
+  container.querySelector("#btn-night-ready")?.addEventListener("click", () => {
+    if (uiState.readyTapped) return;
+    uiState.readyTapped = true;
+    render(container, ctx);
+    void markNightReady(ctx.roomId, ctx.memberId, stepIndex);
+  });
 }
 
 function renderActionFor(roleId: RoleId, ctx: AppContext): string {
@@ -67,7 +84,7 @@ function renderWerewolf(ctx: AppContext): string {
   if (wolves.length >= 2) {
     return `
       <p>${ROLE_META.werewolf.emoji} あなたはおおかみ。仲間は…</p>
-      <ul class="member-list">${others.map((m) => `<li>${m.avatar} ${escapeHtml(m.name)}</li>`).join("")}</ul>
+      <ul class="member-list">${others.map((m) => `<li>${escapeHtml(m.name)}</li>`).join("")}</ul>
     `;
   }
   if (uiState.wolfPeekIndex !== undefined) {
@@ -92,7 +109,7 @@ function renderMinion(ctx: AppContext): string {
     <p>${ROLE_META.minion.emoji} あなたは子狼。おおかみ陣営の仲間は…</p>
     ${
       wolves.length > 0
-        ? `<ul class="member-list">${wolves.map((m) => `<li>${m.avatar} ${escapeHtml(m.name)}</li>`).join("")}</ul>`
+        ? `<ul class="member-list">${wolves.map((m) => `<li>${escapeHtml(m.name)}</li>`).join("")}</ul>`
         : `<p>場にはおおかみがいません。あなただけがおおかみ陣営です。</p>`
     }
   `;
@@ -119,7 +136,7 @@ function renderSeer(ctx: AppContext): string {
     <p class="hint-text">他の1人 か 中央カード2枚、どちらか片方だけ見られます。</p>
     <div class="member-list">
       ${others
-        .map((m) => `<button data-seer-player="${m.id}" class="btn-card" ${picked.length > 0 ? "disabled" : ""}>${m.avatar} ${escapeHtml(m.name)}</button>`)
+        .map((m) => `<button data-seer-player="${m.id}" class="btn-card" ${picked.length > 0 ? "disabled" : ""}>${escapeHtml(m.name)}</button>`)
         .join("")}
     </div>
     <div class="center-card-row">
@@ -141,7 +158,7 @@ function renderRobber(ctx: AppContext): string {
     <p>${ROLE_META.robber.emoji} あなたはきつね。誰かと役職を交換しますか？</p>
     <div class="member-list">
       ${others
-        .map((m) => `<button data-robber-target="${m.id}" class="btn-card">${m.avatar} ${escapeHtml(m.name)}</button>`)
+        .map((m) => `<button data-robber-target="${m.id}" class="btn-card">${escapeHtml(m.name)}</button>`)
         .join("")}
     </div>
     <button data-robber-skip class="btn-link">だれとも交換しない</button>

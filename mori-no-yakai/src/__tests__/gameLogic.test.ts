@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { tallyVotes, determineWinner, effectiveHostId } from "../gameLogic";
+import {
+  tallyVotes,
+  determineWinner,
+  effectiveHostId,
+  isNightStepComplete,
+  advanceNightState,
+  advanceDiscussState,
+  advanceVoteState,
+} from "../gameLogic";
+import type { RoomState } from "../types";
 
 describe("tallyVotes", () => {
   it("最多得票の1人だけが脱落する", () => {
@@ -154,5 +163,83 @@ describe("effectiveHostId", () => {
       { id: "b", online: false, joinedAt: 20 },
     ];
     expect(effectiveHostId(members, "a")).toBe("a");
+  });
+});
+
+describe("isNightStepComplete", () => {
+  it("オンラインの参加者全員が現在のステップ以上にタップ済みならtrue", () => {
+    const members = [
+      { id: "a", online: true, nightReadyStep: 2 },
+      { id: "b", online: true, nightReadyStep: 3 },
+    ];
+    expect(isNightStepComplete(members, 2)).toBe(true);
+  });
+
+  it("1人でも未タップならfalse", () => {
+    const members = [
+      { id: "a", online: true, nightReadyStep: 2 },
+      { id: "b", online: true, nightReadyStep: 1 },
+    ];
+    expect(isNightStepComplete(members, 2)).toBe(false);
+  });
+
+  it("nightReadyStep未設定（一度もタップしていない）ならfalse扱い", () => {
+    const members = [{ id: "a", online: true }];
+    expect(isNightStepComplete(members, 0)).toBe(false);
+  });
+
+  it("オフラインの参加者はタップ判定から除外する", () => {
+    const members = [
+      { id: "a", online: true, nightReadyStep: 2 },
+      { id: "b", online: false },
+    ];
+    expect(isNightStepComplete(members, 2)).toBe(true);
+  });
+
+  it("オンラインの参加者が誰もいなければfalse", () => {
+    expect(isNightStepComplete([{ id: "a", online: false }], 0)).toBe(false);
+  });
+});
+
+describe("advanceNightState / advanceDiscussState / advanceVoteState", () => {
+  const baseState: RoomState = {
+    phase: "night",
+    hostId: "host",
+    createdAt: 0,
+    roleConfig: { centerCount: 3, werewolfCount: 1, seer: true, robber: true, minion: true },
+    nightOrder: ["werewolf", "seer", "robber"],
+    nightStepIndex: 0,
+    nightStepDurationMs: 30000,
+    nightStepEndsAt: 1000,
+    discussDurationMs: 300000,
+    discussEndsAt: 0,
+    voteEndsAt: 0,
+  };
+
+  it("次の夜ステップがあれば進めてタイマーをリセットする", () => {
+    const next = advanceNightState(baseState, 5000);
+    expect(next.phase).toBe("night");
+    expect(next.nightStepIndex).toBe(1);
+    expect(next.nightStepEndsAt).toBe(5000 + baseState.nightStepDurationMs);
+  });
+
+  it("最終ステップなら議論フェーズへ進む", () => {
+    const state = { ...baseState, nightStepIndex: 2 };
+    const next = advanceNightState(state, 5000);
+    expect(next.phase).toBe("discuss");
+    expect(next.discussEndsAt).toBe(5000 + baseState.discussDurationMs);
+  });
+
+  it("議論フェーズから投票フェーズへ進む", () => {
+    const state = { ...baseState, phase: "discuss" as const };
+    const next = advanceDiscussState(state, 10000);
+    expect(next.phase).toBe("vote");
+    expect(next.voteEndsAt).toBeGreaterThan(10000);
+  });
+
+  it("投票フェーズから結果フェーズへ進む", () => {
+    const state = { ...baseState, phase: "vote" as const };
+    const next = advanceVoteState(state);
+    expect(next.phase).toBe("result");
   });
 });

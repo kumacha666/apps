@@ -26,7 +26,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
           const role = m.currentRole;
           const meta = role ? ROLE_META[role] : undefined;
           return `<li class="${eliminatedSet.has(m.id) ? "eliminated" : ""}">
-            ${m.avatar} ${escapeHtml(m.name)}
+            ${escapeHtml(m.name)}
             — ${meta ? `${meta.emoji} ${meta.name}` : "?"}
             <span class="vote-count">(${counts[m.id] ?? 0}票)</span>
           </li>`;

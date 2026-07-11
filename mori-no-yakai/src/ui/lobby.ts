@@ -2,8 +2,14 @@ import type { AppContext } from "./context";
 import { isHost, currentHostId, onlineMembers } from "./context";
 import { ROLE_META } from "../roles";
 import { computeVillagerCount, isValidRoleConfig } from "../roles";
-import { DISCUSS_DURATION_OPTIONS_MS } from "../gameLogic";
-import { updateRoleConfig, updateDiscussDuration, resetRoleConfigToDefault, startGame } from "../roomSync";
+import { DISCUSS_DURATION_OPTIONS_MS, NIGHT_STEP_DURATION_OPTIONS_MS } from "../gameLogic";
+import {
+  updateRoleConfig,
+  updateDiscussDuration,
+  updateNightStepDuration,
+  resetRoleConfigToDefault,
+  startGame,
+} from "../roomSync";
 import type { RoleConfig } from "../types";
 
 export function render(container: HTMLElement, ctx: AppContext): void {
@@ -11,6 +17,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
   const members = onlineMembers(ctx);
   const config = ctx.state.roleConfig;
   const discussDurationMs = ctx.state.discussDurationMs;
+  const nightStepDurationMs = ctx.state.nightStepDurationMs;
   const villagerCount = computeVillagerCount(members.length, config);
   const valid = isValidRoleConfig(members.length, config) && members.length >= 3;
 
@@ -26,14 +33,14 @@ export function render(container: HTMLElement, ctx: AppContext): void {
       ${members
         .map(
           (m) =>
-            `<li>${m.avatar} ${escapeHtml(m.name)}${m.id === currentHostId(ctx) ? " 👑" : ""}</li>`
+            `<li>${escapeHtml(m.name)}${m.id === currentHostId(ctx) ? " 👑" : ""}</li>`
         )
         .join("")}
     </ul>
 
     ${
       host
-        ? renderHostSettings(config, villagerCount, discussDurationMs)
+        ? renderHostSettings(config, villagerCount, discussDurationMs, nightStepDurationMs)
         : `<p class="waiting-text">ホストの開始を待っています…</p>`
     }
 
@@ -57,7 +64,8 @@ export function render(container: HTMLElement, ctx: AppContext): void {
 function renderHostSettings(
   config: RoleConfig,
   villagerCount: number,
-  discussDurationMs: number
+  discussDurationMs: number,
+  nightStepDurationMs: number
 ): string {
   return `
     <div class="lobby-settings">
@@ -85,6 +93,17 @@ function renderHostSettings(
         </div>
       </div>
       <button id="btn-reset-config" class="btn-link">人数に合わせて初期化</button>
+
+      <h3>夜アクションの制限時間</h3>
+      <p class="hint-text">短すぎると何もできず終わってしまいます。迷ったら30秒がおすすめです。</p>
+      <div class="setting-row">
+        ${NIGHT_STEP_DURATION_OPTIONS_MS.map(
+          (ms) =>
+            `<button data-night-step="${ms}" class="btn-toggle ${
+              ms === nightStepDurationMs ? "active" : ""
+            }">${ms / 1000}秒</button>`
+        ).join("")}
+      </div>
 
       <h3>議論タイマー</h3>
       <div class="setting-row">
@@ -140,6 +159,13 @@ function wireHostControls(
     btn.addEventListener("click", () => {
       const centerCount = Number(btn.dataset.center) as 2 | 3;
       push({ ...config, centerCount });
+    });
+  });
+
+  container.querySelectorAll<HTMLButtonElement>("[data-night-step]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const ms = Number(btn.dataset.nightStep);
+      void updateNightStepDuration(ctx.roomId, ms);
     });
   });
 
