@@ -11,6 +11,8 @@ import {
   listenCenterCards,
   maybeAdvancePhase,
   maybeCloseNightStepEarly,
+  maybeCloseDiscussEarly,
+  maybeCloseVoteEarly,
 } from "./roomSync";
 import * as lobbyUi from "./ui/lobby";
 import * as nightUi from "./ui/night";
@@ -111,6 +113,17 @@ function startListening(): void {
     listenMembers(roomId, (members) => {
       latestMembers = members;
       renderCurrentPhase();
+      // 全員タップによる早期進行は本来tickInterval（1秒ごと）の再チェックにも依存しているが、
+      // バックグラウンドタブ（例: 1人で複数端末を切り替えてテストする、または全員が「つぎへ」を
+      // 押した後スマホを置いて待つ）ではブラウザがsetIntervalを大幅に間引く/停止することがあり、
+      // どの端末のtickIntervalも動かないままタイムアウトまで進まなくなる（2026-07-11、実プレイで発覚）。
+      // onValueのリアルタイム通知はバックグラウンドでも比較的届きやすいため、メンバー情報が
+      // 更新されるたびにも早期進行チェックを行い、ポーリングだけに依存しないようにする。
+      if (currentRoomId) {
+        if (latestState?.phase === "night") void maybeCloseNightStepEarly(currentRoomId);
+        if (latestState?.phase === "discuss") void maybeCloseDiscussEarly(currentRoomId);
+        if (latestState?.phase === "vote") void maybeCloseVoteEarly(currentRoomId);
+      }
     })
   );
   unsubscribers.push(
@@ -137,10 +150,21 @@ function startListening(): void {
  * スマホのスリープ・タブのバックグラウンド化からの復帰時に呼ぶ。
  * WebSocket切断でonDisconnectが発火しoffline化していても、復帰時に
  * 明示的にonline:trueへ書き戻さないと他プレイヤーからは退室したまま見えてしまう。
+ *
+ * あわせて、バックグラウンド中は`tickInterval`（setInterval）がブラウザに間引かれ、
+ * 全員タップ済みでも早期進行チェックが動かないまま止まっていることがある
+ * （2026-07-11、実プレイで発覚。全員が「つぎへ」を押した後スマホを置いて待つ、
+ * または1人で複数端末を切り替えてテストする、といった場面で発生しうる）。
+ * フォアグラウンド復帰時に即座に一度チェックし直すことで、tickIntervalの
+ * 次の発火を待たずに取り残されたフェーズを進められるようにする。
  */
 function reconnectPresence(): void {
   if (currentRoomId && currentMemberId) {
     void markOnline(currentRoomId, currentMemberId);
+    void maybeAdvancePhase(currentRoomId);
+    if (latestState?.phase === "night") void maybeCloseNightStepEarly(currentRoomId);
+    if (latestState?.phase === "discuss") void maybeCloseDiscussEarly(currentRoomId);
+    if (latestState?.phase === "vote") void maybeCloseVoteEarly(currentRoomId);
   }
 }
 
