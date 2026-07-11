@@ -11,8 +11,6 @@ interface NightUiState {
   wolfPeekIndex?: number;
   seerChoice?: "player" | "center" | "skip";
   seerTargetId?: string;
-  seerPicked?: number[];
-  seerCenterIndexes?: number[];
   robberPending?: boolean;
   robberTargetId?: string;
   robberResult?: RoleId;
@@ -53,7 +51,10 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     ? alreadyReady
       ? renderReadOnly(currentRoleId, ctx)
       : renderActionFor(currentRoleId, ctx)
-    : `<p class="waiting-text">${ROLE_META[currentRoleId].emoji} だれかが行動中…しずかに待とう</p>`;
+    : `
+      <p class="waiting-text">${ROLE_META[currentRoleId].emoji} だれかが行動中…しずかに待とう</p>
+      <p class="role-description">${ROLE_META[currentRoleId].name}：${ROLE_META[currentRoleId].description}</p>
+    `;
 
   const online = onlineMembers(ctx).filter((m) => m.originalRole);
   const readyCount = online.filter((m) => (m.nightReadyStep ?? -1) >= stepIndex).length;
@@ -110,17 +111,23 @@ function renderActionFor(roleId: RoleId, ctx: AppContext): string {
     case "robber":
       return renderRobber(ctx);
     case "villager":
-      return `<p>あなたはうさぎ。することはありません。</p>`;
+      return `
+        <p>${ROLE_META.villager.emoji} あなたはうさぎ。することはありません。</p>
+        <p class="role-description">${ROLE_META.villager.description}</p>
+      `;
   }
 }
 
 function renderWerewolf(ctx: AppContext): string {
   const wolves = participants(ctx).filter((m) => m.originalRole === "werewolf");
   const others = wolves.filter((m) => m.id !== ctx.memberId);
+  const description = `<p class="role-description">${ROLE_META.werewolf.description}</p>`;
+
   if (wolves.length >= 2) {
     return `
       <p>${ROLE_META.werewolf.emoji} あなたはおおかみ。仲間は…</p>
       <ul class="member-list">${others.map((m) => `<li>${escapeHtml(m.name)}</li>`).join("")}</ul>
+      ${description}
     `;
   }
   if (uiState.wolfPeekIndex !== undefined) {
@@ -128,6 +135,17 @@ function renderWerewolf(ctx: AppContext): string {
     return `
       <p>${ROLE_META.werewolf.emoji} あなたは一匹狼。仲間はいません。</p>
       <p>中央カード${uiState.wolfPeekIndex + 1}は ${ROLE_META[role].emoji} ${ROLE_META[role].name}</p>
+      ${description}
+    `;
+  }
+  // centerCardsはRTDBの別リスナーから届くため、state（phase="night"）より一瞬遅れて
+  // 到着することがある。到着前にボタンを描画すると枚数が0→2/3と変化してちらつくため、
+  // 読み込み中はボタンを出さない。
+  if (ctx.centerCards.length === 0) {
+    return `
+      <p>${ROLE_META.werewolf.emoji} あなたは一匹狼。仲間はいません。</p>
+      <p class="hint-text">中央カードを読み込み中…</p>
+      ${description}
     `;
   }
   return `
@@ -136,6 +154,7 @@ function renderWerewolf(ctx: AppContext): string {
     <div class="center-card-row">
       ${ctx.centerCards.map((_, i) => `<button data-center-peek="${i}" class="btn-card">中央${i + 1}</button>`).join("")}
     </div>
+    ${description}
   `;
 }
 
@@ -148,46 +167,57 @@ function renderMinion(ctx: AppContext): string {
         ? `<ul class="member-list">${wolves.map((m) => `<li>${escapeHtml(m.name)}</li>`).join("")}</ul>`
         : `<p>場にはおおかみがいません。あなただけがおおかみ陣営です。</p>`
     }
+    <p class="role-description">${ROLE_META.minion.description}</p>
   `;
 }
 
 function renderSeer(ctx: AppContext): string {
+  const description = `<p class="role-description">${ROLE_META.seer.description}</p>`;
+
   if (uiState.seerChoice === "player" && uiState.seerTargetId) {
     const target = ctx.members[uiState.seerTargetId];
-    return `<p>${escapeHtml(target.name)}の役職は ${ROLE_META[target.currentRole!].emoji} ${ROLE_META[target.currentRole!].name}</p>`;
+    return `<p>${escapeHtml(target.name)}の役職は ${ROLE_META[target.currentRole!].emoji} ${ROLE_META[target.currentRole!].name}</p>${description}`;
   }
-  if (uiState.seerChoice === "center" && uiState.seerCenterIndexes) {
-    return `<p>中央カードは ${uiState.seerCenterIndexes
+  if (uiState.seerChoice === "center") {
+    const indexes = ctx.centerCards.map((_, i) => i).slice(0, 2);
+    return `<p>中央カードは ${indexes
       .map((i) => `${ROLE_META[ctx.centerCards[i]].emoji} ${ROLE_META[ctx.centerCards[i]].name}`)
-      .join(" と ")}</p>`;
+      .join(" と ")}</p>${description}`;
   }
   if (uiState.seerChoice === "skip") {
-    return `<p>何も見ませんでした。</p>`;
+    return `<p>何も見ませんでした。</p>${description}`;
   }
 
   const others = participants(ctx).filter((m) => m.id !== ctx.memberId);
-  const picked = uiState.seerPicked ?? [];
+  // centerCardsが届く前は「中央2枚を見る」ボタンを出さない（ちらつき防止）
+  const centerButton =
+    ctx.centerCards.length > 0
+      ? `<button data-seer-center class="btn-card">中央2枚を見る</button>`
+      : `<span class="hint-text">中央カードを読み込み中…</span>`;
   return `
     <p>${ROLE_META.seer.emoji} あなたはふくろう。何を見ますか？</p>
     <p class="hint-text">他の1人 か 中央カード2枚、どちらか片方だけ見られます。</p>
     <div class="member-list">
       ${others
-        .map((m) => `<button data-seer-player="${m.id}" class="btn-card" ${picked.length > 0 ? "disabled" : ""}>${escapeHtml(m.name)}</button>`)
+        .map((m) => `<button data-seer-player="${m.id}" class="btn-card">${escapeHtml(m.name)}</button>`)
         .join("")}
     </div>
     <div class="center-card-row">
-      ${ctx.centerCards.map((_, i) => `<button data-seer-center="${i}" class="btn-card ${picked.includes(i) ? "active" : ""}">中央${i + 1}</button>`).join("")}
+      ${centerButton}
     </div>
     <button data-seer-skip class="btn-link">何も見ない</button>
+    ${description}
   `;
 }
 
 function renderRobber(ctx: AppContext): string {
+  const description = `<p class="role-description">${ROLE_META.robber.description}</p>`;
+
   if (uiState.robberResult) {
-    return `<p>${ROLE_META.robber.emoji} 交換後、あなたの役職は ${ROLE_META[uiState.robberResult].emoji} ${ROLE_META[uiState.robberResult].name}</p>`;
+    return `<p>${ROLE_META.robber.emoji} 交換後、あなたの役職は ${ROLE_META[uiState.robberResult].emoji} ${ROLE_META[uiState.robberResult].name}</p>${description}`;
   }
   if (uiState.robberPending) {
-    return `<p>${ROLE_META.robber.emoji} 交換中…</p>`;
+    return `<p>${ROLE_META.robber.emoji} 交換中…</p>${description}`;
   }
   const others = participants(ctx).filter((m) => m.id !== ctx.memberId);
   return `
@@ -198,6 +228,7 @@ function renderRobber(ctx: AppContext): string {
         .join("")}
     </div>
     <button data-robber-skip class="btn-link">だれとも交換しない</button>
+    ${description}
   `;
 }
 
@@ -215,24 +246,16 @@ function wireActions(container: HTMLElement, roleId: RoleId, ctx: AppContext): v
   if (roleId === "seer") {
     container.querySelectorAll<HTMLButtonElement>("[data-seer-player]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        if (uiState.seerChoice || (uiState.seerPicked?.length ?? 0) > 0) return;
+        if (uiState.seerChoice) return;
         uiState.seerChoice = "player";
         uiState.seerTargetId = btn.dataset.seerPlayer;
         render(container, ctx);
       });
     });
-    container.querySelectorAll<HTMLButtonElement>("[data-seer-center]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        if (uiState.seerChoice) return;
-        const index = Number(btn.dataset.seerCenter);
-        const picked = (uiState.seerPicked ??= []);
-        if (!picked.includes(index)) picked.push(index);
-        if (picked.length >= 2) {
-          uiState.seerChoice = "center";
-          uiState.seerCenterIndexes = picked.slice(0, 2);
-        }
-        render(container, ctx);
-      });
+    container.querySelector("[data-seer-center]")?.addEventListener("click", () => {
+      if (uiState.seerChoice) return;
+      uiState.seerChoice = "center";
+      render(container, ctx);
     });
     container.querySelector("[data-seer-skip]")?.addEventListener("click", () => {
       if (uiState.seerChoice) return;

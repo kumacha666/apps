@@ -7,6 +7,8 @@ export interface AppContext {
   state: RoomState;
   members: Record<string, Member>;
   centerCards: RoleId[];
+  /** ロビーの「トップに戻る」ボタンから呼ぶ。main.ts側で退室処理とホーム画面への遷移を行う。 */
+  requestLeaveRoom: () => void;
 }
 
 /** 表示・操作上のホストID。元のホストがオフラインの間は最古参のオンラインメンバーが引き継ぐ。 */

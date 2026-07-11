@@ -18,6 +18,7 @@ import {
   advanceDiscussState,
   advanceVoteState,
   isNightStepComplete,
+  isDiscussComplete,
 } from "./gameLogic";
 
 const ROOM_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -85,6 +86,11 @@ export async function markOnline(roomId: string, memberId: string): Promise<void
   onDisconnect(ref(db, `rooms/${roomId}/members/${memberId}/online`)).set(false);
 }
 
+/** ロビーから「トップに戻る」を押したときに使う。オンライン状態だけをfalseにして退室扱いにする。 */
+export async function leaveRoom(roomId: string, memberId: string): Promise<void> {
+  await update(ref(db, `rooms/${roomId}/members/${memberId}`), { online: false });
+}
+
 export function listenRoomState(roomId: string, cb: (state: RoomState | null) => void): Unsubscribe {
   return onValue(ref(db, `rooms/${roomId}/state`), (snap) => cb(snap.val()));
 }
@@ -142,6 +148,7 @@ export async function startGame(roomId: string): Promise<void> {
       delete members[id].currentRole;
       delete members[id].vote;
       delete members[id].nightReadyStep;
+      delete members[id].discussReadyRound;
     }
     onlineIds.forEach((id, i) => {
       members[id].originalRole = dealt[i];
@@ -268,6 +275,40 @@ export async function maybeCloseNightStepEarly(roomId: string): Promise<void> {
   });
 }
 
+/**
+ * 議論画面で「つぎへ」をタップしたことを記録する。夜ステップと違い議論は1ラウンドにつき
+ * 1回しかないため、stepIndexの代わりにroundNumberをキーにする。
+ */
+export async function markDiscussReady(roomId: string, memberId: string, roundNumber: number): Promise<void> {
+  await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
+    if (!room?.state || room.state.phase !== "discuss" || room.state.roundNumber !== roundNumber) {
+      return room;
+    }
+    if (!room.members?.[memberId]) return room;
+    room.members[memberId].discussReadyRound = roundNumber;
+    return room;
+  });
+  await maybeCloseDiscussEarly(roomId);
+}
+
+/** 配札済みかつオンラインの全員が議論フェーズでタップ済みなら、早めに投票フェーズへ進める。 */
+export async function maybeCloseDiscussEarly(roomId: string): Promise<void> {
+  const snap = await get(ref(db, `rooms/${roomId}`));
+  const room = snap.val();
+  if (!room?.state || room.state.phase !== "discuss") return;
+  const members: Record<string, Member> = room.members ?? {};
+  const participantsList = Object.values(members).filter((m) => m.originalRole);
+  if (!isDiscussComplete(participantsList, room.state.roundNumber)) return;
+
+  await runTransaction(ref(db, `rooms/${roomId}`), (r) => {
+    if (!r?.state || r.state.phase !== "discuss" || r.state.roundNumber !== room.state.roundNumber) {
+      return r;
+    }
+    r.state = advanceDiscussState(r.state, Date.now());
+    return r;
+  });
+}
+
 /** 配札済みかつオンラインのプレイヤー全員が投票済みなら、投票フェーズを早めに締め切る。 */
 export async function maybeCloseVoteEarly(roomId: string): Promise<void> {
   const membersSnap = await get(ref(db, `rooms/${roomId}/members`));
@@ -293,6 +334,7 @@ export async function resetToLobby(roomId: string): Promise<void> {
       delete members[id].currentRole;
       delete members[id].vote;
       delete members[id].nightReadyStep;
+      delete members[id].discussReadyRound;
     }
     room.members = members;
     room.centerCards = null;

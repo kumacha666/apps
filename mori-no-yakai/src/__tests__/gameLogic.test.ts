@@ -4,6 +4,7 @@ import {
   determineWinner,
   effectiveHostId,
   isNightStepComplete,
+  isDiscussComplete,
   advanceNightState,
   advanceDiscussState,
   advanceVoteState,
@@ -199,6 +200,41 @@ describe("isNightStepComplete", () => {
 
   it("オンラインの参加者が誰もいなければfalse", () => {
     expect(isNightStepComplete([{ id: "a", online: false }], 0)).toBe(false);
+  });
+});
+
+describe("isDiscussComplete", () => {
+  it("オンラインの参加者全員が現在のroundNumberでタップ済みならtrue", () => {
+    const members = [
+      { id: "a", online: true, discussReadyRound: 3 },
+      { id: "b", online: true, discussReadyRound: 3 },
+    ];
+    expect(isDiscussComplete(members, 3)).toBe(true);
+  });
+
+  it("1人でも未タップならfalse", () => {
+    const members = [
+      { id: "a", online: true, discussReadyRound: 3 },
+      { id: "b", online: true, discussReadyRound: undefined },
+    ];
+    expect(isDiscussComplete(members, 3)).toBe(false);
+  });
+
+  it("前のラウンドのタップは今回のラウンドではカウントしない", () => {
+    const members = [{ id: "a", online: true, discussReadyRound: 2 }];
+    expect(isDiscussComplete(members, 3)).toBe(false);
+  });
+
+  it("オフラインの参加者はタップ判定から除外する", () => {
+    const members = [
+      { id: "a", online: true, discussReadyRound: 3 },
+      { id: "b", online: false, discussReadyRound: undefined },
+    ];
+    expect(isDiscussComplete(members, 3)).toBe(true);
+  });
+
+  it("オンラインの参加者が誰もいなければfalse", () => {
+    expect(isDiscussComplete([{ id: "a", online: false }], 0)).toBe(false);
   });
 });
 
