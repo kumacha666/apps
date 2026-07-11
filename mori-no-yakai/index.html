@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>森の夜会 — ワンナイト人狼系アプリ</title>
+  <link rel="manifest" href="./manifest.json">
+  <script type="module" crossorigin src="./game.js"></script>
+  <link rel="stylesheet" crossorigin href="./style.css">
+</head>
+<body>
+  <div id="app">
+    <div id="screen-home" class="screen active">
+      <h1 class="title">🌙 森の夜会</h1>
+      <p class="subtitle">動物たちの正体隠匿ゲーム</p>
+      <div class="field">
+        <label for="input-name">なまえ</label>
+        <input id="input-name" type="text" maxlength="10" placeholder="くまごろう" />
+      </div>
+      <div class="field">
+        <label>どうぶつ</label>
+        <div id="avatar-picker" class="avatar-picker"></div>
+      </div>
+      <button id="btn-create-room" class="btn-primary">部屋をつくる</button>
+      <div class="join-row">
+        <input id="input-room-code" type="text" maxlength="5" placeholder="部屋コード" class="code-input" />
+        <button id="btn-join-room" class="btn-secondary">入室</button>
+      </div>
+      <p id="home-error" class="error-text"></p>
+    </div>
+
+    <div id="screen-lobby" class="screen"></div>
+    <div id="screen-night" class="screen"></div>
+    <div id="screen-discuss" class="screen"></div>
+    <div id="screen-vote" class="screen"></div>
+    <div id="screen-result" class="screen"></div>
+  </div>
+
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js");
+    }
+  </script>
+</body>
+</html>
