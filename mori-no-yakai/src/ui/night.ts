@@ -14,6 +14,10 @@ interface NightUiState {
   robberPending?: boolean;
   robberTargetId?: string;
   robberResult?: RoleId;
+  /** centerCardsは別リスナーで届くため一時的に空配列で再描画されることがある。
+   *  一度受信できた値をこのラウンド内で固定し、後続の描画がその値を使い続けることで
+   *  中央カードのボタンが出たり消えたりするちらつきを防ぐ。 */
+  centerCardsSnapshot?: RoleId[];
 }
 
 let uiState: NightUiState = { step: -1, round: -1 };
@@ -27,6 +31,12 @@ export function render(container: HTMLElement, ctx: AppContext): void {
   // roundNumberも合わせて比較する。
   if (uiState.step !== stepIndex || uiState.round !== roundNumber) {
     uiState = { step: stepIndex, round: roundNumber };
+  }
+  // 一度受信できたcenterCardsはラウンド中は不変なので、初回受信時点でスナップショットを
+  // 固定する。以降の描画では常にこのスナップショットを使い、centerCardsリスナーの
+  // タイミングのズレによる再空配列化の影響を受けないようにする。
+  if (!uiState.centerCardsSnapshot && ctx.centerCards.length > 0) {
+    uiState.centerCardsSnapshot = ctx.centerCards;
   }
 
   const currentRoleId = ctx.state.nightOrder[stepIndex];
@@ -130,8 +140,9 @@ function renderWerewolf(ctx: AppContext): string {
       ${description}
     `;
   }
+  const centerCards = uiState.centerCardsSnapshot ?? ctx.centerCards;
   if (uiState.wolfPeekIndex !== undefined) {
-    const role = ctx.centerCards[uiState.wolfPeekIndex];
+    const role = centerCards[uiState.wolfPeekIndex];
     return `
       <p>${ROLE_META.werewolf.emoji} あなたは一匹狼。仲間はいません。</p>
       <p>中央カード${uiState.wolfPeekIndex + 1}は ${ROLE_META[role].emoji} ${ROLE_META[role].name}</p>
@@ -140,8 +151,8 @@ function renderWerewolf(ctx: AppContext): string {
   }
   // centerCardsはRTDBの別リスナーから届くため、state（phase="night"）より一瞬遅れて
   // 到着することがある。到着前にボタンを描画すると枚数が0→2/3と変化してちらつくため、
-  // 読み込み中はボタンを出さない。
-  if (ctx.centerCards.length === 0) {
+  // 読み込み中はボタンを出さない（centerCardsSnapshotで一度受信した値をラウンド中固定する）。
+  if (centerCards.length === 0) {
     return `
       <p>${ROLE_META.werewolf.emoji} あなたは一匹狼。仲間はいません。</p>
       <p class="hint-text">中央カードを読み込み中…</p>
@@ -152,7 +163,7 @@ function renderWerewolf(ctx: AppContext): string {
     <p>${ROLE_META.werewolf.emoji} あなたは一匹狼。仲間はいません。</p>
     <p>中央カードを1枚だけ見られます。</p>
     <div class="center-card-row">
-      ${ctx.centerCards.map((_, i) => `<button data-center-peek="${i}" class="btn-card">中央${i + 1}</button>`).join("")}
+      ${centerCards.map((_, i) => `<button data-center-peek="${i}" class="btn-card">中央${i + 1}</button>`).join("")}
     </div>
     ${description}
   `;
@@ -173,15 +184,16 @@ function renderMinion(ctx: AppContext): string {
 
 function renderSeer(ctx: AppContext): string {
   const description = `<p class="role-description">${ROLE_META.seer.description}</p>`;
+  const centerCards = uiState.centerCardsSnapshot ?? ctx.centerCards;
 
   if (uiState.seerChoice === "player" && uiState.seerTargetId) {
     const target = ctx.members[uiState.seerTargetId];
     return `<p>${escapeHtml(target.name)}の役職は ${ROLE_META[target.currentRole!].emoji} ${ROLE_META[target.currentRole!].name}</p>${description}`;
   }
   if (uiState.seerChoice === "center") {
-    const indexes = ctx.centerCards.map((_, i) => i).slice(0, 2);
+    const indexes = centerCards.map((_, i) => i).slice(0, 2);
     return `<p>中央カードは ${indexes
-      .map((i) => `${ROLE_META[ctx.centerCards[i]].emoji} ${ROLE_META[ctx.centerCards[i]].name}`)
+      .map((i) => `${ROLE_META[centerCards[i]].emoji} ${ROLE_META[centerCards[i]].name}`)
       .join(" と ")}</p>${description}`;
   }
   if (uiState.seerChoice === "skip") {
@@ -191,7 +203,7 @@ function renderSeer(ctx: AppContext): string {
   const others = participants(ctx).filter((m) => m.id !== ctx.memberId);
   // centerCardsが届く前は「中央2枚を見る」ボタンを出さない（ちらつき防止）
   const centerButton =
-    ctx.centerCards.length > 0
+    centerCards.length > 0
       ? `<button data-seer-center class="btn-card">中央2枚を見る</button>`
       : `<span class="hint-text">中央カードを読み込み中…</span>`;
   return `

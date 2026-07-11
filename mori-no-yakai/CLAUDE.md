@@ -48,7 +48,7 @@ lobby → night（役職ごとに複数ステップ） → discuss → vote → 
 - リロード・再入室時（`joinRoom()`）は既存メンバーの `originalRole`/`currentRole`/`vote` を保持し、プロフィール・プレゼンスのみ更新する（`set`で上書きしない）
 - **スマホのスリープ・タブのバックグラウンド化からの復帰時**は、WebSocket切断で`onDisconnect`が発火し`online:false`になったままになる（復帰しても自動では`online:true`に戻らない）。`main.ts`で`visibilitychange`/`pageshow`/`online`イベントから`markOnline()`（`src/roomSync.ts`）を呼び、プレゼンスと`onDisconnect`ハンドラを再登録すること
 - ロビー画面の「トップに戻る」（`leaveRoom()`）は`online:false`を書き込むだけで退室扱いにする。`main.ts`側では`stopListening()`でRTDBリスナー3種と`maybeAdvancePhase`用の`setInterval`を確実に破棄してからホーム画面に戻る。**`startListening()`を呼ぶたびに前回のリスナー・タイマーを止めていないと、退室→別の部屋に入室を繰り返した際にリスナーとintervalが際限なく積み上がる**ため、`startListening()`冒頭で必ず`stopListening()`を呼ぶこと
-- `state`/`members`/`centerCards`は別々の`onValue`リスナーで届くため、Firebase側では`startGame()`が1回のトランザクションで原子的に書き込んでいても、**クライアント側では3つのリスナーの発火順序がずれることがある**（例: phaseが"night"になった直後、centerCardsがまだ空配列のまま届いていない）。中央カードのボタンなど、`centerCards`に依存するUIは`ctx.centerCards.length === 0`の間は「読み込み中…」を表示し、ボタンが出たり消えたりするちらつきを避けること（`src/ui/night.ts`のおおかみ・ふくろうの中央カード表示を参照）
+- `state`/`members`/`centerCards`は別々の`onValue`リスナーで届くため、Firebase側では`startGame()`が1回のトランザクションで原子的に書き込んでいても、**クライアント側では3つのリスナーの発火順序がずれることがある**（例: phaseが"night"になった直後、centerCardsが空配列のまま届いていたり、その後も再描画のたびに空配列と実データを行き来したりする）。**`ctx.centerCards.length === 0`の間だけ「読み込み中…」を出すガードだけでは不十分**で、`centerCards`依存のUIがちらついたまま治らない不具合が2026-07-11に再発した。`src/ui/night.ts`では`uiState.centerCardsSnapshot`として一度受信できた値をそのラウンド中は固定し、以降の描画は常にこのスナップショットを使う（ライブの`ctx.centerCards`を直接使わない）ことで解消した。同様に`centerCards`に依存する新しいUIを追加する場合もこのスナップショットパターンに従うこと
 
 ## 役職の秘密性について（重要）
 
@@ -74,5 +74,6 @@ Vite + TypeScript構成（`7metch`/`enblo`と同様）。
 - `src/roomSync.ts` はRTDB I/Oのラッパーで、純粋なゲームロジック（`roles.ts`/`gameLogic.ts`）を呼び出す形にしている。RTDB自体のユニットテストはしていない（emoji-dmの`app.js`と同様、I/O層はテスト対象外）
 - 部屋コード生成（5文字、`ABCDEFGHJKLMNPQRSTUVWXYZ23456789`）は`apps/emoji-dm`のパターンを踏襲
 - **プレイヤーのアバター選択は廃止し、名前のみ表示する**（2026-07-11）。役職自体が動物モチーフ（🐰🐺🦉🦊🐾）のため、プレイヤーの見た目も動物絵文字にすると「役職の絵文字」と「その人が選んだ見た目」が混同され紛らわしいという実プレイのフィードバックによる。`Member`型に`avatar`フィールドは無い
-- **役職の説明（`ROLE_META[id].description`）は、ロビー（現在の構成に含まれる役職一覧）・夜アクション画面（自分の番/待機中どちらも）・議論画面に表示する**（2026-07-11）。役職名だけでは初見のプレイヤーには何をする役職か分かりにくいという実プレイのフィードバックによる。新しい画面を追加する場合もこの慣習に従うこと
+- **役職の説明（`ROLE_META[id].description`）は、ロビー（現在の構成に含まれる役職一覧）・夜アクション画面（自分の番/待機中どちらも）・議論画面・投票画面に表示する**（2026-07-11）。役職名だけでは初見のプレイヤーには何をする役職か分かりにくいという実プレイのフィードバックによる。新しい画面を追加する場合もこの慣習に従うこと
+- **投票画面には自分の現在の役職（currentRole）と、陣営ごとの勝利条件の説明も表示する**（`src/ui/vote.ts`）。勝敗判定ロジック（`determineWinner`）と表示文言は独立して保守されるため、`determineWinner`の判定条件を変更した場合は`vote.ts`の勝利条件テキストも合わせて更新すること
 - v1では未実装: アプリ内チャット・音声、拡張役職（Doppelganger/Mason/Troublemaker/Drunk/Insomniac相当）、リロード後の完全な状態復元、観戦モード
