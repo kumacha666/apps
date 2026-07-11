@@ -1,5 +1,6 @@
 import type { Member, RoomState, RoleId } from "../types";
 import { effectiveHostId } from "../gameLogic";
+import { ROLE_META } from "../roles";
 
 export interface AppContext {
   roomId: string;
@@ -31,4 +32,16 @@ export function participants(ctx: AppContext): Member[] {
 
 export function otherMembers(ctx: AppContext): Member[] {
   return onlineMembers(ctx).filter((m) => m.id !== ctx.memberId);
+}
+
+/**
+ * 自分の役職を常に画面の一番上に固定表示するためのバナーHTML。
+ * 役職未確定（ロビー・配札前・不参加）なら空文字を返す。
+ * night/discuss/vote/resultの各画面はこれを他のコンテンツより前に置くこと。
+ */
+export function myRoleBanner(ctx: AppContext): string {
+  const role = ctx.members[ctx.memberId]?.currentRole;
+  if (!role) return "";
+  const meta = ROLE_META[role];
+  return `<p class="role-reminder">${meta.emoji} あなたは ${meta.name}</p>`;
 }

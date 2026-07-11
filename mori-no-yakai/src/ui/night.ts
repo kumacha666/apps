@@ -1,5 +1,5 @@
 import type { AppContext } from "./context";
-import { participants, onlineMembers } from "./context";
+import { participants, onlineMembers, myRoleBanner } from "./context";
 import { ROLE_META } from "../roles";
 import { robberSwap, markNightReady } from "../roomSync";
 import type { RoleId } from "../types";
@@ -51,6 +51,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
 
   const header = `
     <h2>🌙 夜がふけていく…</h2>
+    ${myRoleBanner(ctx)}
     <div class="night-timer">${remainingSec}秒</div>
   `;
 
