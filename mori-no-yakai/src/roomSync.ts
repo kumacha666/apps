@@ -53,6 +53,7 @@ export async function joinRoom(roomId: string, memberId: string, name: string): 
       discussDurationMs: DEFAULT_DISCUSS_DURATION_MS,
       discussEndsAt: 0,
       voteEndsAt: 0,
+      roundNumber: 0,
     };
     await set(stateRef, initialState);
   }
@@ -148,6 +149,10 @@ export async function startGame(roomId: string): Promise<void> {
     });
 
     const nightOrder = buildNightOrder(dealt);
+    // nightStepDurationMsはこの設定の追加前に作られた部屋には存在しない可能性があるため
+    // デフォルトにフォールバックする（欠けたままだとDate.now()+undefinedがNaNになり、
+    // RTDBがトランザクション結果を拒否してゲーム開始自体が失敗する）
+    const nightStepDurationMs = room.state.nightStepDurationMs ?? DEFAULT_NIGHT_STEP_DURATION_MS;
 
     room.members = members;
     room.centerCards = center;
@@ -156,8 +161,10 @@ export async function startGame(roomId: string): Promise<void> {
       phase: nightOrder.length > 0 ? "night" : "discuss",
       nightOrder,
       nightStepIndex: 0,
-      nightStepEndsAt: Date.now() + room.state.nightStepDurationMs,
+      nightStepDurationMs,
+      nightStepEndsAt: Date.now() + nightStepDurationMs,
       discussEndsAt: Date.now() + room.state.discussDurationMs,
+      roundNumber: (room.state.roundNumber ?? 0) + 1,
     };
     return room;
   });

@@ -42,4 +42,7 @@ export interface RoomState {
   discussDurationMs: number;
   discussEndsAt: number;
   voteEndsAt: number;
+  /** startGame()が呼ばれるたびにインクリメントする。夜ステップUIの状態を「新しい対局」として
+   *  正しくリセットするために使う（同じstepIndex=0で始まる対局が連続すると区別できないため）。 */
+  roundNumber: number;
 }

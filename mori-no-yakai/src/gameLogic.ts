@@ -91,8 +91,14 @@ export function isNightStepComplete(
   return online.every((m) => (m.nightReadyStep ?? -1) >= stepIndex);
 }
 
-/** 夜ステップを1つ進める（最終ステップなら議論フェーズへ）。タイマー満了・全員タップ完了の両方から使う。 */
+/**
+ * 夜ステップを1つ進める（最終ステップなら議論フェーズへ）。タイマー満了・全員タップ完了の両方から使う。
+ * `nightStepDurationMs`はこの設定の追加前に作られた部屋のRTDBデータには存在しない可能性があるため、
+ * 欠けている場合はデフォルト値にフォールバックする（さもないと`Date.now() + undefined`がNaNになり、
+ * RTDBがトランザクション結果を拒否してゲームが進行不能になる）。
+ */
 export function advanceNightState(state: RoomState, now: number): RoomState {
+  const stepDurationMs = state.nightStepDurationMs ?? DEFAULT_NIGHT_STEP_DURATION_MS;
   const nextIndex = state.nightStepIndex + 1;
   if (nextIndex >= state.nightOrder.length) {
     return { ...state, phase: "discuss", discussEndsAt: now + state.discussDurationMs };
@@ -100,7 +106,7 @@ export function advanceNightState(state: RoomState, now: number): RoomState {
   return {
     ...state,
     nightStepIndex: nextIndex,
-    nightStepEndsAt: now + state.nightStepDurationMs,
+    nightStepEndsAt: now + stepDurationMs,
   };
 }
 

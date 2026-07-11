@@ -6,6 +6,7 @@ import type { RoleId } from "../types";
 
 interface NightUiState {
   step: number;
+  round: number;
   readyTapped?: boolean;
   wolfPeekIndex?: number;
   seerChoice?: "player" | "center" | "skip";
@@ -17,29 +18,39 @@ interface NightUiState {
   robberResult?: RoleId;
 }
 
-let uiState: NightUiState = { step: -1 };
+let uiState: NightUiState = { step: -1, round: -1 };
 
 export function render(container: HTMLElement, ctx: AppContext): void {
   const stepIndex = ctx.state.nightStepIndex;
-  if (uiState.step !== stepIndex) {
-    uiState = { step: stepIndex };
+  const roundNumber = ctx.state.roundNumber;
+  // stepIndexだけを見て比較すると、対局を跨いで両方とも最初のステップが0の場合に
+  // リセットされず、前回の対局でタップ済みのローカル状態が残ってしまう（サーバー側は
+  // startGame()でnightReadyStepを消しているのにボタンが押せないままになる）ため、
+  // roundNumberも合わせて比較する。
+  if (uiState.step !== stepIndex || uiState.round !== roundNumber) {
+    uiState = { step: stepIndex, round: roundNumber };
   }
 
   const currentRoleId = ctx.state.nightOrder[stepIndex];
   const self = ctx.members[ctx.memberId];
   const remainingSec = Math.max(0, Math.ceil((ctx.state.nightStepEndsAt - Date.now()) / 1000));
   const isMyTurn = self?.originalRole === currentRoleId;
+  const alreadyReady = uiState.readyTapped || (self?.nightReadyStep ?? -1) >= stepIndex;
 
   const header = `
     <h2>🌙 夜がふけていく…</h2>
     <div class="night-timer">${remainingSec}秒</div>
   `;
 
+  // 「つぎへ」タップ後もアクションボタンを押せるままにすると、既に他の全員が
+  // 準備完了で夜フェーズを抜けた後にきつねの交換などが実行されてしまう恐れがあるため、
+  // タップ後は読み取り専用の表示に切り替え、ボタンは配線しない。
   const body = isMyTurn
-    ? renderActionFor(currentRoleId, ctx)
+    ? alreadyReady
+      ? renderReadOnly(currentRoleId, ctx)
+      : renderActionFor(currentRoleId, ctx)
     : `<p class="waiting-text">${ROLE_META[currentRoleId].emoji} だれかが行動中…しずかに待とう</p>`;
 
-  const alreadyReady = uiState.readyTapped || (self?.nightReadyStep ?? -1) >= stepIndex;
   const online = onlineMembers(ctx).filter((m) => m.originalRole);
   const readyCount = online.filter((m) => (m.nightReadyStep ?? -1) >= stepIndex).length;
 
@@ -53,7 +64,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     <p class="hint-text">全員がタップすると次に進みます（役職と関係なく全員タップしてください）</p>
   `;
 
-  if (isMyTurn) wireActions(container, currentRoleId, ctx);
+  if (isMyTurn && !alreadyReady) wireActions(container, currentRoleId, ctx);
 
   container.querySelector("#btn-night-ready")?.addEventListener("click", () => {
     if (uiState.readyTapped) return;
@@ -61,6 +72,27 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     render(container, ctx);
     void markNightReady(ctx.roomId, ctx.memberId, stepIndex);
   });
+}
+
+/** 「つぎへ」タップ後の読み取り専用表示。すでに決めた結果があればそれを見せ、なければ何もしなかった旨を表示する。 */
+function renderReadOnly(roleId: RoleId, ctx: AppContext): string {
+  switch (roleId) {
+    case "werewolf": {
+      const wolves = participants(ctx).filter((m) => m.originalRole === "werewolf");
+      if (wolves.length >= 2 || uiState.wolfPeekIndex !== undefined) return renderWerewolf(ctx);
+      return `<p>${ROLE_META.werewolf.emoji} 中央カードは見ませんでした。</p>`;
+    }
+    case "minion":
+      return renderMinion(ctx);
+    case "seer":
+      if (uiState.seerChoice) return renderSeer(ctx);
+      return `<p>${ROLE_META.seer.emoji} 何も見ませんでした。</p>`;
+    case "robber":
+      if (uiState.robberResult) return renderRobber(ctx);
+      return `<p>${ROLE_META.robber.emoji} 誰とも交換しませんでした。</p>`;
+    case "villager":
+      return `<p>あなたはうさぎ。することはありません。</p>`;
+  }
 }
 
 function renderActionFor(roleId: RoleId, ctx: AppContext): string {

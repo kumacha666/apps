@@ -7,6 +7,7 @@ import {
   advanceNightState,
   advanceDiscussState,
   advanceVoteState,
+  DEFAULT_NIGHT_STEP_DURATION_MS,
 } from "../gameLogic";
 import type { RoomState } from "../types";
 
@@ -214,6 +215,7 @@ describe("advanceNightState / advanceDiscussState / advanceVoteState", () => {
     discussDurationMs: 300000,
     discussEndsAt: 0,
     voteEndsAt: 0,
+    roundNumber: 1,
   };
 
   it("次の夜ステップがあれば進めてタイマーをリセットする", () => {
@@ -221,6 +223,16 @@ describe("advanceNightState / advanceDiscussState / advanceVoteState", () => {
     expect(next.phase).toBe("night");
     expect(next.nightStepIndex).toBe(1);
     expect(next.nightStepEndsAt).toBe(5000 + baseState.nightStepDurationMs);
+  });
+
+  it("nightStepDurationMsが欠けている（設定追加前の部屋データ）場合はデフォルトにフォールバックする", () => {
+    // RTDBから読み込んだ古い部屋データにはnightStepDurationMsが存在しない可能性がある。
+    // フォールバックしないとDate.now()+undefinedがNaNになり、RTDBがトランザクションを拒否する。
+    const { nightStepDurationMs, ...rest } = baseState;
+    const legacyState = rest as RoomState;
+    const next = advanceNightState(legacyState, 5000);
+    expect(Number.isFinite(next.nightStepEndsAt)).toBe(true);
+    expect(next.nightStepEndsAt).toBe(5000 + DEFAULT_NIGHT_STEP_DURATION_MS);
   });
 
   it("最終ステップなら議論フェーズへ進む", () => {
