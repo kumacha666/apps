@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   tallyVotes,
   determineWinner,
-  effectiveHostId,
   isNightStepComplete,
   isNightStepMinElapsed,
   isDiscussComplete,
@@ -140,33 +139,6 @@ describe("determineWinner", () => {
       { id: "b", currentRole: "minion" as const },
     ];
     expect(determineWinner(members, ["b"])).toBe("wolf");
-  });
-});
-
-describe("effectiveHostId", () => {
-  it("ホストがオンラインならそのままホスト", () => {
-    const members = [
-      { id: "a", online: true, joinedAt: 100 },
-      { id: "b", online: true, joinedAt: 50 },
-    ];
-    expect(effectiveHostId(members, "a")).toBe("a");
-  });
-
-  it("ホストがオフラインなら最も早く入室したオンラインメンバーが引き継ぐ", () => {
-    const members = [
-      { id: "a", online: false, joinedAt: 10 },
-      { id: "b", online: true, joinedAt: 200 },
-      { id: "c", online: true, joinedAt: 100 },
-    ];
-    expect(effectiveHostId(members, "a")).toBe("c");
-  });
-
-  it("全員オフラインなら元のホストIDを維持する", () => {
-    const members = [
-      { id: "a", online: false, joinedAt: 10 },
-      { id: "b", online: false, joinedAt: 20 },
-    ];
-    expect(effectiveHostId(members, "a")).toBe("a");
   });
 });
 

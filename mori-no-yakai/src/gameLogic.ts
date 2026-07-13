@@ -70,23 +70,6 @@ export function determineWinner(
 }
 
 /**
- * 表示・操作上のホストを決める。state.hostIdのプレイヤーがオフラインの間は、
- * オンラインの中で最も早く入室したプレイヤーがホスト権限を引き継ぐ
- * （全クライアントが同じ入力から決定的に同じ結果を得るので、書き込み不要）。
- */
-export function effectiveHostId(
-  members: Pick<Member, "id" | "online" | "joinedAt">[],
-  hostId: string
-): string {
-  const host = members.find((m) => m.id === hostId);
-  if (host?.online) return hostId;
-  const online = members
-    .filter((m) => m.online)
-    .sort((a, b) => a.joinedAt - b.joinedAt);
-  return online.length > 0 ? online[0].id : hostId;
-}
-
-/**
  * 現在の夜ステップについて、オンラインの参加者全員が「つぎへ」をタップ済みか判定する。
  * 該当役職の人だけがタップすると誰が誰か推測できてしまうため、全員のタップを揃える。
  */
