@@ -19,6 +19,7 @@ import * as nightUi from "./ui/night";
 import * as discussUi from "./ui/discuss";
 import * as voteUi from "./ui/vote";
 import * as resultUi from "./ui/result";
+import { isHostUnlocked, unlockHost, verifyHostPassphrase } from "./hostAuth";
 
 const STORAGE_KEY = "mori-no-yakai-session";
 declare const __APP_VERSION__: string;
@@ -234,6 +235,19 @@ function renderCurrentPhase(): void {
 function init(): void {
   document.getElementById("btn-create-room")?.addEventListener("click", () => {
     const name = (document.getElementById("input-name") as HTMLInputElement).value;
+    const errorEl = document.getElementById("home-error")!;
+    errorEl.textContent = "";
+
+    if (!isHostUnlocked()) {
+      const input = window.prompt("部屋をつくるには合言葉が必要です");
+      if (input === null) return; // キャンセル
+      if (!verifyHostPassphrase(input)) {
+        errorEl.textContent = "合言葉が違います";
+        return;
+      }
+      unlockHost();
+    }
+
     void enterRoom(generateRoomId(), name);
   });
 
