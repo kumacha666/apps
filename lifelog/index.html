@@ -1554,7 +1554,7 @@ function importData() {
     reader.onload = ev => {
       try {
         const imported = JSON.parse(ev.target.result);
-        if (!imported.cats || !imported.logs) throw new Error();
+        if (!Array.isArray(imported.cats) || typeof imported.logs !== 'object' || imported.logs === null) throw new Error();
         if (!confirm('現在のデータをインポートデータで上書きしますか？')) return;
         state = imported;
         save();
