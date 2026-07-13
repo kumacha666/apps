@@ -801,7 +801,7 @@ function renderToday() {
            onclick="openLog('${cat.id}')">
         <div class="cat-icon">${cat.icon||'📝'}</div>
         <div class="cat-name">${esc(cat.name)}</div>
-        <div class="cat-value ${e?'':'empty'}">${val || (e ? '✓' : '未記録')}</div>
+        <div class="cat-value ${e?'':'empty'}">${esc(val) || (e ? '✓' : '未記録')}</div>
       </div>`;
   }).join('');
 
@@ -1155,15 +1155,15 @@ function getInsights(cat, days30) {
     cat.items.forEach(item => {
       const last = lastUsed[item];
       if (!last) {
-        rows.push({ type:'tip', label:'💡 未使用', text:`「${item}」はまだ記録がありません` });
+        rows.push({ type:'tip', label:'💡 未使用', text:`「${esc(item)}」はまだ記録がありません` });
       } else {
         const d = diff(last, todayS);
-        if (d >= 14) rows.push({ type:'tip', label:'💡 提案', text:`「${item}」を最後に使ったのは${d}日前です` });
+        if (d >= 14) rows.push({ type:'tip', label:'💡 提案', text:`「${esc(item)}」を最後に使ったのは${d}日前です` });
       }
     });
 
     const top = Object.entries(usage).sort((a,b)=>b[1]-a[1])[0];
-    if (top) rows.push({ type:'stat', label:'👑 最多', text:`「${top[0]}」が最もよく使われています (${top[1]}回)` });
+    if (top) rows.push({ type:'stat', label:'👑 最多', text:`「${esc(top[0])}」が最もよく使われています (${top[1]}回)` });
 
     const maxCnt = Math.max(...cat.items.map(i => usage[i]||0), 1);
     const barRows = [...cat.items]
