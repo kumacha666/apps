@@ -9,6 +9,7 @@ import {
   type Unsubscribe,
 } from "firebase/database";
 import { db } from "./firebase";
+import { isHostUnlocked } from "./hostAuth";
 import type { Member, RoomState, RoleConfig, RoleId, CenterCardsData } from "./types";
 import { buildRoleDeck, buildNightOrderFromConfig, shuffle, defaultRoleConfig } from "./roles";
 import {
@@ -37,13 +38,26 @@ export function generateMemberId(): string {
   return crypto.randomUUID();
 }
 
-/** 部屋に入室する。まだ部屋が存在しなければロビー状態として初期化する。 */
+/**
+ * 部屋に入室する。まだ部屋が存在しなければロビー状態として初期化する。
+ *
+ * **部屋の新規作成（＝この関数が呼ばれた時点でstateがまだ存在しないケース）は、
+ * ホストの合言葉ゲート（`hostAuth.isHostUnlocked()`）を解錠済みの端末からのみ許可する。**
+ * 「部屋をつくる」ボタンはUI側で解錠を確認してから呼ぶが、「入室」ボタンは既存の部屋コードへの
+ * 参加を想定しており合言葉を求めない。もしここでの検証を省くと、赤の他人が「入室」欄に
+ * 未使用の部屋コードを適当に打ち込むだけで合言葉なしに新しい部屋を作成しホストになれてしまい、
+ * 「部屋をつくる」ボタン側だけを塞いだホスト限定の意味が無くなる（2026-07-13、実プレイの
+ * 質問をきっかけに発覚した抜け穴の修正）。
+ */
 export async function joinRoom(roomId: string, memberId: string, name: string): Promise<void> {
   const memberRef = ref(db, `rooms/${roomId}/members/${memberId}`);
   const stateRef = ref(db, `rooms/${roomId}/state`);
 
   const stateSnap = await get(stateRef);
   if (!stateSnap.exists()) {
+    if (!isHostUnlocked()) {
+      throw new Error("この部屋は存在しません");
+    }
     const initialState: RoomState = {
       phase: "lobby",
       hostId: memberId,

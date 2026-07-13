@@ -275,9 +275,17 @@ function init(): void {
       if (session.roomId && session.memberId) {
         currentRoomId = session.roomId;
         currentMemberId = session.memberId;
-        void joinRoom(session.roomId, session.memberId, session.name).then(() => {
-          startListening();
-        });
+        void joinRoom(session.roomId, session.memberId, session.name)
+          .then(() => {
+            startListening();
+          })
+          .catch(() => {
+            // 保存されていた部屋がもう存在しない等の理由で再入室に失敗した場合は
+            // 古いセッション情報を破棄し、ホーム画面からやり直せるようにする
+            currentRoomId = null;
+            currentMemberId = null;
+            localStorage.removeItem(STORAGE_KEY);
+          });
       }
     } catch {
       localStorage.removeItem(STORAGE_KEY);
