@@ -17,6 +17,7 @@
 /enblo-classic/      enbloの大規模再設計前の完成形（試作品v1）を凍結・独立公開したもの — Vite+TS、ビルド有
 /enblo-tools/        enblo用デバッグ・プレビュー用の単独HTMLツール群
 /emoji-dm/           絵文字チャット — 静的PWA + Firebase (RTDB/Functions/FCM)
+/lifelog/            ライフログ＋ライフコーチ — 静的PWA
 /love-lab/           静的PWA
 /mhwilds-karikan/    モンハンワイルズ計算ツール — 静的PWA、JSONデータ駆動
 /mori-no-yakai/      「森の夜会」ワンナイト人狼系アプリ — Vite+TS、ビルド有、Firebase RTDB
@@ -24,18 +25,19 @@
 ```
 
 - ランディングページ（`index.html`）に掲載されているのは現状 `7metch`・`emoji-dm`・`enblo-classic`・`LifeLog` のみ。他のアプリは未掲載／開発中で、URLを直接踏んで動作確認する運用。新しいアプリを公開する際は `index.html` の `.apps` セクションにカードを追加する。`mori-no-yakai` は実機での動作確認・機能実装が完了済みだが、**身内利用アプリのため意図的に非掲載**（不特定多数への公開を想定していない、2026-07-11判断。`mori-no-yakai/CLAUDE.md`参照）。著作権的な懸念もあり、部屋の新規作成（ホスト操作）は合言葉ゲートで管理者本人に限定している（2026-07-13、`mori-no-yakai/CLAUDE.md`の「部屋作成（ホスト）の合言葉ゲート」参照）。`enblo-classic` は専用PNGアイコン（`icon-192.png`/`icon-512.png`）が未整備のため、ランディングページのカードは絵文字（⚔️）ベースのdata URI SVGアイコンを使用している（LifeLogカードと同じ手法）。
-- `LifeLog` は本リポジトリのディレクトリではなく、姉妹リポジトリ `kumacha666/lifelog`（単独リポジトリで維持、独自のGitHub Pages `https://kumacha666.github.io/lifelog/` でホスティング）へのリンクカード。アイコンはlifelog側の`manifest.json`のデータURI（📔アイコン）を流用している。
+- `lifelog/` は2026-07-13、単独リポジトリ `kumacha666/lifelog`（`https://kumacha666.github.io/lifelog/`）から本リポジトリに移行したもの。旧リポジトリは開発終了・クローズ済みで、以後の変更は本ディレクトリ側で行う。データはlocalStorage保存のためoriginをまたいだ自動移行はできない（利用者本人がエクスポート/インポート機能で手動移行）。
 - 各アプリディレクトリに固有の `CLAUDE.md` がある場合（例: `7metch/CLAUDE.md`）は、そのアプリを変更する際に必ず参照・遵守する。アプリ固有の開発ルール・テスト方針・チェックリストはそちらに記載されている。
 
 ## アプリ種別とアーキテクチャパターン
 
 ### A. 静的PWA（ビルド不要）
-`emoji-dm`, `love-lab`, `mhwilds-karikan` が該当。共通構成:
+`emoji-dm`, `lifelog`, `love-lab`, `mhwilds-karikan` が該当。共通構成:
 - `index.html` + `style.css` + `app.js`（バニラJS、フレームワーク無し）
 - `manifest.json` + `sw.js`（PWA化、アイコン `icon-192.png` / `icon-512.png`）
 - Service Worker はネットワーク優先設計（キャッシュはオフライン用フォールバック）。「新しいバージョンがあります」のような更新トースト通知は、ネットワーク優先では常に最新を取得するため不正確になりやすく、過去に削除された実績がある（`tapu-neko`/`mhwilds-karikan`/`love-lab` 一括追加コミット参照）
 - 変更はファイルを直接編集してコミットするだけで GitHub Pages に反映される（ビルドステップなし）
 - `tapu-neko` はPWA化されていない最小構成（`manifest.json`はあるが`sw.js`なし）
+- `lifelog` はCSS/JSを分離せず、単一の`index.html`にインライン（`style.css`/`app.js`は無い）。アイコンは`manifest.json`内のSVGデータURI（📔）のみで`icon-192.png`/`icon-512.png`ファイルは無い
 
 ### B. Vite+TypeScriptビルドアプリ
 `7metch`, `7metch2`, `enblo`, `enblo-classic` が該当。共通構成:

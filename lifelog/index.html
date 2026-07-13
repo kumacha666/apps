@@ -1,0 +1,1830 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>LifeLog</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#6366f1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="LifeLog">
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-1WL6P6ZEXV"></script>
+  <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-1WL6P6ZEXV');</script>
+  <style>
+    :root {
+      --primary: #6366f1;
+      --primary-dark: #4f46e5;
+      --primary-light: #e0e7ff;
+      --bg: #f0f0f7;
+      --card: #ffffff;
+      --text: #111827;
+      --text-2: #6b7280;
+      --text-3: #9ca3af;
+      --border: #e5e7eb;
+      --danger: #ef4444;
+      --success: #10b981;
+      --warn: #f59e0b;
+      --nav-h: 68px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d0d12;
+        --card: #1a1a22;
+        --text: #f3f4f6;
+        --text-2: #9ca3af;
+        --text-3: #6b7280;
+        --border: #2a2a35;
+        --primary-light: #1e1b4b;
+        .chip {
+        background: #2a2a3a;
+        border-color: #4a4a60;
+      }
+      .field-input {
+        background: #252530;
+        border-color: #3a3a48;
+      }
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      max-width: 430px;
+      margin: 0 auto;
+      min-height: 100dvh;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .app-header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .app-header-title {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--primary);
+      letter-spacing: -0.5px;
+    }
+
+    .bottom-nav {
+      position: fixed;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 100%;
+      max-width: 430px;
+      height: var(--nav-h);
+      background: var(--card);
+      border-top: 1px solid var(--border);
+      display: flex;
+      z-index: 200;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    .nav-tab {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-3);
+      font-size: 10px;
+      font-family: inherit;
+      transition: color 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .nav-tab.active { color: var(--primary); }
+    .nav-tab svg { width: 22px; height: 22px; }
+
+    .view {
+      display: none;
+      padding: 16px 16px calc(var(--nav-h) + 20px);
+      min-height: calc(100dvh - 57px);
+    }
+    .view.active { display: block; }
+
+    .card {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    }
+
+    /* Today view */
+    .date-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      gap: 8px;
+    }
+    .date-nav-btn {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      width: 36px; height: 36px;
+      cursor: pointer;
+      font-size: 20px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text);
+      -webkit-tap-highlight-color: transparent;
+      flex-shrink: 0;
+    }
+    .date-nav-btn:disabled { opacity: 0.3; cursor: default; }
+    .date-center { flex: 1; text-align: center; }
+    .date-label { font-size: 15px; font-weight: 700; }
+    .date-today-pill {
+      display: inline-block;
+      font-size: 11px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 100px;
+      padding: 3px 12px;
+      cursor: pointer;
+      margin-top: 4px;
+      font-family: inherit;
+    }
+
+    .cat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .cat-card {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 16px 14px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: transform 0.1s, box-shadow 0.1s;
+      border-left: 4px solid var(--border);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+      min-height: 90px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .cat-card:active { transform: scale(0.97); }
+    .cat-card.logged { border-left-color: var(--cat-color, var(--primary)); }
+    .cat-icon { font-size: 26px; line-height: 1; }
+    .cat-name { font-size: 11px; font-weight: 600; color: var(--text-2); margin-top: 4px; }
+    .cat-value { font-size: 13px; font-weight: 700; color: var(--text); line-height: 1.35; }
+    .cat-value.empty { color: var(--text-3); font-weight: 400; font-size: 12px; }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 500;
+      display: none;
+      align-items: flex-end;
+      justify-content: center;
+      backdrop-filter: blur(2px);
+    }
+    .modal-overlay.show { display: flex; }
+    .modal {
+      background: var(--card);
+      border-radius: 24px 24px 0 0;
+      width: 100%;
+      max-width: 430px;
+      max-height: 90dvh;
+      overflow-y: auto;
+      padding: 8px 20px 32px;
+      padding-bottom: calc(32px + env(safe-area-inset-bottom));
+      animation: slideUp 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+    .modal-handle {
+      width: 36px; height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      margin: 12px auto 20px;
+    }
+    .modal-title {
+      font-size: 18px;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+    .modal-subtitle {
+      font-size: 12px;
+      color: var(--text-2);
+      margin-bottom: 20px;
+    }
+
+    /* Form elements */
+    .field-group { margin-bottom: 16px; }
+    .field-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-2);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 8px;
+    }
+    .field-input {
+      width: 100%;
+      background: var(--bg);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 15px;
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.15s;
+      font-family: inherit;
+    }
+    .field-input:focus { border-color: var(--primary); }
+    .field-input::placeholder { color: var(--text-3); }
+
+    /* Chips */
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      background: var(--bg);
+      border: 2px solid var(--border);
+      border-radius: 100px;
+      padding: 8px 16px;
+      font-size: 14px;
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.15s;
+      -webkit-tap-highlight-color: transparent;
+      white-space: nowrap;
+      font-family: inherit;
+    }
+    .chip.selected {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: white;
+      font-weight: 600;
+    }
+
+    /* Buttons */
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      border-radius: 14px;
+      border: none;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: opacity 0.15s, transform 0.1s;
+      font-family: inherit;
+      text-align: center;
+    }
+    .btn:active { transform: scale(0.98); opacity: 0.9; }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-secondary { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+    .btn-danger { background: var(--danger); color: white; }
+    .btn + .btn { margin-top: 8px; }
+    .btn-sm {
+      padding: 8px 14px;
+      font-size: 13px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      font-weight: 600;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Type selection grid */
+    .type-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .type-btn {
+      background: var(--bg);
+      border: 2px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s;
+      -webkit-tap-highlight-color: transparent;
+      font-family: inherit;
+    }
+    .type-btn.selected { border-color: var(--primary); background: var(--primary-light); }
+    .type-btn-icon { font-size: 22px; }
+    .type-btn-label { font-size: 13px; font-weight: 700; color: var(--text); margin-top: 4px; }
+    .type-btn-desc { font-size: 11px; color: var(--text-2); margin-top: 2px; }
+
+    /* Icon grid */
+    .icon-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 6px;
+    }
+    .icon-btn {
+      aspect-ratio: 1;
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg);
+      font-size: 18px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s;
+      padding: 0;
+    }
+    .icon-btn.selected { border-color: var(--primary); background: var(--primary-light); }
+
+    /* Color swatches */
+    .color-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .color-dot {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 3px solid transparent;
+      transition: border-color 0.15s, transform 0.1s;
+    }
+    .color-dot.selected { border-color: var(--text); transform: scale(1.15); }
+
+    /* Section title */
+    .section-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-2);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 20px 0 10px;
+    }
+    .section-title:first-child { margin-top: 0; }
+
+    /* Studio credit */
+    .studio-credit {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: fit-content;
+      margin: 24px auto 8px;
+      padding: 10px 20px;
+      background: #FFF8E7;
+      border-radius: 100px;
+      text-decoration: none;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    }
+    .studio-credit svg { display: block; }
+
+    /* Settings list */
+    .setting-row {
+      background: var(--card);
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    }
+    .setting-icon { font-size: 24px; }
+    .setting-info { flex: 1; min-width: 0; }
+    .setting-name { font-size: 15px; font-weight: 600; }
+    .setting-sub { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+    .setting-chevron { color: var(--text-3); font-size: 18px; flex-shrink: 0; }
+
+    .add-cat-btn {
+      width: 100%;
+      background: transparent;
+      border: 2px dashed var(--primary);
+      border-radius: 14px;
+      padding: 14px;
+      color: var(--primary);
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+      -webkit-tap-highlight-color: transparent;
+      transition: background 0.15s;
+    }
+    .add-cat-btn:active { background: var(--primary-light); }
+
+    /* History */
+    .history-day {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      cursor: pointer;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    }
+    .history-date {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-2);
+      margin-bottom: 8px;
+    }
+    .history-entry {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 4px 0;
+      font-size: 13px;
+    }
+    .h-icon { font-size: 16px; width: 20px; flex-shrink: 0; }
+    .h-name { color: var(--text-2); min-width: 60px; flex-shrink: 0; font-size: 11px; }
+    .h-val { color: var(--text); font-weight: 500; }
+
+    /* Insights */
+    .insight-card {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    }
+    .insight-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .insight-head-icon { font-size: 22px; }
+    .insight-head-title { font-size: 15px; font-weight: 700; }
+    .insight-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 7px 0;
+      font-size: 13px;
+      line-height: 1.5;
+      border-bottom: 1px solid var(--border);
+    }
+    .insight-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 100px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .badge-stat { background: #ede9fe; color: #5b21b6; }
+    .badge-good { background: #d1fae5; color: #065f46; }
+    .badge-warn { background: #fef3c7; color: #78350f; }
+    .badge-tip  { background: #dbeafe; color: #1e40af; }
+    @media (prefers-color-scheme: dark) {
+      .badge-stat { background: #2e1065; color: #c4b5fd; }
+      .badge-good { background: #052e16; color: #6ee7b7; }
+      .badge-warn { background: #431407; color: #fcd34d; }
+      .badge-tip  { background: #0c1a3d; color: #93c5fd; }
+    }
+
+    /* Progress bar */
+    .prog-wrap { margin: 10px 0 4px; }
+    .prog-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-2);
+      margin-bottom: 5px;
+    }
+    .prog-track {
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .prog-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: var(--primary);
+    }
+
+    /* Empty state */
+    .empty {
+      text-align: center;
+      padding: 56px 24px;
+      color: var(--text-2);
+    }
+    .empty-emoji { font-size: 48px; margin-bottom: 12px; }
+
+    /* Tutorial */
+    .tut-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 900; }
+    .tut-card { position: fixed; inset: 0; z-index: 901; display: flex; align-items: center; justify-content: center; }
+    .tut-card-inner { background: var(--card); border-radius: 20px; padding: 32px 24px; margin: 20px; max-width: 340px; text-align: center; }
+    .tut-card-inner .tut-emoji { font-size: 48px; margin-bottom: 12px; }
+    .tut-card-inner .tut-title { font-size: 18px; font-weight: 800; margin-bottom: 8px; }
+    .tut-card-inner .tut-desc { font-size: 14px; color: var(--text-2); line-height: 1.7; margin-bottom: 20px; }
+    .tut-highlight { position: relative; z-index: 901; animation: tut-pulse 1.5s infinite; border-radius: 14px; }
+    @keyframes tut-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(99,102,241,0.5); } 50% { box-shadow: 0 0 0 8px rgba(99,102,241,0); } }
+    .tut-tip { position: fixed; left: 16px; right: 16px; max-width: 398px; margin: 0 auto; background: var(--card); border-radius: 16px; padding: 16px 20px; z-index: 902; box-shadow: 0 4px 24px rgba(0,0,0,0.3); font-size: 14px; line-height: 1.6; text-align: center; }
+    .tut-skip { display: inline-block; margin-top: 10px; font-size: 12px; color: var(--text-3); cursor: pointer; border: none; background: none; font-family: inherit; }
+    .empty p { font-size: 15px; line-height: 1.7; }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: calc(var(--nav-h) + 16px);
+      left: 50%;
+      transform: translateX(-50%) translateY(8px);
+      background: #111827;
+      color: white;
+      padding: 10px 20px;
+      border-radius: 100px;
+      font-size: 14px;
+      font-weight: 500;
+      z-index: 999;
+      opacity: 0;
+      transition: all 0.2s;
+      pointer-events: none;
+      white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* Item list editor */
+    .item-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+      align-items: center;
+    }
+    .item-del {
+      background: var(--danger);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      width: 32px; height: 40px;
+      cursor: pointer;
+      font-size: 16px;
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    /* Two-col row */
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    /* Streak dots */
+    .streak-dots { display: flex; gap: 3px; flex-wrap: wrap; margin: 8px 0 4px; }
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--border);
+    }
+    .dot.on { background: var(--primary); }
+
+    hr.divider { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+
+    /* Bar chart */
+    .bar-chart { margin: 4px 0; }
+    .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+    .bar-row:last-child { margin-bottom: 0; }
+    .bar-label { width: 90px; font-size: 11px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+    .bar-track { flex: 1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 4px; background: var(--primary); }
+    .bar-count { width: 20px; font-size: 11px; color: var(--text-2); text-align: right; flex-shrink: 0; }
+
+    /* Calendar */
+    .cal-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .cal-title { font-size: 15px; font-weight: 700; }
+    .cal-table { width: 100%; border-collapse: separate; border-spacing: 2px; table-layout: fixed; }
+    .cal-table th { font-size: 10px; color: var(--text-3); padding: 4px 0; font-weight: 600; text-align: center; }
+    .cal-table td { text-align: center; vertical-align: middle; font-size: 13px; border-radius: 8px; padding: 10px 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .cal-table td.empty { cursor: default; }
+    .cal-table td.has-log { background: var(--primary-light); color: var(--primary); font-weight: 700; }
+    .cal-table td.is-today { box-shadow: inset 0 0 0 2px var(--primary); }
+    .cal-table td:active:not(.empty) { opacity: 0.7; }
+    .cal-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--primary); margin: 1px auto 0; }
+
+    /* History view toggle */
+    .hist-toggle { display: flex; background: var(--border); border-radius: 10px; padding: 2px; margin-bottom: 16px; }
+    .hist-toggle-btn { flex: 1; padding: 7px; font-size: 13px; font-weight: 600; border: none; background: none; border-radius: 8px; cursor: pointer; font-family: inherit; color: var(--text-2); -webkit-tap-highlight-color: transparent; transition: all 0.15s; }
+    .hist-toggle-btn.active { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+
+    /* Shopping list */
+    .shop-row { background: var(--card); border-radius: 14px; padding: 14px 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); transition: opacity 0.2s; }
+    .shop-row.checked { opacity: 0.45; }
+    .shop-check { font-size: 22px; background: none; border: none; cursor: pointer; flex-shrink: 0; padding: 0; line-height: 1; -webkit-tap-highlight-color: transparent; color: var(--text); }
+    .shop-name { flex: 1; font-size: 15px; font-weight: 500; color: var(--text); }
+    .shop-row.checked .shop-name { text-decoration: line-through; color: var(--text-3); }
+    .shop-del { background: none; border: none; color: var(--text-3); font-size: 20px; cursor: pointer; padding: 4px; -webkit-tap-highlight-color: transparent; }
+    .shop-add-row { display: flex; gap: 8px; }
+    .shop-type-toggle { display: flex; gap: 8px; margin-top: 10px; }
+    .shop-type-btn { flex: 1; padding: 8px; font-size: 13px; font-weight: 600; border: 2px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text-2); cursor: pointer; font-family: inherit; -webkit-tap-highlight-color: transparent; transition: all 0.15s; }
+    .shop-type-btn.active { border-color: var(--primary); background: var(--primary-light); color: var(--primary); }
+    .shop-tag { font-size: 11px; font-weight: 700; color: var(--primary); background: var(--primary-light); border-radius: 100px; padding: 2px 7px; flex-shrink: 0; }
+  </style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="app-header-title">LifeLog</div>
+  <div id="hdr-action"></div>
+</header>
+
+<main>
+  <div class="view active" id="view-today"></div>
+  <div class="view" id="view-history"></div>
+  <div class="view" id="view-insights"></div>
+  <div class="view" id="view-shopping"></div>
+  <div class="view" id="view-settings"></div>
+</main>
+
+<nav class="bottom-nav">
+  <button class="nav-tab active" data-v="today" onclick="nav('today')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+    </svg>
+    今日
+  </button>
+  <button class="nav-tab" data-v="history" onclick="nav('history')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+    </svg>
+    履歴
+  </button>
+  <button class="nav-tab" data-v="insights" onclick="nav('insights')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.5" fill="currentColor"/>
+    </svg>
+    インサイト
+  </button>
+  <button class="nav-tab" data-v="shopping" onclick="nav('shopping')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>
+    </svg>
+    買い物
+  </button>
+  <button class="nav-tab" data-v="settings" onclick="nav('settings')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>
+    設定
+  </button>
+</nav>
+
+<!-- Log Entry Modal -->
+<div class="modal-overlay" id="log-modal" onclick="overlayClose(this,'log-modal')">
+  <div class="modal" id="log-modal-body"></div>
+</div>
+
+<!-- Category Edit Modal -->
+<div class="modal-overlay" id="cat-modal" onclick="overlayClose(this,'cat-modal')">
+  <div class="modal" id="cat-modal-body"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div id="tut-container"></div>
+
+<script>
+// ─── Constants ───────────────────────────────────────────────
+const STORAGE_KEY = 'lifelog_v2';
+
+const CAT_TYPES = {
+  fashion:    { label: 'ファッション', icon: '👗', desc: '服・アクセサリー', multi: true },
+  food:       { label: '食事・飲み物', icon: '🍽️', desc: 'カロリー記録も可', multi: false },
+  supplement: { label: 'サプリ・薬',   icon: '💊', desc: '継続ストリーク追跡', multi: true },
+  exercise:   { label: '運動',         icon: '🏃', desc: '時間・距離を記録', multi: false },
+  body:       { label: 'ボディ',       icon: '⚖️', desc: '体重・体脂肪を記録', multi: false },
+  purchase:   { label: '買い物',       icon: '🛒', desc: '金額記録も可', multi: false },
+  custom:     { label: 'カスタム',     icon: '📝', desc: '自由に記録', multi: false }
+};
+
+const ICONS = ['👗','👟','👜','⌚','💍','🕶️','🧢','🎒','👔','🧥','🍳','🥗','🍱','🍜','☕','🧃','🍷','🧁','💊','🌿','🛒','💰','🏃','🏋️','🚴','🏊','🧘','🥊','🎾','⚽','🤸','🚶','🏔️','🧗','🏄','💪','⚖️','🩺','😴','🧠','📏','📚','🎵','🎮','🐾','✏️','⭐','❤️'];
+const COLORS = ['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ef4444','#14b8a6','#f97316','#84cc16'];
+
+// ─── State ────────────────────────────────────────────────────
+let state = (() => {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || { cats: [], logs: {} }; }
+  catch { return { cats: [], logs: {} }; }
+})();
+
+function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+
+// ─── Date utils ───────────────────────────────────────────────
+function today() {
+  const d = new Date();
+  return `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;
+}
+function p2(n) { return String(n).padStart(2,'0'); }
+function addDays(s, n) {
+  const d = new Date(s+'T00:00:00'); d.setDate(d.getDate()+n);
+  return `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;
+}
+function diff(a, b) { return Math.round((new Date(b+'T00:00:00') - new Date(a+'T00:00:00')) / 86400000); }
+function fmtDate(s) {
+  const d = new Date(s+'T00:00:00');
+  const dows = ['日','月','火','水','木','金','土'];
+  const str = `${d.getMonth()+1}月${d.getDate()}日 (${dows[d.getDay()]})`;
+  return s === today() ? `今日 · ${str}` : str;
+}
+function last30() {
+  const arr = []; for (let i=29;i>=0;i--) arr.push(addDays(today(),-i)); return arr;
+}
+
+// ─── Navigation ───────────────────────────────────────────────
+let curView = 'today';
+let curDate = today();
+let histView = 'list';
+let calMonth = today().slice(0, 7);
+
+function nav(v) {
+  curView = v;
+  document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === 'view-'+v));
+  document.querySelectorAll('.nav-tab').forEach(el => el.classList.toggle('active', el.dataset.v === v));
+  render[v]();
+}
+
+// ─── Render dispatcher ────────────────────────────────────────
+const render = {
+  today:    renderToday,
+  history:  renderHistory,
+  insights: renderInsights,
+  shopping: renderShopping,
+  settings: renderSettings
+};
+
+// ─── TODAY ────────────────────────────────────────────────────
+function renderToday() {
+  const el = document.getElementById('view-today');
+  if (!state.cats.length) {
+    el.innerHTML = `
+      <div class="empty">
+        <div class="empty-emoji">📋</div>
+        <p>まずカテゴリを登録して<br>記録をはじめましょう！</p>
+        <br>
+        <button class="btn btn-primary" style="max-width:200px;margin:0 auto" onclick="nav('settings')">カテゴリを追加</button>
+      </div>`;
+    return;
+  }
+
+  const dayLog = state.logs[curDate] || {};
+  const isToday = curDate === today();
+
+  const grid = state.cats.map(cat => {
+    const e = dayLog[cat.id];
+    let val = '';
+    if (e) {
+      const vs = Array.isArray(e.v) ? e.v : (e.v ? [e.v] : []);
+      val = vs.join(', ');
+      if (e.kcal) val += ` · ${e.kcal}kcal`;
+      if (e.yen)  val += ` · ¥${Number(e.yen).toLocaleString()}`;
+      if (e.min)  val += ` · ${e.min}分`;
+      if (e.km)   val += ` · ${e.km}km`;
+      if (e.steps) val += ` · ${Number(e.steps).toLocaleString()}歩`;
+      if (e.wt)   val += ` · ${e.wt}kg`;
+      if (e.fat)  val += ` · ${e.fat}%`;
+    }
+    return `
+      <div class="cat-card ${e?'logged':''}" style="--cat-color:${cat.color||'#6366f1'}"
+           onclick="openLog('${cat.id}')">
+        <div class="cat-icon">${cat.icon||'📝'}</div>
+        <div class="cat-name">${esc(cat.name)}</div>
+        <div class="cat-value ${e?'':'empty'}">${val || (e ? '✓' : '未記録')}</div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="date-nav">
+      <button class="date-nav-btn" onclick="shiftDate(-1)">‹</button>
+      <div class="date-center">
+        <div class="date-label">${fmtDate(curDate)}</div>
+        ${!isToday ? `<button class="date-today-pill" onclick="goToday()">今日に戻る</button>` : ''}
+      </div>
+      <button class="date-nav-btn" ${isToday?'disabled':''} onclick="shiftDate(1)">›</button>
+    </div>
+    <div class="cat-grid">${grid}</div>
+  `;
+}
+
+function shiftDate(n) {
+  const next = addDays(curDate, n);
+  if (next > today()) return;
+  curDate = next;
+  renderToday();
+}
+function goToday() { curDate = today(); renderToday(); }
+
+// ─── LOG MODAL ────────────────────────────────────────────────
+function openLog(catId) {
+  const cat = state.cats.find(c => c.id === catId);
+  if (!cat) return;
+  if (tut === 3) {
+    document.getElementById('tut-container').innerHTML = '';
+    document.querySelectorAll('.tut-highlight').forEach(e => e.classList.remove('tut-highlight'));
+  }
+  const e = (state.logs[curDate]||{})[catId] || {};
+  const selVals = Array.isArray(e.v) ? [...e.v] : (e.v ? [e.v] : []);
+  const typeInfo = CAT_TYPES[cat.type] || CAT_TYPES.custom;
+
+  const chipsHtml = (cat.items||[]).map(item => `
+    <button class="chip ${selVals.includes(item)?'selected':''}"
+            data-item="${esc(item)}" onclick="toggleChip(this)">${esc(item)}</button>`).join('');
+
+  const extraFields = [];
+  if (cat.type === 'food') extraFields.push(`
+    <div class="field-group">
+      <div class="field-label">カロリー (任意)</div>
+      <input class="field-input" id="f-kcal" type="number" inputmode="numeric" placeholder="例: 500" value="${e.kcal||''}">
+    </div>`);
+  if (cat.type === 'purchase') extraFields.push(`
+    <div class="field-group">
+      <div class="field-label">金額 (任意)</div>
+      <input class="field-input" id="f-yen" type="number" inputmode="numeric" placeholder="例: 1500" value="${e.yen||''}">
+    </div>`);
+  if (cat.type === 'exercise') extraFields.push(`
+    <div class="row-2">
+      <div class="field-group">
+        <div class="field-label">時間 (分)</div>
+        <input class="field-input" id="f-min" type="number" inputmode="numeric" placeholder="例: 30" value="${e.min||''}">
+      </div>
+      <div class="field-group">
+        <div class="field-label">距離 (km)</div>
+        <input class="field-input" id="f-km" type="number" inputmode="decimal" placeholder="例: 5.0" value="${e.km||''}">
+      </div>
+    </div>
+    <div class="field-group">
+      <div class="field-label">歩数 (任意)</div>
+      <input class="field-input" id="f-steps" type="number" inputmode="numeric" placeholder="例: 8000" value="${e.steps||''}">
+    </div>`);
+  if (cat.type === 'body') extraFields.push(`
+    <div class="row-2">
+      <div class="field-group">
+        <div class="field-label">体重 (kg)</div>
+        <input class="field-input" id="f-wt" type="number" inputmode="decimal" placeholder="例: 65.0" value="${e.wt||''}">
+      </div>
+      <div class="field-group">
+        <div class="field-label">体脂肪率 (%)</div>
+        <input class="field-input" id="f-fat" type="number" inputmode="decimal" placeholder="例: 18.5" value="${e.fat||''}">
+      </div>
+    </div>`);
+
+  document.getElementById('log-modal-body').innerHTML = `
+    <div class="modal-handle"></div>
+    <div style="font-size:32px;margin-bottom:6px">${cat.icon||'📝'}</div>
+    <div class="modal-title">${esc(cat.name)}</div>
+    <div class="modal-subtitle">${fmtDate(curDate)} · ${typeInfo.label}</div>
+
+    ${(cat.items||[]).length ? `
+      <div class="field-group">
+        <div class="field-label">${typeInfo.multi?'アイテムを選択（複数可）':'アイテムを選択'}</div>
+        <div class="chips" id="chip-box">${chipsHtml}</div>
+      </div>` : ''}
+
+    <div class="field-group">
+      <div class="field-label">${(cat.items||[]).length ? 'その他・自由記入' : '記録内容'}</div>
+      <input class="field-input" id="f-text" type="text" placeholder="自由に入力..." value="${esc(e.free||'')}">
+    </div>
+    ${extraFields.join('')}
+    <div class="field-group">
+      <div class="field-label">メモ (任意)</div>
+      <input class="field-input" id="f-note" type="text" placeholder="メモ..." value="${esc(e.note||'')}">
+    </div>
+
+    <button class="btn btn-primary" onclick="saveLog('${catId}')">保存する</button>
+    ${e ? `<button class="btn btn-secondary" onclick="clearLog('${catId}')">記録を消去</button>` : ''}
+    <button class="btn btn-secondary" onclick="closeModal('log-modal')">キャンセル</button>
+  `;
+  document.getElementById('log-modal').classList.add('show');
+}
+
+function toggleChip(btn) { btn.classList.toggle('selected'); }
+
+function saveLog(catId) {
+  const chips = document.querySelectorAll('#chip-box .chip.selected');
+  const selVals = Array.from(chips).map(c => c.dataset.item);
+  const free = document.getElementById('f-text')?.value?.trim() || '';
+  const kcal = document.getElementById('f-kcal')?.value || '';
+  const yen  = document.getElementById('f-yen')?.value || '';
+  const min  = document.getElementById('f-min')?.value || '';
+  const km   = document.getElementById('f-km')?.value || '';
+  const steps = document.getElementById('f-steps')?.value || '';
+  const wt   = document.getElementById('f-wt')?.value || '';
+  const fat  = document.getElementById('f-fat')?.value || '';
+  const note = document.getElementById('f-note')?.value?.trim() || '';
+
+  const cat = state.cats.find(c => c.id === catId);
+  if (free && cat && !cat.items.includes(free)) {
+    if (confirm(`「${free}」をアイテムリストに追加しますか？`)) cat.items.push(free);
+  }
+
+  if (free) selVals.push(free);
+
+  if (!selVals.length && !kcal && !yen && !min && !km && !steps && !wt && !fat && !note) {
+    if (state.logs[curDate]?.[catId]) { clearLog(catId); return; }
+  }
+
+  if (!state.logs[curDate]) state.logs[curDate] = {};
+  state.logs[curDate][catId] = {
+    v: selVals,
+    free,
+    kcal: kcal ? Number(kcal) : null,
+    yen:  yen  ? Number(yen)  : null,
+    min:  min  ? Number(min)  : null,
+    km:   km   ? Number(km)   : null,
+    steps: steps ? Number(steps) : null,
+    wt:   wt   ? Number(wt)   : null,
+    fat:  fat  ? Number(fat)  : null,
+    note,
+    ts: Date.now()
+  };
+
+  save();
+  closeModal('log-modal');
+  renderToday();
+  toast('記録しました ✓');
+  tutAfterLogSave();
+}
+
+function clearLog(catId) {
+  if (!state.logs[curDate]) return;
+  delete state.logs[curDate][catId];
+  if (!Object.keys(state.logs[curDate]).length) delete state.logs[curDate];
+  save();
+  closeModal('log-modal');
+  renderToday();
+  toast('記録を消去しました');
+}
+
+// ─── HISTORY ──────────────────────────────────────────────────
+function renderHistory() {
+  const el = document.getElementById('view-history');
+  const toggle = `
+    <div class="hist-toggle">
+      <button class="hist-toggle-btn ${histView==='list'?'active':''}" onclick="setHistView('list')">📋 リスト</button>
+      <button class="hist-toggle-btn ${histView==='calendar'?'active':''}" onclick="setHistView('calendar')">📅 カレンダー</button>
+    </div>`;
+
+  if (histView === 'calendar') {
+    el.innerHTML = toggle + renderCalendarHtml();
+    return;
+  }
+
+  const days = last30().reverse().filter(d => state.logs[d] && Object.keys(state.logs[d]).length);
+  if (!days.length) {
+    el.innerHTML = toggle + `<div class="empty"><div class="empty-emoji">📅</div><p>まだ記録がありません</p></div>`;
+    return;
+  }
+
+  const html = days.map(date => {
+    const dayLog = state.logs[date];
+    const entries = Object.entries(dayLog).map(([cid, e]) => {
+      const cat = state.cats.find(c => c.id === cid);
+      if (!cat) return '';
+      const vs = Array.isArray(e.v) ? e.v : (e.v ? [e.v] : []);
+      let val = vs.join(', ');
+      if (e.kcal) val += ` (${e.kcal}kcal)`;
+      if (e.yen)  val += ` (¥${Number(e.yen).toLocaleString()})`;
+      if (e.min)  val += ` (${e.min}分)`;
+      if (e.km)   val += ` (${e.km}km)`;
+      if (e.steps) val += ` (${Number(e.steps).toLocaleString()}歩)`;
+      if (e.wt)   val += ` (${e.wt}kg)`;
+      if (e.fat)  val += ` (${e.fat}%)`;
+      if (!val && e.note) val = e.note;
+      return `
+        <div class="history-entry">
+          <span class="h-icon">${cat.icon||'📝'}</span>
+          <span class="h-name">${esc(cat.name)}</span>
+          <span class="h-val">${esc(val||'記録あり')}</span>
+        </div>`;
+    }).join('');
+    return `
+      <div class="history-day" onclick="jumpToDate('${date}')">
+        <div class="history-date">${fmtDate(date)}</div>
+        ${entries}
+      </div>`;
+  }).join('');
+
+  el.innerHTML = toggle + `<div class="section-title">直近30日の記録</div>${html}`;
+}
+
+function setHistView(v) { histView = v; renderHistory(); }
+
+function renderCalendarHtml() {
+  const [y, m] = calMonth.split('-').map(Number);
+  const firstDow = new Date(y, m - 1, 1).getDay();
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const todayStr = today();
+
+  let tbl = '<table class="cal-table"><thead><tr>';
+  ['日','月','火','水','木','金','土'].forEach(d => tbl += `<th>${d}</th>`);
+  tbl += '</tr></thead><tbody><tr>';
+  for (let i = 0; i < firstDow; i++) tbl += '<td class="empty"></td>';
+  let dow = firstDow;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ds = `${calMonth}-${p2(d)}`;
+    const hasLog = !!(state.logs[ds] && Object.keys(state.logs[ds]).length);
+    const isToday = ds === todayStr;
+    const isFuture = ds > todayStr;
+    const cls = [hasLog&&'has-log', isToday&&'is-today', isFuture&&'empty'].filter(Boolean).join(' ');
+    tbl += `<td class="${cls}" ${!isFuture?`onclick="jumpToDate('${ds}')"`:''}>` +
+      `${d}${hasLog?'<div class="cal-dot"></div>':''}` + '</td>';
+    dow++;
+    if (dow === 7 && d < daysInMonth) { tbl += '</tr><tr>'; dow = 0; }
+  }
+  while (dow < 7) { tbl += '<td class="empty"></td>'; dow++; }
+  tbl += '</tr></tbody></table>';
+
+  const isCurrentMonth = calMonth === todayStr.slice(0, 7);
+  return `
+    <div class="card">
+      <div class="cal-hdr">
+        <button class="date-nav-btn" onclick="shiftCalMonth(-1)">‹</button>
+        <div class="cal-title">${y}年${m}月</div>
+        <button class="date-nav-btn" ${isCurrentMonth?'disabled':''} onclick="shiftCalMonth(1)">›</button>
+      </div>
+      ${tbl}
+    </div>`;
+}
+
+function shiftCalMonth(n) {
+  const [y, m] = calMonth.split('-').map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  calMonth = `${d.getFullYear()}-${p2(d.getMonth()+1)}`;
+  renderHistory();
+}
+
+function jumpToDate(d) { curDate = d; nav('today'); }
+
+// ─── INSIGHTS ────────────────────────────────────────────────
+function renderInsights() {
+  const el = document.getElementById('view-insights');
+
+  if (!state.cats.length) {
+    el.innerHTML = `<div class="empty"><div class="empty-emoji">💡</div><p>カテゴリを追加して記録を始めると<br>インサイトが表示されます</p></div>`;
+    return;
+  }
+
+  const days30 = last30();
+  const loggedDays = days30.filter(d => state.logs[d] && Object.keys(state.logs[d]).length).length;
+  const pct = Math.round(loggedDays / 30 * 100);
+
+  let html = `
+    <div class="card">
+      <div style="font-size:12px;color:var(--text-2);margin-bottom:4px">直近30日間の記録率</div>
+      <div style="font-size:30px;font-weight:800;color:var(--primary)">${loggedDays}<span style="font-size:14px;font-weight:400;color:var(--text-2)"> / 30日</span></div>
+      <div class="prog-wrap">
+        <div class="prog-labels"><span>継続率</span><span>${pct}%</span></div>
+        <div class="prog-track"><div class="prog-fill" style="width:${pct}%"></div></div>
+      </div>
+    </div>`;
+
+  state.cats.forEach(cat => {
+    const rows = getInsights(cat, days30);
+    if (!rows.length) return;
+    html += `
+      <div class="insight-card">
+        <div class="insight-head">
+          <div class="insight-head-icon">${cat.icon||'📝'}</div>
+          <div class="insight-head-title">${esc(cat.name)}</div>
+        </div>
+        ${rows.map(r => `
+          <div class="insight-row">
+            <span class="badge badge-${r.type}">${r.label}</span>
+            <span>${r.text}</span>
+          </div>`).join('')}
+      </div>`;
+  });
+
+  el.innerHTML = html;
+}
+
+function getInsights(cat, days30) {
+  const rows = [];
+  const todayS = today();
+
+  // Build 90-day history
+  const days90 = [];
+  for (let i=89;i>=0;i--) days90.push(addDays(todayS,-i));
+
+  const catLogs = days90
+    .filter(d => state.logs[d]?.[cat.id])
+    .map(d => ({ date: d, e: state.logs[d][cat.id] }));
+
+  const catLogs30 = catLogs.filter(l => days30.includes(l.date));
+
+  if (!catLogs30.length) {
+    rows.push({ type:'warn', label:'⚠ 未記録', text:'直近30日に記録がありません' });
+    return rows;
+  }
+
+  rows.push({ type:'stat', label:'📊 記録', text:`直近30日で${catLogs30.length}回 (${Math.round(catLogs30.length/30*100)}%)` });
+
+  // Fashion insights
+  if (cat.type === 'fashion' && (cat.items||[]).length > 1) {
+    const usage = {}, lastUsed = {};
+    catLogs.forEach(({ date, e }) => {
+      const vs = Array.isArray(e.v) ? e.v : (e.v ? [e.v] : []);
+      vs.forEach(v => {
+        usage[v] = (usage[v]||0) + 1;
+        if (!lastUsed[v] || date > lastUsed[v]) lastUsed[v] = date;
+      });
+    });
+
+    const used = new Set(Object.keys(usage));
+    const total = cat.items.length;
+    const variety = Math.round(used.size / total * 100);
+    rows.push({
+      type: variety >= 70 ? 'good' : variety >= 40 ? 'stat' : 'warn',
+      label: '🎨 バリエーション',
+      text: `${used.size}/${total}アイテムを使用 (${variety}%)`
+    });
+
+    // Suggestions for unused / long-unused items
+    cat.items.forEach(item => {
+      const last = lastUsed[item];
+      if (!last) {
+        rows.push({ type:'tip', label:'💡 未使用', text:`「${item}」はまだ記録がありません` });
+      } else {
+        const d = diff(last, todayS);
+        if (d >= 14) rows.push({ type:'tip', label:'💡 提案', text:`「${item}」を最後に使ったのは${d}日前です` });
+      }
+    });
+
+    const top = Object.entries(usage).sort((a,b)=>b[1]-a[1])[0];
+    if (top) rows.push({ type:'stat', label:'👑 最多', text:`「${top[0]}」が最もよく使われています (${top[1]}回)` });
+
+    const maxCnt = Math.max(...cat.items.map(i => usage[i]||0), 1);
+    const barRows = [...cat.items]
+      .sort((a, b) => (usage[b]||0) - (usage[a]||0))
+      .map(item => {
+        const cnt = usage[item]||0;
+        const pct = Math.round(cnt / maxCnt * 100);
+        return `<div class="bar-row">
+          <div class="bar-label" title="${esc(item)}">${esc(item)}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+          <div class="bar-count">${cnt}</div>
+        </div>`;
+      }).join('');
+    rows.push({ type:'stat', label:'📊 使用回数', text:`<div class="bar-chart">${barRows}</div>` });
+  }
+
+  // Food insights
+  if (cat.type === 'food') {
+    const kcalLogs = catLogs30.filter(l => l.e.kcal);
+    if (kcalLogs.length) {
+      const avg = Math.round(kcalLogs.reduce((s,l)=>s+l.e.kcal,0) / kcalLogs.length);
+      rows.push({ type:'stat', label:'🔥 カロリー', text:`平均 ${avg}kcal/回 (${kcalLogs.length}回計測)` });
+      if (avg > 700) rows.push({ type:'warn', label:'⚠ 注意', text:'1回あたりのカロリーが高めです' });
+      else if (avg < 200) rows.push({ type:'tip', label:'💡 ヒント', text:'カロリーが少なめです。バランスを確認しましょう' });
+      else rows.push({ type:'good', label:'✓ 良好', text:'バランスのとれたカロリー摂取です' });
+    }
+
+    // Food variety
+    const foodSet = new Set();
+    catLogs30.forEach(l => {
+      const vs = Array.isArray(l.e.v) ? l.e.v : (l.e.v ? [l.e.v] : []);
+      vs.forEach(v => foodSet.add(v));
+    });
+    if (foodSet.size >= 8) rows.push({ type:'good', label:'🌈 多様性', text:`${foodSet.size}種類を記録。バリエーション豊か！` });
+  }
+
+  // Supplement insights – streak
+  if (cat.type === 'supplement') {
+    let streak = 0;
+    let d = todayS;
+    while (state.logs[d]?.[cat.id]) { streak++; d = addDays(d,-1); }
+
+    if (streak >= 7) rows.push({ type:'good', label:'🔥 継続中', text:`${streak}日連続！すばらしい継続です` });
+    else if (streak > 0) rows.push({ type:'stat', label:'📅 連続', text:`現在${streak}日連続記録中` });
+
+    const missed = days30.filter(d => !state.logs[d]?.[cat.id]).length;
+    if (missed === 0) rows.push({ type:'good', label:'✓ 完璧', text:'直近30日、一日も欠かさず記録！' });
+    else if (missed > 10) rows.push({ type:'warn', label:'⚠ 抜け', text:`直近30日で${missed}日が未記録です` });
+
+    // Streak dots (last 30 days)
+    const dotHtml = days30.map(d => `<div class="dot ${state.logs[d]?.[cat.id]?'on':''}"></div>`).join('');
+    rows.push({ type:'stat', label:'📅 30日', text: `<div class="streak-dots" style="margin-top:6px">${dotHtml}</div>` });
+  }
+
+  // Exercise insights
+  if (cat.type === 'exercise') {
+    const minLogs = catLogs30.filter(l => l.e.min);
+    if (minLogs.length) {
+      const totalMin = minLogs.reduce((s,l) => s+l.e.min, 0);
+      const avgMin = Math.round(totalMin / minLogs.length);
+      rows.push({ type:'stat', label:'⏱ 時間', text:`合計${totalMin}分 / 平均${avgMin}分/回` });
+    }
+    const kmLogs = catLogs30.filter(l => l.e.km);
+    if (kmLogs.length) {
+      const totalKm = kmLogs.reduce((s,l) => s+l.e.km, 0);
+      rows.push({ type:'stat', label:'📍 距離', text:`直近30日の合計: ${totalKm.toFixed(1)}km` });
+    }
+    let streak = 0, ds = todayS;
+    while (state.logs[ds]?.[cat.id]) { streak++; ds = addDays(ds,-1); }
+    if (streak >= 7) rows.push({ type:'good', label:'🔥 継続中', text:`${streak}日連続！すばらしい継続です` });
+    else if (streak > 0) rows.push({ type:'stat', label:'📅 連続', text:`現在${streak}日連続` });
+    if (catLogs30.length >= 20) rows.push({ type:'good', label:'✓ 優秀', text:'月の2/3以上運動しています！' });
+  }
+
+  // Body insights
+  if (cat.type === 'body') {
+    const wtLogs = catLogs30.filter(l => l.e.wt).sort((a,b) => a.date.localeCompare(b.date));
+    if (wtLogs.length) {
+      const latest = wtLogs[wtLogs.length-1].e.wt;
+      rows.push({ type:'stat', label:'⚖️ 体重', text:`最新: ${latest}kg` });
+      if (wtLogs.length >= 2) {
+        const delta = (latest - wtLogs[0].e.wt).toFixed(1);
+        const sign = delta > 0 ? '+' : '';
+        rows.push({ type: delta < 0 ? 'good' : delta > 0 ? 'warn' : 'stat', label:'📈 変化', text:`直近30日で${sign}${delta}kg` });
+      }
+    }
+    const fatLogs = catLogs30.filter(l => l.e.fat).sort((a,b) => a.date.localeCompare(b.date));
+    if (fatLogs.length) {
+      const latest = fatLogs[fatLogs.length-1].e.fat;
+      rows.push({ type:'stat', label:'💧 体脂肪', text:`最新: ${latest}%` });
+    }
+  }
+
+  // Purchase insights
+  if (cat.type === 'purchase') {
+    const yenLogs = catLogs30.filter(l => l.e.yen);
+    if (yenLogs.length) {
+      const total = yenLogs.reduce((s,l)=>s+l.e.yen,0);
+      rows.push({ type:'stat', label:'💰 支出', text:`直近30日の合計: ¥${total.toLocaleString()}` });
+    }
+    rows.push({ type:'stat', label:'🛒 回数', text:`直近30日で${catLogs30.length}回の購入記録` });
+  }
+
+  return rows;
+}
+
+// ─── SETTINGS ─────────────────────────────────────────────────
+function renderSettings() {
+  const el = document.getElementById('view-settings');
+
+  const catRows = state.cats.map(cat => `
+    <div class="setting-row" onclick="openCatEdit('${cat.id}')">
+      <div class="setting-icon">${cat.icon||'📝'}</div>
+      <div class="setting-info">
+        <div class="setting-name">${esc(cat.name)}</div>
+        <div class="setting-sub">${CAT_TYPES[cat.type]?.label||'カスタム'} · アイテム${(cat.items||[]).length}件</div>
+      </div>
+      <div class="setting-chevron">›</div>
+    </div>`).join('');
+
+  el.innerHTML = `
+    <div class="section-title">カテゴリ管理</div>
+    ${catRows}
+    <button class="add-cat-btn" onclick="openCatEdit(null)">＋ カテゴリを追加</button>
+
+    <div class="section-title">データ</div>
+    <div class="setting-row" onclick="exportData()">
+      <div class="setting-icon">📤</div>
+      <div class="setting-info">
+        <div class="setting-name">エクスポート</div>
+        <div class="setting-sub">JSONでダウンロード</div>
+      </div>
+      <div class="setting-chevron">›</div>
+    </div>
+    <div class="setting-row" onclick="importData()">
+      <div class="setting-icon">📥</div>
+      <div class="setting-info">
+        <div class="setting-name">インポート</div>
+        <div class="setting-sub">JSONファイルから復元</div>
+      </div>
+      <div class="setting-chevron">›</div>
+    </div>
+    <div class="setting-row" onclick="clearAll()">
+      <div class="setting-icon">🗑️</div>
+      <div class="setting-info">
+        <div class="setting-name" style="color:var(--danger)">全データを消去</div>
+        <div class="setting-sub">元に戻せません</div>
+      </div>
+      <div class="setting-chevron">›</div>
+    </div>
+
+    <div class="section-title">ヘルプ</div>
+    <div class="setting-row" onclick="tutReplay()">
+      <div class="setting-icon">📖</div>
+      <div class="setting-info">
+        <div class="setting-name">使い方ガイド</div>
+        <div class="setting-sub">チュートリアルをもう一度見る</div>
+      </div>
+      <div class="setting-chevron">›</div>
+    </div>
+    <div class="setting-row" onclick="window.open('https://docs.google.com/forms/d/e/1FAIpQLSd8h6BKgB77_rI-b0S7XBJ7vFqDjd3yvxNIYoT-MAaNpSWq0g/viewform','_blank')">
+      <div class="setting-icon">💬</div>
+      <div class="setting-info">
+        <div class="setting-name">フィードバックを送る</div>
+        <div class="setting-sub">ご意見・ご要望をお聞かせください</div>
+      </div>
+      <div class="setting-chevron">›</div>
+    </div>
+
+    <div class="section-title">このアプリについて</div>
+    <a href="https://honeypawlab.com/" target="_blank" rel="noopener" class="studio-credit">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 70" width="140" height="19" aria-label="Honeypaw Lab.">
+        <defs>
+          <linearGradient id="honeyGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#F5C842"/>
+            <stop offset="100%" stop-color="#D4951A"/>
+          </linearGradient>
+        </defs>
+        <g transform="translate(32, 22) scale(0.30)" opacity="0.9">
+          <path d="M 0 10 C -35 10, -52 25, -50 50 C -48 75, -30 90, 0 92 C 30 90, 48 75, 50 50 C 52 25, 35 10, 0 10 Z" fill="url(#honeyGrad)"/>
+          <ellipse cx="-42" cy="-15" rx="16" ry="19" transform="rotate(-15, -42, -15)" fill="url(#honeyGrad)"/>
+          <ellipse cx="-15" cy="-32" rx="15" ry="18" transform="rotate(-5, -15, -32)" fill="url(#honeyGrad)"/>
+          <ellipse cx="15" cy="-32" rx="15" ry="18" transform="rotate(5, 15, -32)" fill="url(#honeyGrad)"/>
+          <ellipse cx="42" cy="-15" rx="16" ry="19" transform="rotate(15, 42, -15)" fill="url(#honeyGrad)"/>
+          <path d="M 5 92 C 5 100, 4 115, 5 122 C 6 126, 9 126, 9 122 C 10 115, 8 100, 8 92" fill="#D4951A" opacity="0.7"/>
+          <path d="M -25 82 C -25 88, -26 95, -25 99 C -24 102, -22 102, -22 99 C -21 95, -23 88, -23 82" fill="#D4951A" opacity="0.6"/>
+          <path d="M 30 88 C 30 93, 31 98, 30 101 C 29 103, 27 103, 28 101 C 28 98, 29 93, 29 88" fill="#D4951A" opacity="0.5"/>
+        </g>
+        <text x="68" y="42" font-family="'Nunito', 'Arial Rounded MT Bold', 'Helvetica Neue', sans-serif" font-size="44" font-weight="800" fill="#3D2B1F" letter-spacing="1">Honeypaw Lab.</text>
+      </svg>
+    </a>
+  `;
+}
+
+// ─── CATEGORY EDIT MODAL ──────────────────────────────────────
+let editCatId = null;
+const ITEM_TIP_KEY = 'lifelog_item_tip_done';
+let itemTipVisible = !localStorage.getItem(ITEM_TIP_KEY);
+
+function itemTipHtml() {
+  if (!itemTipVisible) return '';
+  return `<div style="background:var(--primary-light);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:12px;line-height:1.7;color:var(--text-2);position:relative">
+    <button onclick="dismissItemTip()" style="position:absolute;top:6px;right:8px;background:none;border:none;font-size:16px;color:var(--text-2);cursor:pointer;padding:4px">✕</button>
+    💡 <b>アイテムとは？</b><br>
+    記録する時の「選択肢」を事前に登録しておく機能です。<br>
+    例えば「コーディネート」なら：<br>
+    <b>カジュアル、フォーマル、スポーティ</b> など<br>
+    登録しなくても自由入力で記録できます。
+  </div>`;
+}
+
+function dismissItemTip() {
+  itemTipVisible = false;
+  localStorage.setItem(ITEM_TIP_KEY, '1');
+  const el = document.getElementById('ce-item-tip');
+  if (el) el.innerHTML = '';
+}
+
+function showItemTip() {
+  itemTipVisible = true;
+  const el = document.getElementById('ce-item-tip');
+  if (el) el.innerHTML = itemTipHtml();
+}
+
+function openCatEdit(catId) {
+  editCatId = catId;
+  if (tut === 2) {
+    document.getElementById('tut-container').innerHTML = '';
+    document.querySelectorAll('.tut-highlight').forEach(e => e.classList.remove('tut-highlight'));
+  }
+  const cat = catId ? state.cats.find(c => c.id === catId) : null;
+  const isNew = !cat;
+
+  const name  = cat?.name  || '';
+  const type  = cat?.type  || 'fashion';
+  const icon  = cat?.icon  || '👗';
+  const color = cat?.color || '#6366f1';
+  const items = [...(cat?.items || [])];
+
+  const typeHtml = Object.entries(CAT_TYPES).map(([k,t]) => `
+    <button class="type-btn ${type===k?'selected':''}" data-type="${k}" onclick="selType(this)">
+      <div class="type-btn-icon">${t.icon}</div>
+      <div class="type-btn-label">${t.label}</div>
+      <div class="type-btn-desc">${t.desc}</div>
+    </button>`).join('');
+
+  const iconHtml = ICONS.map(ic => `
+    <button class="icon-btn ${ic===icon?'selected':''}" data-icon="${ic}" onclick="selIcon(this)">${ic}</button>`).join('');
+
+  const colorHtml = COLORS.map(c => `
+    <div class="color-dot ${c===color?'selected':''}" data-color="${c}" style="background:${c}" onclick="selColor(this)"></div>`).join('');
+
+  const itemsHtml = items.map((item, i) => `
+    <div class="item-row" id="irow-${i}">
+      <input class="field-input" style="flex:1" value="${esc(item)}" data-idx="${i}" onchange="updateItemVal(${i},this.value)">
+      <button class="item-del" onclick="removeItemRow(${i})">✕</button>
+    </div>`).join('');
+
+  document.getElementById('cat-modal-body').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">${isNew ? '新しいカテゴリ' : 'カテゴリを編集'}</div>
+
+    <div class="field-group">
+      <div class="field-label">カテゴリ名</div>
+      <input class="field-input" id="ce-name" placeholder="例: コーディネート、朝食、サプリ..." value="${esc(name)}">
+    </div>
+
+    <div class="field-label" style="margin-bottom:8px">種類</div>
+    <div class="type-grid" id="ce-types">${typeHtml}</div>
+
+    <div class="field-label" style="margin-bottom:8px">アイコン</div>
+    <div class="icon-grid" id="ce-icons">${iconHtml}</div>
+
+    <div class="field-label" style="margin-bottom:8px;margin-top:14px">カラー</div>
+    <div class="color-row" id="ce-colors">${colorHtml}</div>
+
+    <hr class="divider">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div class="field-label" style="margin:0">アイテム登録</div>
+      ${!itemTipVisible ? '<button onclick="showItemTip()" style="background:none;border:1px solid var(--border);border-radius:50%;width:24px;height:24px;font-size:13px;color:var(--text-2);cursor:pointer;display:flex;align-items:center;justify-content:center">?</button>' : ''}
+    </div>
+    <div id="ce-item-tip">${itemTipHtml()}</div>
+    <div id="ce-items">${itemsHtml}</div>
+    <button class="btn-sm" style="background:var(--primary-light);color:var(--primary);margin-bottom:16px" onclick="addItemRow()">＋ アイテムを追加</button>
+
+    <button class="btn btn-primary" onclick="saveCat()">保存する</button>
+    ${!isNew ? `<button class="btn btn-danger" onclick="deleteCat('${catId}')">このカテゴリを削除</button>` : ''}
+    <button class="btn btn-secondary" onclick="closeModal('cat-modal')">キャンセル</button>
+  `;
+
+  // Store items in modal for editing
+  window._editItems = [...items];
+  document.getElementById('cat-modal').classList.add('show');
+}
+
+function selType(btn) {
+  document.querySelectorAll('#ce-types .type-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+}
+function selIcon(btn) {
+  document.querySelectorAll('#ce-icons .icon-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+}
+function selColor(dot) {
+  document.querySelectorAll('#ce-colors .color-dot').forEach(b => b.classList.remove('selected'));
+  dot.classList.add('selected');
+}
+function addItemRow() {
+  const idx = window._editItems.length;
+  window._editItems.push('');
+  const div = document.createElement('div');
+  div.className = 'item-row';
+  div.id = `irow-${idx}`;
+  div.innerHTML = `
+    <input class="field-input" style="flex:1" placeholder="アイテム名..." data-idx="${idx}" onchange="updateItemVal(${idx},this.value)">
+    <button class="item-del" onclick="removeItemRow(${idx})">✕</button>`;
+  document.getElementById('ce-items').appendChild(div);
+  div.querySelector('input').focus();
+}
+function updateItemVal(idx, val) { window._editItems[idx] = val; }
+function removeItemRow(idx) {
+  window._editItems[idx] = null;
+  document.getElementById(`irow-${idx}`)?.remove();
+}
+
+function saveCat() {
+  const name = document.getElementById('ce-name').value.trim();
+  if (!name) { toast('カテゴリ名を入力してください'); return; }
+
+  const typeEl  = document.querySelector('#ce-types .type-btn.selected');
+  const iconEl  = document.querySelector('#ce-icons .icon-btn.selected');
+  const colorEl = document.querySelector('#ce-colors .color-dot.selected');
+
+  const catType  = typeEl?.dataset.type  || 'custom';
+  const catIcon  = iconEl?.dataset.icon  || '📝';
+  const catColor = colorEl?.dataset.color || '#6366f1';
+
+  // Also read current input values
+  document.querySelectorAll('#ce-items input').forEach((inp, i) => {
+    if (inp.dataset.idx !== undefined) window._editItems[Number(inp.dataset.idx)] = inp.value.trim();
+  });
+  const items = (window._editItems||[]).filter(v => v && v.trim());
+
+  if (editCatId) {
+    const cat = state.cats.find(c => c.id === editCatId);
+    if (cat) { cat.name = name; cat.type = catType; cat.icon = catIcon; cat.color = catColor; cat.items = items; }
+  } else {
+    state.cats.push({ id: 'c'+Date.now(), name, type: catType, icon: catIcon, color: catColor, items, createdAt: Date.now() });
+  }
+
+  save();
+  closeModal('cat-modal');
+  renderSettings();
+  toast(editCatId ? '更新しました ✓' : 'カテゴリを追加しました ✓');
+  if (!editCatId) tutAfterCatSave();
+}
+
+function deleteCat(catId) {
+  if (!confirm('このカテゴリを削除しますか？\nこのカテゴリのすべての記録も削除されます。')) return;
+  state.cats = state.cats.filter(c => c.id !== catId);
+  Object.keys(state.logs).forEach(d => {
+    delete state.logs[d][catId];
+    if (!Object.keys(state.logs[d]).length) delete state.logs[d];
+  });
+  save();
+  closeModal('cat-modal');
+  renderSettings();
+  toast('削除しました');
+}
+
+// ─── DATA ─────────────────────────────────────────────────────
+function exportData() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `lifelog_${today()}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function importData() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json';
+  input.onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const imported = JSON.parse(ev.target.result);
+        if (!imported.cats || !imported.logs) throw new Error();
+        if (!confirm('現在のデータをインポートデータで上書きしますか？')) return;
+        state = imported;
+        save();
+        render[curView]();
+        toast('インポートしました ✓');
+      } catch { toast('ファイルが正しくありません'); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+function clearAll() {
+  if (!confirm('全データを消去しますか？\nこの操作は元に戻せません。')) return;
+  localStorage.removeItem(STORAGE_KEY);
+  state = { cats: [], logs: {} };
+  render[curView]();
+  toast('データを消去しました');
+}
+
+// ─── SHOPPING LIST ────────────────────────────────────────────
+let shopType = 'once'; // 'once' | 'recurring'
+const SHOP_TIP_KEY = 'lifelog_shop_tip_done';
+let shopTipVisible = !localStorage.getItem(SHOP_TIP_KEY);
+
+function shopTipHtml() {
+  if (!shopTipVisible) return '';
+  return `
+    <div class="card" style="background:var(--primary-light);border:1px solid var(--primary);position:relative">
+      <button onclick="dismissShopTip()" style="position:absolute;top:10px;right:12px;background:none;border:none;font-size:18px;color:var(--text-2);cursor:pointer;padding:4px">✕</button>
+      <div style="font-size:15px;font-weight:700;margin-bottom:8px">🛒 買い物リストの使い方</div>
+      <div style="font-size:13px;line-height:1.7;color:var(--text-2)">
+        <b>1回だけ</b> — 卵や牛乳など、買ったら完了<br>
+        <b>🔄 定期品</b> — 歯磨き粉や洗剤など、定期的に買うもの<br><br>
+        ☑ タップで購入済みにできます。<br>
+        定期品は「リセット」で次回の買い物に再利用。<br>
+        1回品は購入後にまとめて削除できます。
+      </div>
+    </div>`;
+}
+
+function dismissShopTip() {
+  shopTipVisible = false;
+  localStorage.setItem(SHOP_TIP_KEY, '1');
+  renderShopping();
+}
+
+function showShopTip() {
+  shopTipVisible = true;
+  renderShopping();
+}
+
+function renderShopping() {
+  const el = document.getElementById('view-shopping');
+  const items = state.shopping || [];
+  const pending      = items.filter(i => !i.checked);
+  const doneOnce     = items.filter(i => i.checked && !i.recurring);
+  const doneRecur    = items.filter(i => i.checked && i.recurring);
+
+  const row = i => `
+    <div class="shop-row ${i.checked?'checked':''}">
+      <button class="shop-check" onclick="toggleShop('${i.id}')">${i.checked?'☑':'☐'}</button>
+      <span class="shop-name">${esc(i.name)}</span>
+      ${i.recurring ? '<span class="shop-tag">🔄 定期</span>' : ''}
+      <button class="shop-del" onclick="deleteShopItem('${i.id}')">✕</button>
+    </div>`;
+
+  el.innerHTML = `
+    ${shopTipHtml()}
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div class="field-label" style="margin:0">アイテムを追加</div>
+        ${!shopTipVisible ? '<button onclick="showShopTip()" style="background:none;border:1px solid var(--border);border-radius:50%;width:24px;height:24px;font-size:13px;color:var(--text-2);cursor:pointer;display:flex;align-items:center;justify-content:center">?</button>' : ''}
+      </div>
+      <div class="shop-add-row">
+        <input class="field-input" id="shop-input" placeholder="例: 卵、牛乳、歯磨き粉..."
+               onkeydown="if(event.key==='Enter')addShopItem()" style="flex:1">
+        <button class="btn btn-primary" style="width:auto;padding:12px 16px;flex-shrink:0" onclick="addShopItem()">追加</button>
+      </div>
+      <div class="shop-type-toggle">
+        <button class="shop-type-btn ${shopType==='once'?'active':''}" onclick="setShopType('once')">1回だけ</button>
+        <button class="shop-type-btn ${shopType==='recurring'?'active':''}" onclick="setShopType('recurring')">🔄 定期品</button>
+      </div>
+    </div>
+
+    ${pending.length ? `<div class="section-title">買うもの (${pending.length}件)</div>${pending.map(row).join('')}` : ''}
+
+    ${doneRecur.length ? `
+      <div class="section-title">購入済みの定期品 (${doneRecur.length}件)</div>
+      ${doneRecur.map(row).join('')}
+      <button class="btn btn-secondary" style="margin-top:8px" onclick="resetRecurringShop()">🔄 定期品をリセット（次回分へ）</button>` : ''}
+
+    ${doneOnce.length ? `
+      <div class="section-title">購入済み・1回品 (${doneOnce.length}件)</div>
+      ${doneOnce.map(row).join('')}
+      <button class="btn btn-secondary" style="margin-top:8px;background:var(--danger);color:white;border:none" onclick="clearOnceShop()">🗑️ 1回品をすべて削除</button>` : ''}
+
+    ${!pending.length && !doneRecur.length && !doneOnce.length ? `<div class="empty"><div class="empty-emoji">🛒</div><p>買い物リストは空です<br>必要なものを追加しましょう</p></div>` : ''}
+  `;
+}
+
+function setShopType(type) { shopType = type; renderShopping(); }
+
+function addShopItem() {
+  const input = document.getElementById('shop-input');
+  const name = input.value.trim();
+  if (!name) return;
+  if (!state.shopping) state.shopping = [];
+  state.shopping.unshift({ id: 's'+Date.now(), name, checked: false, recurring: shopType === 'recurring', addedAt: Date.now() });
+  save();
+  input.value = '';
+  renderShopping();
+  toast(`「${name}」を追加しました`);
+}
+
+function toggleShop(id) {
+  const item = (state.shopping||[]).find(i => i.id === id);
+  if (item) { item.checked = !item.checked; save(); renderShopping(); }
+}
+
+function deleteShopItem(id) {
+  state.shopping = (state.shopping||[]).filter(i => i.id !== id);
+  save();
+  renderShopping();
+}
+
+function resetRecurringShop() {
+  (state.shopping||[]).filter(i => i.recurring).forEach(i => i.checked = false);
+  save();
+  renderShopping();
+  toast('定期品をリセットしました');
+}
+
+function clearOnceShop() {
+  if (!confirm('1回品をすべて削除しますか？')) return;
+  state.shopping = (state.shopping||[]).filter(i => i.recurring || !i.checked);
+  save();
+  renderShopping();
+  toast('削除しました');
+}
+
+// ─── Utilities ────────────────────────────────────────────────
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+function overlayClose(overlay, id) { if (event.target === overlay) closeModal(id); }
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── TUTORIAL ────────────────────────────────────────────────
+const TUT_KEY = 'lifelog_tut_done';
+let tut = 0;
+
+function tutStart() {
+  tut = 1;
+  tutRender();
+}
+
+function tutRender() {
+  const c = document.getElementById('tut-container');
+  if (tut === 1) {
+    c.innerHTML = `
+      <div class="tut-backdrop"></div>
+      <div class="tut-card">
+        <div class="tut-card-inner">
+          <div class="tut-emoji">📔</div>
+          <div class="tut-title">LifeLogへようこそ！</div>
+          <div class="tut-desc">
+            毎日の記録をつけるライフログアプリです。<br>
+            コーディネート・食事・運動など、自分だけの<br>カテゴリを作って記録しましょう。
+          </div>
+          <button class="btn btn-primary" onclick="tutStep2()">はじめる →</button>
+          <br><button class="tut-skip" onclick="tutDone()">スキップ</button>
+        </div>
+      </div>`;
+  } else if (tut === 2) {
+    requestAnimationFrame(() => {
+      const btn = document.querySelector('.add-cat-btn');
+      if (btn) btn.classList.add('tut-highlight');
+      const r = btn?.getBoundingClientRect();
+      const top = r ? r.bottom + 12 : 300;
+      c.innerHTML = `
+        <div class="tut-backdrop"></div>
+        <div class="tut-tip" style="top:${top}px">
+          <strong>👆 カテゴリを追加しましょう</strong><br>
+          上のボタンをタップして、最初のカテゴリを作ってみましょう。<br>
+          例：👗 コーディネート、🍽️ 食事、💊 サプリなど
+          <br><button class="tut-skip" onclick="tutDone()">スキップ</button>
+        </div>`;
+    });
+  } else if (tut === 3) {
+    requestAnimationFrame(() => {
+      const cards = document.querySelectorAll('.cat-card');
+      const card = cards[cards.length - 1];
+      if (card) card.classList.add('tut-highlight');
+      const r = card?.getBoundingClientRect();
+      const top = r ? r.bottom + 12 : 300;
+      c.innerHTML = `
+        <div class="tut-backdrop"></div>
+        <div class="tut-tip" style="top:${top}px">
+          <strong>👆 タップして記録しましょう</strong><br>
+          作ったカテゴリをタップすると、今日の記録ができます。
+          <br><button class="tut-skip" onclick="tutDone()">閉じる</button>
+        </div>`;
+    });
+  } else if (tut === 4) {
+    c.innerHTML = `
+      <div class="tut-backdrop"></div>
+      <div class="tut-card">
+        <div class="tut-card-inner">
+          <div class="tut-emoji">🎉</div>
+          <div class="tut-title">準備完了！</div>
+          <div class="tut-desc">
+            使い方はバッチリです。<br>
+            カテゴリは設定画面からいつでも追加できます。<br>
+            毎日の記録を楽しんでください！
+          </div>
+          <button class="btn btn-primary" onclick="tutDone()">閉じる</button>
+        </div>
+      </div>`;
+  } else {
+    c.innerHTML = '';
+  }
+}
+
+function tutStep2() {
+  tut = 2;
+  nav('settings');
+  tutRender();
+}
+
+function tutAfterCatSave() {
+  if (tut !== 2) return;
+  tut = 3;
+  nav('today');
+  tutRender();
+}
+
+function tutAfterLogSave() {
+  if (tut !== 3) return;
+  tut = 4;
+  tutRender();
+}
+
+function tutDone() {
+  tut = 0;
+  localStorage.setItem(TUT_KEY, '1');
+  document.querySelectorAll('.tut-highlight').forEach(e => e.classList.remove('tut-highlight'));
+  document.getElementById('tut-container').innerHTML = '';
+}
+
+function tutReplay() {
+  localStorage.removeItem(TUT_KEY);
+  tutStart();
+}
+
+// ─── Init ─────────────────────────────────────────────────────
+renderToday();
+if (!localStorage.getItem(TUT_KEY) && !state.cats.length) tutStart();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
