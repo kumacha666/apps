@@ -1,5 +1,4 @@
 import type { Member, RoomState, RoleId } from "../types";
-import { effectiveHostId } from "../gameLogic";
 import { ROLE_META } from "../roles";
 
 export interface AppContext {
@@ -12,9 +11,14 @@ export interface AppContext {
   requestLeaveRoom: () => void;
 }
 
-/** 表示・操作上のホストID。元のホストがオフラインの間は最古参のオンラインメンバーが引き継ぐ。 */
+/**
+ * 表示・操作上のホストID。部屋を作った本人（`state.hostId`）に固定で、
+ * オフラインになっても他のメンバーには引き継がない（2026-07-13、
+ * 「作成者本人が抜けた後に他のメンバーが自動でホストになってしまう」という
+ * 指摘を受けて、以前あった一時切断時のフェイルオーバーを廃止した）。
+ */
 export function currentHostId(ctx: AppContext): string {
-  return effectiveHostId(Object.values(ctx.members), ctx.state.hostId);
+  return ctx.state.hostId;
 }
 
 export function isHost(ctx: AppContext): boolean {
