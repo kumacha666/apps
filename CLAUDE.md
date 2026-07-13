@@ -46,7 +46,7 @@
 - `enblo`/`enblo-classic` のみ Playwright による E2E テスト（`e2e/`, `npm run test:e2e`）を持つ。画面遷移（起動→クラス選択→戦闘→強化選択→…→ゲームオーバー）の疎通確認用で、ユニットテストの代替ではない
 - **`enblo-classic`は凍結アプリ**。`enblo`の大規模再設計に着手する前の完成形をそのままコピーしたもので、以降は変更しない前提（バグ修正のみ最小対応）
 - **`7metch2`は開発中につきPWA未対応**（`manifest.json`/`sw.js`なし、CSSは`index.html`にインライン）。`npm run deploy` は `dist/game.js` のコピーのみで現状の構成としては完結している。公開時にPWA化とdeployスクリプト拡充（manifest/SWコピー・SWバージョン自動更新）を行うこと
-- 詳細なテスト方針・難易度パラメータ・変更時チェックリストはアプリごとの `CLAUDE.md`（例: `7metch/CLAUDE.md`, `enblo/CLAUDE.md`, `enblo-classic/CLAUDE.md`）を参照
+- 詳細なテスト方針・難易度パラメータ・変更時チェックリストはアプリごとの `CLAUDE.md`（例: `7metch/CLAUDE.md`, `7metch2/CLAUDE.md`, `enblo/CLAUDE.md`, `enblo-classic/CLAUDE.md`）を参照
 
 ### C. 補助ツール
 `7metch-tools`（7metch用）、`enblo-tools`（enblo用、音確認ツール等）は本体アプリのデバッグ・プレビュー用に単独で動作するHTMLファイル群。ビルド不要、ブラウザで直接開いて使う。
