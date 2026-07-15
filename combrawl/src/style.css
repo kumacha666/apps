@@ -388,6 +388,29 @@ h1 {
   display: flex;
   gap: 10px;
   justify-content: center;
+  margin-bottom: 10px;
+}
+.clear-panel .btn-row:last-of-type { margin-bottom: 0; }
+.clear-panel-note {
+  color: var(--text-dim);
+  font-size: 10.5px;
+  margin: 10px 0 0;
+  line-height: 1.5;
+}
+
+.endless-controls {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.endless-controls .btn {
+  margin-top: 0;
+  padding: 8px 14px;
+  font-size: 12px;
 }
 
 .title-screen,

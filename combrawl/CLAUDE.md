@@ -6,7 +6,7 @@
 ## アーキテクチャ
 `apps/CLAUDE.md`のB系（Vite+TypeScriptビルドアプリ）に準拠。`enblo`と同じ構成。
 
-- `src/types.ts` / `src/units.ts` / `src/combat.ts` / `src/battle.ts` / `src/stats.ts` / `src/progress.ts` / `src/highscore.ts`：DOM非依存の純粋なゲームロジック。全てVitestでユニットテスト済み
+- `src/types.ts` / `src/units.ts` / `src/combat.ts` / `src/battle.ts` / `src/stats.ts` / `src/progress.ts` / `src/highscore.ts` / `src/speed.ts`：DOM非依存の純粋なゲームロジック。全てVitestでユニットテスト済み
 - `src/data/cards.ts`：カード9種の定義（`apply(state, chosenUnit)`は状態を直接ミューテートする純粋関数寄りの設計。DOM操作は含まない）
 - `src/data/enemies.ts`：敵編成生成。ラウンド数に上限を設けていないため、10層クリア後のエンドレスモードでも同じ式をそのまま延長適用できる
 - `src/main.ts`：DOM描画・アニメーション・音・エンドレス突入UIなど、UIオーケストレーション層。ここだけはユニットテスト対象外（DOM操作のため）
@@ -21,6 +21,7 @@
 - **1ターン最大ダメージ / 1ターン最大キル数**：プレイヤーの1回の攻撃アクション（連撃・全体攻撃込み）単位で集計する演出スタッツ。これらが更新された瞬間、戦闘中でも「RECORD UPDATE!!」バナー＋ファンファーレを鳴らす（`showRecordBanner`/`sfxRecord`、Gemini指摘の「記録更新演出」対応）
 - **敵の強さは戦闘開始後にしか見せない**（事前提示なし。ラウンド2以降、裏で敵1体に連撃を自動付与する仕様も意図的に非公開）
 - **10層クリア後のエンドレスモード**：`FINAL_ROUND=10`到達後、プレイヤーが「エンドレスに挑戦」を選ぶと、同じ敵編成の式（`setupEnemies`）をそのまま延長適用してラウンドを続行する。バランス調整は不要という前提（10層クリアできれば目的達成のため）
+- **エンドレスの高速/超速自動周回**（2026-07-15追加）：ビルドが強くなりすぎるとエンドレスが自然に終わらなくなる問題への対策。10層クリアパネル、またはエンドレス中いつでも表示される`#endlessControls`バーから「高速に切替」「超速に切替」を選ぶと`speedMode`（`src/speed.ts`の`BattleSpeed`型）が切り替わり、以後はカード選択を挟まず`continueEndlessAuto()`で自動的に次ラウンドへ進み続ける（**一方通行**：一度切り替えたら通常速度・カード選択には戻せない仕様）。アニメーション遅延は`scaledDelay(baseMs, speedMode)`（純粋関数、`speed.test.ts`でテスト済み）で一律縮める。高速/超速中は`playTone`/`sfxDeath`を早期returnでミュートする（大量の効果音でオーディオノードが積み上がりパフォーマンスを圧迫するのを防ぐため）。`#finishEndlessBtn`（ここで終了）はエンドレス中いつでも押せ、`finishEndlessRun()`が現在のSCORE/到達ラウンドを確定保存してからタイトル画面に戻す（自然に死ななくても切り上げられる保険）
 - **自己ベスト記録は2系統ある**：①到達ラウンドの自己ベスト（`localStorage`の`combrawl.bestRecord.v1`、`RunRecord`）、②SCOREだけの自己ベスト＝HIGH SCORE（`combrawl.bestScore.v1`）。ラウンド進行度とSCOREは別軸のため、両方を独立して保存・表示する（HUDの「自己ベスト到達ラウンド」と「HIGH SCORE」）。いずれもサーバー無し・「自分の中だけのランキング」で、バックエンドやランキング共有機能は意図的に作らない
 - **単体強化カードで対象未選択（ランダム）の場合、`card.apply`の戻り値`appliedUnit`が実際に適用されたユニットを返す**（`src/data/cards.ts`）。`main.ts`側で「対象未選択なら最後のユニットに決め打ち」のような独自ロジックで再現しないこと（2026-07-16、Codexレビュー指摘: 独立した2つのランダム選択がズレて、光る対象と実際の強化対象が食い違うバグがあった）
 - **タイトル画面（`#titleScreen`）は`index.html`にゲーム画面（`#gameScreen`）と並べて実装し、JS側でのhidden切り替えで遷移する**。「Honeypaw Lab. by kumacha.」のクレジット表記は`.title-credit`に固定表示。ゲームの初期化（`initRun()`）はタイトルの「はじめる」ボタン押下まで遅延させる
