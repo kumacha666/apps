@@ -16,7 +16,7 @@
 - ダメージ式・命中/回避/会心の導出式、溜め機構、状態異常スタック、恒常特性（層2）の離散3段階化などが未実装の設計タスクとして残っている
 - 実装に着手する際は `CLASS_IDENTITY_FOUNDATION.md`, `UPGRADE_POOL_BRAINSTORM.md`, `UPGRADE_SYNERGY_ARCHETYPES.md`, `GLOSSARY.md` を参照
 - **現状の `src/` はこの再設計より前の実装**。何も知らずに現行コードを読むと旧仕様を前提にした変更をしてしまうので注意
-- 大改修着手前の完成形（試作品v1）は `enblo-classic/` として独立公開済み。当初は `enblo-v1-prototype-snapshot` ブランチにも同内容を保存していたが、`enblo-classic/` が正式な保存先として機能するため冗長となり、2026-07-15に削除した
+- 大改修着手前の完成形（試作品v1）は `enblo-classic/` として独立公開済み。当初は `enblo-v1-prototype-snapshot` ブランチにも同内容を保存していたが、`enblo-classic/` が正式な保存先として機能するため冗長となり、PRマージ後に削除予定（2026-07-15時点では削除前）
 
 ## テスト
 
