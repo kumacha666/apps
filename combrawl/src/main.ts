@@ -29,6 +29,9 @@ const bestRoundEl = document.getElementById("bestRound") as HTMLElement;
 const highScoreEl = document.getElementById("highScore") as HTMLElement;
 const deckStrip = document.getElementById("deckStrip") as HTMLElement;
 const endlessControls = document.getElementById("endlessControls") as HTMLElement;
+const switchFastBtn = document.getElementById("switchFastBtn") as HTMLButtonElement;
+const switchUltraBtn = document.getElementById("switchUltraBtn") as HTMLButtonElement;
+const finishEndlessBtn = document.getElementById("finishEndlessBtn") as HTMLButtonElement;
 
 // --- 効果音（Web Audio APIで生成、外部ファイル不要） ---
 let audioCtx: AudioContext | null = null;
@@ -566,30 +569,26 @@ function finishEndlessRun() {
   titleScreen.hidden = false;
 }
 
+/**
+ * ボタン要素は index.html に静的に配置し、onclickもモジュール末尾で一度だけバインドする
+ * （下記の startBtn.onclick 等と同じ並び）。ここでは表示/非表示とラベルの切り替えだけ行う。
+ *
+ * 以前はここで毎回 innerHTML を作り直してボタンを再生成・onclick を再バインドしていたが、
+ * renderHud()（延いてはこの関数）は1ヒットごとに呼ばれるため、高速/超速モードでは
+ * 1秒間に何十回も呼ばれる。そのたびにボタンDOMを破棄→再生成していたため、
+ * クリックのタイミングによっては「押した瞬間にボタンが差し替わって判定が消える」という
+ * 状態になり、「ここで終了」がほぼ押せなくなる不具合があった
+ * （2026-07-16、ユーザー報告: 超速で最後まで終了ボタンが押せずタブを強制終了する事態に）
+ */
 function renderEndlessControls() {
   if (!hasRunStarted || !isEndless(state.round)) {
     endlessControls.hidden = true;
-    endlessControls.innerHTML = "";
     return;
   }
   endlessControls.hidden = false;
-
-  const buttons: string[] = [];
-  if (speedMode === "normal") {
-    buttons.push('<button class="btn secondary" id="switchFastBtn">高速に切替</button>');
-    buttons.push('<button class="btn secondary" id="switchUltraBtn">超速に切替</button>');
-  } else if (speedMode === "fast") {
-    buttons.push('<button class="btn secondary" id="switchUltraBtn">超速に上げる</button>');
-  }
-  buttons.push('<button class="btn secondary" id="finishEndlessBtn">ここで終了</button>');
-  endlessControls.innerHTML = buttons.join("");
-
-  const fastBtn = endlessControls.querySelector("#switchFastBtn") as HTMLButtonElement | null;
-  if (fastBtn) fastBtn.onclick = () => setAutoSpeed("fast");
-  const ultraBtn = endlessControls.querySelector("#switchUltraBtn") as HTMLButtonElement | null;
-  if (ultraBtn) ultraBtn.onclick = () => setAutoSpeed("ultra");
-  const finishBtn = endlessControls.querySelector("#finishEndlessBtn") as HTMLButtonElement | null;
-  if (finishBtn) finishBtn.onclick = finishEndlessRun;
+  switchFastBtn.hidden = speedMode !== "normal";
+  switchUltraBtn.hidden = speedMode === "ultra";
+  switchUltraBtn.textContent = speedMode === "fast" ? "超速に上げる" : "超速に切替";
 }
 
 function finalizeRecord(clearedTenFloors: boolean) {
@@ -685,6 +684,9 @@ function resetRun() {
 
 startBtn.onclick = startBattle;
 resetBtn.onclick = resetRun;
+switchFastBtn.onclick = () => setAutoSpeed("fast");
+switchUltraBtn.onclick = () => setAutoSpeed("ultra");
+finishEndlessBtn.onclick = finishEndlessRun;
 
 titleStartBtn.onclick = () => {
   titleScreen.hidden = true;

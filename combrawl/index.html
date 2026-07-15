@@ -21,6 +21,12 @@
 
 
 
+
+
+
+
+
+
 <script type="module" crossorigin src="./game.js"></script>
 
 <link rel="stylesheet" crossorigin href="./style.css">
@@ -53,7 +59,11 @@
       <div class="score-number" id="scoreNum">SCORE 0</div>
     </div>
 
-    <div class="endless-controls" id="endlessControls" hidden></div>
+    <div class="endless-controls" id="endlessControls" hidden>
+      <button class="btn secondary" id="switchFastBtn">高速に切替</button>
+      <button class="btn secondary" id="switchUltraBtn">超速に切替</button>
+      <button class="btn secondary" id="finishEndlessBtn">ここで終了</button>
+    </div>
 
     <div class="arena" id="arena">
       <div class="side player" id="playerSide"></div>
