@@ -8,6 +8,7 @@
     "test": "vitest run",
     "prebuild": "node scripts/restore-entry.mjs && npm test",
     "build": "vite build",
+    "postbuild": "git checkout -- index.html",
     "sim": "npx vite-node scripts/simulate.mjs",
     "preview": "vite preview",
     "test:e2e": "playwright test",
