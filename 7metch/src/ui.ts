@@ -10,6 +10,13 @@ import { initInput, renderHelpPieceIcons } from "./input";
 
 // --- Screens ---
 
+// サポートID表示を更新する。初回セッションはinitUI()実行時点では7metch_uidが
+// まだ作られておらず「履歴なし」と表示されるが、track()呼び出しでID発行後に
+// タイトル画面へ戻ってきたときに正しい値を再表示できるようにする
+export function refreshSupportId(): void {
+  document.getElementById("support-id-value")!.textContent = peekAnonId() || "履歴なし";
+}
+
 export function showScreen(name: ScreenName): void {
   const fromGame = name === "options" && G.optionsReturnScreen === "game";
   if (name !== "game" && !fromGame) { clearHint(); stopBgAnim(); }
@@ -18,6 +25,7 @@ export function showScreen(name: ScreenName): void {
   if (name !== "result") stopResultBgAnim();
   Object.values(G.screens!).forEach((s: HTMLElement) => s.classList.remove("active"));
   G.screens![name].classList.add("active");
+  if (name === "title") refreshSupportId();
   if (name === "game") startBgAnim();
   if (name === "title") startTitleBgAnim();
   if (name === "splash") startSplashBgAnim();
@@ -263,8 +271,7 @@ export function initUI(): void {
   };
 
   // --- Support ID (お問い合わせ・データ復旧時にユーザーが申告するための匿名ID表示) ---
-  // 新規IDを発行すると復旧に使えない無関係なIDを表示してしまうため、既存値のみ表示する
-  document.getElementById("support-id-value")!.textContent = peekAnonId() || "履歴なし";
+  refreshSupportId();
 
   // --- Sound Toggle ---
   document.getElementById("btn-sound-toggle")!.addEventListener("click", () => {

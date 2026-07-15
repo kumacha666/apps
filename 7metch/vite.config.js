@@ -4,10 +4,23 @@ import { readFileSync } from "fs";
 
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ command }) => ({
   root: ".",
   base: "./",
   publicDir: "public",
+  plugins: [{
+    // npm run dev 時のみ、root index.html の ./game.js 参照を ./src/main.ts に
+    // 書き換えてdevサーバーがソースを直接配信できるようにする。ビルド時のentry検出には
+    // 使わない（build.rollupOptions.input で直接指定するため、これは無効化する）。
+    name: "dev-entry-rewrite",
+    transformIndexHtml(html) {
+      if (command !== "serve") return html;
+      return html.replace(
+        /<script type="module"[^>]*src="[^"]*game\.js"/,
+        '<script type="module" src="./src/main.ts"'
+      );
+    },
+  }],
   build: {
     outDir: "dist",
     emptyOutDir: true,
