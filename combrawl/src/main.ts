@@ -381,7 +381,13 @@ function endBattle(won: boolean) {
       sfxVictory();
     } else {
       state.playerUnits.forEach((u) => { u.hp = u.maxHp; u.alive = true; });
-      const label = isEndless(state.round) ? `エンドレス ${state.round}層 突破！` : `ラウンド ${state.round} 勝利！`;
+      const endless = isEndless(state.round);
+      if (endless) {
+        // エンドレス継続中の各勝利ごとに自己ベストを更新する
+        // （リセットやページを閉じた場合でも、直前まで到達した層数を記録として残すため）
+        finalizeRecord(true);
+      }
+      const label = endless ? `エンドレス ${state.round}層 突破！` : `ラウンド ${state.round} 勝利！`;
       statusLine.textContent = `${label} カードを1枚選んでください`;
       showCardChoices();
       sfxVictory();

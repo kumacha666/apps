@@ -62,6 +62,23 @@ describe("enemyAttackTurn", () => {
     const result = enemyAttackTurn(state, () => 0.9);
     expect(result!.hits.every((h) => h.target === taunter)).toBe(true);
   });
+
+  it("連撃中に挑発ユニットが倒れたら、残りのヒットは他の生存ユニットに向く", () => {
+    const taunter = makeUnit("player", 5, 2); // 1発で倒れるHP
+    taunter.tauntLevel = 1;
+    const other = makeUnit("player", 100, 2);
+    const enemy = makeUnit("enemy", 20, 50);
+    enemy.attackCount = 3;
+    const state = makeState({ playerUnits: [taunter, other], enemyUnits: [enemy] });
+
+    const result = enemyAttackTurn(state, zeroRng);
+
+    // 昔のバグでは挑発ユニットが倒れた時点で残りのヒットが失われ、hits.lengthが1で止まっていた
+    expect(result!.hits.length).toBe(3);
+    expect(result!.hits[0].target).toBe(taunter);
+    expect(result!.hits[1].target).toBe(other);
+    expect(result!.hits[2].target).toBe(other);
+  });
 });
 
 describe("retaliatePhase", () => {

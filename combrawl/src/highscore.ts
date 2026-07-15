@@ -33,11 +33,19 @@ export function loadBestRecord(storage?: StorageLike): RunRecord | null {
   }
 }
 
-/** 自分の中だけの記録（ランキングというより「自己ベスト」）。到達ラウンドが上回った時のみ更新する */
+/**
+ * 自分の中だけの記録（ランキングというより「自己ベスト」）。
+ * 到達ラウンドが上回った時、または同ラウンドで新たに10層クリアを達成した時に更新する
+ * （例: 先に「10層目で敗北(endlessRound=10, clearedTenFloors=false)」を記録した後、
+ * 別のランで「10層クリア(endlessRound=10, clearedTenFloors=true)」しても正しく上書きする）
+ */
 export function saveRecordIfBetter(record: RunRecord, storage?: StorageLike): { saved: boolean; best: RunRecord } {
   const s = resolveStorage(storage);
   const current = loadBestRecord(storage);
-  const isBetter = !current || record.endlessRound > current.endlessRound;
+  const isBetter =
+    !current ||
+    record.endlessRound > current.endlessRound ||
+    (record.endlessRound === current.endlessRound && record.clearedTenFloors && !current.clearedTenFloors);
   if (!isBetter) {
     return { saved: false, best: current as RunRecord };
   }

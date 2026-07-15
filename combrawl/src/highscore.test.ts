@@ -11,13 +11,13 @@ function makeFakeStorage(): StorageLike {
   };
 }
 
-function makeRecord(endlessRound: number): RunRecord {
+function makeRecord(endlessRound: number, clearedTenFloors = endlessRound >= 10): RunRecord {
   return {
     endlessRound,
     maxCombo: 3,
     maxTurnDamage: 100,
     maxTurnKills: 2,
-    clearedTenFloors: endlessRound >= 10,
+    clearedTenFloors,
     achievedAt: new Date().toISOString(),
   };
 }
@@ -42,5 +42,21 @@ describe("highscore（自分の中だけの記録）", () => {
     const better = saveRecordIfBetter(makeRecord(12), storage);
     expect(better.saved).toBe(true);
     expect(loadBestRecord(storage)?.endlessRound).toBe(12);
+  });
+
+  it("同じ到達ラウンドでも、後から10層クリア達成の記録が来たら上書きする（先に10層目で敗北していた場合）", () => {
+    const storage = makeFakeStorage();
+    saveRecordIfBetter(makeRecord(10, false), storage); // 10層目で敗北
+    const cleared = saveRecordIfBetter(makeRecord(10, true), storage); // 別のランで10層クリア
+    expect(cleared.saved).toBe(true);
+    expect(loadBestRecord(storage)?.clearedTenFloors).toBe(true);
+  });
+
+  it("既に10層クリア済みの記録を、同ラウンドの未クリア記録で上書きしない", () => {
+    const storage = makeFakeStorage();
+    saveRecordIfBetter(makeRecord(10, true), storage);
+    const worse = saveRecordIfBetter(makeRecord(10, false), storage);
+    expect(worse.saved).toBe(false);
+    expect(loadBestRecord(storage)?.clearedTenFloors).toBe(true);
   });
 });

@@ -12,7 +12,9 @@ function resolveHits(
   attacker: Unit,
   targetsPool: Unit[],
   hits: number,
-  rng: Rng
+  rng: Rng,
+  /** ヒットごとに狙う対象群を絞り込む（例: 挑発ユニット優先）。省略時は生存者全体 */
+  selectTargets?: (alive: Unit[]) => Unit[]
 ): HitResult[] {
   const results: HitResult[] = [];
   const isAoe = attacker.aoeLevel > 0;
@@ -21,8 +23,11 @@ function resolveHits(
   for (let hitIndex = 0; hitIndex < hits; hitIndex++) {
     const alive = targetsPool.filter((u) => u.alive);
     if (alive.length === 0) break;
+    // 挑発ユニットが途中で倒れた場合など、狙う対象群をヒットごとに再評価する
+    const pool = selectTargets ? selectTargets(alive) : alive;
+    if (pool.length === 0) break;
     const isCrit = rng() < attacker.critChance;
-    const targets = isAoe ? alive.slice() : [pickRandom(alive, rng)];
+    const targets = isAoe ? pool.slice() : [pickRandom(pool, rng)];
 
     for (const target of targets) {
       const damage = computeHitDamage({
@@ -60,10 +65,11 @@ export function enemyAttackTurn(state: GameState, rng: Rng = Math.random): { att
 
   const alivePlayers = aliveUnits(state.playerUnits);
   if (alivePlayers.length === 0) return { attacker, hits: [] };
-  const taunters = alivePlayers.filter((u) => u.tauntLevel > 0);
-  const pool = taunters.length > 0 ? taunters : alivePlayers;
 
-  const hits = resolveHits(attacker, pool, attacker.attackCount, rng);
+  const hits = resolveHits(attacker, state.playerUnits, attacker.attackCount, rng, (alive) => {
+    const taunters = alive.filter((u) => u.tauntLevel > 0);
+    return taunters.length > 0 ? taunters : alive;
+  });
   return { attacker, hits };
 }
 
