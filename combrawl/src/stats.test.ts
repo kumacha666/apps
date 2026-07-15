@@ -1,27 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { applyComboDecay, applyComboGain, applyTurnStats, initialStats, summarizeTurn } from "./stats";
+import { applyScoreGain, applyTurnStats, initialStats, summarizeTurn } from "./stats";
 import type { HitResult } from "./types";
 import { makeUnit } from "./units";
-
-describe("applyComboGain", () => {
-  it("ヒット数分だけコンボが伸び、最大値も更新される(全ヒットを加算。1発目限定ではない)", () => {
-    const { combo, maxCombo } = applyComboGain(1, 3, 0);
-    expect(combo).toBeCloseTo(1 + 0.45 * 3);
-    expect(maxCombo).toBeCloseTo(combo);
-  });
-
-  it("既存の最大値より低ければ更新しない", () => {
-    const { maxCombo } = applyComboGain(1, 1, 10);
-    expect(maxCombo).toBe(10);
-  });
-});
-
-describe("applyComboDecay", () => {
-  it("下限1を割らない", () => {
-    expect(applyComboDecay(1.05)).toBeGreaterThanOrEqual(1);
-    expect(applyComboDecay(1.0)).toBe(1);
-  });
-});
 
 describe("summarizeTurn / applyTurnStats", () => {
   it("1ターンの合計ダメージ・撃破数を集計し、演出用スタッツの最大値を更新する", () => {
@@ -44,5 +24,41 @@ describe("summarizeTurn / applyTurnStats", () => {
     const stats2 = applyTurnStats(stats, { totalDamage: 5, kills: 0 });
     expect(stats2.maxTurnDamage).toBe(18);
     expect(stats2.maxTurnKills).toBe(1);
+  });
+});
+
+describe("applyScoreGain", () => {
+  it("与ダメージの合計をそのまま加算する", () => {
+    const attacker = makeUnit("player", 10, 5);
+    const t1 = makeUnit("enemy", 10, 1);
+    const hits: HitResult[] = [
+      { attacker, target: t1, damage: 12, isCrit: false, wasKilled: false, hitIndex: 0, hpAfter: -2 },
+    ];
+    expect(applyScoreGain(100, hits)).toBe(112);
+  });
+
+  it("撃破するとダメージ加算に加えて撃破ボーナスが乗る", () => {
+    const attacker = makeUnit("player", 10, 5);
+    const t1 = makeUnit("enemy", 10, 1);
+    const hits: HitResult[] = [
+      { attacker, target: t1, damage: 12, isCrit: false, wasKilled: true, hitIndex: 0, hpAfter: 0 },
+    ];
+    expect(applyScoreGain(0, hits)).toBe(12 + 25);
+  });
+
+  it("1ランの累積なので、複数回に分けて呼んでも積み上がる（リセットされない）", () => {
+    const attacker = makeUnit("player", 10, 5);
+    const t1 = makeUnit("enemy", 10, 1);
+    const hits: HitResult[] = [
+      { attacker, target: t1, damage: 10, isCrit: false, wasKilled: false, hitIndex: 0, hpAfter: 0 },
+    ];
+    let score = 0;
+    score = applyScoreGain(score, hits);
+    score = applyScoreGain(score, hits);
+    expect(score).toBe(20);
+  });
+
+  it("ヒットが空でもスコアは変化しない", () => {
+    expect(applyScoreGain(50, [])).toBe(50);
   });
 });

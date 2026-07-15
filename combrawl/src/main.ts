@@ -4,24 +4,28 @@ import { makeUnit } from "./units";
 import { setupEnemies, FINAL_ROUND } from "./data/enemies";
 import { CARD_POOL } from "./data/cards";
 import { playerAttackTurn, enemyAttackTurn, retaliatePhase, isPlayerWiped, isEnemyWiped } from "./battle";
-import { applyComboGain, applyComboDecay, summarizeTurn, applyTurnStats, initialStats } from "./stats";
+import { applyScoreGain, applyTurnStats, initialStats, summarizeTurn } from "./stats";
 import { isEndless, roundLabel } from "./progress";
-import { loadBestRecord, saveRecordIfBetter } from "./highscore";
+import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBetter } from "./highscore";
+
+const titleScreen = document.getElementById("titleScreen") as HTMLElement;
+const gameScreen = document.getElementById("gameScreen") as HTMLElement;
+const titleStartBtn = document.getElementById("titleStartBtn") as HTMLButtonElement;
 
 const arena = document.getElementById("arena") as HTMLElement;
 const playerSide = document.getElementById("playerSide") as HTMLElement;
 const enemySide = document.getElementById("enemySide") as HTMLElement;
-const comboNum = document.getElementById("comboNum") as HTMLElement;
+const scoreNum = document.getElementById("scoreNum") as HTMLElement;
 const statusLine = document.getElementById("statusLine") as HTMLElement;
 const startBtn = document.getElementById("startBtn") as HTMLButtonElement;
 const resetBtn = document.getElementById("resetBtn") as HTMLButtonElement;
 const cardArea = document.getElementById("cardArea") as HTMLElement;
 const roundEl = document.getElementById("round") as HTMLElement;
-const maxComboEl = document.getElementById("maxCombo") as HTMLElement;
 const cardCountEl = document.getElementById("cardCount") as HTMLElement;
 const maxTurnDamageEl = document.getElementById("maxTurnDamage") as HTMLElement;
 const maxTurnKillsEl = document.getElementById("maxTurnKills") as HTMLElement;
 const bestRoundEl = document.getElementById("bestRound") as HTMLElement;
+const highScoreEl = document.getElementById("highScore") as HTMLElement;
 const deckStrip = document.getElementById("deckStrip") as HTMLElement;
 
 // --- 効果音（Web Audio APIで生成、外部ファイル不要） ---
@@ -82,6 +86,7 @@ function sfxDeath() {
 }
 function sfxVictory() { [523, 659, 784, 1047].forEach((f, i) => playTone(f, 0.22, "square", 0.15, i * 0.11)); }
 function sfxDefeat() { [400, 300, 220, 160].forEach((f, i) => playTone(f, 0.3, "sawtooth", 0.15, i * 0.14)); }
+function sfxRecord() { [660, 880, 1108, 1320].forEach((f, i) => playTone(f, 0.16, "square", 0.17, i * 0.08)); }
 
 // --- ゲーム状態 ---
 let state: GameState;
@@ -90,17 +95,20 @@ let battleTimer: ReturnType<typeof setTimeout> | null = null;
 let battleGen = 0;
 let unitSelectionMode = false;
 let selectedTargetId: string | null = null;
-let lastMilestone = 1;
 
 const HIT_STAGGER = 190;
+
+function setSelectionMode(v: boolean) {
+  unitSelectionMode = v;
+  arena.classList.toggle("selecting", v);
+}
 
 function initRun() {
   if (battleTimer) clearTimeout(battleTimer);
   battleActive = false;
   battleGen++;
-  unitSelectionMode = false;
+  setSelectionMode(false);
   selectedTargetId = null;
-  lastMilestone = 1;
   state = {
     round: 1,
     playerUnits: [makeUnit("player", 24, 4), makeUnit("player", 24, 4)],
@@ -108,7 +116,7 @@ function initRun() {
     // なので、実際の生成はstartBattle()まで遅らせる
     enemyUnits: [],
     deck: [],
-    combo: 1,
+    score: 0,
     stats: initialStats(),
   };
   renderAll();
@@ -124,14 +132,14 @@ function renderAll() {
 
 function renderHud() {
   roundEl.textContent = roundLabel(state.round);
-  maxComboEl.textContent = state.stats.maxCombo.toFixed(1);
   cardCountEl.textContent = String(state.deck.length);
   maxTurnDamageEl.textContent = String(state.stats.maxTurnDamage);
   maxTurnKillsEl.textContent = String(state.stats.maxTurnKills);
-  comboNum.textContent = "×" + state.combo.toFixed(1);
+  scoreNum.textContent = "SCORE " + state.score.toLocaleString();
   deckStrip.innerHTML = state.deck.map((c) => `<div class="chip">${c.name}</div>`).join("");
   const best = loadBestRecord();
   bestRoundEl.textContent = best ? String(best.endlessRound) : "-";
+  highScoreEl.textContent = loadBestScore().toLocaleString();
 }
 
 interface DisplayOverride { hp: number; alive: boolean }
@@ -192,7 +200,7 @@ function popDamage(targetEl: Element, text: string, color: string, hitIndex: num
   pop.className = "dmg-pop";
   pop.style.color = color;
   const hitBoost = hitIndex ? Math.min(hitIndex, 6) * 3 : 0;
-  pop.style.fontSize = 16 + Math.min(state.combo, 15) * 3 + hitBoost + "px";
+  pop.style.fontSize = 16 + hitBoost + "px";
   if (hitIndex !== null) {
     pop.innerHTML = `<span class="hit-index-tag">${hitLabelFor(hitIndex)}</span>${text}`;
   } else {
@@ -212,9 +220,9 @@ function hitLabelFor(hitIndex: number): string {
   return `${n}ヒット${bangs}`;
 }
 
-function pulseCombo() {
-  comboNum.classList.add("pulse");
-  setTimeout(() => comboNum.classList.remove("pulse"), 160);
+function pulseScore() {
+  scoreNum.classList.add("pulse");
+  setTimeout(() => scoreNum.classList.remove("pulse"), 160);
 }
 
 function showToast(msg: string) {
@@ -229,21 +237,10 @@ function showToast(msg: string) {
   }, 2200);
 }
 
-function checkMilestone() {
-  const milestones = [3, 5, 8, 12, 20, 30, 50];
-  for (const m of milestones) {
-    if (state.combo >= m && lastMilestone < m) {
-      lastMilestone = m;
-      showMilestoneBanner(m);
-      break;
-    }
-  }
-}
-
-function showMilestoneBanner(m: number) {
+function showRecordBanner(text: string) {
   const b = document.createElement("div");
-  b.className = "milestone-banner";
-  b.textContent = `COMBO ×${m}!!`;
+  b.className = "record-banner";
+  b.textContent = text;
   arena.appendChild(b);
   arena.classList.add("shake");
   setTimeout(() => arena.classList.remove("shake"), 300);
@@ -269,6 +266,20 @@ function startBattle() {
   battleTimer = setTimeout(() => battleTick(gen), 150);
 }
 
+/** ヒット群を集計してSCORE・演出用スタッツに反映し、新記録が出た瞬間は演出する */
+function applyHitsToRun(hits: HitResult[]) {
+  const turn = summarizeTurn(hits);
+  const prevStats = state.stats;
+  state.stats = applyTurnStats(state.stats, turn);
+  state.score = applyScoreGain(state.score, hits);
+  if (hits.length > 0) pulseScore();
+  if (state.stats.maxTurnDamage > prevStats.maxTurnDamage || state.stats.maxTurnKills > prevStats.maxTurnKills) {
+    showRecordBanner("RECORD UPDATE!!");
+    sfxRecord();
+  }
+  renderHud();
+}
+
 function battleTick(gen: number) {
   if (!battleActive || gen !== battleGen) return;
 
@@ -281,16 +292,7 @@ function battleTick(gen: number) {
   animateHits(playerSide, enemySide, playerTurn.hits, "player", gen, () => {
     if (!battleActive || gen !== battleGen) return;
 
-    const turn = summarizeTurn(playerTurn.hits);
-    state.stats = applyTurnStats(state.stats, turn);
-    const gain = applyComboGain(state.combo, playerTurn.hits.length, state.stats.maxCombo);
-    state.combo = gain.combo;
-    state.stats.maxCombo = gain.maxCombo;
-    if (playerTurn.hits.length > 0) {
-      pulseCombo();
-      checkMilestone();
-    }
-    renderHud();
+    applyHitsToRun(playerTurn.hits);
 
     if (isEnemyWiped(state)) { endBattle(true); return; }
     if (isPlayerWiped(state)) { endBattle(false); return; }
@@ -307,7 +309,6 @@ function battleTick(gen: number) {
       const retaliateHits = retaliatePhase(state, enemyTurn.hits);
       const finishEnemyPhase = () => {
         if (!battleActive || gen !== battleGen) return;
-        state.combo = applyComboDecay(state.combo);
         renderHud();
 
         // 反撃で相討みになった場合は勝利を優先する（反撃で敵を全滅させたなら
@@ -320,14 +321,7 @@ function battleTick(gen: number) {
 
       if (retaliateHits.length > 0) {
         animateHits(playerSide, enemySide, retaliateHits, "retaliate", gen, () => {
-          const retaliateTurn = summarizeTurn(retaliateHits);
-          state.stats = applyTurnStats(state.stats, retaliateTurn);
-          const rGain = applyComboGain(state.combo, retaliateHits.length, state.stats.maxCombo);
-          state.combo = rGain.combo;
-          state.stats.maxCombo = rGain.maxCombo;
-          pulseCombo();
-          checkMilestone();
-          renderHud();
+          applyHitsToRun(retaliateHits);
           finishEnemyPhase();
         });
       } else {
@@ -351,8 +345,6 @@ function animateHits(
     onDone();
     return;
   }
-  // 反撃フェーズは複数の異なる反撃持ちユニットのヒットが1つの配列に混在しうるため、
-  // 「連撃かどうか」は先頭ヒットの攻撃者だけで一括判定せず、ヒットごとにその攻撃者を見る
   let anyKilled = false;
 
   // stateはこのターンの全ヒットを解決済み（最終値）なので、そのまま描画すると1コマ目から
@@ -366,38 +358,58 @@ function animateHits(
   }
   renderArena(overrides);
 
-  hits.forEach((hit, i) => {
+  // 同じ攻撃者による同じhitIndexのヒットは「1回の振りで全体に同時ヒット」なので、
+  // まとめて同じタイミングで再生する（全体攻撃化カードの見た目を裏付ける）。
+  // 異なる攻撃者・異なるhitIndexへの遷移だけを区切りとしてグループ化する
+  const groups: HitResult[][] = [];
+  for (const hit of hits) {
+    const lastGroup = groups[groups.length - 1];
+    const lastHit = lastGroup?.[0];
+    if (lastHit && lastHit.hitIndex === hit.hitIndex && lastHit.attacker.id === hit.attacker.id) {
+      lastGroup.push(hit);
+    } else {
+      groups.push([hit]);
+    }
+  }
+
+  groups.forEach((group, gi) => {
     setTimeout(() => {
       if (!battleActive || gen !== battleGen) return;
-      overrides.set(hit.target.id, { hp: hit.hpAfter, alive: !hit.wasKilled });
+
+      for (const hit of group) {
+        overrides.set(hit.target.id, { hp: hit.hpAfter, alive: !hit.wasKilled });
+      }
       renderArena(overrides);
 
-      const aEl = attackerContainer.querySelector(`[data-id="${hit.attacker.id}"]`);
+      const aEl = attackerContainer.querySelector(`[data-id="${group[0].attacker.id}"]`);
       if (aEl) {
         aEl.classList.add("attacking");
         setTimeout(() => aEl.classList.remove("attacking"), 200);
       }
-      const tEl = targetContainer.querySelector(`[data-id="${hit.target.id}"]`);
-      if (tEl) {
-        const color = kind === "player" ? (hit.isCrit ? "#f4b942" : "#ffffff") : kind === "retaliate" ? "#4fd1c5" : "#e63950";
-        const prefix = kind === "enemy" ? "-" : kind === "retaliate" ? "↩" : hit.isCrit ? "CRIT! " : "";
-        const showsHitIndex = hit.attacker.attackCount > 1;
-        popDamage(tEl, prefix + hit.damage, color, showsHitIndex ? hit.hitIndex : null);
-        if (!hit.wasKilled) flashHit(tEl);
-      }
-      if (hit.wasKilled) anyKilled = true;
 
-      if (kind === "player" || kind === "retaliate") sfxHit(hit.isCrit);
+      for (const hit of group) {
+        const tEl = targetContainer.querySelector(`[data-id="${hit.target.id}"]`);
+        if (tEl) {
+          const color = kind === "player" ? (hit.isCrit ? "#f4b942" : "#ffffff") : kind === "retaliate" ? "#4fd1c5" : "#e63950";
+          const prefix = kind === "enemy" ? "-" : kind === "retaliate" ? "↩" : hit.isCrit ? "CRIT! " : "";
+          const showsHitIndex = hit.attacker.attackCount > 1;
+          popDamage(tEl, prefix + hit.damage, color, showsHitIndex ? hit.hitIndex : null);
+          if (!hit.wasKilled) flashHit(tEl);
+        }
+        if (hit.wasKilled) anyKilled = true;
+      }
+
+      if (kind === "player" || kind === "retaliate") sfxHit(group.some((h) => h.isCrit));
       else sfxHurt();
 
-      if (i === hits.length - 1) {
+      if (gi === groups.length - 1) {
         if (anyKilled) sfxDeath();
         setTimeout(() => {
           if (!battleActive || gen !== battleGen) return;
           onDone();
         }, 140);
       }
-    }, i * HIT_STAGGER);
+    }, gi * HIT_STAGGER);
   });
 }
 
@@ -425,7 +437,7 @@ function endBattle(won: boolean) {
   } else {
     // エンドレス中の敗北は、その前段の10層クリアが既に成立している
     finalizeRecord(isEndless(state.round));
-    statusLine.textContent = `敗北… 最大コンボ ×${state.stats.maxCombo.toFixed(1)} / 到達ラウンド ${state.round}`;
+    statusLine.textContent = `敗北… SCORE ${state.score.toLocaleString()} / 到達ラウンド ${state.round}`;
     startBtn.disabled = true;
     sfxDefeat();
   }
@@ -437,7 +449,7 @@ function showTenFloorClearPanel() {
   statusLine.textContent = "";
   startBtn.disabled = true;
 
-  const best = finalizeRecord(true);
+  const { best } = finalizeRecord(true);
 
   const panel = document.createElement("div");
   panel.className = "clear-panel";
@@ -465,15 +477,20 @@ function showTenFloorClearPanel() {
 function finalizeRecord(clearedTenFloors: boolean) {
   const record = {
     endlessRound: state.round,
-    maxCombo: state.stats.maxCombo,
+    score: state.score,
     maxTurnDamage: state.stats.maxTurnDamage,
     maxTurnKills: state.stats.maxTurnKills,
     clearedTenFloors,
     achievedAt: new Date().toISOString(),
   };
-  const { best } = saveRecordIfBetter(record);
+  const { saved: recordSaved, best } = saveRecordIfBetter(record);
+  const { saved: scoreSaved, best: scoreBest } = saveBestScoreIfBetter(state.score);
   renderHud();
-  return best;
+  if (recordSaved || scoreSaved) {
+    showToast("🎉 自己ベスト更新！");
+    sfxRecord();
+  }
+  return { best, scoreBest };
 }
 
 function showCardChoices() {
@@ -482,7 +499,7 @@ function showCardChoices() {
 
   selectedTargetId = null;
   const alivePlayerCount = state.playerUnits.filter((u) => u.alive).length;
-  unitSelectionMode = options.some((c) => c.singleTarget) && alivePlayerCount > 1;
+  setSelectionMode(options.some((c) => c.singleTarget) && alivePlayerCount > 1);
   renderArena();
 
   if (unitSelectionMode) {
@@ -512,14 +529,14 @@ function chooseCard(card: (typeof CARD_POOL)[number]) {
     chosenUnit = state.playerUnits.find((u) => u.id === selectedTargetId && u.alive) || null;
   }
   const result = card.apply(state, chosenUnit);
+  // 未選択でランダムに対象が決まった場合も、card.apply側が実際に適用したユニットを
+  // そのままハイライト対象にする（以前は「最後のユニット」に決め打ちしていたため、
+  // ランダム選択された実際の対象とズレることがあった）
+  const appliedUnit = result.appliedUnit ?? null;
 
-  const appliedUnit = chosenUnit || (card.singleTarget ? state.playerUnits[state.playerUnits.length - 1] : null);
-
-  unitSelectionMode = false;
+  setSelectionMode(false);
   selectedTargetId = null;
   state.round += 1;
-  lastMilestone = 1;
-  state.combo = 1;
   // 次ラウンドの敵編成はここでは生成しない（戦闘開始まで非公開にするため、startBattle()で生成する）
   state.enemyUnits = [];
   cardArea.innerHTML = "";
@@ -540,4 +557,8 @@ function chooseCard(card: (typeof CARD_POOL)[number]) {
 startBtn.onclick = startBattle;
 resetBtn.onclick = initRun;
 
-initRun();
+titleStartBtn.onclick = () => {
+  titleScreen.hidden = true;
+  gameScreen.hidden = false;
+  initRun();
+};

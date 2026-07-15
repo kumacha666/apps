@@ -1,7 +1,7 @@
 export interface RunRecord {
   /** 到達ラウンド。10層未満で敗北した場合はその到達ラウンド、10層クリア後エンドレスに進めばそれ以上の値になる */
   endlessRound: number;
-  maxCombo: number;
+  score: number;
   maxTurnDamage: number;
   maxTurnKills: number;
   clearedTenFloors: boolean;
@@ -63,4 +63,39 @@ export function saveRecordIfBetter(record: RunRecord, storage?: StorageLike): { 
     }
   }
   return { saved: true, best: record };
+}
+
+const SCORE_STORAGE_KEY = "combrawl.bestScore.v1";
+
+/**
+ * HIGH SCORE（自分の中だけの累積SCORE自己ベスト）。到達ラウンドの自己ベスト（RunRecord）とは
+ * 別軸の記録で、ラウンド進行度に関わらず「そのランで稼いだSCORE」が過去最高を更新した時だけ保存する。
+ */
+export function loadBestScore(storage?: StorageLike): number {
+  const s = resolveStorage(storage);
+  if (!s) return 0;
+  try {
+    const raw = s.getItem(SCORE_STORAGE_KEY);
+    if (!raw) return 0;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function saveBestScoreIfBetter(score: number, storage?: StorageLike): { saved: boolean; best: number } {
+  const current = loadBestScore(storage);
+  if (score <= current) {
+    return { saved: false, best: current };
+  }
+  const s = resolveStorage(storage);
+  if (s) {
+    try {
+      s.setItem(SCORE_STORAGE_KEY, String(score));
+    } catch {
+      // 保存に失敗しても、今回のセッション内の表示用にはこのスコアをそのまま返す
+    }
+  }
+  return { saved: true, best: score };
 }

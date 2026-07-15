@@ -18,7 +18,6 @@ export interface Unit {
 }
 
 export interface RunStats {
-  maxCombo: number;
   maxTurnDamage: number;
   maxTurnKills: number;
 }
@@ -28,12 +27,16 @@ export interface GameState {
   playerUnits: Unit[];
   enemyUnits: Unit[];
   deck: Card[];
-  combo: number;
+  /** 累積SCORE。1ラン中はリセットされず、「最初から」した時だけ0に戻る */
+  score: number;
   stats: RunStats;
 }
 
 export interface CardApplyResult {
   message: string;
+  /** 実際に効果が適用されたユニット（対象未選択でランダムに決まった場合も、そのランダムな実体を返す）。
+   * 全体・複数体対象のカード（増援・巨大化・合体など）はハイライト不要のためundefinedのままでよい */
+  appliedUnit?: Unit | null;
 }
 
 export interface Card {

@@ -1,35 +1,10 @@
 import type { HitResult, RunStats } from "./types";
 
-export const COMBO_GAIN_PER_HIT = 0.45;
-export const COMBO_DECAY_PER_ENEMY_PHASE = 0.15;
+export const SCORE_PER_DAMAGE = 1;
+export const SCORE_PER_KILL = 25;
 
 export function initialStats(): RunStats {
-  return { maxCombo: 0, maxTurnDamage: 0, maxTurnKills: 0 };
-}
-
-/**
- * コンボは2026-07-15の設計転換でダメージ計算から完全に外し、
- * 戦闘の見せ場を数字で見せる演出専用スタッツにした。
- * 1発目限定ではなく、連撃・反撃・全体攻撃を含む全てのヒットで加算する
- * （AoEで複数体に同時ヒットした場合は、命中した対象の数だけ加算する）。
- */
-export function applyComboGain(
-  combo: number,
-  hitCount: number,
-  maxCombo: number,
-  comboGainBonus = 0
-): { combo: number; maxCombo: number } {
-  let nextCombo = combo;
-  let nextMax = maxCombo;
-  for (let i = 0; i < hitCount; i++) {
-    nextCombo += COMBO_GAIN_PER_HIT + comboGainBonus;
-    nextMax = Math.max(nextMax, nextCombo);
-  }
-  return { combo: nextCombo, maxCombo: nextMax };
-}
-
-export function applyComboDecay(combo: number, comboDecayBonus = 0): number {
-  return Math.max(1, combo - (COMBO_DECAY_PER_ENEMY_PHASE - comboDecayBonus));
+  return { maxTurnDamage: 0, maxTurnKills: 0 };
 }
 
 export function summarizeTurn(hits: HitResult[]): { totalDamage: number; kills: number } {
@@ -45,4 +20,14 @@ export function applyTurnStats(stats: RunStats, turn: { totalDamage: number; kil
     maxTurnDamage: Math.max(stats.maxTurnDamage, turn.totalDamage),
     maxTurnKills: Math.max(stats.maxTurnKills, turn.kills),
   };
+}
+
+/**
+ * SCOREはプレイヤーが与えたダメージ・撃破の累積値（2026-07-16、コンボ演出スタッツを廃止し置き換え）。
+ * ダメージ量をそのまま加算し、撃破ボーナスを上乗せする。1ラン中はリセットされない
+ * （ラウンドをまたいで加算され続け、「最初から」した時だけ0に戻る）。
+ */
+export function applyScoreGain(score: number, hits: HitResult[]): number {
+  const turn = summarizeTurn(hits);
+  return score + turn.totalDamage * SCORE_PER_DAMAGE + turn.kills * SCORE_PER_KILL;
 }

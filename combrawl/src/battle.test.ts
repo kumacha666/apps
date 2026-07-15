@@ -23,8 +23,8 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     playerUnits: [makeUnit("player", 24, 4)],
     enemyUnits: [makeUnit("enemy", 20, 3)],
     deck: [],
-    combo: 1,
-    stats: { maxCombo: 0, maxTurnDamage: 0, maxTurnKills: 0 },
+    score: 0,
+    stats: { maxTurnDamage: 0, maxTurnKills: 0 },
     ...overrides,
   };
 }
