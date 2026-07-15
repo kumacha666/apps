@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node scripts/restore-entry.mjs",
     "dev": "vite",
     "test": "vitest run",
     "prebuild": "node scripts/restore-entry.mjs && npm test",
