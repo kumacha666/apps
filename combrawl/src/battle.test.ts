@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { enemyAttackTurn, isEnemyWiped, isPlayerWiped, playerAttackTurn, retaliatePhase } from "./battle";
 import { makeUnit } from "./units";
-import type { GameState } from "./types";
+import type { GameState, HitResult, Unit } from "./types";
+
+/** retaliatePhaseへの入力を組み立てるテスト用ヘルパー（実際の敵ヒットを模す） */
+function makeIncomingHit(target: Unit, overrides: Partial<HitResult> = {}): HitResult {
+  return {
+    attacker: makeUnit("enemy", 20, 3),
+    target,
+    damage: 5,
+    isCrit: false,
+    wasKilled: false,
+    hitIndex: 0,
+    hpAfter: target.hp,
+    ...overrides,
+  };
+}
 
 function makeState(overrides: Partial<GameState> = {}): GameState {
   return {
@@ -86,7 +100,7 @@ describe("retaliatePhase", () => {
     const retaliator = makeUnit("player", 30, 5);
     retaliator.retaliateLevel = 1;
     const state = makeState({ playerUnits: [retaliator] });
-    const hits = retaliatePhase(state, [retaliator], zeroRng);
+    const hits = retaliatePhase(state, [makeIncomingHit(retaliator)], zeroRng);
     expect(hits.length).toBe(1);
     expect(state.enemyUnits[0].hp).toBeLessThan(20);
   });
@@ -94,7 +108,7 @@ describe("retaliatePhase", () => {
   it("反撃Lv0のユニットは反撃しない", () => {
     const nonRetaliator = makeUnit("player", 30, 5);
     const state = makeState({ playerUnits: [nonRetaliator] });
-    const hits = retaliatePhase(state, [nonRetaliator], zeroRng);
+    const hits = retaliatePhase(state, [makeIncomingHit(nonRetaliator)], zeroRng);
     expect(hits.length).toBe(0);
   });
 
@@ -102,9 +116,27 @@ describe("retaliatePhase", () => {
     const retaliator = makeUnit("player", 30, 5);
     retaliator.retaliateLevel = 1;
     const state = makeState({ playerUnits: [retaliator], enemyUnits: [makeUnit("enemy", 1000, 3)] });
-    // 敵の連撃で3回被弾した想定 -> 同じユニット参照を3つ渡す
-    const hits = retaliatePhase(state, [retaliator, retaliator, retaliator], zeroRng);
+    // 敵の連撃で3回被弾した想定（いずれも致命傷ではない） -> 3ヒット分渡す
+    const hits = retaliatePhase(
+      state,
+      [makeIncomingHit(retaliator), makeIncomingHit(retaliator), makeIncomingHit(retaliator)],
+      zeroRng
+    );
     expect(hits.length).toBe(3);
+  });
+
+  it("撃破された瞬間のヒットでは反撃しないが、それ以前の被弾分の反撃は消えない", () => {
+    const retaliator = makeUnit("player", 10, 5);
+    retaliator.retaliateLevel = 1;
+    const state = makeState({ playerUnits: [retaliator], enemyUnits: [makeUnit("enemy", 1000, 3)] });
+    // 1発目は生存、2発目で撃破された想定
+    const hits = retaliatePhase(
+      state,
+      [makeIncomingHit(retaliator, { wasKilled: false }), makeIncomingHit(retaliator, { wasKilled: true })],
+      zeroRng
+    );
+    // 撃破ヒットの分(1回)は反撃しないが、その前の生存していた分(1回)の反撃は残る
+    expect(hits.length).toBe(1);
   });
 });
 

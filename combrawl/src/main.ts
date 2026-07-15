@@ -287,9 +287,8 @@ function battleTick(gen: number) {
       if (isEnemyWiped(state)) { endBattle(true); return; }
       if (isPlayerWiped(state)) { endBattle(false); return; }
 
-      // 「被弾するたびに反撃」の仕様通り、被弾イベントの数だけ渡す（連撃で複数回被弾したユニットは複数回反撃する）
-      const damagedUnits = enemyTurn.hits.map((h) => h.target);
-      const retaliateHits = retaliatePhase(state, damagedUnits);
+      // 「被弾するたびに反撃」の仕様通り、ヒット結果をそのまま渡す（各ヒットのwasKilledで判定するため）
+      const retaliateHits = retaliatePhase(state, enemyTurn.hits);
       const finishEnemyPhase = () => {
         if (!battleActive || gen !== battleGen) return;
         state.combo = applyComboDecay(state.combo);

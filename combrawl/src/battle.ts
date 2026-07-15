@@ -73,9 +73,17 @@ export function enemyAttackTurn(state: GameState, rng: Rng = Math.random): { att
   return { attacker, hits };
 }
 
-/** 被弾したプレイヤーユニットのうち反撃持ちが、自動で敵側へ反撃する */
-export function retaliatePhase(state: GameState, damagedUnits: Unit[], rng: Rng = Math.random): HitResult[] {
-  const retaliators = damagedUnits.filter((u) => u.alive && u.retaliateLevel > 0);
+/**
+ * 被弾したプレイヤーユニットのうち反撃持ちが、自動で敵側へ反撃する。
+ * 「被弾するたびに反撃」という仕様なので、各ヒットが起きた瞬間に対象が生存していたか
+ * （＝そのヒット自体が撃破blowでなかったか）で判定する。ユニットの最終的な生存状態
+ * （敵ターン全体が終わった後の`u.alive`）で判定すると、連撃の途中で倒れた場合に
+ * 死ぬ前の分の反撃まで消えてしまうため、`incomingHits`（各ヒットの`wasKilled`）を見る
+ */
+export function retaliatePhase(state: GameState, incomingHits: HitResult[], rng: Rng = Math.random): HitResult[] {
+  const retaliators = incomingHits
+    .filter((h) => !h.wasKilled && h.target.retaliateLevel > 0)
+    .map((h) => h.target);
   const results: HitResult[] = [];
 
   for (const r of retaliators) {
