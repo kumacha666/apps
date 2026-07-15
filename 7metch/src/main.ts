@@ -1,3 +1,4 @@
+import "../style.css";
 import type { GameScreens, GameDom } from "./types";
 import { G, loadSave, loadOptions } from "./state";
 import { buildStages } from "./stages";

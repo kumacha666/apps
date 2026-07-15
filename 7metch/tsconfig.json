@@ -9,7 +9,7 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "jsx": "preserve",
-    "types": ["vitest/globals"]
+    "types": ["vitest/globals", "vite/client"]
   },
   "include": ["src/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["node_modules", "dist"]

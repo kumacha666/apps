@@ -5,10 +5,17 @@ import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim
 import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker } from "./game";
 import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
 import { buildStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText } from "./stages";
-import { track, FEEDBACK_URL } from "./tracking";
+import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
 import { initInput, renderHelpPieceIcons } from "./input";
 
 // --- Screens ---
+
+// サポートID表示を更新する。初回セッションはinitUI()実行時点では7metch_uidが
+// まだ作られておらず「履歴なし」と表示されるが、track()呼び出しでID発行後に
+// タイトル画面へ戻ってきたときに正しい値を再表示できるようにする
+export function refreshSupportId(): void {
+  document.getElementById("support-id-value")!.textContent = peekAnonId() || "履歴なし";
+}
 
 export function showScreen(name: ScreenName): void {
   const fromGame = name === "options" && G.optionsReturnScreen === "game";
@@ -18,6 +25,7 @@ export function showScreen(name: ScreenName): void {
   if (name !== "result") stopResultBgAnim();
   Object.values(G.screens!).forEach((s: HTMLElement) => s.classList.remove("active"));
   G.screens![name].classList.add("active");
+  if (name === "title") refreshSupportId();
   if (name === "game") startBgAnim();
   if (name === "title") startTitleBgAnim();
   if (name === "splash") startSplashBgAnim();
@@ -261,6 +269,9 @@ export function initUI(): void {
     game: document.getElementById("screen-game")!,
     result: document.getElementById("screen-result")!,
   };
+
+  // --- Support ID (お問い合わせ・データ復旧時にユーザーが申告するための匿名ID表示) ---
+  refreshSupportId();
 
   // --- Sound Toggle ---
   document.getElementById("btn-sound-toggle")!.addEventListener("click", () => {
