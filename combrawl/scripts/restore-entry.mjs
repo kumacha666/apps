@@ -1,6 +1,8 @@
 /**
- * deployの前にroot index.htmlのscript参照をViteが解決できる
- * ./src/main.ts に戻す。deployでdist/index.htmlが上書きするため毎回必要。
+ * root index.htmlのscript参照をViteが解決できる ./src/main.ts に戻す。
+ * deployでdist/index.htmlが上書きするため、buildのたびに必要（prebuildから毎回呼ぶ）。
+ * これを怠ると、直近のdeployで書き出された ./game.js を素通りさせるだけの
+ * ビルドになり、src/main.tsへの変更が反映されない「見た目だけ成功するビルド」になる。
  */
 import { readFileSync, writeFileSync } from "fs";
 

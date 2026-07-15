@@ -138,6 +138,33 @@ describe("retaliatePhase", () => {
     // 撃破ヒットの分(1回)は反撃しないが、その前の生存していた分(1回)の反撃は残る
     expect(hits.length).toBe(1);
   });
+
+  it("反撃持ち自身ではなく、他の味方が被弾した場合でも反撃する（カード説明文「味方が攻撃を受けるたびに」通り）", () => {
+    const retaliator = makeUnit("player", 30, 5);
+    retaliator.retaliateLevel = 1;
+    const ally = makeUnit("player", 30, 2); // 反撃Lvを持たない味方
+    const state = makeState({ playerUnits: [ally, retaliator] });
+    // allyだけが被弾した想定（retaliator自身は狙われていない）
+    const hits = retaliatePhase(state, [makeIncomingHit(ally)], zeroRng);
+    expect(hits.length).toBe(1);
+    expect(hits[0].attacker).toBe(retaliator);
+  });
+
+  it("反撃持ちが連撃の途中で倒れた後に発生した味方の被弾には反撃しない", () => {
+    const retaliator = makeUnit("player", 10, 5);
+    retaliator.retaliateLevel = 1;
+    const ally = makeUnit("player", 30, 2);
+    const state = makeState({ playerUnits: [ally, retaliator], enemyUnits: [makeUnit("enemy", 1000, 3)] });
+    const hits = retaliatePhase(
+      state,
+      [
+        makeIncomingHit(retaliator, { wasKilled: true }), // retaliatorがここで倒れる
+        makeIncomingHit(ally, { wasKilled: false }), // その後にallyが被弾
+      ],
+      zeroRng
+    );
+    expect(hits.length).toBe(0);
+  });
 });
 
 describe("isPlayerWiped / isEnemyWiped", () => {

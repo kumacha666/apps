@@ -74,39 +74,53 @@ export function enemyAttackTurn(state: GameState, rng: Rng = Math.random): { att
 }
 
 /**
- * 被弾したプレイヤーユニットのうち反撃持ちが、自動で敵側へ反撃する。
- * 「被弾するたびに反撃」という仕様なので、各ヒットが起きた瞬間に対象が生存していたか
- * （＝そのヒット自体が撃破blowでなかったか）で判定する。ユニットの最終的な生存状態
- * （敵ターン全体が終わった後の`u.alive`）で判定すると、連撃の途中で倒れた場合に
- * 死ぬ前の分の反撃まで消えてしまうため、`incomingHits`（各ヒットの`wasKilled`）を見る
+ * 「選んだユニットが、味方が攻撃を受けるたびに自動で反撃する」（カード説明文の通り）。
+ * 反撃持ちユニット自身が狙われた時だけでなく、他の味方が被弾した時にも反撃が発動する。
+ *
+ * 反撃可否は「そのヒットが起きた瞬間に反撃持ちユニットが生存していたか」で判定する。
+ * `incomingHits`が解決し終えた後の最終的な`u.alive`をそのまま使うと、反撃持ち自身が
+ * 連撃の途中で倒れた場合、死ぬ前に発生した味方の被弾に対する反撃まで消えてしまうため、
+ * 各反撃持ちについて「どのヒットで力尽きたか（あれば）」を先に求め、それより前のヒット
+ * でのみ反撃資格があるとして扱う。
  */
 export function retaliatePhase(state: GameState, incomingHits: HitResult[], rng: Rng = Math.random): HitResult[] {
-  const retaliators = incomingHits
-    .filter((h) => !h.wasKilled && h.target.retaliateLevel > 0)
-    .map((h) => h.target);
   const results: HitResult[] = [];
+  const retaliateCandidates = state.playerUnits.filter((u) => u.retaliateLevel > 0);
 
-  for (const r of retaliators) {
-    const retMult = retaliateMultFor(r.retaliateLevel);
-    const isAoe = r.aoeLevel > 0;
-    const aoeMult = aoeMultFor(r.aoeLevel);
+  const deathIndexOf = new Map<string, number>();
+  incomingHits.forEach((hit, idx) => {
+    if (hit.wasKilled) deathIndexOf.set(hit.target.id, idx);
+  });
 
-    for (let hitIndex = 0; hitIndex < r.attackCount; hitIndex++) {
-      const alive = state.enemyUnits.filter((u) => u.alive);
-      if (alive.length === 0) break;
-      const targets = isAoe ? alive.slice() : [pickRandom(alive, rng)];
-      for (const target of targets) {
-        const damage = Math.max(
-          1,
-          Math.round(r.atk * r.dmgOutMult * aoeMult * retMult * hitDampen(hitIndex))
-        );
-        target.hp -= damage;
-        const wasKilled = target.hp <= 0 && target.alive;
-        if (wasKilled) target.alive = false;
-        results.push({ attacker: r, target, damage, isCrit: false, wasKilled, hitIndex, hpAfter: target.hp });
+  incomingHits.forEach((hit, idx) => {
+    for (const r of retaliateCandidates) {
+      const deathIdx = deathIndexOf.get(r.id);
+      // このヒットの時点でrが生存していたか（一度も倒れていないならこのフェーズ開始時点の生存状態、
+      // 途中で倒れたなら「そのヒットより前か」で判定する）
+      const wasAliveAtThisHit = deathIdx !== undefined ? idx < deathIdx : r.alive;
+      if (!wasAliveAtThisHit) continue;
+
+      const retMult = retaliateMultFor(r.retaliateLevel);
+      const isAoe = r.aoeLevel > 0;
+      const aoeMult = aoeMultFor(r.aoeLevel);
+
+      for (let hitIndex = 0; hitIndex < r.attackCount; hitIndex++) {
+        const aliveEnemies = state.enemyUnits.filter((u) => u.alive);
+        if (aliveEnemies.length === 0) break;
+        const targets = isAoe ? aliveEnemies.slice() : [pickRandom(aliveEnemies, rng)];
+        for (const target of targets) {
+          const damage = Math.max(
+            1,
+            Math.round(r.atk * r.dmgOutMult * aoeMult * retMult * hitDampen(hitIndex))
+          );
+          target.hp -= damage;
+          const wasKilled = target.hp <= 0 && target.alive;
+          if (wasKilled) target.alive = false;
+          results.push({ attacker: r, target, damage, isCrit: false, wasKilled, hitIndex, hpAfter: target.hp });
+        }
       }
     }
-  }
+  });
   return results;
 }
 

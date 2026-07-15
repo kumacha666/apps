@@ -284,10 +284,10 @@ function battleTick(gen: number) {
 
     animateHits(enemySide, playerSide, enemyTurn.hits, "enemy", gen, () => {
       if (!battleActive || gen !== battleGen) return;
-      if (isEnemyWiped(state)) { endBattle(true); return; }
-      if (isPlayerWiped(state)) { endBattle(false); return; }
 
-      // 「被弾するたびに反撃」の仕様通り、ヒット結果をそのまま渡す（各ヒットのwasKilledで判定するため）
+      // 敵ターンで力尽きたユニットがいても、それより前に発生した被弾に対する反撃は
+      // 有効なので、プレイヤー全滅判定より先に反撃を解決する（反撃で敵を返り討ちに
+      // できる可能性もある）
       const retaliateHits = retaliatePhase(state, enemyTurn.hits);
       const finishEnemyPhase = () => {
         if (!battleActive || gen !== battleGen) return;
