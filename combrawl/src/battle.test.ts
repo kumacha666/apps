@@ -23,8 +23,8 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     playerUnits: [makeUnit("player", 24, 4)],
     enemyUnits: [makeUnit("enemy", 20, 3)],
     deck: [],
-    combo: 1,
-    stats: { maxCombo: 0, maxTurnDamage: 0, maxTurnKills: 0 },
+    score: 0,
+    stats: { maxTurnDamage: 0, maxTurnKills: 0 },
     ...overrides,
   };
 }
@@ -123,6 +123,22 @@ describe("retaliatePhase", () => {
       zeroRng
     );
     expect(hits.length).toBe(3);
+  });
+
+  it("同じユニットの複数回の反撃は、それぞれ別のswingId（別の1回の振り）として区別される（アニメーションで誤って同時ヒット扱いされないため）", () => {
+    const retaliator = makeUnit("player", 30, 5);
+    retaliator.retaliateLevel = 1; // attackCount=1のまま（各反撃は常にhitIndex=0の1発のみ）
+    const state = makeState({ playerUnits: [retaliator], enemyUnits: [makeUnit("enemy", 1000, 3)] });
+    const hits = retaliatePhase(
+      state,
+      [makeIncomingHit(retaliator), makeIncomingHit(retaliator), makeIncomingHit(retaliator)],
+      zeroRng
+    );
+    expect(hits.length).toBe(3);
+    expect(hits.every((h) => h.hitIndex === 0)).toBe(true);
+    // 3回とも同じattacker・同じhitIndex(0)だが、別々の反撃アクションなのでswingIdは3件とも異なるはず
+    const swingIds = hits.map((h) => h.swingId);
+    expect(new Set(swingIds).size).toBe(3);
   });
 
   it("撃破された瞬間のヒットでは反撃しないが、それ以前の被弾分の反撃は消えない", () => {

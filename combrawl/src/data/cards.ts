@@ -49,7 +49,7 @@ export const CARD_POOL: Card[] = [
       const u = pickTarget(state, chosenUnit);
       if (!u) return { message: "対象なし" };
       u.attackCount += 4;
-      return { message: `1体が${u.attackCount}連撃になった！` };
+      return { message: `1体が${u.attackCount}連撃になった！`, appliedUnit: u };
     },
   },
   {
@@ -125,7 +125,7 @@ export const CARD_POOL: Card[] = [
         c.tauntLevel = u.tauntLevel;
       });
       state.playerUnits.splice(idx, 1, child1, child2);
-      return { message: "1体が2体に分裂した！（特性も両方に引き継ぎ）" };
+      return { message: "1体が2体に分裂した！（特性も両方に引き継ぎ）", appliedUnit: child1 };
     },
   },
   {
@@ -137,7 +137,7 @@ export const CARD_POOL: Card[] = [
       const u = pickTarget(state, chosenUnit);
       if (!u) return { message: "対象なし" };
       u.aoeLevel += 1;
-      return { message: `1体が全体攻撃化した！（Lv${u.aoeLevel}・威力${Math.round(aoeMultForDisplay(u.aoeLevel) * 100)}%）` };
+      return { message: `1体が全体攻撃化した！（Lv${u.aoeLevel}・威力${Math.round(aoeMultForDisplay(u.aoeLevel) * 100)}%）`, appliedUnit: u };
     },
   },
   {
@@ -149,7 +149,7 @@ export const CARD_POOL: Card[] = [
       const u = pickTarget(state, chosenUnit);
       if (!u) return { message: "対象なし" };
       u.retaliateLevel += 1;
-      return { message: `1体が反撃の構えを取った！（Lv${u.retaliateLevel}・威力${Math.round(retaliateMultForDisplay(u.retaliateLevel) * 100)}%）` };
+      return { message: `1体が反撃の構えを取った！（Lv${u.retaliateLevel}・威力${Math.round(retaliateMultForDisplay(u.retaliateLevel) * 100)}%）`, appliedUnit: u };
     },
   },
   {
@@ -162,7 +162,7 @@ export const CARD_POOL: Card[] = [
       if (!u) return { message: "対象なし" };
       u.tauntLevel += 1;
       u.dmgTakenMult = tauntMultForDisplay(u.tauntLevel);
-      return { message: `1体が挑発した！（Lv${u.tauntLevel}・被ダメージ${Math.round(u.dmgTakenMult * 100)}%）` };
+      return { message: `1体が挑発した！（Lv${u.tauntLevel}・被ダメージ${Math.round(u.dmgTakenMult * 100)}%）`, appliedUnit: u };
     },
   },
   {
@@ -177,7 +177,7 @@ export const CARD_POOL: Card[] = [
       u.hp = nm;
       u.maxHp = nm;
       u.atk = u.atk * 3;
-      return { message: "1体が特大化した！" };
+      return { message: "1体が特大化した！", appliedUnit: u };
     },
   },
 ];

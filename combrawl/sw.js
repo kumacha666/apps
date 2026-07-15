@@ -1,4 +1,4 @@
-const CACHE_NAME = "combrawl-v0.1.10";
+const CACHE_NAME = "combrawl-v0.1.17";
 const ASSETS = ["./", "./index.html", "./style.css", "./game.js", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {

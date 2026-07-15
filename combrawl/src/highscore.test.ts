@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { loadBestRecord, saveRecordIfBetter, type RunRecord, type StorageLike } from "./highscore";
+import {
+  loadBestRecord,
+  loadBestScore,
+  saveBestScoreIfBetter,
+  saveRecordIfBetter,
+  type RunRecord,
+  type StorageLike,
+} from "./highscore";
 
 function makeFakeStorage(): StorageLike {
   const map = new Map<string, string>();
@@ -14,7 +21,7 @@ function makeFakeStorage(): StorageLike {
 function makeRecord(endlessRound: number, clearedTenFloors = endlessRound >= 10): RunRecord {
   return {
     endlessRound,
-    maxCombo: 3,
+    score: 300,
     maxTurnDamage: 100,
     maxTurnKills: 2,
     clearedTenFloors,
@@ -79,5 +86,48 @@ describe("highscore（自分の中だけの記録）", () => {
     const { saved, best } = saveRecordIfBetter(record, throwingStorage);
     expect(saved).toBe(true);
     expect(best.endlessRound).toBe(7);
+  });
+});
+
+describe("HIGH SCORE（到達ラウンドとは別軸の、累積SCOREだけの自己ベスト）", () => {
+  it("記録がまだ無ければ0、初回は渡した値がそのまま保存される", () => {
+    const storage = makeFakeStorage();
+    expect(loadBestScore(storage)).toBe(0);
+    const { saved, best } = saveBestScoreIfBetter(1200, storage);
+    expect(saved).toBe(true);
+    expect(best).toBe(1200);
+    expect(loadBestScore(storage)).toBe(1200);
+  });
+
+  it("既存の記録を上回った場合のみ更新される", () => {
+    const storage = makeFakeStorage();
+    saveBestScoreIfBetter(1200, storage);
+    const worse = saveBestScoreIfBetter(800, storage);
+    expect(worse.saved).toBe(false);
+    expect(worse.best).toBe(1200);
+
+    const better = saveBestScoreIfBetter(2000, storage);
+    expect(better.saved).toBe(true);
+    expect(loadBestScore(storage)).toBe(2000);
+  });
+
+  it("storageへのアクセスが例外を投げても、loadBestScoreはクラッシュせず0を返す", () => {
+    const throwingStorage: StorageLike = {
+      getItem: () => { throw new Error("SecurityError: storage disabled"); },
+      setItem: () => { throw new Error("SecurityError: storage disabled"); },
+    };
+    expect(() => loadBestScore(throwingStorage)).not.toThrow();
+    expect(loadBestScore(throwingStorage)).toBe(0);
+  });
+
+  it("storageへの保存が例外を投げても、saveBestScoreIfBetterはクラッシュせず今回のスコアを返す", () => {
+    const throwingStorage: StorageLike = {
+      getItem: () => { throw new Error("SecurityError: storage disabled"); },
+      setItem: () => { throw new Error("SecurityError: storage disabled"); },
+    };
+    expect(() => saveBestScoreIfBetter(500, throwingStorage)).not.toThrow();
+    const { saved, best } = saveBestScoreIfBetter(500, throwingStorage);
+    expect(saved).toBe(true);
+    expect(best).toBe(500);
   });
 });
