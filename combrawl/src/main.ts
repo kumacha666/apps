@@ -358,14 +358,21 @@ function animateHits(
   }
   renderArena(overrides);
 
-  // 同じ攻撃者による同じhitIndexのヒットは「1回の振りで全体に同時ヒット」なので、
-  // まとめて同じタイミングで再生する（全体攻撃化カードの見た目を裏付ける）。
-  // 異なる攻撃者・異なるhitIndexへの遷移だけを区切りとしてグループ化する
+  // 同じ攻撃者・同じ攻撃アクション（swingId）・同じhitIndexのヒットは「1回の振りで全体に同時ヒット」
+  // なので、まとめて同じタイミングで再生する（全体攻撃化カードの見た目を裏付ける）。
+  // swingIdも見るのは、同じ攻撃者が別々のタイミングで複数回攻撃（例: 反撃持ちが複数回反撃）した場合、
+  // hitIndexだけでは「別々の攻撃がたまたま同じhitIndexになった」ケースと区別できないため
+  // （2026-07-15、Codexレビュー指摘）
   const groups: HitResult[][] = [];
   for (const hit of hits) {
     const lastGroup = groups[groups.length - 1];
     const lastHit = lastGroup?.[0];
-    if (lastHit && lastHit.hitIndex === hit.hitIndex && lastHit.attacker.id === hit.attacker.id) {
+    if (
+      lastHit &&
+      lastHit.hitIndex === hit.hitIndex &&
+      lastHit.attacker.id === hit.attacker.id &&
+      lastHit.swingId === hit.swingId
+    ) {
       lastGroup.push(hit);
     } else {
       groups.push([hit]);

@@ -57,4 +57,9 @@ export interface HitResult {
   hitIndex: number;
   /** このヒット直後の対象のHP（段階的なアニメーション再生用） */
   hpAfter: number;
+  /** 「同じ1回の振り」を識別するID（アニメーション演出専用）。同じ攻撃者・同じhitIndexでも、
+   * 別々の攻撃アクション（例: 反撃持ちが複数回に分けて反撃した場合の各反撃）ならswingIdは別になる。
+   * hitIndexだけでは「1回のAoE振りで複数体に同時ヒット」と「別々の攻撃が偶然hitIndexが同じ」を
+   * 区別できないため導入した（2026-07-15、Codexレビュー指摘） */
+  swingId?: number;
 }

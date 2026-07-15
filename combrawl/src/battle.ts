@@ -8,6 +8,12 @@ function pickRandom<T>(arr: T[], rng: Rng): T {
   return arr[Math.floor(rng() * arr.length)];
 }
 
+/** 「同じ1回の振り」を識別するID採番（アニメーション演出専用、値そのものに意味は無い） */
+let swingCounter = 0;
+function nextSwingId(): number {
+  return swingCounter++;
+}
+
 function resolveHits(
   attacker: Unit,
   targetsPool: Unit[],
@@ -19,6 +25,9 @@ function resolveHits(
   const results: HitResult[] = [];
   const isAoe = attacker.aoeLevel > 0;
   const aoeMult = aoeMultFor(attacker.aoeLevel);
+  // 1回のresolveHits呼び出し全体（1ターン分の連撃・全体攻撃）を1つの攻撃アクションとして扱う。
+  // hitIndexが攻撃の何発目かを表すのに対し、swingIdは「別々の攻撃アクション」を区別する
+  const swingId = nextSwingId();
 
   for (let hitIndex = 0; hitIndex < hits; hitIndex++) {
     const alive = targetsPool.filter((u) => u.alive);
@@ -42,7 +51,7 @@ function resolveHits(
       target.hp -= damage;
       const wasKilled = target.hp <= 0 && target.alive;
       if (wasKilled) target.alive = false;
-      results.push({ attacker, target, damage, isCrit, wasKilled, hitIndex, hpAfter: target.hp });
+      results.push({ attacker, target, damage, isCrit, wasKilled, hitIndex, hpAfter: target.hp, swingId });
     }
   }
   return results;
@@ -103,6 +112,12 @@ export function retaliatePhase(state: GameState, incomingHits: HitResult[], rng:
       const retMult = retaliateMultFor(r.retaliateLevel);
       const isAoe = r.aoeLevel > 0;
       const aoeMult = aoeMultFor(r.aoeLevel);
+      // 同じ反撃持ちユニットが、味方の複数回の被弾（別々のincomingHit）に反応して複数回反撃することがある。
+      // 各反撃はそれぞれ独立した「1回の振り」なので、hitIndexが0から振り出しに戻っても
+      // 前の反撃と同時ヒット扱いにならないよう、反撃1回ごとに新しいswingIdを発行する
+      // （2026-07-15、Codexレビュー指摘: hitIndex+attackerだけのグループ化だと、
+      //   attackCount===1の反撃が複数回起きた場合に誤って1つの同時スイングに見えてしまう）
+      const swingId = nextSwingId();
 
       for (let hitIndex = 0; hitIndex < r.attackCount; hitIndex++) {
         const aliveEnemies = state.enemyUnits.filter((u) => u.alive);
@@ -116,7 +131,7 @@ export function retaliatePhase(state: GameState, incomingHits: HitResult[], rng:
           target.hp -= damage;
           const wasKilled = target.hp <= 0 && target.alive;
           if (wasKilled) target.alive = false;
-          results.push({ attacker: r, target, damage, isCrit: false, wasKilled, hitIndex, hpAfter: target.hp });
+          results.push({ attacker: r, target, damage, isCrit: false, wasKilled, hitIndex, hpAfter: target.hp, swingId });
         }
       }
     }
