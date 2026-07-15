@@ -7,12 +7,25 @@ const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbw6_EH0cRSKYnKVefY
 export const FEEDBACK_URL = "https://forms.gle/emCFWfyXtkpmL7zL9";
 
 export function getAnonId(): string {
-  let id = localStorage.getItem("7metch_uid");
-  if (!id) {
-    id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
-    localStorage.setItem("7metch_uid", id);
+  try {
+    let id = localStorage.getItem("7metch_uid");
+    if (!id) {
+      id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem("7metch_uid", id);
+    }
+    return id;
+  } catch {
+    return "";
   }
-  return id;
+}
+
+// サポートID表示用: 新規IDを発行せず既存の値のみを読む（無ければ復旧に使える履歴が無いことを示す）
+export function peekAnonId(): string | null {
+  try {
+    return localStorage.getItem("7metch_uid");
+  } catch {
+    return null;
+  }
 }
 
 function trackGA(event: string, params: Record<string, unknown>): void {

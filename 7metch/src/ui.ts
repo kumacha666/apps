@@ -5,7 +5,7 @@ import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim
 import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker } from "./game";
 import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
 import { buildStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText } from "./stages";
-import { track, FEEDBACK_URL, getAnonId } from "./tracking";
+import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
 import { initInput, renderHelpPieceIcons } from "./input";
 
 // --- Screens ---
@@ -263,7 +263,8 @@ export function initUI(): void {
   };
 
   // --- Support ID (お問い合わせ・データ復旧時にユーザーが申告するための匿名ID表示) ---
-  document.getElementById("support-id-value")!.textContent = getAnonId();
+  // 新規IDを発行すると復旧に使えない無関係なIDを表示してしまうため、既存値のみ表示する
+  document.getElementById("support-id-value")!.textContent = peekAnonId() || "履歴なし";
 
   // --- Sound Toggle ---
   document.getElementById("btn-sound-toggle")!.addEventListener("click", () => {

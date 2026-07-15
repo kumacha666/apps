@@ -8,15 +8,6 @@ export default defineConfig(({ mode }) => ({
   root: ".",
   base: "./",
   publicDir: "public",
-  plugins: [{
-    name: "entry-rewrite",
-    transformIndexHtml(html) {
-      return html.replace(
-        /<script type="module"[^>]*src="[^"]*game\.js"/,
-        '<script type="module" src="./src/main.ts"'
-      );
-    },
-  }],
   build: {
     outDir: "dist",
     emptyOutDir: true,
@@ -28,6 +19,11 @@ export default defineConfig(({ mode }) => ({
       },
     },
     rollupOptions: {
+      // index.htmlは本番配信用に./game.js（ビルド成果物のコピー）を直接参照するため、
+      // Viteのentry-pointは index.html 経由ではなく src/main.ts を直接指定する
+      // （HTML内のscript src書き換えによる旧entry-rewrite方式はVite 6系で
+      //   entry検出に反映されないことが判明したため廃止）。
+      input: resolve(__dirname, "src/main.ts"),
       output: {
         entryFileNames: "game.js",
         assetFileNames: (assetInfo) => {
