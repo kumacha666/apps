@@ -106,7 +106,9 @@ function initRun() {
   state = {
     round: 1,
     playerUnits: [makeUnit("player", 24, 4), makeUnit("player", 24, 4)],
-    enemyUnits: setupEnemies(1),
+    // 敵の強さ・裏で付与される連撃は戦闘開始後にしか見せない仕様（combrawl/CLAUDE.md参照）
+    // なので、実際の生成はstartBattle()まで遅らせる
+    enemyUnits: [],
     deck: [],
     combo: 1,
     stats: initialStats(),
@@ -134,14 +136,27 @@ function renderHud() {
   bestRoundEl.textContent = best ? String(best.endlessRound) : "-";
 }
 
-function renderArena() {
-  renderUnits(playerSide, state.playerUnits, "player-unit");
-  renderUnits(enemySide, state.enemyUnits, "enemy-unit");
+interface DisplayOverride { hp: number; alive: boolean }
+
+function renderArena(overrides?: Map<string, DisplayOverride>) {
+  renderUnits(playerSide, state.playerUnits, "player-unit", overrides);
+  renderUnits(enemySide, state.enemyUnits, "enemy-unit", overrides);
 }
 
-function renderUnits(container: HTMLElement, units: Unit[], cls: "player-unit" | "enemy-unit") {
+function renderUnits(
+  container: HTMLElement,
+  units: Unit[],
+  cls: "player-unit" | "enemy-unit",
+  overrides?: Map<string, DisplayOverride>
+) {
   container.innerHTML = "";
-  units.forEach((u) => {
+  units.forEach((unit) => {
+    // アニメーション中は、そのユニットが「今何ヒット目まで見せ終えたか」に応じたHP/生存状態を表示する。
+    // stateは連撃・全体攻撃の全ヒットを解決済みの最終値を持っているため、そのまま描画すると
+    // 1コマ目から最終状態（途中で倒れたユニットは即座に死亡表示）になってしまうのを防ぐ
+    const override = overrides?.get(unit.id);
+    const u = override ? { ...unit, hp: override.hp, alive: override.alive } : unit;
+
     const el = document.createElement("div");
     let className = "unit " + cls + (u.alive ? "" : " dead");
     if (unitSelectionMode && cls === "player-unit" && u.alive) {
@@ -247,9 +262,12 @@ function startBattle() {
   battleActive = true;
   battleGen++;
   const gen = battleGen;
+  // 敵編成（裏で付与される連撃を含む）はここで初めて確定・表示する
+  state.enemyUnits = setupEnemies(state.round);
   startBtn.disabled = true;
   cardArea.innerHTML = "";
   statusLine.textContent = "戦闘中…";
+  renderArena();
   battleTimer = setTimeout(() => battleTick(gen), 150);
 }
 
@@ -294,8 +312,10 @@ function battleTick(gen: number) {
         state.combo = applyComboDecay(state.combo);
         renderHud();
 
-        if (isPlayerWiped(state)) { endBattle(false); return; }
+        // 反撃で相討みになった場合は勝利を優先する（反撃で敵を全滅させたなら
+        // その後にプレイヤー側が力尽きていても「返り討ち」が成立している）
         if (isEnemyWiped(state)) { endBattle(true); return; }
+        if (isPlayerWiped(state)) { endBattle(false); return; }
 
         battleTimer = setTimeout(() => battleTick(gen), 130);
       };
@@ -337,10 +357,22 @@ function animateHits(
   const showsHitIndex = attacker.attackCount > 1;
   let anyKilled = false;
 
+  // stateはこのターンの全ヒットを解決済み（最終値）なので、そのまま描画すると1コマ目から
+  // 最終状態になってしまう。各対象について「このアニメーション開始前＝1発目のダメージが
+  // 乗る前」のHPをhpAfter+damageで逆算し、ヒットを再生するたびに1体ずつ更新していく
+  const overrides = new Map<string, DisplayOverride>();
+  for (const hit of hits) {
+    if (!overrides.has(hit.target.id)) {
+      overrides.set(hit.target.id, { hp: hit.hpAfter + hit.damage, alive: true });
+    }
+  }
+  renderArena(overrides);
+
   hits.forEach((hit, i) => {
     setTimeout(() => {
       if (!battleActive || gen !== battleGen) return;
-      renderArena();
+      overrides.set(hit.target.id, { hp: hit.hpAfter, alive: !hit.wasKilled });
+      renderArena(overrides);
 
       const aEl = attackerContainer.querySelector(`[data-id="${hit.attacker.id}"]`);
       if (aEl) {
@@ -492,7 +524,8 @@ function chooseCard(card: (typeof CARD_POOL)[number]) {
   state.round += 1;
   lastMilestone = 1;
   state.combo = 1;
-  state.enemyUnits = setupEnemies(state.round);
+  // 次ラウンドの敵編成はここでは生成しない（戦闘開始まで非公開にするため、startBattle()で生成する）
+  state.enemyUnits = [];
   cardArea.innerHTML = "";
   showToast(`${card.name}：${result.message}`);
   statusLine.textContent = `${roundLabel(state.round)}: 戦闘開始を押してください`;
