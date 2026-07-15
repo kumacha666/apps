@@ -7,6 +7,7 @@ import { playerAttackTurn, enemyAttackTurn, retaliatePhase, isPlayerWiped, isEne
 import { applyHitsBySwing, applyScoreGain, initialStats } from "./stats";
 import { isEndless, roundLabel } from "./progress";
 import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBetter } from "./highscore";
+import { scaledDelay, type BattleSpeed } from "./speed";
 
 const titleScreen = document.getElementById("titleScreen") as HTMLElement;
 const gameScreen = document.getElementById("gameScreen") as HTMLElement;
@@ -27,6 +28,7 @@ const maxTurnKillsEl = document.getElementById("maxTurnKills") as HTMLElement;
 const bestRoundEl = document.getElementById("bestRound") as HTMLElement;
 const highScoreEl = document.getElementById("highScore") as HTMLElement;
 const deckStrip = document.getElementById("deckStrip") as HTMLElement;
+const endlessControls = document.getElementById("endlessControls") as HTMLElement;
 
 // --- 効果音（Web Audio APIで生成、外部ファイル不要） ---
 let audioCtx: AudioContext | null = null;
@@ -39,6 +41,9 @@ function getAudioCtx(): AudioContext {
 }
 
 function playTone(freq: number, duration: number, type: OscillatorType, volume = 0.18, delay = 0) {
+  // 高速/超速の自動周回中は、大量の効果音が短時間に重なって鳴り続ける
+  // （オーディオノードが積み上がりパフォーマンスを圧迫する）のを避けるためミュートする
+  if (speedMode !== "normal") return;
   try {
     const ctx = getAudioCtx();
     const start = ctx.currentTime + delay;
@@ -67,6 +72,7 @@ function sfxHit(isCrit: boolean) {
 }
 function sfxHurt() { playTone(150, 0.1, "sawtooth", 0.14); }
 function sfxDeath() {
+  if (speedMode !== "normal") return;
   try {
     const ctx = getAudioCtx();
     const osc = ctx.createOscillator();
@@ -96,8 +102,11 @@ let battleTimer: ReturnType<typeof setTimeout> | null = null;
 let battleGen = 0;
 let unitSelectionMode = false;
 let selectedTargetId: string | null = null;
+/** エンドレスでビルドが強くなりすぎて終わらなくなる問題への対策（2026-07-15追加）。
+ * 一度normal以外に切り替えたら、そのラン中は元に戻せない（一方通行。UI上も戻すボタンは出さない） */
+let speedMode: BattleSpeed = "normal";
 
-const HIT_STAGGER = 190;
+const HIT_STAGGER_BASE = 190;
 
 function setSelectionMode(v: boolean) {
   unitSelectionMode = v;
@@ -111,6 +120,7 @@ function initRun() {
   battleGen++;
   setSelectionMode(false);
   selectedTargetId = null;
+  speedMode = "normal";
   state = {
     round: 1,
     playerUnits: [makeUnit("player", 24, 4), makeUnit("player", 24, 4)],
@@ -142,6 +152,7 @@ function renderHud() {
   const best = loadBestRecord();
   bestRoundEl.textContent = best ? String(best.endlessRound) : "-";
   highScoreEl.textContent = loadBestScore().toLocaleString();
+  renderEndlessControls();
 }
 
 interface DisplayOverride { hp: number; alive: boolean }
@@ -265,7 +276,7 @@ function startBattle() {
   cardArea.innerHTML = "";
   statusLine.textContent = "戦闘中…";
   renderArena();
-  battleTimer = setTimeout(() => battleTick(gen), 150);
+  battleTimer = setTimeout(() => battleTick(gen), scaledDelay(150, speedMode));
 }
 
 /** ヒット群を集計してSCORE・演出用スタッツに反映し、新記録が出た瞬間は演出する */
@@ -320,7 +331,7 @@ function battleTick(gen: number) {
         if (isEnemyWiped(state)) { endBattle(true); return; }
         if (isPlayerWiped(state)) { endBattle(false); return; }
 
-        battleTimer = setTimeout(() => battleTick(gen), 130);
+        battleTimer = setTimeout(() => battleTick(gen), scaledDelay(130, speedMode));
       };
 
       if (retaliateHits.length > 0) {
@@ -418,9 +429,9 @@ function animateHits(
         setTimeout(() => {
           if (!battleActive || gen !== battleGen) return;
           onDone();
-        }, 140);
+        }, scaledDelay(140, speedMode));
       }
-    }, gi * HIT_STAGGER);
+    }, gi * scaledDelay(HIT_STAGGER_BASE, speedMode));
   });
 }
 
@@ -440,9 +451,15 @@ function endBattle(won: boolean) {
         // （リセットやページを閉じた場合でも、直前まで到達した層数を記録として残すため）
         finalizeRecord(true);
       }
-      const label = endless ? `エンドレス ${state.round}層 突破！` : `ラウンド ${state.round} 勝利！`;
-      statusLine.textContent = `${label} カードを1枚選んでください`;
-      showCardChoices();
+      if (endless && speedMode !== "normal") {
+        // 高速/超速モードでは、勝利のたびにカード選択を挟まず自動で次のラウンドへ進む
+        // （「それ以降の強化はなし、どこまで伸ばせるかを見届ける」仕様）
+        continueEndlessAuto();
+      } else {
+        const label = endless ? `エンドレス ${state.round}層 突破！` : `ラウンド ${state.round} 勝利！`;
+        statusLine.textContent = `${label} カードを1枚選んでください`;
+        showCardChoices();
+      }
       sfxVictory();
     }
   } else {
@@ -471,6 +488,11 @@ function showTenFloorClearPanel() {
       <button class="btn secondary" id="endBtn">ここで終了</button>
       <button class="btn" id="endlessBtn">エンドレスに挑戦</button>
     </div>
+    <div class="btn-row">
+      <button class="btn secondary" id="endlessFastBtn">高速で自動周回</button>
+      <button class="btn secondary" id="endlessUltraBtn">超速で自動周回</button>
+    </div>
+    <p class="clear-panel-note">高速/超速は、以後カード強化なしで死ぬまで自動継続します（いつでも「ここで終了」で切り上げ可）</p>
   `;
   cardArea.appendChild(panel);
 
@@ -483,6 +505,91 @@ function showTenFloorClearPanel() {
     statusLine.textContent = "エンドレス突入！ カードを1枚選んでください";
     showCardChoices();
   };
+  (panel.querySelector("#endlessFastBtn") as HTMLButtonElement).onclick = () => enterAutoEndless("fast");
+  (panel.querySelector("#endlessUltraBtn") as HTMLButtonElement).onclick = () => enterAutoEndless("ultra");
+}
+
+/**
+ * 10層クリアパネルから、カード選択を挟まず直接エンドレスの自動周回（高速/超速）へ入る。
+ * 通常の「エンドレスに挑戦」は1枚カードを選んでから次ラウンドへ進むが、
+ * 「それ以降の強化はなし」の仕様通り、ここでは最初の1枚も選ばせずラウンドを進める
+ */
+function enterAutoEndless(speed: "fast" | "ultra") {
+  speedMode = speed;
+  state.playerUnits.forEach((u) => { u.hp = u.maxHp; u.alive = true; });
+  state.round += 1;
+  state.enemyUnits = [];
+  cardArea.innerHTML = "";
+  renderAll();
+  startBattle();
+}
+
+/**
+ * 既にエンドレス中（カード選択画面 or 戦闘中）に高速/超速へ切り替える。
+ * カード選択画面が出ている場合はそれを飛ばして即座に次の戦闘を開始する
+ * （戦闘中に押した場合は、現在の戦闘には影響せず次ラウンド以降から速度が反映される）
+ */
+function setAutoSpeed(speed: "fast" | "ultra") {
+  speedMode = speed;
+  if (cardArea.querySelector(".card-row")) {
+    // このカード選択画面は「直前に勝ったラウンド」の報酬なので、選ばずに飛ばす場合も
+    // chooseCard()/continueEndlessAuto()と同様にラウンドを進めてから次の戦闘へ入る。
+    // これを怠ると、同じラウンド番号の敵ともう一度戦うことになってしまう
+    // （2026-07-15、Codexレビュー指摘: 既にクリア済みのフロアの分だけSCORE/記録が水増しされていた）
+    setSelectionMode(false);
+    state.round += 1;
+    state.enemyUnits = [];
+    cardArea.innerHTML = "";
+    renderAll();
+    startBattle();
+  }
+  renderHud();
+}
+
+function continueEndlessAuto() {
+  state.round += 1;
+  state.enemyUnits = [];
+  cardArea.innerHTML = "";
+  renderAll();
+  startBattle();
+}
+
+/** エンドレス中、ビルドが強くなりすぎて自然に終わらない場合の脱出ボタン。記録を確定してタイトルに戻る */
+function finishEndlessRun() {
+  if (battleTimer) clearTimeout(battleTimer);
+  battleActive = false;
+  battleGen++;
+  const { scoreBest } = finalizeRecord(true);
+  showToast(`お疲れ様でした！ SCORE ${state.score.toLocaleString()}（HIGH SCORE: ${scoreBest.toLocaleString()}）`);
+  cardArea.innerHTML = "";
+  gameScreen.hidden = true;
+  titleScreen.hidden = false;
+}
+
+function renderEndlessControls() {
+  if (!hasRunStarted || !isEndless(state.round)) {
+    endlessControls.hidden = true;
+    endlessControls.innerHTML = "";
+    return;
+  }
+  endlessControls.hidden = false;
+
+  const buttons: string[] = [];
+  if (speedMode === "normal") {
+    buttons.push('<button class="btn secondary" id="switchFastBtn">高速に切替</button>');
+    buttons.push('<button class="btn secondary" id="switchUltraBtn">超速に切替</button>');
+  } else if (speedMode === "fast") {
+    buttons.push('<button class="btn secondary" id="switchUltraBtn">超速に上げる</button>');
+  }
+  buttons.push('<button class="btn secondary" id="finishEndlessBtn">ここで終了</button>');
+  endlessControls.innerHTML = buttons.join("");
+
+  const fastBtn = endlessControls.querySelector("#switchFastBtn") as HTMLButtonElement | null;
+  if (fastBtn) fastBtn.onclick = () => setAutoSpeed("fast");
+  const ultraBtn = endlessControls.querySelector("#switchUltraBtn") as HTMLButtonElement | null;
+  if (ultraBtn) ultraBtn.onclick = () => setAutoSpeed("ultra");
+  const finishBtn = endlessControls.querySelector("#finishEndlessBtn") as HTMLButtonElement | null;
+  if (finishBtn) finishBtn.onclick = finishEndlessRun;
 }
 
 function finalizeRecord(clearedTenFloors: boolean) {
