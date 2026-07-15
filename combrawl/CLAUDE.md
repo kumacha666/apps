@@ -32,6 +32,7 @@
 - SCORE・ダメージ計算式を変更する場合は、必ず「敵の攻撃（被ダメージ）はSCOREに影響しない」「1ラン中はリセットされない」という制約を壊していないか確認する
 - 単体強化カードを追加する場合は、`apply`の戻り値に実際に適用したユニットを`appliedUnit`として必ず含める（`main.ts`側でハイライト対象を独自に推測させない）
 - コミット前に`npm run deploy`を実行し、ビルド成果物（`game.js`/`style.css`/`manifest.json`/`index.html`）をルート直下に反映させる（`npm run build`は`scripts/build.mjs`が entry書き換え→テスト→vite build を一括で行い、失敗時も必ずindex.htmlを復元する。`npx vite build`を直接叩かないこと。2026-07-15、apps#298）
+- **`npm run deploy`は`dist/index.html`をコピーした直後に`scripts/normalize-index.mjs`を必ず実行する**：Viteはビルド時、注入するscript/linkタグの前に大量の空白パディングを付与する。この生成物をそのまま次回ビルドの入力（=コミットされるindex.html）として使い回すと、ビルドのたびにViteが既存のパディングの上にさらにパディングを重ねてしまい、デプロイのたびにindex.htmlがほぼ倍々に肥大化し続ける不具合があった（2026-07-15、Codexレビュー指摘。実測: 7.9KB→14KB→…と倍増）。normalize-index.mjsは注入タグ直前の空白ランを1個の改行に正規化し、この複利的な肥大化を断つ。`deploy`スクリプトからこのステップを外さないこと
 
 ## プロトタイプ移植で得た教訓（2026-07-15、初回実装のCodexレビューで16件の指摘を受けた振り返り）
 

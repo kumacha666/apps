@@ -9,7 +9,7 @@
     "test": "vitest run",
     "build": "node scripts/build.mjs",
     "preview": "vite preview",
-    "deploy": "npm run build && cp dist/game.js dist/style.css dist/manifest.json dist/index.html dist/icon-192.png dist/icon-512.png . && node scripts/update-sw-version.mjs && echo 'Deploy complete.'"
+    "deploy": "npm run build && cp dist/game.js dist/style.css dist/manifest.json dist/index.html dist/icon-192.png dist/icon-512.png . && node scripts/normalize-index.mjs && node scripts/update-sw-version.mjs && echo 'Deploy complete.'"
   },
   "devDependencies": {
     "terser": "^5.48.0",

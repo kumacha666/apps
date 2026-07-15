@@ -90,6 +90,7 @@ function sfxRecord() { [660, 880, 1108, 1320].forEach((f, i) => playTone(f, 0.16
 
 // --- ゲーム状態 ---
 let state: GameState;
+let hasRunStarted = false;
 let battleActive = false;
 let battleTimer: ReturnType<typeof setTimeout> | null = null;
 let battleGen = 0;
@@ -106,6 +107,7 @@ function setSelectionMode(v: boolean) {
 function initRun() {
   if (battleTimer) clearTimeout(battleTimer);
   battleActive = false;
+  hasRunStarted = true;
   battleGen++;
   setSelectionMode(false);
   selectedTargetId = null;
@@ -563,8 +565,19 @@ function chooseCard(card: (typeof CARD_POOL)[number]) {
   }
 }
 
+/**
+ * 「最初から」は、そのランのSCOREがまだfinalizeRecord（敗北・10層クリア・エンドレス勝利）を
+ * 経ていない場合でも、リセットで失われる前にHIGH SCORE自己ベストとしては確定させておく
+ * （2026-07-15、Codexレビュー指摘: 自己ベストを更新した直後に「最初から」を押すと、
+ *   そのスコアがどこにも保存されないまま消えてしまっていた）
+ */
+function resetRun() {
+  if (hasRunStarted) saveBestScoreIfBetter(state.score);
+  initRun();
+}
+
 startBtn.onclick = startBattle;
-resetBtn.onclick = initRun;
+resetBtn.onclick = resetRun;
 
 titleStartBtn.onclick = () => {
   titleScreen.hidden = true;
