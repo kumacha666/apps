@@ -64,6 +64,27 @@ describe("playerAttackTurn", () => {
     state.playerUnits[0].alive = false;
     expect(playerAttackTurn(state, zeroRng)).toBeNull();
   });
+
+  it("生存する全プレイヤーユニットがそれぞれ攻撃する（1体だけがランダムに選ばれるのではない）", () => {
+    const state = makeState({
+      playerUnits: [makeUnit("player", 24, 4), makeUnit("player", 24, 4), makeUnit("player", 24, 4)],
+      enemyUnits: [makeUnit("enemy", 1000, 3)],
+    });
+    const result = playerAttackTurn(state, zeroRng);
+    expect(result!.hits.length).toBe(3);
+    const attackerIds = new Set(result!.hits.map((h) => h.attacker.id));
+    expect(attackerIds.size).toBe(3);
+  });
+
+  it("戦闘不能なユニットは攻撃しない", () => {
+    const dead = makeUnit("player", 24, 4);
+    dead.alive = false;
+    const alive = makeUnit("player", 24, 4);
+    const state = makeState({ playerUnits: [dead, alive], enemyUnits: [makeUnit("enemy", 1000, 3)] });
+    const result = playerAttackTurn(state, zeroRng);
+    expect(result!.hits.length).toBe(1);
+    expect(result!.hits[0].attacker).toBe(alive);
+  });
 });
 
 describe("enemyAttackTurn", () => {
@@ -92,6 +113,17 @@ describe("enemyAttackTurn", () => {
     expect(result!.hits[0].target).toBe(taunter);
     expect(result!.hits[1].target).toBe(other);
     expect(result!.hits[2].target).toBe(other);
+  });
+
+  it("生存する全敵ユニットがそれぞれ攻撃する（1体だけがランダムに選ばれるのではない）", () => {
+    const state = makeState({
+      playerUnits: [makeUnit("player", 1000, 2)],
+      enemyUnits: [makeUnit("enemy", 20, 3), makeUnit("enemy", 20, 3), makeUnit("enemy", 20, 3)],
+    });
+    const result = enemyAttackTurn(state, zeroRng);
+    expect(result!.hits.length).toBe(3);
+    const attackerIds = new Set(result!.hits.map((h) => h.attacker.id));
+    expect(attackerIds.size).toBe(3);
   });
 });
 

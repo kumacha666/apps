@@ -57,29 +57,35 @@ function resolveHits(
   return results;
 }
 
-/** プレイヤー側ランダム1体が、敵側に攻撃する1ターン分（連撃・全体攻撃込み） */
-export function playerAttackTurn(state: GameState, rng: Rng = Math.random): { attacker: Unit; hits: HitResult[] } | null {
+/** プレイヤー側の生存ユニット全員が、敵側に攻撃する1ターン分（連撃・全体攻撃込み） */
+export function playerAttackTurn(state: GameState, rng: Rng = Math.random): { hits: HitResult[] } | null {
   const attackers = aliveUnits(state.playerUnits);
   if (attackers.length === 0) return null;
-  const attacker = pickRandom(attackers, rng);
-  const hits = resolveHits(attacker, state.enemyUnits, attacker.attackCount, rng);
-  return { attacker, hits };
+  const hits: HitResult[] = [];
+  for (const attacker of attackers) {
+    hits.push(...resolveHits(attacker, state.enemyUnits, attacker.attackCount, rng));
+  }
+  return { hits };
 }
 
-/** 敵側ランダム1体が、プレイヤー側に攻撃する1ターン分（挑発ユニットがいれば優先的に狙われる） */
-export function enemyAttackTurn(state: GameState, rng: Rng = Math.random): { attacker: Unit; hits: HitResult[] } | null {
+/** 敵側の生存ユニット全員が、プレイヤー側に攻撃する1ターン分（挑発ユニットがいれば優先的に狙われる） */
+export function enemyAttackTurn(state: GameState, rng: Rng = Math.random): { hits: HitResult[] } | null {
   const attackers = aliveUnits(state.enemyUnits);
   if (attackers.length === 0) return null;
-  const attacker = pickRandom(attackers, rng);
 
   const alivePlayers = aliveUnits(state.playerUnits);
-  if (alivePlayers.length === 0) return { attacker, hits: [] };
+  if (alivePlayers.length === 0) return { hits: [] };
 
-  const hits = resolveHits(attacker, state.playerUnits, attacker.attackCount, rng, (alive) => {
-    const taunters = alive.filter((u) => u.tauntLevel > 0);
-    return taunters.length > 0 ? taunters : alive;
-  });
-  return { attacker, hits };
+  const hits: HitResult[] = [];
+  for (const attacker of attackers) {
+    hits.push(
+      ...resolveHits(attacker, state.playerUnits, attacker.attackCount, rng, (alive) => {
+        const taunters = alive.filter((u) => u.tauntLevel > 0);
+        return taunters.length > 0 ? taunters : alive;
+      })
+    );
+  }
+  return { hits };
 }
 
 /**
