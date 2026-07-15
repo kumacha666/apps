@@ -279,7 +279,6 @@ function battleTick(gen: number) {
     if (isEnemyWiped(state)) { endBattle(true); return; }
     if (isPlayerWiped(state)) { endBattle(false); return; }
 
-    const damagedBeforeEnemyTurn = state.playerUnits.filter((u) => u.alive);
     const enemyTurn = enemyAttackTurn(state);
     if (!enemyTurn) { endBattle(true); return; }
 
@@ -288,9 +287,8 @@ function battleTick(gen: number) {
       if (isEnemyWiped(state)) { endBattle(true); return; }
       if (isPlayerWiped(state)) { endBattle(false); return; }
 
-      const damagedUnits = damagedBeforeEnemyTurn.filter((u) =>
-        enemyTurn.hits.some((h) => h.target.id === u.id)
-      );
+      // 「被弾するたびに反撃」の仕様通り、被弾イベントの数だけ渡す（連撃で複数回被弾したユニットは複数回反撃する）
+      const damagedUnits = enemyTurn.hits.map((h) => h.target);
       const retaliateHits = retaliatePhase(state, damagedUnits);
       const finishEnemyPhase = () => {
         if (!battleActive || gen !== battleGen) return;
@@ -305,6 +303,8 @@ function battleTick(gen: number) {
 
       if (retaliateHits.length > 0) {
         animateHits(playerSide, enemySide, retaliateHits, "retaliate", gen, () => {
+          const retaliateTurn = summarizeTurn(retaliateHits);
+          state.stats = applyTurnStats(state.stats, retaliateTurn);
           const rGain = applyComboGain(state.combo, retaliateHits.length, state.stats.maxCombo);
           state.combo = rGain.combo;
           state.stats.maxCombo = rGain.maxCombo;
@@ -387,7 +387,8 @@ function endBattle(won: boolean) {
       sfxVictory();
     }
   } else {
-    finalizeRecord(false);
+    // エンドレス中の敗北は、その前段の10層クリアが既に成立している
+    finalizeRecord(isEndless(state.round));
     statusLine.textContent = `敗北… 最大コンボ ×${state.stats.maxCombo.toFixed(1)} / 到達ラウンド ${state.round}`;
     startBtn.disabled = true;
     sfxDefeat();

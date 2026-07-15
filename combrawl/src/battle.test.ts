@@ -80,6 +80,15 @@ describe("retaliatePhase", () => {
     const hits = retaliatePhase(state, [nonRetaliator], zeroRng);
     expect(hits.length).toBe(0);
   });
+
+  it("同じユニットが複数回被弾していれば、その回数分だけ反撃する（連撃を持つ敵からの複数ヒット対応）", () => {
+    const retaliator = makeUnit("player", 30, 5);
+    retaliator.retaliateLevel = 1;
+    const state = makeState({ playerUnits: [retaliator], enemyUnits: [makeUnit("enemy", 1000, 3)] });
+    // 敵の連撃で3回被弾した想定 -> 同じユニット参照を3つ渡す
+    const hits = retaliatePhase(state, [retaliator, retaliator, retaliator], zeroRng);
+    expect(hits.length).toBe(3);
+  });
 });
 
 describe("isPlayerWiped / isEnemyWiped", () => {
