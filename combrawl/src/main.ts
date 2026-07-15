@@ -91,7 +91,6 @@ let battleGen = 0;
 let unitSelectionMode = false;
 let selectedTargetId: string | null = null;
 let lastMilestone = 1;
-let awaitingEndlessChoice = false;
 
 const HIT_STAGGER = 190;
 
@@ -102,7 +101,6 @@ function initRun() {
   unitSelectionMode = false;
   selectedTargetId = null;
   lastMilestone = 1;
-  awaitingEndlessChoice = false;
   state = {
     round: 1,
     playerUnits: [makeUnit("player", 24, 4), makeUnit("player", 24, 4)],
@@ -353,8 +351,8 @@ function animateHits(
     onDone();
     return;
   }
-  const attacker = hits[0].attacker;
-  const showsHitIndex = attacker.attackCount > 1;
+  // 反撃フェーズは複数の異なる反撃持ちユニットのヒットが1つの配列に混在しうるため、
+  // 「連撃かどうか」は先頭ヒットの攻撃者だけで一括判定せず、ヒットごとにその攻撃者を見る
   let anyKilled = false;
 
   // stateはこのターンの全ヒットを解決済み（最終値）なので、そのまま描画すると1コマ目から
@@ -383,6 +381,7 @@ function animateHits(
       if (tEl) {
         const color = kind === "player" ? (hit.isCrit ? "#f4b942" : "#ffffff") : kind === "retaliate" ? "#4fd1c5" : "#e63950";
         const prefix = kind === "enemy" ? "-" : kind === "retaliate" ? "↩" : hit.isCrit ? "CRIT! " : "";
+        const showsHitIndex = hit.attacker.attackCount > 1;
         popDamage(tEl, prefix + hit.damage, color, showsHitIndex ? hit.hitIndex : null);
         if (!hit.wasKilled) flashHit(tEl);
       }
@@ -434,7 +433,6 @@ function endBattle(won: boolean) {
 }
 
 function showTenFloorClearPanel() {
-  awaitingEndlessChoice = true;
   cardArea.innerHTML = "";
   statusLine.textContent = "";
   startBtn.disabled = true;
@@ -454,12 +452,10 @@ function showTenFloorClearPanel() {
   cardArea.appendChild(panel);
 
   (panel.querySelector("#endBtn") as HTMLButtonElement).onclick = () => {
-    awaitingEndlessChoice = false;
     cardArea.innerHTML = "";
     statusLine.textContent = `10層クリア！ お疲れ様でした（自己ベスト到達ラウンド：${best.endlessRound}）`;
   };
   (panel.querySelector("#endlessBtn") as HTMLButtonElement).onclick = () => {
-    awaitingEndlessChoice = false;
     state.playerUnits.forEach((u) => { u.hp = u.maxHp; u.alive = true; });
     statusLine.textContent = "エンドレス突入！ カードを1枚選んでください";
     showCardChoices();
