@@ -4,7 +4,7 @@ import { makeUnit } from "./units";
 import { setupEnemies, FINAL_ROUND } from "./data/enemies";
 import { CARD_POOL } from "./data/cards";
 import { playerAttackTurn, enemyAttackTurn, retaliatePhase, isPlayerWiped, isEnemyWiped } from "./battle";
-import { applyScoreGain, applyTurnStats, initialStats, summarizeTurn } from "./stats";
+import { applyHitsBySwing, applyScoreGain, initialStats } from "./stats";
 import { isEndless, roundLabel } from "./progress";
 import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBetter } from "./highscore";
 
@@ -268,12 +268,14 @@ function startBattle() {
 
 /** ヒット群を集計してSCORE・演出用スタッツに反映し、新記録が出た瞬間は演出する */
 function applyHitsToRun(hits: HitResult[]) {
-  const turn = summarizeTurn(hits);
-  const prevStats = state.stats;
-  state.stats = applyTurnStats(state.stats, turn);
+  if (hits.length === 0) return;
+
   state.score = applyScoreGain(state.score, hits);
-  if (hits.length > 0) pulseScore();
-  if (state.stats.maxTurnDamage > prevStats.maxTurnDamage || state.stats.maxTurnKills > prevStats.maxTurnKills) {
+  pulseScore();
+
+  const { stats, recordUpdated } = applyHitsBySwing(state.stats, hits);
+  state.stats = stats;
+  if (recordUpdated) {
     showRecordBanner("RECORD UPDATE!!");
     sfxRecord();
   }
