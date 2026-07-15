@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#10121a">
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icon-192.png">
+<title>combrawl</title>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                <script type="module" crossorigin src="./game.js"></script>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                <link rel="stylesheet" crossorigin href="./style.css">
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              </head>
+<body>
+
+  <h1>combrawl</h1>
+
+  <div class="hud">
+    <div>ラウンド <b id="round">1</b></div>
+    <div>最大コンボ <b id="maxCombo">0</b></div>
+    <div>所持カード <b id="cardCount">0</b></div>
+  </div>
+  <div class="hud hud-secondary">
+    <div>1ターン最大ダメージ <b id="maxTurnDamage">0</b></div>
+    <div>1ターン最大キル数 <b id="maxTurnKills">0</b></div>
+    <div>自己ベスト到達ラウンド <b id="bestRound">-</b></div>
+  </div>
+
+  <div class="combo-display">
+    <div class="combo-number" id="comboNum">×1</div>
+    <div class="combo-label">コンボ（見せ場を数字で見せる演出スタッツ。ダメージには影響しません）</div>
+  </div>
+
+  <div class="arena" id="arena">
+    <div class="side player" id="playerSide"></div>
+    <div class="vs-divider"></div>
+    <div class="side enemy" id="enemySide"></div>
+  </div>
+
+  <div class="status-line" id="statusLine">戦闘開始を押してください</div>
+
+  <div id="cardArea"></div>
+
+  <div style="display:flex; gap:10px; margin-top: 4px;">
+    <button class="btn" id="startBtn">戦闘開始</button>
+    <button class="btn secondary" id="resetBtn">最初から</button>
+  </div>
+
+  <div class="deck-strip" id="deckStrip"></div>
+
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js");
+    }
+  </script>
+</body>
+</html>
