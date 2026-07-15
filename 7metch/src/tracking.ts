@@ -6,7 +6,7 @@ const GA_MEASUREMENT_ID = "G-CT956V6Y2V";
 const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbw6_EH0cRSKYnKVefYMRUnIZSnCm-Xcz8iPlOed-5zou54a_Yf09FJedIYNtY5qZCyX/exec";
 export const FEEDBACK_URL = "https://forms.gle/emCFWfyXtkpmL7zL9";
 
-function getAnonId(): string {
+export function getAnonId(): string {
   let id = localStorage.getItem("7metch_uid");
   if (!id) {
     id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);

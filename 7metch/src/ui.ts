@@ -5,7 +5,7 @@ import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim
 import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker } from "./game";
 import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
 import { buildStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText } from "./stages";
-import { track, FEEDBACK_URL } from "./tracking";
+import { track, FEEDBACK_URL, getAnonId } from "./tracking";
 import { initInput, renderHelpPieceIcons } from "./input";
 
 // --- Screens ---
@@ -261,6 +261,9 @@ export function initUI(): void {
     game: document.getElementById("screen-game")!,
     result: document.getElementById("screen-result")!,
   };
+
+  // --- Support ID (お問い合わせ・データ復旧時にユーザーが申告するための匿名ID表示) ---
+  document.getElementById("support-id-value")!.textContent = getAnonId();
 
   // --- Sound Toggle ---
   document.getElementById("btn-sound-toggle")!.addEventListener("click", () => {
