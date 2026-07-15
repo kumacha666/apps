@@ -17,16 +17,22 @@ const STORAGE_KEY = "combrawl.bestRecord.v1";
 
 function resolveStorage(storage?: StorageLike): StorageLike | null {
   if (storage) return storage;
-  if (typeof localStorage !== "undefined") return localStorage;
+  try {
+    // プライベートブラウジングやサンドボックス化されたiframe等、localStorageへの
+    // アクセス自体（プロパティ参照だけ）が例外を投げる環境があるため、丸ごとtry/catchする
+    if (typeof localStorage !== "undefined") return localStorage;
+  } catch {
+    // 自己ベスト機能はオプショナルなので、握りつぶして「記録なし」として扱う
+  }
   return null;
 }
 
 export function loadBestRecord(storage?: StorageLike): RunRecord | null {
   const s = resolveStorage(storage);
   if (!s) return null;
-  const raw = s.getItem(STORAGE_KEY);
-  if (!raw) return null;
   try {
+    const raw = s.getItem(STORAGE_KEY);
+    if (!raw) return null;
     return JSON.parse(raw) as RunRecord;
   } catch {
     return null;
@@ -50,7 +56,11 @@ export function saveRecordIfBetter(record: RunRecord, storage?: StorageLike): { 
     return { saved: false, best: current as RunRecord };
   }
   if (s) {
-    s.setItem(STORAGE_KEY, JSON.stringify(record));
+    try {
+      s.setItem(STORAGE_KEY, JSON.stringify(record));
+    } catch {
+      // 保存に失敗しても、今回のセッション内の表示用にはこの記録をそのまま返す（下のreturn参照）
+    }
   }
   return { saved: true, best: record };
 }

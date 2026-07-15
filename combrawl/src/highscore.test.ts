@@ -59,4 +59,25 @@ describe("highscore（自分の中だけの記録）", () => {
     expect(worse.saved).toBe(false);
     expect(loadBestRecord(storage)?.clearedTenFloors).toBe(true);
   });
+
+  it("storageへのアクセスが例外を投げても、loadBestRecordはクラッシュせずnullを返す", () => {
+    const throwingStorage: StorageLike = {
+      getItem: () => { throw new Error("SecurityError: storage disabled"); },
+      setItem: () => { throw new Error("SecurityError: storage disabled"); },
+    };
+    expect(() => loadBestRecord(throwingStorage)).not.toThrow();
+    expect(loadBestRecord(throwingStorage)).toBeNull();
+  });
+
+  it("storageへの保存が例外を投げても、saveRecordIfBetterはクラッシュせず今回の記録を返す（永続化はされないが表示用には使える）", () => {
+    const throwingStorage: StorageLike = {
+      getItem: () => { throw new Error("SecurityError: storage disabled"); },
+      setItem: () => { throw new Error("SecurityError: storage disabled"); },
+    };
+    const record = makeRecord(7);
+    expect(() => saveRecordIfBetter(record, throwingStorage)).not.toThrow();
+    const { saved, best } = saveRecordIfBetter(record, throwingStorage);
+    expect(saved).toBe(true);
+    expect(best.endlessRound).toBe(7);
+  });
 });
