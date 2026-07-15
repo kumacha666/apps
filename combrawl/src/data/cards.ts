@@ -22,6 +22,12 @@ export function retaliateMultForDisplay(level: number): number {
   return Math.min(3, 1 + 0.35 * (level - 1));
 }
 
+/** 挑発Lvに対応する被ダメージ倍率（Lv1:70%→Lv2:49%→Lv3:34.3%…）。dmgTakenMultはtauntLevel専属の値なので、常にこの式で導出する */
+export function tauntMultForDisplay(level: number): number {
+  if (!level || level <= 0) return 1;
+  return Math.pow(0.7, level);
+}
+
 export const CARD_POOL: Card[] = [
   {
     id: "reinforce",
@@ -75,7 +81,6 @@ export const CARD_POOL: Card[] = [
       const totalCrit = Math.min(0.95, units.reduce((s, u) => s + u.critChance, 0));
       const maxCritMult = units.reduce((m, u) => Math.max(m, u.critMult), 2);
       const avgDmgOut = units.reduce((s, u) => s + u.dmgOutMult, 0) / units.length;
-      const avgDmgTaken = units.reduce((s, u) => s + u.dmgTakenMult, 0) / units.length;
       const sumAoeLevel = units.reduce((s, u) => s + u.aoeLevel, 0);
       const sumRetaliateLevel = units.reduce((s, u) => s + u.retaliateLevel, 0);
       const sumTauntLevel = units.reduce((s, u) => s + u.tauntLevel, 0);
@@ -85,7 +90,9 @@ export const CARD_POOL: Card[] = [
       fused.critChance = totalCrit;
       fused.critMult = maxCritMult;
       fused.dmgOutMult = avgDmgOut;
-      fused.dmgTakenMult = avgDmgTaken;
+      // dmgTakenMultはtauntLevel専属の値なので、合算したtauntLevelから式で導出する
+      // （単純平均だと「表示Lvは合算されているのに軽減率は伸びない」というズレが生じるため）
+      fused.dmgTakenMult = tauntMultForDisplay(sumTauntLevel);
       fused.aoeLevel = sumAoeLevel;
       fused.retaliateLevel = sumRetaliateLevel;
       fused.tauntLevel = sumTauntLevel;
@@ -154,7 +161,7 @@ export const CARD_POOL: Card[] = [
       const u = pickTarget(state, chosenUnit);
       if (!u) return { message: "対象なし" };
       u.tauntLevel += 1;
-      u.dmgTakenMult = u.dmgTakenMult * 0.7;
+      u.dmgTakenMult = tauntMultForDisplay(u.tauntLevel);
       return { message: `1体が挑発した！（Lv${u.tauntLevel}・被ダメージ${Math.round(u.dmgTakenMult * 100)}%）` };
     },
   },

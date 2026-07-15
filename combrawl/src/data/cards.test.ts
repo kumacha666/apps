@@ -77,6 +77,21 @@ describe("合体", () => {
     expect(fused.atk).toBe(Math.round((4 + 6) * 1.2));
     expect(fused.aoeLevel).toBe(2);
   });
+
+  it("挑発Lvを合算した場合、被ダメージ倍率も合算後のLvに整合した値になる（表示Lvと実際の軽減率がズレない）", () => {
+    const a = makeUnit("player", 20, 4);
+    findCard("taunt").apply({ ...makeState([a]), playerUnits: [a] } as GameState, a); // Lv1(70%)
+    const b = makeUnit("player", 20, 4);
+    findCard("taunt").apply({ ...makeState([b]), playerUnits: [b] } as GameState, b); // Lv1(70%)
+
+    const state = makeState([a, b]);
+    findCard("fusion").apply(state);
+    const fused = state.playerUnits[0];
+
+    expect(fused.tauntLevel).toBe(2);
+    // 1体でLv2まで積んだ場合(0.7*0.7=0.49)と同じ軽減率になるべき
+    expect(fused.dmgTakenMult).toBeCloseTo(0.49);
+  });
 });
 
 describe("分裂", () => {
