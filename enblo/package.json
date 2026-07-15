@@ -6,13 +6,10 @@
   "scripts": {
     "dev": "vite",
     "test": "vitest run",
-    "prebuild": "node scripts/restore-entry.mjs && npm test",
-    "build": "vite build",
-    "postbuild": "node scripts/reset-entry.mjs",
+    "build": "node scripts/build.mjs",
     "sim": "npx vite-node scripts/simulate.mjs",
     "preview": "vite preview",
     "test:e2e": "playwright test",
-    "predeploy": "node scripts/restore-entry.mjs",
     "deploy": "npm run build && cp dist/game.js dist/style.css dist/manifest.json dist/index.html . && node scripts/update-sw-version.mjs && echo 'Deploy complete.'"
   },
   "devDependencies": {
