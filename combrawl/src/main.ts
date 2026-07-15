@@ -532,8 +532,15 @@ function enterAutoEndless(speed: "fast" | "ultra") {
 function setAutoSpeed(speed: "fast" | "ultra") {
   speedMode = speed;
   if (cardArea.querySelector(".card-row")) {
+    // このカード選択画面は「直前に勝ったラウンド」の報酬なので、選ばずに飛ばす場合も
+    // chooseCard()/continueEndlessAuto()と同様にラウンドを進めてから次の戦闘へ入る。
+    // これを怠ると、同じラウンド番号の敵ともう一度戦うことになってしまう
+    // （2026-07-15、Codexレビュー指摘: 既にクリア済みのフロアの分だけSCORE/記録が水増しされていた）
     setSelectionMode(false);
+    state.round += 1;
+    state.enemyUnits = [];
     cardArea.innerHTML = "";
+    renderAll();
     startBattle();
   }
   renderHud();
