@@ -43,7 +43,7 @@
 
 - `npm run build` — テスト → ビルド
 - `npm run deploy` — ビルド → dist/ を `game.js`/`style.css`/`manifest.json`/`index.html` としてルート直下にコピー → SW バージョン自動更新（1コマンドで完結）
-- `npm run predeploy`（`scripts/restore-entry.mjs`）と vite.config.js の entry-rewrite の組み合わせで、root index.html の `./game.js` 参照を自動的に `./src/main.ts` に書き換える。index.html の手動編集は不要
+- `scripts/restore-entry.mjs` が root index.html の `./game.js` 参照を `./src/main.ts` に書き換えてからVite（デフォルトのindex.html entry検出）がビルドする。このスクリプトは `prebuild`（`npm run build`単体でも実行される）と `predeploy` の両方から呼ばれる（2026-07-15、7metchで`npm run build`単体だとentry書き換えが走らずsrcの変更が一切バンドルされない事故が発生したため、`prebuild`側にも追加して単体実行時も安全にした）。index.html の手動編集は不要。デプロイ後は `dist/index.html` がroot index.htmlを上書きするため、`restore-entry.mjs`によるscript src変更は毎回一時的なもの
 
 ## 変更時チェックリスト
 

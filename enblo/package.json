@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "test": "vitest run",
-    "prebuild": "npm test",
+    "prebuild": "node scripts/restore-entry.mjs && npm test",
     "build": "vite build",
     "sim": "npx vite-node scripts/simulate.mjs",
     "preview": "vite preview",
