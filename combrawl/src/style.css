@@ -448,6 +448,14 @@ h1 {
   letter-spacing: 0.04em;
 }
 .title-screen .btn { margin-top: 12px; padding: 14px 40px; }
+.title-mode-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 12px;
+}
+.title-mode-row .btn { margin-top: 0; padding: 14px 22px; }
 .title-credit {
   margin-top: 28px;
   font-size: 11px;
