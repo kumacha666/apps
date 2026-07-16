@@ -1,17 +1,17 @@
 import "./style.css";
 import type { GameState, HitResult, Unit } from "./types";
 import { makeUnit } from "./units";
-import { setupEnemies, FINAL_ROUND } from "./data/enemies";
+import { setupEnemies } from "./data/enemies";
 import { CARD_POOL } from "./data/cards";
 import { playerAttackTurn, enemyAttackTurn, retaliatePhase, isPlayerWiped, isEnemyWiped } from "./battle";
 import { applyHitsBySwing, applyScoreGain, initialStats } from "./stats";
-import { isEndless, roundLabel } from "./progress";
+import { isEndless, roundLabel, RUN_LENGTH_OPTIONS } from "./progress";
 import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBetter } from "./highscore";
 import { scaledDelay, type BattleSpeed } from "./speed";
 
 const titleScreen = document.getElementById("titleScreen") as HTMLElement;
 const gameScreen = document.getElementById("gameScreen") as HTMLElement;
-const titleStartBtn = document.getElementById("titleStartBtn") as HTMLButtonElement;
+const titleModeRow = document.getElementById("titleModeRow") as HTMLElement;
 
 const arena = document.getElementById("arena") as HTMLElement;
 const playerSide = document.getElementById("playerSide") as HTMLElement;
@@ -116,7 +116,7 @@ function setSelectionMode(v: boolean) {
   arena.classList.toggle("selecting", v);
 }
 
-function initRun() {
+function initRun(finalRound: number) {
   if (battleTimer) clearTimeout(battleTimer);
   battleActive = false;
   hasRunStarted = true;
@@ -133,6 +133,7 @@ function initRun() {
     deck: [],
     score: 0,
     stats: initialStats(),
+    finalRound,
   };
   renderAll();
   statusLine.textContent = "戦闘開始を押してください";
@@ -146,7 +147,7 @@ function renderAll() {
 }
 
 function renderHud() {
-  roundEl.textContent = roundLabel(state.round);
+  roundEl.textContent = roundLabel(state.round, state.finalRound);
   cardCountEl.textContent = String(state.deck.length);
   maxTurnDamageEl.textContent = String(state.stats.maxTurnDamage);
   maxTurnKillsEl.textContent = String(state.stats.maxTurnKills);
@@ -443,12 +444,12 @@ function endBattle(won: boolean) {
   battleActive = false;
 
   if (won) {
-    if (state.round >= FINAL_ROUND && !isEndless(state.round)) {
+    if (state.round >= state.finalRound && !isEndless(state.round, state.finalRound)) {
       showTenFloorClearPanel();
       sfxVictory();
     } else {
       state.playerUnits.forEach((u) => { u.hp = u.maxHp; u.alive = true; });
-      const endless = isEndless(state.round);
+      const endless = isEndless(state.round, state.finalRound);
       if (endless) {
         // エンドレス継続中の各勝利ごとに自己ベストを更新する
         // （リセットやページを閉じた場合でも、直前まで到達した層数を記録として残すため）
@@ -466,8 +467,8 @@ function endBattle(won: boolean) {
       sfxVictory();
     }
   } else {
-    // エンドレス中の敗北は、その前段の10層クリアが既に成立している
-    finalizeRecord(isEndless(state.round));
+    // エンドレス中の敗北は、その前段の通常クリアが既に成立している
+    finalizeRecord(isEndless(state.round, state.finalRound));
     statusLine.textContent = `敗北… SCORE ${state.score.toLocaleString()} / 到達ラウンド ${state.round}`;
     startBtn.disabled = true;
     sfxDefeat();
@@ -485,7 +486,7 @@ function showTenFloorClearPanel() {
   const panel = document.createElement("div");
   panel.className = "clear-panel";
   panel.innerHTML = `
-    <h2>🏆 10層クリア！</h2>
+    <h2>🏆 ${state.finalRound}層クリア！</h2>
     <p>ここで終了してもよし、そのままエンドレスに挑戦して<br>どこまで化け物じみたビルドに育てられるか試してもよし。<br>自己ベスト到達ラウンド：<b>${best.endlessRound}</b></p>
     <div class="btn-row">
       <button class="btn secondary" id="endBtn">ここで終了</button>
@@ -501,7 +502,7 @@ function showTenFloorClearPanel() {
 
   (panel.querySelector("#endBtn") as HTMLButtonElement).onclick = () => {
     cardArea.innerHTML = "";
-    statusLine.textContent = `10層クリア！ お疲れ様でした（自己ベスト到達ラウンド：${best.endlessRound}）`;
+    statusLine.textContent = `${state.finalRound}層クリア！ お疲れ様でした（自己ベスト到達ラウンド：${best.endlessRound}）`;
   };
   (panel.querySelector("#endlessBtn") as HTMLButtonElement).onclick = () => {
     state.playerUnits.forEach((u) => { u.hp = u.maxHp; u.alive = true; });
@@ -581,7 +582,7 @@ function finishEndlessRun() {
  * （2026-07-16、ユーザー報告: 超速で最後まで終了ボタンが押せずタブを強制終了する事態に）
  */
 function renderEndlessControls() {
-  if (!hasRunStarted || !isEndless(state.round)) {
+  if (!hasRunStarted || !isEndless(state.round, state.finalRound)) {
     endlessControls.hidden = true;
     return;
   }
@@ -658,7 +659,7 @@ function chooseCard(card: (typeof CARD_POOL)[number]) {
   state.enemyUnits = [];
   cardArea.innerHTML = "";
   showToast(`${card.name}：${result.message}`);
-  statusLine.textContent = `${roundLabel(state.round)}: 戦闘開始を押してください`;
+  statusLine.textContent = `${roundLabel(state.round, state.finalRound)}: 戦闘開始を押してください`;
   startBtn.disabled = false;
   renderAll();
 
@@ -679,7 +680,7 @@ function chooseCard(card: (typeof CARD_POOL)[number]) {
  */
 function resetRun() {
   if (hasRunStarted) saveBestScoreIfBetter(state.score);
-  initRun();
+  initRun(state.finalRound);
 }
 
 startBtn.onclick = startBattle;
@@ -688,8 +689,14 @@ switchFastBtn.onclick = () => setAutoSpeed("fast");
 switchUltraBtn.onclick = () => setAutoSpeed("ultra");
 finishEndlessBtn.onclick = finishEndlessRun;
 
-titleStartBtn.onclick = () => {
-  titleScreen.hidden = true;
-  gameScreen.hidden = false;
-  initRun();
-};
+RUN_LENGTH_OPTIONS.forEach((floors) => {
+  const btn = document.createElement("button");
+  btn.className = "btn";
+  btn.textContent = `${floors}層ラン`;
+  btn.onclick = () => {
+    titleScreen.hidden = true;
+    gameScreen.hidden = false;
+    initRun(floors);
+  };
+  titleModeRow.appendChild(btn);
+});

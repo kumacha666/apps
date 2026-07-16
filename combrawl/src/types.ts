@@ -30,6 +30,8 @@ export interface GameState {
   /** 累積SCORE。1ラン中はリセットされず、「最初から」した時だけ0に戻る */
   score: number;
   stats: RunStats;
+  /** このランの通常クリア層数（タイトル画面で選択、10/15/20層）。これを超えるとエンドレス扱いになる */
+  finalRound: number;
 }
 
 export interface CardApplyResult {

@@ -25,6 +25,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     deck: [],
     score: 0,
     stats: { maxTurnDamage: 0, maxTurnKills: 0 },
+    finalRound: 10,
     ...overrides,
   };
 }
