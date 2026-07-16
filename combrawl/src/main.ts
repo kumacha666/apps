@@ -254,14 +254,16 @@ function showToast(msg: string) {
   }, 2200);
 }
 
-function showRecordBanner(text: string) {
-  const b = document.createElement("div");
-  b.className = "record-banner";
-  b.textContent = text;
-  arena.appendChild(b);
-  arena.classList.add("shake");
-  setTimeout(() => arena.classList.remove("shake"), 300);
-  setTimeout(() => b.remove(), 900);
+/** 1ターン最大ダメージ/最大キル数が更新された瞬間、HUDのその数値自体を光らせる。
+ * 以前は"RECORD UPDATE!!"というバナーをアリーナ中央に出していたが、ユニットの上に文字が
+ * 重なって読めない、どちらの記録が更新されたのか分からない、という2つの問題があった
+ * （2026-07-16、ユーザー報告）。更新された当のHUD数値をハイライトすれば両方解決する */
+function flashStatUpdate(el: HTMLElement) {
+  el.classList.remove("stat-flash");
+  // 同じ要素に連続してクラスを付け直してもアニメーションが再生されるよう、一度剥がしてから
+  // 次のフレームで付け直す（既にstat-flash中に連続更新された場合の再生保証）
+  requestAnimationFrame(() => el.classList.add("stat-flash"));
+  setTimeout(() => el.classList.remove("stat-flash"), 600);
 }
 
 function flashHit(el: Element) {
@@ -290,13 +292,12 @@ function applyHitsToRun(hits: HitResult[]) {
   state.score = applyScoreGain(state.score, hits);
   pulseScore();
 
-  const { stats, recordUpdated } = applyHitsBySwing(state.stats, hits);
+  const { stats, damageRecordUpdated, killsRecordUpdated } = applyHitsBySwing(state.stats, hits);
   state.stats = stats;
-  if (recordUpdated) {
-    showRecordBanner("RECORD UPDATE!!");
-    sfxRecord();
-  }
   renderHud();
+  if (damageRecordUpdated) flashStatUpdate(maxTurnDamageEl);
+  if (killsRecordUpdated) flashStatUpdate(maxTurnKillsEl);
+  if (damageRecordUpdated || killsRecordUpdated) sfxRecord();
 }
 
 function battleTick(gen: number) {

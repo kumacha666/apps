@@ -28,9 +28,14 @@ export function applyTurnStats(stats: RunStats, turn: { totalDamage: number; kil
  * 複数回に分けて反撃した場合など、複数の別々の攻撃アクションが1つの配列に混在しうるため、
  * hits全体をまとめて1回のsummarizeTurnにかけると、実際には無かった1アクションぶんの
  * 合計ダメージ・撃破数として水増しされてしまう（2026-07-15、Codexレビュー指摘）。
- * recordUpdatedは、いずれかのswingでmaxTurnDamage/maxTurnKillsが更新されたかを表す。
+ * damageRecordUpdated/killsRecordUpdatedは、いずれかのswingでmaxTurnDamage/maxTurnKillsが
+ * それぞれ更新されたかを表す（2026-07-16、ユーザー報告：どちらが更新されたか分からないバナー演出は
+ * 文字がユニットと重なり読めなかったため、HUDの該当数値だけを光らせる演出に変更する際に必要になった）。
  */
-export function applyHitsBySwing(stats: RunStats, hits: HitResult[]): { stats: RunStats; recordUpdated: boolean } {
+export function applyHitsBySwing(
+  stats: RunStats,
+  hits: HitResult[]
+): { stats: RunStats; damageRecordUpdated: boolean; killsRecordUpdated: boolean } {
   const swingGroups = new Map<number | undefined, HitResult[]>();
   for (const hit of hits) {
     const group = swingGroups.get(hit.swingId);
@@ -39,16 +44,16 @@ export function applyHitsBySwing(stats: RunStats, hits: HitResult[]): { stats: R
   }
 
   let nextStats = stats;
-  let recordUpdated = false;
+  let damageRecordUpdated = false;
+  let killsRecordUpdated = false;
   for (const swingHits of swingGroups.values()) {
     const turn = summarizeTurn(swingHits);
     const prevStats = nextStats;
     nextStats = applyTurnStats(nextStats, turn);
-    if (nextStats.maxTurnDamage > prevStats.maxTurnDamage || nextStats.maxTurnKills > prevStats.maxTurnKills) {
-      recordUpdated = true;
-    }
+    if (nextStats.maxTurnDamage > prevStats.maxTurnDamage) damageRecordUpdated = true;
+    if (nextStats.maxTurnKills > prevStats.maxTurnKills) killsRecordUpdated = true;
   }
-  return { stats: nextStats, recordUpdated };
+  return { stats: nextStats, damageRecordUpdated, killsRecordUpdated };
 }
 
 /**
