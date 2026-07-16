@@ -72,10 +72,11 @@ describe("applyHitsBySwing", () => {
       { attacker, target: t1, damage: 10, isCrit: false, wasKilled: true, hitIndex: 0, hpAfter: 0, swingId: 1 },
       { attacker, target: t2, damage: 8, isCrit: false, wasKilled: false, hitIndex: 0, hpAfter: 2, swingId: 1 },
     ];
-    const { stats, recordUpdated } = applyHitsBySwing(initialStats(), hits);
+    const { stats, damageRecordUpdated, killsRecordUpdated } = applyHitsBySwing(initialStats(), hits);
     expect(stats.maxTurnDamage).toBe(18);
     expect(stats.maxTurnKills).toBe(1);
-    expect(recordUpdated).toBe(true);
+    expect(damageRecordUpdated).toBe(true);
+    expect(killsRecordUpdated).toBe(true);
   });
 
   it("swingIdが異なるヒットは別々のアクションとして集計し、合計として水増ししない（反撃が複数回発動した場合）", () => {
@@ -100,9 +101,24 @@ describe("applyHitsBySwing", () => {
     const hits: HitResult[] = [
       { attacker, target: t1, damage: 10, isCrit: false, wasKilled: false, hitIndex: 0, hpAfter: 0, swingId: 1 },
     ];
-    const { stats, recordUpdated } = applyHitsBySwing(initial, hits);
+    const { stats, damageRecordUpdated, killsRecordUpdated } = applyHitsBySwing(initial, hits);
     expect(stats.maxTurnDamage).toBe(100);
-    expect(recordUpdated).toBe(false);
+    expect(damageRecordUpdated).toBe(false);
+    expect(killsRecordUpdated).toBe(false);
+  });
+
+  it("ダメージだけ更新されキル数は更新されない場合、damageRecordUpdatedだけがtrueになる", () => {
+    const attacker = makeUnit("player", 10, 5);
+    const t1 = makeUnit("enemy", 100, 1);
+    const initial = { maxTurnDamage: 5, maxTurnKills: 3 };
+    const hits: HitResult[] = [
+      { attacker, target: t1, damage: 20, isCrit: false, wasKilled: false, hitIndex: 0, hpAfter: 80, swingId: 1 },
+    ];
+    const { stats, damageRecordUpdated, killsRecordUpdated } = applyHitsBySwing(initial, hits);
+    expect(stats.maxTurnDamage).toBe(20);
+    expect(stats.maxTurnKills).toBe(3);
+    expect(damageRecordUpdated).toBe(true);
+    expect(killsRecordUpdated).toBe(false);
   });
 
   it("swingIdが無い（undefined）ヒット同士は1つのグループとして集計される", () => {
