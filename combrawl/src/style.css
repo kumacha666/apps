@@ -176,6 +176,14 @@ h1 {
   100% { filter: brightness(1); transform: translateX(0); }
 }
 
+/* 挑発のブロック演出（暫定）。詳細な盾バッジ/シャター表現はGAME_DESIGN.md §2.5を参照、未着手 */
+.unit.guard-flash { animation: guard-flash-anim 0.26s var(--ease-out-smooth); }
+@keyframes guard-flash-anim {
+  0% { filter: brightness(1) drop-shadow(0 0 0 rgba(94, 200, 255, 0)); }
+  40% { filter: brightness(1.6) drop-shadow(0 0 10px rgba(94, 200, 255, 0.9)); }
+  100% { filter: brightness(1) drop-shadow(0 0 0 rgba(94, 200, 255, 0)); }
+}
+
 .hp-bar-wrap {
   position: absolute;
   bottom: -7px; left: 4px; right: 4px;

@@ -1,3 +1,12 @@
+/** 硬質化のDEF軽減式の基準値（暫定値、シミュレーションで調整予定） */
+export const BASE_DEF = 40;
+
+/** DEFから被ダメ倍率を導出する。defが変わる箇所（硬質化・増援・合体・分裂）は必ずこの式で
+ * dmgTakenMultを再計算すること（挑発から完全に切り離された、DEF専属の式） */
+export function dmgTakenMultForDef(def: number): number {
+  return BASE_DEF / (BASE_DEF + Math.max(0, def));
+}
+
 /** ヒット減衰: 連撃の1攻撃アクション内での単発バランス調整。 */
 export function hitDampen(hitIndex: number): number {
   const FLOOR = 0.5;

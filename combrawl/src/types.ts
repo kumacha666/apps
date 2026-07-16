@@ -6,6 +6,8 @@ export interface Unit {
   hp: number;
   maxHp: number;
   atk: number;
+  /** 硬質化で伸ばす防御力。被ダメ倍率(dmgTakenMult)はdefが変わるたびに必ず同時に再計算すること */
+  def: number;
   critChance: number;
   critMult: number;
   dmgOutMult: number;
@@ -32,12 +34,20 @@ export interface GameState {
   stats: RunStats;
   /** このランの通常クリア層数（タイトル画面で選択、10/15/20層）。これを超えるとエンドレス扱いになる */
   finalRound: number;
+  /**
+   * 挑発の「1ラウンドにつきtauntLevel回ぶんダメージを完全無効化」の残り回数（ユニットidをキーに保持）。
+   * 1回の戦闘（1つのround）はbattleTick()がsetTimeoutで自分自身を再帰的に何度も呼び出す構造のため、
+   * enemyAttackTurn()内のローカル変数では呼び出しのたびにリフィルされてしまう。
+   * 必ずstartBattle()（ラウンドが変わり敵編成を生成するタイミング）で初期化し、
+   * その戦闘が決着するまでenemyAttackTurnの複数回の呼び出しにまたがって保持・消費する。
+   */
+  tauntBlockBudget: Map<string, number>;
 }
 
 export interface CardApplyResult {
   message: string;
   /** 実際に効果が適用されたユニット（対象未選択でランダムに決まった場合も、そのランダムな実体を返す）。
-   * 全体・複数体対象のカード（増援・巨大化・合体など）はハイライト不要のためundefinedのままでよい */
+   * 全体・複数体対象のカード（増援・合体など）はハイライト不要のためundefinedのままでよい */
   appliedUnit?: Unit | null;
 }
 
@@ -64,4 +74,7 @@ export interface HitResult {
    * hitIndexだけでは「1回のAoE振りで複数体に同時ヒット」と「別々の攻撃が偶然hitIndexが同じ」を
    * 区別できないため導入した（2026-07-15、Codexレビュー指摘） */
   swingId?: number;
+  /** 挑発のブロック予算で完全無効化されたヒットか。damage===0だけでは、DEFの軽減で自然に0へ丸められた
+   * ケースと区別できないため導入した */
+  blocked?: boolean;
 }
