@@ -6,7 +6,7 @@ import { CARD_POOL } from "./data/cards";
 import { playerAttackTurn, enemyAttackTurn, retaliatePhase, isPlayerWiped, isEnemyWiped } from "./battle";
 import { applyHitsBySwing, applyScoreGain, initialStats } from "./stats";
 import { isEndless, roundLabel, RUN_LENGTH_OPTIONS } from "./progress";
-import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBetter } from "./highscore";
+import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBetter, type RunRecord } from "./highscore";
 import { scaledDelay, type BattleSpeed } from "./speed";
 
 const titleScreen = document.getElementById("titleScreen") as HTMLElement;
@@ -466,14 +466,14 @@ function endBattle(won: boolean) {
       }
       sfxVictory();
     }
+    renderAll();
   } else {
     // エンドレス中の敗北は、その前段の通常クリアが既に成立している
-    finalizeRecord(isEndless(state.round, state.finalRound));
-    statusLine.textContent = `敗北… SCORE ${state.score.toLocaleString()} / 到達ラウンド ${state.round}`;
-    startBtn.disabled = true;
+    const record = finalizeRecord(isEndless(state.round, state.finalRound));
     sfxDefeat();
+    renderAll();
+    showResultPanel("敗北…", record.best, record.scoreBest, record.recordSaved, record.scoreSaved);
   }
-  renderAll();
 }
 
 function showTenFloorClearPanel() {
@@ -563,11 +563,9 @@ function finishEndlessRun() {
   if (battleTimer) clearTimeout(battleTimer);
   battleActive = false;
   battleGen++;
-  const { scoreBest } = finalizeRecord(true);
-  showToast(`お疲れ様でした！ SCORE ${state.score.toLocaleString()}（HIGH SCORE: ${scoreBest.toLocaleString()}）`);
-  cardArea.innerHTML = "";
-  gameScreen.hidden = true;
-  titleScreen.hidden = false;
+  const record = finalizeRecord(true);
+  renderAll();
+  showResultPanel("お疲れ様でした！", record.best, record.scoreBest, record.recordSaved, record.scoreSaved);
 }
 
 /**
@@ -608,7 +606,41 @@ function finalizeRecord(clearedTenFloors: boolean) {
     showToast("🎉 自己ベスト更新！");
     sfxRecord();
   }
-  return { best, scoreBest };
+  return { best, scoreBest, recordSaved, scoreSaved };
+}
+
+/** エンドレスの「ここで終了」・敗北時に、タイトルへ戻る前に成果を確認できるリザルト画面を出す。
+ * 2026-07-16、ユーザー報告：500層近くまで育てたエンドレスを「ここで終了」で切り上げたら、
+ * トースト表示だけで即座にタイトル画面へ戻されてしまい、結果をゆっくり確認できなかった。
+ * 以後はゲーム画面に留まったままcardAreaへパネルを表示し、ボタン操作でタイトルへ戻す */
+function showResultPanel(title: string, best: RunRecord, scoreBest: number, recordSaved: boolean, scoreSaved: boolean) {
+  cardArea.innerHTML = "";
+  statusLine.textContent = "";
+  startBtn.disabled = true;
+  endlessControls.hidden = true;
+
+  const panel = document.createElement("div");
+  panel.className = "clear-panel";
+  panel.innerHTML = `
+    <h2>${title}</h2>
+    <p>
+      到達ラウンド：<b>${state.round}</b><br>
+      SCORE：<b>${state.score.toLocaleString()}</b><br>
+      自己ベスト到達ラウンド：<b>${best.endlessRound}</b>${recordSaved ? "　🎉更新！" : ""}<br>
+      HIGH SCORE：<b>${scoreBest.toLocaleString()}</b>${scoreSaved ? "　🎉更新！" : ""}
+    </p>
+    <div class="btn-row">
+      <button class="btn secondary" id="resultRestartBtn">最初から</button>
+      <button class="btn" id="resultTitleBtn">タイトルへ</button>
+    </div>
+  `;
+  cardArea.appendChild(panel);
+
+  (panel.querySelector("#resultRestartBtn") as HTMLButtonElement).onclick = resetRun;
+  (panel.querySelector("#resultTitleBtn") as HTMLButtonElement).onclick = () => {
+    gameScreen.hidden = true;
+    titleScreen.hidden = false;
+  };
 }
 
 function showCardChoices() {
