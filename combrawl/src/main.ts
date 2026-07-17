@@ -8,6 +8,7 @@ import { applyHitsBySwing, applyScoreGain, initialStats } from "./stats";
 import { isEndless, roundLabel, RUN_LENGTH_OPTIONS } from "./progress";
 import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBetter, type RunRecord } from "./highscore";
 import { scaledDelay, type BattleSpeed } from "./speed";
+import { atkTier, defTier, hpTier, isHpCapped, materialClassForDefTier, shapeForAtkTier, sizeForHpTier, starPolygonClipPath } from "./visuals";
 
 const titleScreen = document.getElementById("titleScreen") as HTMLElement;
 const gameScreen = document.getElementById("gameScreen") as HTMLElement;
@@ -189,9 +190,22 @@ function renderUnits(
     }
     el.className = className;
     el.dataset.id = u.id;
-    const size = Math.max(30, Math.min(96, 16 + Math.sqrt(Math.max(0, u.hp)) * 7));
+    // HP=サイズ／ATK=形（トゲトゲ度）／DEF=素材、の3チャンネルで見た目を分離する（GAME_DESIGN.md §2.6）
+    const size = sizeForHpTier(hpTier(u.hp));
     el.style.width = size + "px";
     el.style.height = size + "px";
+    if (isHpCapped(u.hp)) el.classList.add("hp-capped");
+
+    // 形・素材（clip-path/材質背景）は専用のインナー要素(.unit-shape)にのみ適用する。
+    // .unit自体にclip-pathをかけると、その子であるバッジ(top:-13px)やHPバー(bottom:-7px)まで
+    // 一緒に切り取られてしまう（星形になった瞬間にトレイトバッジ・HPバーが欠ける不具合。
+    // 2026-07-17、Codexレビュー指摘）
+    const shape = shapeForAtkTier(atkTier(u.atk));
+    const shapeStyle =
+      shape.kind === "rounded"
+        ? `border-radius:${shape.borderRadiusPercent}%; clip-path:none;`
+        : `border-radius:0; clip-path:${starPolygonClipPath(shape.points)};`;
+    const shapeClass = "unit-shape " + materialClassForDefTier(defTier(u.def));
 
     const badgeList: string[] = [];
     if (u.attackCount > 1) badgeList.push(`⚡${u.attackCount}`);
@@ -200,7 +214,7 @@ function renderUnits(
     if (u.tauntLevel > 0) badgeList.push(`🛡${u.tauntLevel > 1 ? u.tauntLevel : ""}`);
     const badges = badgeList.length ? `<div class="unit-badges">${badgeList.join(" ")}</div>` : "";
 
-    el.innerHTML = `${badges}<div class="unit-hp">${Math.max(0, Math.round(u.hp))}</div>
+    el.innerHTML = `<div class="${shapeClass}" style="${shapeStyle}"></div>${badges}<div class="unit-hp">${Math.max(0, Math.round(u.hp))}</div>
       <div class="hp-bar-wrap"><div class="hp-bar" style="width:${Math.max(0, (u.hp / u.maxHp) * 100)}%; background:${cls === "player-unit" ? "#4fd1c5" : "#e63950"}"></div></div>`;
 
     if (unitSelectionMode && cls === "player-unit" && u.alive) {
