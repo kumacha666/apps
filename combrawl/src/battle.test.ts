@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enemyAttackTurn, isEnemyWiped, isPlayerWiped, playerAttackTurn, retaliatePhase } from "./battle";
+import { enemyAttackTurn, initTauntBlockBudget, isEnemyWiped, isPlayerWiped, playerAttackTurn, retaliatePhase } from "./battle";
 import { makeUnit } from "./units";
 import type { GameState, HitResult, Unit } from "./types";
 
@@ -26,6 +26,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     score: 0,
     stats: { maxTurnDamage: 0, maxTurnKills: 0 },
     finalRound: 10,
+    tauntBlockBudget: new Map(),
     ...overrides,
   };
 }
@@ -89,31 +90,64 @@ describe("playerAttackTurn", () => {
 });
 
 describe("enemyAttackTurn", () => {
-  it("挑発ユニットがいれば優先的に狙う", () => {
+  it("挑発ユニットがいれば優先的に狙われ、ブロック予算が残っている間はダメージを完全無効化する", () => {
     const taunter = makeUnit("player", 30, 2);
     taunter.tauntLevel = 1;
     const other = makeUnit("player", 30, 2);
     const state = makeState({ playerUnits: [other, taunter] });
+    initTauntBlockBudget(state);
     // rngを0.9に固定してもタンク以外を選ばせない(候補がtaunterのみになるため)
     const result = enemyAttackTurn(state, () => 0.9);
     expect(result!.hits.every((h) => h.target === taunter)).toBe(true);
+    expect(result!.hits[0].blocked).toBe(true);
+    expect(result!.hits[0].damage).toBe(0);
+    expect(taunter.alive).toBe(true);
+  });
+
+  it("ブロック予算を使い切ったtaunterは、以後の対象選択で優先されなくなる（余った予算が余ったまま被弾するバグの防止）", () => {
+    const taunter = makeUnit("player", 30, 2);
+    taunter.tauntLevel = 1; // ブロック予算1回分
+    const other = makeUnit("player", 30, 2);
+    const enemy = makeUnit("enemy", 20, 3);
+    enemy.attackCount = 2;
+    const state = makeState({ playerUnits: [taunter, other], enemyUnits: [enemy] });
+    initTauntBlockBudget(state);
+
+    const result = enemyAttackTurn(state, zeroRng);
+
+    expect(result!.hits.length).toBe(2);
+    // 1発目: 予算が残っているtaunterが狙われ、ブロックされる
+    expect(result!.hits[0].target).toBe(taunter);
+    expect(result!.hits[0].blocked).toBe(true);
+    // 2発目: 予算を使い切ったので、taunterはもう優先されない（候補は生存者全体）
+    expect(result!.hits[1].blocked).toBeFalsy();
   });
 
   it("連撃中に挑発ユニットが倒れたら、残りのヒットは他の生存ユニットに向く", () => {
-    const taunter = makeUnit("player", 5, 2); // 1発で倒れるHP
+    const taunter = makeUnit("player", 5, 2); // ブロックを使い切った後の1発で倒れるHP
     taunter.tauntLevel = 1;
     const other = makeUnit("player", 100, 2);
     const enemy = makeUnit("enemy", 20, 50);
     enemy.attackCount = 3;
     const state = makeState({ playerUnits: [taunter, other], enemyUnits: [enemy] });
+    initTauntBlockBudget(state);
 
     const result = enemyAttackTurn(state, zeroRng);
 
-    // 昔のバグでは挑発ユニットが倒れた時点で残りのヒットが失われ、hits.lengthが1で止まっていた
+    // 昔のバグでは挑発ユニットが倒れた時点で残りのヒットが失われ、hits.lengthが2で止まっていた
     expect(result!.hits.length).toBe(3);
     expect(result!.hits[0].target).toBe(taunter);
-    expect(result!.hits[1].target).toBe(other);
+    expect(result!.hits[0].blocked).toBe(true); // 1発目はブロック予算で無効化
+    expect(result!.hits[1].target).toBe(taunter); // 予算を使い切った後、2発目で倒れる
+    expect(result!.hits[1].wasKilled).toBe(true);
     expect(result!.hits[2].target).toBe(other);
+  });
+
+  it("挑発を持たないユニットしかいない場合、ブロックは発生しない", () => {
+    const state = makeState({ playerUnits: [makeUnit("player", 30, 2)] });
+    initTauntBlockBudget(state);
+    const result = enemyAttackTurn(state, zeroRng);
+    expect(result!.hits.every((h) => !h.blocked)).toBe(true);
   });
 
   it("生存する全敵ユニットがそれぞれ攻撃する（1体だけがランダムに選ばれるのではない）", () => {
@@ -213,6 +247,30 @@ describe("retaliatePhase", () => {
       zeroRng
     );
     expect(hits.length).toBe(0);
+  });
+
+  it("敵側のDEF(dmgTakenMult)が反撃ダメージにも適用される（2026-07-16、DEF導入前は反撃だけDEFを無視していた）", () => {
+    const retaliator = makeUnit("player", 30, 100);
+    retaliator.retaliateLevel = 1;
+    const hardEnemy = makeUnit("enemy", 1000, 3, 200); // DEF高め、dmgTakenMultが小さい
+    const state = makeState({ playerUnits: [retaliator], enemyUnits: [hardEnemy] });
+    const hits = retaliatePhase(state, [makeIncomingHit(retaliator)], zeroRng);
+    expect(hits.length).toBe(1);
+    // DEFを無視した場合のダメージ(atk*retMult=100)より明確に小さくなるはず
+    expect(hits[0].damage).toBeLessThan(100);
+    expect(hits[0].damage).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("initTauntBlockBudget", () => {
+  it("挑発Lvを持つユニットの分だけ予算を初期化する（挑発を持たないユニットは含めない）", () => {
+    const taunter = makeUnit("player", 30, 2);
+    taunter.tauntLevel = 3;
+    const other = makeUnit("player", 30, 2);
+    const state = makeState({ playerUnits: [taunter, other] });
+    initTauntBlockBudget(state);
+    expect(state.tauntBlockBudget.get(taunter.id)).toBe(3);
+    expect(state.tauntBlockBudget.has(other.id)).toBe(false);
   });
 });
 

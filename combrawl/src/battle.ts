@@ -20,7 +20,10 @@ function resolveHits(
   hits: number,
   rng: Rng,
   /** ヒットごとに狙う対象群を絞り込む（例: 挑発ユニット優先）。省略時は生存者全体 */
-  selectTargets?: (alive: Unit[]) => Unit[]
+  selectTargets?: (alive: Unit[]) => Unit[],
+  /** 挑発のブロック予算（ユニットidごとの残り回数）。渡された場合、予算が残っている対象への
+   * ヒットはダメージを完全無効化し、予算を1消費する */
+  tauntBlockBudget?: Map<string, number>
 ): HitResult[] {
   const results: HitResult[] = [];
   const isAoe = attacker.aoeLevel > 0;
@@ -39,6 +42,22 @@ function resolveHits(
     const targets = isAoe ? pool.slice() : [pickRandom(pool, rng)];
 
     for (const target of targets) {
+      const remaining = tauntBlockBudget?.get(target.id) ?? 0;
+      if (remaining > 0) {
+        tauntBlockBudget!.set(target.id, remaining - 1);
+        results.push({
+          attacker,
+          target,
+          damage: 0,
+          isCrit: false,
+          wasKilled: false,
+          hitIndex,
+          hpAfter: target.hp,
+          swingId,
+          blocked: true,
+        });
+        continue;
+      }
       const damage = computeHitDamage({
         atk: attacker.atk,
         dmgOutMult: attacker.dmgOutMult,
@@ -55,6 +74,17 @@ function resolveHits(
     }
   }
   return results;
+}
+
+/** 戦闘開始時（ラウンドが変わり敵編成を生成するタイミング）に挑発のブロック予算をリフィルする。
+ * enemyAttackTurn()はbattleTick()のsetTimeoutループの都合で1戦闘中に複数回呼ばれるため、
+ * ここ（戦闘開始の1回）以外でリフィルしてはいけない */
+export function initTauntBlockBudget(state: GameState): void {
+  const budget = new Map<string, number>();
+  for (const u of state.playerUnits) {
+    if (u.tauntLevel > 0) budget.set(u.id, u.tauntLevel);
+  }
+  state.tauntBlockBudget = budget;
 }
 
 /** プレイヤー側の生存ユニット全員が、敵側に攻撃する1ターン分（連撃・全体攻撃込み） */
@@ -79,10 +109,21 @@ export function enemyAttackTurn(state: GameState, rng: Rng = Math.random): { hit
   const hits: HitResult[] = [];
   for (const attacker of attackers) {
     hits.push(
-      ...resolveHits(attacker, state.playerUnits, attacker.attackCount, rng, (alive) => {
-        const taunters = alive.filter((u) => u.tauntLevel > 0);
-        return taunters.length > 0 ? taunters : alive;
-      })
+      ...resolveHits(
+        attacker,
+        state.playerUnits,
+        attacker.attackCount,
+        rng,
+        (alive) => {
+          // ブロック予算が残っているtaunterを優先する。優先しないと予算が余ったまま被弾する
+          // （＝挑発スキルが機能していないように見える）バグになる
+          const tautersWithBudget = alive.filter(
+            (u) => u.tauntLevel > 0 && (state.tauntBlockBudget.get(u.id) ?? 0) > 0
+          );
+          return tautersWithBudget.length > 0 ? tautersWithBudget : alive;
+        },
+        state.tauntBlockBudget
+      )
     );
   }
   return { hits };
@@ -132,7 +173,7 @@ export function retaliatePhase(state: GameState, incomingHits: HitResult[], rng:
         for (const target of targets) {
           const damage = Math.max(
             1,
-            Math.round(r.atk * r.dmgOutMult * aoeMult * retMult * hitDampen(hitIndex))
+            Math.round(r.atk * r.dmgOutMult * target.dmgTakenMult * aoeMult * retMult * hitDampen(hitIndex))
           );
           target.hp -= damage;
           const wasKilled = target.hp <= 0 && target.alive;

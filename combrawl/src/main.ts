@@ -3,7 +3,7 @@ import type { GameState, HitResult, Unit } from "./types";
 import { makeUnit } from "./units";
 import { setupEnemies } from "./data/enemies";
 import { CARD_POOL } from "./data/cards";
-import { playerAttackTurn, enemyAttackTurn, retaliatePhase, isPlayerWiped, isEnemyWiped } from "./battle";
+import { playerAttackTurn, enemyAttackTurn, retaliatePhase, isPlayerWiped, isEnemyWiped, initTauntBlockBudget } from "./battle";
 import { applyHitsBySwing, applyScoreGain, initialStats } from "./stats";
 import { isEndless, roundLabel, RUN_LENGTH_OPTIONS } from "./progress";
 import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBetter, type RunRecord } from "./highscore";
@@ -134,6 +134,7 @@ function initRun(finalRound: number) {
     score: 0,
     stats: initialStats(),
     finalRound,
+    tauntBlockBudget: new Map(),
   };
   renderAll();
   statusLine.textContent = "戦闘開始を押してください";
@@ -278,6 +279,8 @@ function startBattle() {
   const gen = battleGen;
   // 敵編成（裏で付与される連撃を含む）はここで初めて確定・表示する
   state.enemyUnits = setupEnemies(state.round);
+  // 挑発のブロック予算はここ（戦闘開始・ラウンド確定のタイミング）でのみリフィルする
+  initTauntBlockBudget(state);
   startBtn.disabled = true;
   cardArea.innerHTML = "";
   statusLine.textContent = "戦闘中…";
@@ -417,11 +420,19 @@ function animateHits(
       for (const hit of group) {
         const tEl = targetContainer.querySelector(`[data-id="${hit.target.id}"]`);
         if (tEl) {
-          const color = kind === "player" ? (hit.isCrit ? "#f4b942" : "#ffffff") : kind === "retaliate" ? "#4fd1c5" : "#e63950";
-          const prefix = kind === "enemy" ? "-" : kind === "retaliate" ? "↩" : hit.isCrit ? "CRIT! " : "";
-          const showsHitIndex = hit.attacker.attackCount > 1;
-          popDamage(tEl, prefix + hit.damage, color, showsHitIndex ? hit.hitIndex : null);
-          if (!hit.wasKilled) flashHit(tEl);
+          if (hit.blocked) {
+            // damage===0だけでは「挑発でブロックされた」のか「DEF軽減で自然に0になった」のか
+            // 見分けがつかないため、専用のGUARD表示にする（通常のダメージポップは出さない）
+            popDamage(tEl, "GUARD", "#5ec8ff", null);
+            tEl.classList.add("guard-flash");
+            setTimeout(() => tEl.classList.remove("guard-flash"), 260);
+          } else {
+            const color = kind === "player" ? (hit.isCrit ? "#f4b942" : "#ffffff") : kind === "retaliate" ? "#4fd1c5" : "#e63950";
+            const prefix = kind === "enemy" ? "-" : kind === "retaliate" ? "↩" : hit.isCrit ? "CRIT! " : "";
+            const showsHitIndex = hit.attacker.attackCount > 1;
+            popDamage(tEl, prefix + hit.damage, color, showsHitIndex ? hit.hitIndex : null);
+            if (!hit.wasKilled) flashHit(tEl);
+          }
         }
         if (hit.wasKilled) anyKilled = true;
       }

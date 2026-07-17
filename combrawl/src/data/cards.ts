@@ -1,5 +1,6 @@
 import type { Card, GameState, Unit } from "../types";
-import { avgAtk, avgHp, makeUnit } from "../units";
+import { avgAtk, avgDef, avgHp, makeUnit } from "../units";
+import { dmgTakenMultForDef } from "../combat";
 
 function alivePlayers(state: GameState): Unit[] {
   return state.playerUnits.filter((u) => u.alive);
@@ -22,12 +23,6 @@ export function retaliateMultForDisplay(level: number): number {
   return Math.min(3, 1 + 0.35 * (level - 1));
 }
 
-/** 挑発Lvに対応する被ダメージ倍率（Lv1:70%→Lv2:49%→Lv3:34.3%…）。dmgTakenMultはtauntLevel専属の値なので、常にこの式で導出する */
-export function tauntMultForDisplay(level: number): number {
-  if (!level || level <= 0) return 1;
-  return Math.pow(0.7, level);
-}
-
 export const CARD_POOL: Card[] = [
   {
     id: "reinforce",
@@ -36,7 +31,8 @@ export const CARD_POOL: Card[] = [
     apply: (state) => {
       const h = avgHp(state.playerUnits);
       const a = avgAtk(state.playerUnits);
-      state.playerUnits.push(makeUnit("player", h || 20, a || 4));
+      const d = avgDef(state.playerUnits);
+      state.playerUnits.push(makeUnit("player", h || 20, a || 4, d || 5));
       return { message: `ユニットが${state.playerUnits.length}体に増えた！` };
     },
   },
@@ -53,29 +49,17 @@ export const CARD_POOL: Card[] = [
     },
   },
   {
-    id: "giant_growth",
-    name: "巨大化",
-    desc: "全ユニットのHP・攻撃力が2倍になり、その場で巨大化する",
-    apply: (state) => {
-      state.playerUnits.forEach((u) => {
-        const nm = u.maxHp * 2;
-        u.hp = nm;
-        u.maxHp = nm;
-        u.atk = u.atk * 2;
-      });
-      return { message: "全ユニットが巨大化した！" };
-    },
-  },
-  {
     id: "fusion",
     name: "合体",
-    desc: "全ユニットが1体に合体する。HP・攻撃力は合計の1.2倍。連撃・全体攻撃化・反撃・挑発などの特性も引き継ぐ",
+    desc: "全ユニットが1体に合体する。HP・攻撃力・DEFは合計の1.2倍。連撃・全体攻撃化・反撃・挑発などの特性も引き継ぐ",
     apply: (state) => {
       const units = state.playerUnits;
       const totalHp = units.reduce((s, u) => s + u.maxHp, 0);
       const totalAtk = units.reduce((s, u) => s + u.atk, 0);
+      const totalDef = units.reduce((s, u) => s + u.def, 0);
       const newHp = Math.round(totalHp * 1.2);
       const newAtk = Math.round(totalAtk * 1.2);
+      const newDef = Math.round(totalDef * 1.2);
 
       const extraHits = units.reduce((s, u) => s + (u.attackCount - 1), 0);
       const totalCrit = Math.min(0.95, units.reduce((s, u) => s + u.critChance, 0));
@@ -85,20 +69,17 @@ export const CARD_POOL: Card[] = [
       const sumRetaliateLevel = units.reduce((s, u) => s + u.retaliateLevel, 0);
       const sumTauntLevel = units.reduce((s, u) => s + u.tauntLevel, 0);
 
-      const fused = makeUnit("player", newHp, newAtk);
+      const fused = makeUnit("player", newHp, newAtk, newDef);
       fused.attackCount = 1 + extraHits;
       fused.critChance = totalCrit;
       fused.critMult = maxCritMult;
       fused.dmgOutMult = avgDmgOut;
-      // dmgTakenMultはtauntLevel専属の値なので、合算したtauntLevelから式で導出する
-      // （単純平均だと「表示Lvは合算されているのに軽減率は伸びない」というズレが生じるため）
-      fused.dmgTakenMult = tauntMultForDisplay(sumTauntLevel);
       fused.aoeLevel = sumAoeLevel;
       fused.retaliateLevel = sumRetaliateLevel;
       fused.tauntLevel = sumTauntLevel;
 
       state.playerUnits = [fused];
-      return { message: `1体の巨大ユニットに合体！ HP${newHp} / 攻撃${newAtk}（特性も合算して引き継ぎ）` };
+      return { message: `1体の巨大ユニットに合体！ HP${newHp} / 攻撃${newAtk} / DEF${newDef}（特性も合算して引き継ぎ）` };
     },
   },
   {
@@ -112,14 +93,14 @@ export const CARD_POOL: Card[] = [
       const idx = state.playerUnits.indexOf(u);
       const nh = Math.max(6, Math.round(u.maxHp * 0.6));
       const na = Math.max(1, Math.round(u.atk * 0.6));
-      const child1 = makeUnit("player", nh, na);
-      const child2 = makeUnit("player", nh, na);
+      const nd = Math.max(1, Math.round(u.def * 0.6));
+      const child1 = makeUnit("player", nh, na, nd);
+      const child2 = makeUnit("player", nh, na, nd);
       [child1, child2].forEach((c) => {
         c.attackCount = u.attackCount;
         c.critChance = u.critChance;
         c.critMult = u.critMult;
         c.dmgOutMult = u.dmgOutMult;
-        c.dmgTakenMult = u.dmgTakenMult;
         c.aoeLevel = u.aoeLevel;
         c.retaliateLevel = u.retaliateLevel;
         c.tauntLevel = u.tauntLevel;
@@ -155,29 +136,52 @@ export const CARD_POOL: Card[] = [
   {
     id: "taunt",
     name: "挑発",
-    desc: "選んだ（またはランダムな）1体が、敵の攻撃を一身に受けるようになる。ピックするたびに被ダメージがさらに0.7倍に（重ねがけ可）",
+    desc: "選んだ（またはランダムな）1体が、敵の攻撃を一身に受けるようになる。重ねがけでLvが上がり、1ラウンドにつきLv回ぶんダメージを完全無効化（毎ラウンドリフィル）",
     singleTarget: true,
     apply: (state, chosenUnit) => {
       const u = pickTarget(state, chosenUnit);
       if (!u) return { message: "対象なし" };
       u.tauntLevel += 1;
-      u.dmgTakenMult = tauntMultForDisplay(u.tauntLevel);
-      return { message: `1体が挑発した！（Lv${u.tauntLevel}・被ダメージ${Math.round(u.dmgTakenMult * 100)}%）`, appliedUnit: u };
+      return { message: `1体が挑発した！（Lv${u.tauntLevel}・1ラウンドにつき${u.tauntLevel}回ダメージ無効）`, appliedUnit: u };
     },
   },
   {
     id: "titan_growth",
     name: "特大化",
-    desc: "選んだ（またはランダムな）1体だけHP・攻撃力が3倍になり、その場で巨大化する",
+    desc: "選んだ（またはランダムな）1体だけHPが3倍になり、その場で巨大化する",
     singleTarget: true,
     apply: (state, chosenUnit) => {
       const u = pickTarget(state, chosenUnit);
       if (!u) return { message: "対象なし" };
       const nm = u.maxHp * 3;
-      u.hp = nm;
       u.maxHp = nm;
-      u.atk = u.atk * 3;
+      u.hp = nm;
       return { message: "1体が特大化した！", appliedUnit: u };
+    },
+  },
+  {
+    id: "sharpen",
+    name: "先鋭化",
+    desc: "選んだ（またはランダムな）1体だけ攻撃力が3倍になる",
+    singleTarget: true,
+    apply: (state, chosenUnit) => {
+      const u = pickTarget(state, chosenUnit);
+      if (!u) return { message: "対象なし" };
+      u.atk = u.atk * 3;
+      return { message: "1体が先鋭化した！", appliedUnit: u };
+    },
+  },
+  {
+    id: "harden",
+    name: "硬質化",
+    desc: "選んだ（またはランダムな）1体だけDEFが3倍になり、被ダメージが大きく減る",
+    singleTarget: true,
+    apply: (state, chosenUnit) => {
+      const u = pickTarget(state, chosenUnit);
+      if (!u) return { message: "対象なし" };
+      u.def = u.def * 3;
+      u.dmgTakenMult = dmgTakenMultForDef(u.def);
+      return { message: `1体が硬質化した！（被ダメージ${Math.round(u.dmgTakenMult * 100)}%）`, appliedUnit: u };
     },
   },
 ];
