@@ -230,9 +230,14 @@ function renderUnits(
     if (u.aoeLevel > 0) badgeList.push(`🌀${u.aoeLevel > 1 ? u.aoeLevel : ""}`);
     if (u.retaliateLevel > 0) badgeList.push(`↩${u.retaliateLevel > 1 ? u.retaliateLevel : ""}`);
     if (u.tauntLevel > 0) badgeList.push(`🛡${u.tauntLevel > 1 ? u.tauntLevel : ""}`);
-    const badges = badgeList.length ? `<div class="unit-badges">${badgeList.join(" ")}</div>` : "";
+    // 特性を1本の長いピルで繋げると、連撃+全体攻撃化+反撃+挑発が全部乗ったユニットで
+    // 横幅が伸びすぎて隣のユニット・バッジと衝突し読めなくなる（2026-07-17、ユーザー報告）。
+    // 個別の小さなチップに分けてflex-wrapさせ、横幅を一定以内に収める
+    const badges = badgeList.length
+      ? `<div class="unit-badges">${badgeList.map((b) => `<span class="badge-chip">${b}</span>`).join("")}</div>`
+      : "";
 
-    el.innerHTML = `<div class="${shapeClass}" style="${shapeStyle}"></div>${badges}<div class="unit-hp">${Math.max(0, Math.round(u.hp))}</div>
+    el.innerHTML = `<div class="${shapeClass}" style="${shapeStyle}"></div><div class="unit-hp">${Math.max(0, Math.round(u.hp))}</div>
       <div class="hp-bar-wrap"><div class="hp-bar" style="width:${Math.max(0, (u.hp / u.maxHp) * 100)}%; background:${cls === "player-unit" ? "#4fd1c5" : "#e63950"}"></div></div>`;
 
     if (unitSelectionMode && cls === "player-unit" && u.alive) {
@@ -241,7 +246,27 @@ function renderUnits(
         renderArena();
       };
     }
-    container.appendChild(el);
+
+    // バッジをposition:absoluteでユニットに重ねる方式だと、レイアウト上は幅0扱いになり
+    // .sideのflex-wrapがバッジの実サイズを一切考慮してくれない。そのため小さいユニットが
+    // 密集する序盤ではバッジが隣のユニットへ横方向にはみ出し、増援等で複数行に折り返す場面では
+    // 下の行のバッジが上の行のユニットへ縦方向にはみ出す、という2種類の重なりが発生していた
+    // （2026-07-17、Codexレビュー指摘）。バッジを.unit-slotという通常フローのラッパーに
+    // ユニットと並べて入れることで、バッジの実サイズがflex-wrapのレイアウト計算に
+    // 正しく参加するようにした
+    if (badges) {
+      const slot = document.createElement("div");
+      // バッジが.unitの子から兄弟(.unit-slot内)に移ったため、.unit.deadのopacity:0が
+      // バッジ側には効かなくなり、死亡ユニットのバッジだけ画面に浮いたまま残ってしまう
+      // （2026-07-17、Codexレビュー指摘）。deadクラスをslot側にも付与し、CSS側で
+      // 揃って消えるようにする
+      slot.className = "unit-slot" + (u.alive ? "" : " dead");
+      slot.innerHTML = badges;
+      slot.appendChild(el);
+      container.appendChild(slot);
+    } else {
+      container.appendChild(el);
+    }
   });
 }
 

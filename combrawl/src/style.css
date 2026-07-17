@@ -82,8 +82,18 @@ h1 {
   flex-wrap: wrap;
   align-content: center;
   justify-content: center;
-  gap: 10px;
+  /* バッジは.unit-slot内の通常フロー要素になったため、行の高さ（ユニット+バッジ分）は
+     ブラウザのflex-wrapが自動的に計算する。固定の大きなrow-gapで隙間を確保する必要はない
+     （2026-07-17、Codexレビュー指摘を受けて.unit-badgesをposition:absoluteから
+     通常フローに変更、詳細は.unit-slotのコメント参照） */
+  gap: 14px 10px;
   padding: 14px 10px;
+}
+.unit-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
 }
 
 .unit {
@@ -119,20 +129,38 @@ h1 {
   text-shadow: 0 1px 2px rgba(0,0,0,0.95), 0 0 4px rgba(0,0,0,0.85);
 }
 .unit-badges {
-  position: absolute;
-  top: -13px;
-  right: -8px;
+  /* ユニットの真上、.unit-slot内の通常フロー要素として配置する。HP=サイズ可変システム導入後、
+     ユニットが22px〜140pxまで幅を持つようになったため、旧来の「右上の角に
+     少しはみ出す」固定オフセット(top:-13px; right:-8px)だと小さいユニット
+     （序盤はほぼ全て）ではバッジ本体がユニットより大きくなり、覆い隠してしまっていた
+     （2026-07-17、ユーザー報告）。
+     以前はposition:absoluteで浮かせていたが、それだとレイアウト上は幅0扱いになり
+     .sideのflex-wrapがバッジの実サイズを考慮できず、密集した小さいユニットでは隣に
+     横方向にはみ出し、複数行に折り返すと下の行のバッジが上の行のユニットへ縦方向に
+     はみ出す、という2種類の重なりが残っていた（2026-07-17、Codexレビュー指摘）。
+     .unit-slot（親、display:flex;flex-direction:column）内の通常フロー要素にすることで、
+     バッジの実サイズがflex-wrapのレイアウト計算に正しく参加するようにした */
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 3px;
+  /* 特性(連撃・全体攻撃化・反撃・挑発)を1本の長いピルで繋げると、複数積んだユニットで
+     横幅が伸びすぎて隣のユニット・バッジと衝突し読めなくなっていた（2026-07-17、ユーザー報告）。
+     チップ単位でflex-wrapさせ、この上限幅で2行以上に折り返すことで横方向の食い出しを抑える */
+  max-width: 84px;
+}
+.badge-chip {
   background: linear-gradient(135deg, #ffce54, #ff8a3d);
   color: #2a1400;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 900;
   line-height: 1;
-  padding: 4px 7px;
-  border-radius: 20px;
+  padding: 3px 6px;
+  border-radius: 10px;
   border: 2px solid #1a1c26;
   white-space: nowrap;
   box-shadow: 0 2px 6px rgba(0,0,0,0.5);
-  z-index: 5;
 }
 /* 陣営色は --tone に持たせ、DEF素材が「なし」「布」の間だけ陣営色そのものを使う
    （木目以降は敵味方で分岐せず素材固有の色を使う。自陣/敵陣は左右の配置で区別できるため） */
@@ -270,6 +298,14 @@ h1 {
   100% { transform: translateX(0) scale(1) rotate(0deg); }
 }
 .unit.dead { opacity: 0; transform: scale(0.3); }
+/* バッジは.unit-slot内の兄弟要素になったため、.unit.deadのopacity:0だけでは連動して
+   消えない。同じdeadクラスをslot側にも付与し(main.ts側)、バッジ側にも同じフェードを
+   掛けて死亡ユニットのバッジだけ浮いたまま残らないようにする（2026-07-17、Codexレビュー指摘） */
+.unit-badges {
+  opacity: 1;
+  transition: opacity 0.25s var(--ease-out-smooth);
+}
+.unit-slot.dead .unit-badges { opacity: 0; }
 
 .unit.selectable {
   cursor: pointer;
@@ -333,6 +369,9 @@ h1 {
   white-space: nowrap;
   text-shadow: 0 0 10px currentColor, 0 2px 4px rgba(0,0,0,0.6);
   text-align: center;
+  /* .unit-badges（常駐の特性バッジ）と同じ「ユニット上部中央」の位置から出発するため、
+     常にヒット演出側を手前に表示する（2026-07-17、Codexレビュー指摘） */
+  z-index: 8;
 }
 .hit-index-tag {
   display: block;
@@ -363,6 +402,9 @@ h1 {
   white-space: nowrap;
   text-shadow: 0 0 10px rgba(244,185,66,0.7), 0 2px 4px rgba(0,0,0,0.6);
   text-align: center;
+  /* AoE持ちは常駐の🌀バッジ（.unit-badges）も同じ座標に浮いているため、
+     ヒット中の演出は常にその手前に表示する（2026-07-17、Codexレビュー指摘） */
+  z-index: 9;
   animation: aoe-badge-fade 0.72s var(--ease-out-smooth) forwards;
 }
 @keyframes aoe-badge-fade {
