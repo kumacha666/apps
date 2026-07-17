@@ -350,6 +350,28 @@ h1 {
   100% { transform: translateY(-60px) scale(1); opacity: 0; }
 }
 
+/* 全体攻撃化のヒット中だけ表示する「全体化◯%」常駐バッジ。ダメージポップと違い上に
+   流れていかず、攻撃者の頭上にとどまったまま短くフェードイン/アウトする（GAME_DESIGN.md §2.3） */
+.aoe-hit-badge {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  margin-top: -6px;
+  font-family: "Courier New", monospace;
+  font-weight: 800;
+  color: var(--gold);
+  pointer-events: none;
+  white-space: nowrap;
+  text-shadow: 0 0 10px rgba(244,185,66,0.7), 0 2px 4px rgba(0,0,0,0.6);
+  text-align: center;
+  animation: aoe-badge-fade 0.72s var(--ease-out-smooth) forwards;
+}
+@keyframes aoe-badge-fade {
+  0% { opacity: 0; transform: translate(-50%, -100%) scale(0.7); }
+  15% { opacity: 1; transform: translate(-50%, -100%) scale(1.08); }
+  75% { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -100%) scale(1); }
+}
+
 .toast {
   position: fixed;
   left: 50%;

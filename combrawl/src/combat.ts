@@ -25,6 +25,16 @@ export function aoePercentForLevel(level: number): number {
   return base + 0.25 * Math.log2(level - 4);
 }
 
+/** 連撃のNヒット目・全体化のLv-1のダメージポップ/バッジのフォントサイズ(px)。
+ * hitIndexが大きいほど（≒連撃の後の方ほど）大きく表示し、重ねがけの強さを直感的に伝える。
+ * 全体化の常駐バッジは fontSizeForHitIndex(level - 1) として同じ式を流用する（GAME_DESIGN.md §2.3） */
+export function fontSizeForHitIndex(hitIndex: number): number {
+  const BASE = 16;
+  const STEP = 3;
+  const CAP_INDEX = 6;
+  return BASE + Math.min(Math.max(hitIndex, 0), CAP_INDEX) * STEP;
+}
+
 export function retaliateMultFor(level: number): number {
   if (!level || level <= 0) return 0;
   return Math.min(3, 1 + 0.35 * (level - 1));
