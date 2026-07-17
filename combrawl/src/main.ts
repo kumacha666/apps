@@ -299,7 +299,10 @@ function renderGalleryScreen() {
   buildGalleryTrack(hpTrack, hpTrackCount, hp, (tier) => {
     const d = document.createElement("div");
     d.className = "gallery-cell-shape mat-iron";
-    const size = sizeForHpTier(tier) * 0.5; // タイル内に収まるよう実寸の半分で表示
+    // タイル内に収まるよう実寸の半分で表示しつつ、高tier(最大140px)でもセル幅を超えないよう
+    // ATK/DEFトラックと同じ34pxを上限にクランプする（2026-07-17、Codexレビュー指摘：
+    // sizeForHpTier(12)*0.5=70pxは6列グリッドのセル幅(約63px)を超えて隣のセルに溢れていた）
+    const size = Math.min(sizeForHpTier(tier) * 0.5, 34);
     d.style.width = size + "px";
     d.style.height = size + "px";
     d.style.borderRadius = "6%";
