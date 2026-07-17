@@ -119,9 +119,16 @@ h1 {
   text-shadow: 0 1px 2px rgba(0,0,0,0.95), 0 0 4px rgba(0,0,0,0.85);
 }
 .unit-badges {
+  /* ユニットの真上に完全に浮かせる形で配置する。HP=サイズ可変システム導入後、
+     ユニットが22px〜140pxまで幅を持つようになったため、旧来の「右上の角に
+     少しはみ出す」固定オフセット(top:-13px; right:-8px)だと小さいユニット
+     （序盤はほぼ全て）ではバッジ本体がユニットより大きくなり、覆い隠してしまっていた
+     （2026-07-17、ユーザー報告）。left:50%+translateXでサイズによらず中央上に置く */
   position: absolute;
-  top: -13px;
-  right: -8px;
+  left: 50%;
+  top: 0;
+  transform: translate(-50%, -100%);
+  margin-top: -4px;
   background: linear-gradient(135deg, #ffce54, #ff8a3d);
   color: #2a1400;
   font-size: 13px;
