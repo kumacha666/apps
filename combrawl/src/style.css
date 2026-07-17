@@ -298,6 +298,14 @@ h1 {
   100% { transform: translateX(0) scale(1) rotate(0deg); }
 }
 .unit.dead { opacity: 0; transform: scale(0.3); }
+/* バッジは.unit-slot内の兄弟要素になったため、.unit.deadのopacity:0だけでは連動して
+   消えない。同じdeadクラスをslot側にも付与し(main.ts側)、バッジ側にも同じフェードを
+   掛けて死亡ユニットのバッジだけ浮いたまま残らないようにする（2026-07-17、Codexレビュー指摘） */
+.unit-badges {
+  opacity: 1;
+  transition: opacity 0.25s var(--ease-out-smooth);
+}
+.unit-slot.dead .unit-badges { opacity: 0; }
 
 .unit.selectable {
   cursor: pointer;

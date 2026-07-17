@@ -256,7 +256,11 @@ function renderUnits(
     // 正しく参加するようにした
     if (badges) {
       const slot = document.createElement("div");
-      slot.className = "unit-slot";
+      // バッジが.unitの子から兄弟(.unit-slot内)に移ったため、.unit.deadのopacity:0が
+      // バッジ側には効かなくなり、死亡ユニットのバッジだけ画面に浮いたまま残ってしまう
+      // （2026-07-17、Codexレビュー指摘）。deadクラスをslot側にも付与し、CSS側で
+      // 揃って消えるようにする
+      slot.className = "unit-slot" + (u.alive ? "" : " dead");
       slot.innerHTML = badges;
       slot.appendChild(el);
       container.appendChild(slot);
