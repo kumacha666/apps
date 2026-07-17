@@ -89,7 +89,6 @@ h1 {
 .unit {
   width: 46px;
   height: 46px;
-  border-radius: 10px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -99,7 +98,19 @@ h1 {
   position: relative;
   transition: transform 0.16s var(--ease-out-smooth), opacity 0.25s var(--ease-out-smooth), width 0.3s var(--ease-out-smooth), height 0.3s var(--ease-out-smooth);
 }
+/* ATK形状（border-radius/clip-path）とDEF素材（背景）はこのインナー要素にのみ適用する。
+   .unit自体をclip-pathで切り抜くと、子であるバッジ(top:-13px)やHPバー(bottom:-7px)まで
+   一緒に切り取られてしまうため、見た目専用のレイヤーとして分離した
+   （2026-07-17、Codexレビュー指摘） */
+.unit-shape {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 10px;
+}
 .unit-hp {
+  position: relative;
+  z-index: 1;
   font-size: 13px;
   line-height: 1.1;
   /* DEF素材ごとに背景の明暗が大きく変わるため（漆黒〜白銀まで）、
@@ -133,58 +144,58 @@ h1 {
 /* ================= DEF素材ラダー（12段階、GAME_DESIGN.md §2.6） =================
    なし → 布 → 木目 → 石 → 銅 → 鉄 → 銀 → 金 → プラチナ → ダイヤ → 虹 → 漆黒
    画像アセットは使わず、グラデーション・box-shadowの重ね掛けのみで表現する */
-.unit.mat-none {
+.unit-shape.mat-none {
   background: color-mix(in srgb, var(--tone, var(--cyan)) 12%, transparent);
   border: 2px dashed color-mix(in srgb, var(--tone, var(--cyan)) 55%, transparent);
 }
-.unit.mat-cloth { background: var(--tone, var(--cyan)); }
-.unit.mat-wood {
+.unit-shape.mat-cloth { background: var(--tone, var(--cyan)); }
+.unit-shape.mat-wood {
   background:
     repeating-linear-gradient(98deg, rgba(0,0,0,0.16) 0 3px, transparent 3px 9px),
     linear-gradient(160deg, #cf9f63 0%, #a97a3d 55%, #7c5527 100%);
   border: 1.5px solid #8a6132;
 }
-.unit.mat-stone {
+.unit-shape.mat-stone {
   background:
     radial-gradient(circle at 30% 22%, rgba(255,255,255,0.28) 0%, transparent 42%),
     radial-gradient(circle at 72% 68%, rgba(0,0,0,0.22) 0%, transparent 46%),
     linear-gradient(160deg, #9aa1ab 0%, #767d87 55%, #565c66 100%);
   border: 1.5px solid #6b7280;
 }
-.unit.mat-bronze {
+.unit-shape.mat-bronze {
   background:
     radial-gradient(circle at 27% 23%, rgba(255,255,255,0.5) 0%, transparent 30%),
     linear-gradient(155deg, #dd9760 0%, #a85f2f 50%, #6e3c18 100%);
   border: 1.5px solid #c97c3f;
 }
-.unit.mat-iron {
+.unit-shape.mat-iron {
   background:
     radial-gradient(circle at 27% 23%, rgba(255,255,255,0.55) 0%, transparent 30%),
     linear-gradient(155deg, #7b8592 0%, #454c56 50%, #21252b 100%);
   border: 1.5px solid #8b95a3;
 }
-.unit.mat-silver {
+.unit-shape.mat-silver {
   background:
     radial-gradient(circle at 25% 21%, rgba(255,255,255,0.92) 0%, transparent 34%),
     linear-gradient(155deg, #f2f4f7 0%, #c3c9d1 45%, #8b929c 100%);
   border: 1.5px solid #ffffff;
   box-shadow: 0 0 8px rgba(255,255,255,0.32);
 }
-.unit.mat-gold {
+.unit-shape.mat-gold {
   background:
     radial-gradient(circle at 25% 21%, rgba(255,255,255,0.85) 0%, transparent 32%),
     linear-gradient(155deg, #ffe39a 0%, var(--gold) 45%, #b8781f 100%);
   border: 1.5px solid #ffe39a;
   box-shadow: 0 0 10px rgba(244,185,66,0.5);
 }
-.unit.mat-platinum {
+.unit-shape.mat-platinum {
   background:
     radial-gradient(circle at 24% 20%, rgba(255,255,255,0.95) 0%, transparent 30%),
     linear-gradient(150deg, #f6f8fb 0%, #dbe0e7 40%, #adb7c5 70%, #7d8b9e 100%);
   border: 1.5px solid #ffffff;
   box-shadow: 0 0 13px rgba(255,255,255,0.5);
 }
-.unit.mat-diamond {
+.unit-shape.mat-diamond {
   background:
     linear-gradient(100deg, rgba(255,255,255,0.72) 0%, transparent 16%),
     linear-gradient(205deg, rgba(150,222,255,0.5) 0%, transparent 20%),
@@ -193,13 +204,13 @@ h1 {
   border: 1.5px solid #e8fdff;
   box-shadow: 0 0 18px rgba(140,220,255,0.6), inset 0 0 10px rgba(255,255,255,0.4);
 }
-.unit.mat-aurora {
+.unit-shape.mat-aurora {
   background: conic-gradient(from var(--spin, 0deg), #6ee7ff, #a78bfa, #ff8fd6, #ffe08a, #7dffb3, #6ee7ff);
   border: 1.5px solid #fff;
   box-shadow: 0 0 22px rgba(160,200,255,0.65);
   animation: aurora-spin 5s linear infinite;
 }
-.unit.mat-void {
+.unit-shape.mat-void {
   background:
     radial-gradient(circle at 30% 26%, rgba(150,120,255,0.5) 0%, transparent 30%),
     linear-gradient(160deg, #14121c 0%, #050308 70%);
@@ -212,7 +223,7 @@ h1 {
   initial-value: 0deg;
 }
 @keyframes aurora-spin { to { --spin: 360deg; } }
-@media (prefers-reduced-motion: reduce) { .unit.mat-aurora { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .unit-shape.mat-aurora { animation: none; } }
 
 /* HPが12段階目（サイズ最大）を超えても伸び続けている場合、サイズはそれ以上変えず
    紫の脈動グローで「まだ伸びている」ことを示す */
@@ -288,6 +299,7 @@ h1 {
 
 .hp-bar-wrap {
   position: absolute;
+  z-index: 2;
   bottom: -7px; left: 4px; right: 4px;
   height: 4px;
   background: rgba(0,0,0,0.35);
