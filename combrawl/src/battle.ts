@@ -44,7 +44,8 @@ function resolveHits(
     for (const target of targets) {
       const remaining = tauntBlockBudget?.get(target.id) ?? 0;
       if (remaining > 0) {
-        tauntBlockBudget!.set(target.id, remaining - 1);
+        const remainingAfter = remaining - 1;
+        tauntBlockBudget!.set(target.id, remainingAfter);
         results.push({
           attacker,
           target,
@@ -55,6 +56,7 @@ function resolveHits(
           hpAfter: target.hp,
           swingId,
           blocked: true,
+          blockRemainingAfter: remainingAfter,
         });
         continue;
       }
