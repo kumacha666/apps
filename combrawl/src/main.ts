@@ -9,10 +9,26 @@ import { isEndless, roundLabel, RUN_LENGTH_OPTIONS } from "./progress";
 import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBetter, type RunRecord } from "./highscore";
 import { scaledDelay, type BattleSpeed } from "./speed";
 import { atkTier, defTier, hpTier, isHpCapped, materialClassForDefTier, shapeForAtkTier, sizeForHpTier, starPolygonClipPath } from "./visuals";
+import { isGalleryProgressAdvanced, loadGalleryProgress, mergeGalleryProgress, saveGalleryProgress, type GalleryProgress } from "./gallery";
 
 const titleScreen = document.getElementById("titleScreen") as HTMLElement;
 const gameScreen = document.getElementById("gameScreen") as HTMLElement;
 const titleModeRow = document.getElementById("titleModeRow") as HTMLElement;
+const galleryScreen = document.getElementById("galleryScreen") as HTMLElement;
+const openGalleryBtn = document.getElementById("openGalleryBtn") as HTMLButtonElement;
+const galleryBackBtn = document.getElementById("galleryBackBtn") as HTMLButtonElement;
+const hpTrack = document.getElementById("hpTrack") as HTMLElement;
+const atkTrack = document.getElementById("atkTrack") as HTMLElement;
+const defTrack = document.getElementById("defTrack") as HTMLElement;
+const hpSummaryValue = document.getElementById("hpSummaryValue") as HTMLElement;
+const atkSummaryValue = document.getElementById("atkSummaryValue") as HTMLElement;
+const defSummaryValue = document.getElementById("defSummaryValue") as HTMLElement;
+const hpSummaryBar = document.getElementById("hpSummaryBar") as HTMLElement;
+const atkSummaryBar = document.getElementById("atkSummaryBar") as HTMLElement;
+const defSummaryBar = document.getElementById("defSummaryBar") as HTMLElement;
+const hpTrackCount = document.getElementById("hpTrackCount") as HTMLElement;
+const atkTrackCount = document.getElementById("atkTrackCount") as HTMLElement;
+const defTrackCount = document.getElementById("defTrackCount") as HTMLElement;
 
 const arena = document.getElementById("arena") as HTMLElement;
 const playerSide = document.getElementById("playerSide") as HTMLElement;
@@ -137,6 +153,7 @@ function initRun(finalRound: number) {
     finalRound,
     tauntBlockBudget: new Map(),
   };
+  updateGalleryFromPlayerUnits(state.playerUnits);
   renderAll();
   statusLine.textContent = "戦闘開始を押してください";
   startBtn.disabled = false;
@@ -224,6 +241,95 @@ function renderUnits(
       };
     }
     container.appendChild(el);
+  });
+}
+
+/** タイトル画面の「ギャラリー」で見られるHP/ATK/DEF到達記録（localStorageで永続化）。
+ * 起動時に読み込み、カード適用でステータスが伸びるたびに更新する */
+let galleryProgress: GalleryProgress = loadGalleryProgress();
+
+/** プレイヤーユニットの現在のtierを観測し、ギャラリーの記録を更新する（伸びていた場合のみ保存） */
+function updateGalleryFromPlayerUnits(units: Unit[]) {
+  const observed = units.map((u) => ({ hp: hpTier(u.hp), atk: atkTier(u.atk), def: defTier(u.def) }));
+  const merged = mergeGalleryProgress(galleryProgress, observed);
+  if (isGalleryProgressAdvanced(galleryProgress, merged)) {
+    galleryProgress = merged;
+    saveGalleryProgress(galleryProgress);
+  }
+}
+
+function buildGalleryTrack(
+  container: HTMLElement,
+  countEl: HTMLElement,
+  unlockedTier: number,
+  renderShape: (tier: number) => HTMLElement
+) {
+  container.innerHTML = "";
+  for (let tier = 1; tier <= 12; tier++) {
+    const cell = document.createElement("div");
+    const unlocked = tier <= unlockedTier;
+    cell.className = "gallery-cell" + (tier === unlockedTier ? " current" : "");
+    const num = document.createElement("div");
+    num.className = "tier-num";
+    num.textContent = String(tier);
+    cell.appendChild(num);
+    if (unlocked) {
+      cell.appendChild(renderShape(tier));
+    } else {
+      const q = document.createElement("div");
+      q.className = "gallery-cell-locked-mark";
+      q.textContent = "？";
+      cell.appendChild(q);
+    }
+    container.appendChild(cell);
+  }
+  countEl.textContent = `${unlockedTier} / 12 解放`;
+}
+
+function renderGalleryScreen() {
+  const { hp, atk, def } = galleryProgress;
+
+  hpSummaryValue.textContent = `${hp} / 12`;
+  atkSummaryValue.textContent = `${atk} / 12`;
+  defSummaryValue.textContent = `${def} / 12`;
+  hpSummaryBar.style.width = (hp / 12) * 100 + "%";
+  atkSummaryBar.style.width = (atk / 12) * 100 + "%";
+  defSummaryBar.style.width = (def / 12) * 100 + "%";
+
+  buildGalleryTrack(hpTrack, hpTrackCount, hp, (tier) => {
+    const d = document.createElement("div");
+    d.className = "gallery-cell-shape mat-iron";
+    // タイル内に収まるよう実寸の半分で表示しつつ、高tier(最大140px)でもセル幅を超えないよう
+    // ATK/DEFトラックと同じ34pxを上限にクランプする（2026-07-17、Codexレビュー指摘：
+    // sizeForHpTier(12)*0.5=70pxは6列グリッドのセル幅(約63px)を超えて隣のセルに溢れていた）
+    const size = Math.min(sizeForHpTier(tier) * 0.5, 34);
+    d.style.width = size + "px";
+    d.style.height = size + "px";
+    d.style.borderRadius = "6%";
+    return d;
+  });
+
+  buildGalleryTrack(atkTrack, atkTrackCount, atk, (tier) => {
+    const d = document.createElement("div");
+    d.className = "gallery-cell-shape mat-iron";
+    d.style.width = "34px";
+    d.style.height = "34px";
+    const shape = shapeForAtkTier(tier);
+    if (shape.kind === "rounded") {
+      d.style.borderRadius = shape.borderRadiusPercent + "%";
+    } else {
+      d.style.clipPath = starPolygonClipPath(shape.points);
+    }
+    return d;
+  });
+
+  buildGalleryTrack(defTrack, defTrackCount, def, (tier) => {
+    const d = document.createElement("div");
+    d.className = "gallery-cell-shape " + materialClassForDefTier(tier);
+    d.style.width = "34px";
+    d.style.height = "34px";
+    d.style.borderRadius = "6%";
+    return d;
   });
 }
 
@@ -715,6 +821,9 @@ function chooseCard(card: (typeof CARD_POOL)[number]) {
   state.round += 1;
   // 次ラウンドの敵編成はここでは生成しない（戦闘開始まで非公開にするため、startBattle()で生成する）
   state.enemyUnits = [];
+  // カードでHP/ATK/DEFが伸びたタイミングでギャラリー記録を更新する
+  // （ステータスが変化しうるのはカード適用時のみなので、ここで十分）
+  updateGalleryFromPlayerUnits(state.playerUnits);
   cardArea.innerHTML = "";
   showToast(`${card.name}：${result.message}`);
   statusLine.textContent = `${roundLabel(state.round, state.finalRound)}: 戦闘開始を押してください`;
@@ -740,6 +849,16 @@ function resetRun() {
   if (hasRunStarted) saveBestScoreIfBetter(state.score);
   initRun(state.finalRound);
 }
+
+openGalleryBtn.onclick = () => {
+  renderGalleryScreen();
+  titleScreen.hidden = true;
+  galleryScreen.hidden = false;
+};
+galleryBackBtn.onclick = () => {
+  galleryScreen.hidden = true;
+  titleScreen.hidden = false;
+};
 
 startBtn.onclick = startBattle;
 resetBtn.onclick = resetRun;

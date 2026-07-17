@@ -6,7 +6,7 @@
 ## アーキテクチャ
 `apps/CLAUDE.md`のB系（Vite+TypeScriptビルドアプリ）に準拠。`enblo`と同じ構成。
 
-- `src/types.ts` / `src/units.ts` / `src/combat.ts` / `src/battle.ts` / `src/stats.ts` / `src/progress.ts` / `src/highscore.ts` / `src/speed.ts` / `src/visuals.ts`：DOM非依存の純粋なゲームロジック。全てVitestでユニットテスト済み
+- `src/types.ts` / `src/units.ts` / `src/combat.ts` / `src/battle.ts` / `src/stats.ts` / `src/progress.ts` / `src/highscore.ts` / `src/speed.ts` / `src/visuals.ts` / `src/gallery.ts`：DOM非依存の純粋なゲームロジック。全てVitestでユニットテスト済み
 - `src/data/cards.ts`：カード9種の定義（`apply(state, chosenUnit)`は状態を直接ミューテートする純粋関数寄りの設計。DOM操作は含まない）
 - `src/data/enemies.ts`：敵編成生成。ラウンド数に上限を設けていないため、10層クリア後のエンドレスモードでも同じ式をそのまま延長適用できる
 - `src/main.ts`：DOM描画・アニメーション・音・エンドレス突入UIなど、UIオーケストレーション層。ここだけはユニットテスト対象外（DOM操作のため）
@@ -32,9 +32,9 @@
 - **単体強化カードで対象未選択（ランダム）の場合、`card.apply`の戻り値`appliedUnit`が実際に適用されたユニットを返す**（`src/data/cards.ts`）。`main.ts`側で「対象未選択なら最後のユニットに決め打ち」のような独自ロジックで再現しないこと（2026-07-16、Codexレビュー指摘: 独立した2つのランダム選択がズレて、光る対象と実際の強化対象が食い違うバグがあった）
 - **タイトル画面（`#titleScreen`）は`index.html`にゲーム画面（`#gameScreen`）と並べて実装し、JS側でのhidden切り替えで遷移する**。「Honeypaw Lab. by kumacha.」のクレジット表記は`.title-credit`に固定表示。ゲームの初期化（`initRun()`）はタイトルの「はじめる」ボタン押下まで遅延させる
 
-## カード全面再設計（2026-07-16〜17実装。ギャラリー機能以外は実装済み）
+## カード全面再設計（2026-07-16〜17実装。全項目実装済み）
 
-ai-workspace側`GAME_DESIGN.md`（§2.3・§2.4・§2.5・§2.6・§2.8・§3・§3.1・§3.2・§7）で仕様が固まった大規模変更。DEF導入・特大化/先鋭化/硬質化・挑発の全面リワーク・反撃へのDEF適用・合体/分裂のDEF継承・全体攻撃化の上限撤廃・視覚システム（HP=サイズ/ATK=形/DEF=材質）は実装済み（`types.ts`/`units.ts`/`combat.ts`/`battle.ts`/`data/cards.ts`/`visuals.ts`/`main.ts`、テストは`units.test.ts`/`battle.test.ts`/`data/cards.test.ts`/`combat.test.ts`/`visuals.test.ts`に追加）。**ギャラリー機能（メタ進行）のみ依然未着手**（下記参照）。
+ai-workspace側`GAME_DESIGN.md`（§2.3・§2.4・§2.5・§2.6・§2.6.1・§2.8・§3・§3.1・§3.2・§7）で仕様が固まった大規模変更。DEF導入・特大化/先鋭化/硬質化・挑発の全面リワーク・反撃へのDEF適用・合体/分裂のDEF継承・全体攻撃化の上限撤廃・視覚システム（HP=サイズ/ATK=形/DEF=材質）・ギャラリー機能（メタ進行）まで全て実装済み（`types.ts`/`units.ts`/`combat.ts`/`battle.ts`/`data/cards.ts`/`visuals.ts`/`gallery.ts`/`main.ts`、テストは`units.test.ts`/`battle.test.ts`/`data/cards.test.ts`/`combat.test.ts`/`visuals.test.ts`/`gallery.test.ts`に追加）。
 
 - **「巨大化」を廃止済み、「特大化」はHP専用**（`u.maxHp *= 3`、`u.hp = u.maxHp`同期は維持）。ATKは変化しない
 - **「先鋭化」「硬質化」を実装済み**：単体選択、それぞれ`u.atk *= 3`／`u.def *= 3`のみ。硬質化は`u.dmgTakenMult`も同時に再計算する
@@ -52,7 +52,7 @@ ai-workspace側`GAME_DESIGN.md`（§2.3・§2.4・§2.5・§2.6・§2.8・§3・
   - `level > 5`のとき：`base += 0.25 * log2(level - 4)`（Lv6:165%→Lv9:198%→Lv12:215%…上限なし、対数的に減衰しながら伸び続ける）
   - 係数（`0.65`/`0.15`/`0.25`）はすべて暫定値。実際のバランスは今後シミュレーションで調整する（次の作業候補）
 - **「合体」「分裂」のDEF継承ルールを実装済み**：DEFはHP/ATKと同じ「肉体枠」として扱う（合体は合算×1.2、分裂は0.6倍・下限1）。`dmgTakenMult`は`makeUnit()`が`def`から自動的に導出するため、合体・分裂側で個別に合算・コピーする必要はない
-- **見た目（HP=サイズ/ATK=形/DEF=材質、12段階）を実装済み（2026-07-17）。ギャラリー機能（メタ進行）は依然未着手**：
+- **見た目（HP=サイズ/ATK=形/DEF=材質、12段階）を実装済み（2026-07-17）**：
   - `src/visuals.ts`（DOM非依存の純粋関数、`visuals.test.ts`でテスト済み）に3チャンネル共通のしきい値計算`tierForValue(value, base)`を実装。「基準値から見て約2倍ごとに1段階、1〜12にクランプ」という同じロジックをHP/ATK/DEFで共有する
   - **HP→サイズ**：`hpTier(hp)`（基準値`HP_BASE=8`、実測の巨大化ビルドHP約99,360が丁度tier12に収まるよう校正済み）→`sizeForHpTier(tier)`で22px(tier1)〜140px(tier12)の12段階サイズを返す。旧`size = clamp(30, 96, 16 + sqrt(hp) * 7)`は廃止。tier12到達後もHPが伸び続けている場合は`isHpCapped(hp)`が真になり、`.hp-capped`クラス（紫の脈動グロー、`style.css`）でサイズ据え置きのまま「まだ伸びている」ことを示す
   - **ATK→形（トゲトゲ度）**：`atkTier(atk)`（基準値`ATK_BASE=2`）→`shapeForAtkTier(tier)`。tier1〜3は角の丸み（円形/丸角/四角、`border-radius`のみ）、tier4〜12は`starPolygonClipPath(points)`で生成する4〜12芒星（`clip-path: polygon()`、pointsはtierと一致）
@@ -60,8 +60,13 @@ ai-workspace側`GAME_DESIGN.md`（§2.3・§2.4・§2.5・§2.6・§2.8・§3・
   - **形・素材（`border-radius`/`clip-path`/材質背景）は`.unit`自体ではなく専用のインナー要素`.unit-shape`（`position:absolute; inset:0`）にのみ適用すること（2026-07-17、Codexレビュー指摘・重要）**：`.unit`にclip-pathを直接かけると、その子である`.unit-badges`（`top:-13px`）や`.hp-bar-wrap`（`bottom:-7px`）まで一緒に切り取られてしまい、ATK tier4以上（星形）になった瞬間にトレイトバッジ・HPバーが欠ける不具合になる。`main.ts`の`renderUnits()`は`el.innerHTML`の先頭に`<div class="unit-shape ...">`を差し込み、`el.style.borderRadius`/`el.style.clipPath`ではなく`.unit-shape`側のstyle属性に形状を設定する。`.unit-hp`は`z-index:1`、`.hp-bar-wrap`は`z-index:2`、`.unit-shape`は`z-index:0`で、形状レイヤーが最背面になるようスタッキングを明示している
   - **基準値（`HP_BASE`/`ATK_BASE`/`DEF_BASE`）はすべて暫定値**：初期値（HP24/ATK4/DEF5）がだいたいtier2に収まるよう当たりをつけただけで、実際のカードスタック数・到達分布に基づくシミュレーション調整はまだ行っていない。調整する場合は`src/visuals.ts`の定数を変更するだけで済む
   - **HPの数値表示（`.unit-hp`）は白文字+濃い縁取り(`text-shadow`)に固定した**：DEF素材によって背景の明暗（漆黒〜白銀）が大きく変わるため、単一の文字色ではどこかで読めなくなる。素材ごとの文字色出し分けはしていない
-  - **ギャラリー（メタ進行）は未実装**：タイトル画面から開ける、HP/ATK/DEFそれぞれ独立した12マスの到達record画面（未到達は「？」で伏せる、localStorage保存）。優先度は低いまま
   - より詳細な検討経緯・デザインサンプルの参照先はai-workspace側`GAME_DESIGN.md`§2.6・§2.6.1に記載
+- **ギャラリー（メタ進行）を実装済み（2026-07-17）**：タイトル画面の「🖼 ギャラリー」ボタンから開ける、HP/ATK/DEFそれぞれ独立した12マスの到達record画面
+  - `src/gallery.ts`（DOM非依存の純粋関数+localStorage永続化、`gallery.test.ts`でテスト済み）に`GalleryProgress { hp, atk, def }`（各軸1〜12、未到達は0）を持つ。`loadGalleryProgress()`/`saveGalleryProgress()`が`localStorage`の`combrawl.gallery.v1`キーを読み書きし、`mergeGalleryProgress(current, observed)`が観測したユニット群のtierと既存記録を突き合わせて各軸ごとの最大値を返す（下がることはない）
+  - `main.ts`の`updateGalleryFromPlayerUnits(units)`が、`initRun()`（ラン開始時のベースライン登録）と`chooseCard()`（カード適用でステータスが伸びうるタイミング）の2箇所から呼ばれる。**ステータスが変化しうるのはカード適用時のみなので、戦闘中の毎フレーム呼び出しは不要**（`renderArena()`等の高頻度描画からは呼んでいない。挑発ブロック予算と同様、呼び出し頻度を絞ることでlocalStorageへの過剰な読み書きを避けている）
+  - 未到達の段階は「？」で伏せて表示し、実際に到達すると解放される。各トラックのセル描画（`gallery-cell-shape`）は`visuals.ts`の`shapeForAtkTier`/`materialClassForDefTier`/`starPolygonClipPath`をそのまま再利用し、戦闘中のユニット表示とロジックを重複させていない。`style.css`の`.unit-shape.mat-*`セレクタは`.gallery-cell-shape.mat-*`も同時に対象にするよう拡張してあるため、DEF素材のグラデーション定義（12段階分）を二重に書いていない
+  - `index.html`に`#galleryScreen`（`#titleScreen`/`#gameScreen`と同じ`[hidden]`属性による出し分けパターンを踏襲、CSSの罠は`apps/CLAUDE.md`「新しく`hidden`属性で出し分けるコンテナを追加するたび」の項を参照して回避済み）を新設
+  - サーバー・共有機能は無し、自己ベスト記録・HIGH SCOREと同じ「自分だけの記録」という位置付け
 - **分裂・合体後、見た目が新しいステータスに正しく反映されるか重点確認**：過去に類似の対象ズレバグが実際に起きている（本ファイル「単体強化カードで対象未選択」の項参照）。今回、`renderUnits()`の編集時に`el.className`/`el.dataset.id`の代入を誤って削除してしまい、全ユニットのクラス・data-id・クリックハンドラが丸ごと消える不具合を実装直後に自己発見・修正した実績がある（Playwrightでの実プレイ確認で発覚。ユニットテストだけでは検出できなかった）。DOM要素の`className`/`classList`を扱うコードを編集する際は、既存の代入行を消していないか特に注意する
 
 ## 変更時のチェックリスト
@@ -72,6 +77,7 @@ ai-workspace側`GAME_DESIGN.md`（§2.3・§2.4・§2.5・§2.6・§2.8・§3・
 - 単体強化カードを追加する場合は、`apply`の戻り値に実際に適用したユニットを`appliedUnit`として必ず含める（`main.ts`側でハイライト対象を独自に推測させない）
 - コミット前に`npm run deploy`を実行し、ビルド成果物（`game.js`/`style.css`/`manifest.json`/`index.html`）をルート直下に反映させる（`npm run build`は`scripts/build.mjs`が entry書き換え→テスト→vite build を一括で行い、失敗時も必ずindex.htmlを復元する。`npx vite build`を直接叩かないこと。2026-07-15、apps#298）
 - **`npm run deploy`は`dist/index.html`をコピーした直後に`scripts/normalize-index.mjs`を必ず実行する**：Viteはビルド時、注入するscript/linkタグの前に大量の空白パディングを付与する。この生成物をそのまま次回ビルドの入力（=コミットされるindex.html）として使い回すと、ビルドのたびにViteが既存のパディングの上にさらにパディングを重ねてしまい、デプロイのたびにindex.htmlがほぼ倍々に肥大化し続ける不具合があった（2026-07-15、Codexレビュー指摘。実測: 7.9KB→14KB→…と倍増）。normalize-index.mjsは注入タグ直前の空白ランを1個の改行に正規化し、この複利的な肥大化を断つ。`deploy`スクリプトからこのステップを外さないこと
+- **`npm run deploy`の後に`npm run dev`（や単体の`vite`起動）を実行すると、`predev`フックの`restore-entry.mjs`がルート直下`index.html`のエントリを再び`./game.js`→`./src/main.ts`に書き換え、スタイルシートのlink要素も失われる**。この状態のまま`git commit`すると、GitHub Pagesで配信される本番`index.html`が生のTypeScriptを読み込もうとして起動不能になる（2026-07-17、Codexレビュー指摘・実際に一度この状態でコミットしてしまった実績あり）。**Playwright等でビルド後の動作を実プレイ確認する際は、確認用に`npm run dev`を起動した後、コミット前に必ずもう一度`npm run deploy`を実行してエントリを`./game.js`に戻すこと**。コミット直前は`git diff combrawl/index.html`で`<script type="module" ... src="./game.js">`になっているか（`./src/main.ts`になっていないか）を必ず目視確認する
 
 ## プロトタイプ移植で得た教訓（2026-07-15、初回実装のCodexレビューで16件の指摘を受けた振り返り）
 
@@ -82,7 +88,7 @@ ai-workspace側`GAME_DESIGN.md`（§2.3・§2.4・§2.5・§2.6・§2.8・§3・
 
 ## 未着手・既知の課題（ロードマップは`ai-workspace`側GAME_DESIGN.md §14に集約）
 
-- カード全面再設計（9→10種、DEF導入・挑発リワーク・全体攻撃化の上限撤廃・視覚システム）は2026-07-16〜17実装済み。**ギャラリー機能（メタ進行）のみ未実装**（上記「カード全面再設計」セクション参照）。拡張候補（カウンタータンクのシナジー、回数制バリア持ちの敵）は`ai-workspace`側のGAME_DESIGN.md §11・§14を参照
+- カード全面再設計（9→10種、DEF導入・挑発リワーク・全体攻撃化の上限撤廃・視覚システム・ギャラリー）は2026-07-16〜17実装済み。拡張候補（カウンタータンクのシナジー、回数制バリア持ちの敵）は`ai-workspace`側のGAME_DESIGN.md §11・§14を参照
 - ドット絵化は未着手。着手時はHP連動の連続サイズ変化（`src/main.ts`の`renderUnits`内`size`計算）を廃し、HPバー＋スプライト差し替え方式に再設計する（GAME_DESIGN.md §14参照）
 - **BGM追加・SE強化は未着手**（2026-07-15、ロードマップに追加）：現状SEは`playTone`ベースのWeb Audio API簡易合成音のみ、BGMは無し。着手時の検討事項はGAME_DESIGN.md §14参照。高速/超速自動周回中はSEをミュートする既存仕様（本ファイルの「エンドレスの高速/超速自動周回」参照）と矛盾しないよう、BGMの扱い（鳴らし続けるか等）も合わせて設計する
 - `public/icon-192.png` / `icon-512.png`はプレースホルダー（`scripts/gen-icons.mjs`で生成した単色リング）。本番公開前に正式なアイコンに差し替える
