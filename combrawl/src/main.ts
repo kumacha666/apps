@@ -179,7 +179,17 @@ function renderHud() {
   renderEndlessControls();
 }
 
-interface DisplayOverride { hp: number; alive: boolean }
+interface DisplayOverride {
+  hp: number;
+  alive: boolean;
+  /** アニメーション再生中、そのユニットの挑発バッジに表示すべき「残りブロック回数」の
+   * 上書き値。stateはそのターンの全ヒットを解決済み（最終値）で、hp/aliveと同じ理由で
+   * 再生の途中経過を表せないため、hpAfter方式と同様にblockRemainingAfterから逆算する
+   * （2026-07-17、Codexレビュー指摘: Lv3挑発が3連続でブロックした際、アニメーション上は
+   * 1発目の時点で既に🛡✕（最終値）になってしまい、🛡3→🛡2→🛡1→🛡✕のカウントダウンが
+   * 見えず、盾シャッター演出もバッジが空になった後に発火しているように見えていた） */
+  tauntRemaining?: number;
+}
 
 function renderArena(overrides?: Map<string, DisplayOverride>) {
   renderUnits(playerSide, state.playerUnits, "player-unit", overrides);
@@ -233,8 +243,17 @@ function renderUnits(
       // 挑発は「Lv（1ラウンドの最大ブロック回数）」の固定表示ではなく、そのラウンド中の
       // 残りブロック回数を動的に表示する。budgetにまだエントリが無い場合（カードを取った直後、
       // まだ一度もinitTauntBlockBudget()が走っていない）はtauntLevelそのもの＝満タン扱いにする
-      // （2026-07-17、ユーザー要望：見た目だけでは「ちゃんと盾が減っているか」分からなかった）
-      const remaining = state.tauntBlockBudget.has(u.id) ? state.tauntBlockBudget.get(u.id)! : u.tauntLevel;
+      // （2026-07-17、ユーザー要望：見た目だけでは「ちゃんと盾が減っているか」分からなかった）。
+      // アニメーション再生中はoverride.tauntRemainingを優先する：state.tauntBlockBudgetは
+      // そのターンの全ヒットを解決済み（最終値）を持つため、そのまま読むと1発目の再生時点で
+      // 既に最終値（例: 🛡✕）になってしまい、カウントダウンが見えなくなる
+      // （2026-07-17、Codexレビュー指摘）
+      const remaining =
+        override?.tauntRemaining !== undefined
+          ? override.tauntRemaining
+          : state.tauntBlockBudget.has(u.id)
+            ? state.tauntBlockBudget.get(u.id)!
+            : u.tauntLevel;
       badgeList.push(remaining > 0 ? `🛡${remaining}` : `🛡✕`);
     }
     // 特性ごとに枠線付きの個別チップへ分けると、複数特性が乗ったユニットでバッジが林立して
@@ -573,6 +592,15 @@ function animateHits(
     if (!overrides.has(hit.target.id)) {
       overrides.set(hit.target.id, { hp: hit.hpAfter + hit.damage, alive: true });
     }
+    // 挑発バッジも同じ理由で「このヒットより前＝blockRemainingAfter+1」の残数から逆算する。
+    // その対象について最初に出てくるヒットだけを見れば十分（挑発ユニットは予算が残っている間
+    // 優先的に狙われるため、ブロックされたヒットは常にそのターンの先頭側に来る）
+    if (hit.blocked && hit.blockRemainingAfter !== undefined) {
+      const existing = overrides.get(hit.target.id)!;
+      if (existing.tauntRemaining === undefined) {
+        existing.tauntRemaining = hit.blockRemainingAfter + 1;
+      }
+    }
   }
   renderArena(overrides);
 
@@ -602,7 +630,15 @@ function animateHits(
       if (!battleActive || gen !== battleGen) return;
 
       for (const hit of group) {
-        overrides.set(hit.target.id, { hp: hit.hpAfter, alive: !hit.wasKilled });
+        const prevTauntRemaining = overrides.get(hit.target.id)?.tauntRemaining;
+        overrides.set(hit.target.id, {
+          hp: hit.hpAfter,
+          alive: !hit.wasKilled,
+          // ブロックされたヒットなら、このヒットで消費した後の残数に更新する。
+          // それ以外（挑発と無関係のヒット、あるいはこの対象が同グループ内で複数回
+          // 登場しない限り通常は1回のみ）は直前の値をそのまま引き継ぐ
+          tauntRemaining: hit.blocked ? hit.blockRemainingAfter : prevTauntRemaining,
+        });
       }
       renderArena(overrides);
 
