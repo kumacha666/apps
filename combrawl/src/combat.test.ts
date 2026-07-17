@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aoeMultFor, computeHitDamage, hitDampen, retaliateMultFor } from "./combat";
+import { aoePercentForLevel, computeHitDamage, hitDampen, retaliateMultFor } from "./combat";
 
 describe("hitDampen", () => {
   it("1発目は満威力", () => {
@@ -12,14 +12,22 @@ describe("hitDampen", () => {
   });
 });
 
-describe("aoeMultFor", () => {
+describe("aoePercentForLevel", () => {
   it("Lv0は等倍", () => {
-    expect(aoeMultFor(0)).toBe(1);
+    expect(aoePercentForLevel(0)).toBe(1);
   });
-  it("Lv1〜Lv5+は仕様通りの値になり上限150%で頭打ちになる", () => {
-    expect(aoeMultFor(1)).toBeCloseTo(0.8);
-    expect(aoeMultFor(3)).toBeCloseTo(1.1);
-    expect(aoeMultFor(10)).toBe(1.5);
+  it("Lv1〜Lv5は旧式と同じ伸び（Lv1:80%→Lv5:140%）", () => {
+    expect(aoePercentForLevel(1)).toBeCloseTo(0.8);
+    expect(aoePercentForLevel(3)).toBeCloseTo(1.1);
+    expect(aoePercentForLevel(5)).toBeCloseTo(1.4);
+  });
+  it("Lv6以降は上限なく対数的に伸び続ける（2026-07-17、150%キャップを撤廃）", () => {
+    expect(aoePercentForLevel(6)).toBeCloseTo(1.65);
+    expect(aoePercentForLevel(9)).toBeCloseTo(1.98, 1);
+    expect(aoePercentForLevel(12)).toBeCloseTo(2.15);
+    // 頭打ちにならず、レベルが上がるほど値も増え続ける
+    expect(aoePercentForLevel(20)).toBeGreaterThan(aoePercentForLevel(12));
+    expect(aoePercentForLevel(100)).toBeGreaterThan(aoePercentForLevel(20));
   });
 });
 

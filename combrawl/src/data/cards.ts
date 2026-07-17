@@ -1,6 +1,6 @@
 import type { Card, GameState, Unit } from "../types";
 import { avgAtk, avgDef, avgHp, makeUnit } from "../units";
-import { dmgTakenMultForDef } from "../combat";
+import { aoePercentForLevel, dmgTakenMultForDef } from "../combat";
 
 function alivePlayers(state: GameState): Unit[] {
   return state.playerUnits.filter((u) => u.alive);
@@ -11,11 +11,6 @@ function pickTarget(state: GameState, chosenUnit?: Unit | null): Unit | null {
   if (alive.length === 0) return null;
   if (chosenUnit && alive.includes(chosenUnit)) return chosenUnit;
   return alive[Math.floor(Math.random() * alive.length)];
-}
-
-export function aoeMultForDisplay(level: number): number {
-  if (!level || level <= 0) return 1;
-  return Math.min(1.5, 0.65 + 0.15 * level);
 }
 
 export function retaliateMultForDisplay(level: number): number {
@@ -112,13 +107,13 @@ export const CARD_POOL: Card[] = [
   {
     id: "aoe_convert",
     name: "全体攻撃化",
-    desc: "選んだ（またはランダムな）1体が、敵全体に同時攻撃するように。重ねがけで威力上昇（Lv1:80%→Lv2:95%→Lv3:110%…上限150%）",
+    desc: "選んだ（またはランダムな）1体が、敵全体に同時攻撃するように。重ねがけで威力上昇（Lv1:80%→Lv2:95%→Lv3:110%…上限なし）",
     singleTarget: true,
     apply: (state, chosenUnit) => {
       const u = pickTarget(state, chosenUnit);
       if (!u) return { message: "対象なし" };
       u.aoeLevel += 1;
-      return { message: `1体が全体攻撃化した！（Lv${u.aoeLevel}・威力${Math.round(aoeMultForDisplay(u.aoeLevel) * 100)}%）`, appliedUnit: u };
+      return { message: `1体が全体攻撃化した！（Lv${u.aoeLevel}・威力${Math.round(aoePercentForLevel(u.aoeLevel) * 100)}%）`, appliedUnit: u };
     },
   },
   {

@@ -1,6 +1,6 @@
 import type { GameState, HitResult, Unit } from "./types";
 import { aliveUnits } from "./units";
-import { aoeMultFor, computeHitDamage, hitDampen, retaliateMultFor } from "./combat";
+import { aoePercentForLevel, computeHitDamage, hitDampen, retaliateMultFor } from "./combat";
 
 export type Rng = () => number;
 
@@ -27,7 +27,7 @@ function resolveHits(
 ): HitResult[] {
   const results: HitResult[] = [];
   const isAoe = attacker.aoeLevel > 0;
-  const aoeMult = aoeMultFor(attacker.aoeLevel);
+  const aoeMult = aoePercentForLevel(attacker.aoeLevel);
   // 1回のresolveHits呼び出し全体（1ターン分の連撃・全体攻撃）を1つの攻撃アクションとして扱う。
   // hitIndexが攻撃の何発目かを表すのに対し、swingIdは「別々の攻撃アクション」を区別する
   const swingId = nextSwingId();
@@ -158,7 +158,7 @@ export function retaliatePhase(state: GameState, incomingHits: HitResult[], rng:
 
       const retMult = retaliateMultFor(r.retaliateLevel);
       const isAoe = r.aoeLevel > 0;
-      const aoeMult = aoeMultFor(r.aoeLevel);
+      const aoeMult = aoePercentForLevel(r.aoeLevel);
       // 同じ反撃持ちユニットが、味方の複数回の被弾（別々のincomingHit）に反応して複数回反撃することがある。
       // 各反撃はそれぞれ独立した「1回の振り」なので、hitIndexが0から振り出しに戻っても
       // 前の反撃と同時ヒット扱いにならないよう、反撃1回ごとに新しいswingIdを発行する

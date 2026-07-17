@@ -14,9 +14,15 @@ export function hitDampen(hitIndex: number): number {
   return Math.max(FLOOR, 1 - hitIndex * STEP);
 }
 
-export function aoeMultFor(level: number): number {
+/** 全体攻撃化の威力%（上限なし）。Lv1〜5は旧式と同じ伸び（Lv1:80%→Lv5:140%）、
+ * Lv6以降は対数的に減衰しながら伸び続ける。係数はすべて暫定値でシミュレーションで調整予定。
+ * 実ダメージ計算（combat.ts）とカード説明文表示（data/cards.ts）の両方から必ずこの関数を
+ * 参照すること（別々に定義すると「実ダメージは伸びるのに説明文だけ頭打ち」というズレが起きる） */
+export function aoePercentForLevel(level: number): number {
   if (!level || level <= 0) return 1;
-  return Math.min(1.5, 0.65 + 0.15 * level);
+  const base = 0.65 + 0.15 * Math.min(level, 5);
+  if (level <= 5) return base;
+  return base + 0.25 * Math.log2(level - 4);
 }
 
 export function retaliateMultFor(level: number): number {
