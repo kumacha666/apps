@@ -8,6 +8,7 @@ import { applyHitsBySwing, applyScoreGain, initialStats } from "./stats";
 import { isEndless, roundLabel, RUN_LENGTH_OPTIONS } from "./progress";
 import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBetter, type RunRecord } from "./highscore";
 import { scaledDelay, type BattleSpeed } from "./speed";
+import { atkTier, defTier, hpTier, isHpCapped, materialClassForDefTier, shapeForAtkTier, sizeForHpTier, starPolygonClipPath } from "./visuals";
 
 const titleScreen = document.getElementById("titleScreen") as HTMLElement;
 const gameScreen = document.getElementById("gameScreen") as HTMLElement;
@@ -189,9 +190,22 @@ function renderUnits(
     }
     el.className = className;
     el.dataset.id = u.id;
-    const size = Math.max(30, Math.min(96, 16 + Math.sqrt(Math.max(0, u.hp)) * 7));
+    // HP=サイズ／ATK=形（トゲトゲ度）／DEF=素材、の3チャンネルで見た目を分離する（GAME_DESIGN.md §2.6）
+    const size = sizeForHpTier(hpTier(u.hp));
     el.style.width = size + "px";
     el.style.height = size + "px";
+    if (isHpCapped(u.hp)) el.classList.add("hp-capped");
+
+    const shape = shapeForAtkTier(atkTier(u.atk));
+    if (shape.kind === "rounded") {
+      el.style.borderRadius = shape.borderRadiusPercent + "%";
+      el.style.clipPath = "none";
+    } else {
+      el.style.borderRadius = "0";
+      el.style.clipPath = starPolygonClipPath(shape.points);
+    }
+
+    el.classList.add(materialClassForDefTier(defTier(u.def)));
 
     const badgeList: string[] = [];
     if (u.attackCount > 1) badgeList.push(`⚡${u.attackCount}`);
