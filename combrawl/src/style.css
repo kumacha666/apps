@@ -82,12 +82,18 @@ h1 {
   flex-wrap: wrap;
   align-content: center;
   justify-content: center;
-  /* row-gapを大きめに取り、複数行に折り返した際もバッジ(最大2行・約48px)が上の行の
-     ユニットに重ならないようにする（2026-07-17、Codexレビュー指摘：増援等で5体以上に
-     増えて複数行になると、下の行のバッジが上の行のユニットを覆ってしまっていた） */
-  gap: 40px 10px;
-  /* バッジがユニット上に浮くため、上に十分な余白を確保する（2026-07-17、バッジ重なり修正に合わせて調整） */
-  padding: 22px 10px 14px;
+  /* バッジは.unit-slot内の通常フロー要素になったため、行の高さ（ユニット+バッジ分）は
+     ブラウザのflex-wrapが自動的に計算する。固定の大きなrow-gapで隙間を確保する必要はない
+     （2026-07-17、Codexレビュー指摘を受けて.unit-badgesをposition:absoluteから
+     通常フローに変更、詳細は.unit-slotのコメント参照） */
+  gap: 14px 10px;
+  padding: 14px 10px;
+}
+.unit-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
 }
 
 .unit {
@@ -123,16 +129,17 @@ h1 {
   text-shadow: 0 1px 2px rgba(0,0,0,0.95), 0 0 4px rgba(0,0,0,0.85);
 }
 .unit-badges {
-  /* ユニットの真上に完全に浮かせる形で配置する。HP=サイズ可変システム導入後、
+  /* ユニットの真上、.unit-slot内の通常フロー要素として配置する。HP=サイズ可変システム導入後、
      ユニットが22px〜140pxまで幅を持つようになったため、旧来の「右上の角に
      少しはみ出す」固定オフセット(top:-13px; right:-8px)だと小さいユニット
      （序盤はほぼ全て）ではバッジ本体がユニットより大きくなり、覆い隠してしまっていた
-     （2026-07-17、ユーザー報告）。left:50%+translateXでサイズによらず中央上に置く */
-  position: absolute;
-  left: 50%;
-  top: 0;
-  transform: translate(-50%, -100%);
-  margin-top: -4px;
+     （2026-07-17、ユーザー報告）。
+     以前はposition:absoluteで浮かせていたが、それだとレイアウト上は幅0扱いになり
+     .sideのflex-wrapがバッジの実サイズを考慮できず、密集した小さいユニットでは隣に
+     横方向にはみ出し、複数行に折り返すと下の行のバッジが上の行のユニットへ縦方向に
+     はみ出す、という2種類の重なりが残っていた（2026-07-17、Codexレビュー指摘）。
+     .unit-slot（親、display:flex;flex-direction:column）内の通常フロー要素にすることで、
+     バッジの実サイズがflex-wrapのレイアウト計算に正しく参加するようにした */
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -142,7 +149,6 @@ h1 {
      横幅が伸びすぎて隣のユニット・バッジと衝突し読めなくなっていた（2026-07-17、ユーザー報告）。
      チップ単位でflex-wrapさせ、この上限幅で2行以上に折り返すことで横方向の食い出しを抑える */
   max-width: 84px;
-  z-index: 5;
 }
 .badge-chip {
   background: linear-gradient(135deg, #ffce54, #ff8a3d);
@@ -355,8 +361,8 @@ h1 {
   white-space: nowrap;
   text-shadow: 0 0 10px currentColor, 0 2px 4px rgba(0,0,0,0.6);
   text-align: center;
-  /* .unit-badges（常駐の特性バッジ、z-index:5）と同じ「ユニット上部中央」の位置から
-     出発するため、常にヒット演出側を手前に表示する（2026-07-17、Codexレビュー指摘） */
+  /* .unit-badges（常駐の特性バッジ）と同じ「ユニット上部中央」の位置から出発するため、
+     常にヒット演出側を手前に表示する（2026-07-17、Codexレビュー指摘） */
   z-index: 8;
 }
 .hit-index-tag {
@@ -388,7 +394,7 @@ h1 {
   white-space: nowrap;
   text-shadow: 0 0 10px rgba(244,185,66,0.7), 0 2px 4px rgba(0,0,0,0.6);
   text-align: center;
-  /* AoE持ちは常駐の🌀バッジ（.unit-badges、z-index:5）も同じ座標に浮いているため、
+  /* AoE持ちは常駐の🌀バッジ（.unit-badges）も同じ座標に浮いているため、
      ヒット中の演出は常にその手前に表示する（2026-07-17、Codexレビュー指摘） */
   z-index: 9;
   animation: aoe-badge-fade 0.72s var(--ease-out-smooth) forwards;
