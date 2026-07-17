@@ -119,8 +119,26 @@ describe("enemyAttackTurn", () => {
     // 1発目: 予算が残っているtaunterが狙われ、ブロックされる
     expect(result!.hits[0].target).toBe(taunter);
     expect(result!.hits[0].blocked).toBe(true);
+    // ちょうどこの1発でブロック予算(1回分)を使い切ったので、blockRemainingAfterは0
+    // （盾シャッター演出の発火判定に使う。main.tsのCLAUDE.md参照）
+    expect(result!.hits[0].blockRemainingAfter).toBe(0);
     // 2発目: 予算を使い切ったので、taunterはもう優先されない（候補は生存者全体）
     expect(result!.hits[1].blocked).toBeFalsy();
+  });
+
+  it("ブロック予算が複数回分あるtaunterは、blockRemainingAfterが1発ごとにカウントダウンする", () => {
+    const taunter = makeUnit("player", 30, 2);
+    taunter.tauntLevel = 3; // ブロック予算3回分
+    const enemy = makeUnit("enemy", 20, 3);
+    enemy.attackCount = 3;
+    const state = makeState({ playerUnits: [taunter], enemyUnits: [enemy] });
+    initTauntBlockBudget(state);
+
+    const result = enemyAttackTurn(state, zeroRng);
+
+    expect(result!.hits.length).toBe(3);
+    expect(result!.hits.every((h) => h.blocked)).toBe(true);
+    expect(result!.hits.map((h) => h.blockRemainingAfter)).toEqual([2, 1, 0]);
   });
 
   it("連撃中に挑発ユニットが倒れたら、残りのヒットは他の生存ユニットに向く", () => {

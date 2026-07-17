@@ -93,6 +93,12 @@ h1 {
   display: flex;
   flex-direction: column;
   align-items: center;
+  /* .sideのflex-wrapは同じ行内のslotをalign-items:stretchで揃えるため、バッジ無し
+     ユニットのslotもバッジ有りユニットと同じ高さまで伸びる。justify-content指定が
+     無いとその中で内容が上詰めになり、バッジ有り無しでユニット本体の縦位置が
+     ズレて横一列に見えなくなっていた（2026-07-17、ユーザー報告）。
+     下詰めにして、バッジの有無に関わらずユニット本体の下端を常に揃える */
+  justify-content: flex-end;
   gap: 3px;
 }
 
@@ -139,28 +145,22 @@ h1 {
      横方向にはみ出し、複数行に折り返すと下の行のバッジが上の行のユニットへ縦方向に
      はみ出す、という2種類の重なりが残っていた（2026-07-17、Codexレビュー指摘）。
      .unit-slot（親、display:flex;flex-direction:column）内の通常フロー要素にすることで、
-     バッジの実サイズがflex-wrapのレイアウト計算に正しく参加するようにした */
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+     バッジの実サイズがflex-wrapのレイアウト計算に正しく参加するようにした。
+     以前は特性ごとに枠線付きの個別チップ(.badge-chip)へ分けていたが、複数特性が乗った
+     ユニットでバッジが林立してごちゃつくという指摘を受け、枠線を持つ帯を1本だけにして
+     中身（絵文字+数字）を横に並べるだけのシンプルな見た目に作り直した（2026-07-17） */
+  display: inline-flex;
   align-items: center;
-  gap: 3px;
-  /* 特性(連撃・全体攻撃化・反撃・挑発)を1本の長いピルで繋げると、複数積んだユニットで
-     横幅が伸びすぎて隣のユニット・バッジと衝突し読めなくなっていた（2026-07-17、ユーザー報告）。
-     チップ単位でflex-wrapさせ、この上限幅で2行以上に折り返すことで横方向の食い出しを抑える */
-  max-width: 84px;
-}
-.badge-chip {
-  background: linear-gradient(135deg, #ffce54, #ff8a3d);
-  color: #2a1400;
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 1;
-  padding: 3px 6px;
-  border-radius: 10px;
-  border: 2px solid #1a1c26;
+  gap: 5px;
+  background: rgba(10, 8, 4, 0.72);
+  border: 1px solid rgba(244, 185, 66, 0.45);
+  border-radius: 8px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
   white-space: nowrap;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  letter-spacing: 0.01em;
 }
 /* 陣営色は --tone に持たせ、DEF素材が「なし」「布」の間だけ陣営色そのものを使う
    （木目以降は敵味方で分岐せず素材固有の色を使う。自陣/敵陣は左右の配置で区別できるため） */
@@ -412,6 +412,30 @@ h1 {
   15% { opacity: 1; transform: translate(-50%, -100%) scale(1.08); }
   75% { opacity: 1; transform: translate(-50%, -100%) scale(1); }
   100% { opacity: 0; transform: translate(-50%, -100%) scale(1); }
+}
+
+/* 挑発のブロック予算をちょうど使い切った瞬間に、盾(🛡️)が左右に真っ二つに割れて吹き飛ぶ演出。
+   同じ絵文字を2枚重ねて表示し、それぞれclip-pathで左半分/右半分だけ切り抜いてから
+   逆方向へ回転しつつ飛ばすことで「割れた」ように見せる（GAME_DESIGN.md §2.5で検討されていたが
+   未実装だった演出。2026-07-17実装） */
+.shield-shard {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translate(-50%, -100%);
+  font-size: 22px;
+  pointer-events: none;
+  z-index: 9;
+}
+.shield-shard-left { animation: shield-shard-left 0.56s var(--ease-out-smooth) forwards; }
+.shield-shard-right { animation: shield-shard-right 0.56s var(--ease-out-smooth) forwards; }
+@keyframes shield-shard-left {
+  0% { transform: translate(-50%, -100%) rotate(0deg); opacity: 1; }
+  100% { transform: translate(calc(-50% - 16px), calc(-100% + 10px)) rotate(-70deg); opacity: 0; }
+}
+@keyframes shield-shard-right {
+  0% { transform: translate(-50%, -100%) rotate(0deg); opacity: 1; }
+  100% { transform: translate(calc(-50% + 16px), calc(-100% + 10px)) rotate(70deg); opacity: 0; }
 }
 
 .toast {

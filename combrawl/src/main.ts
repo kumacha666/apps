@@ -229,12 +229,19 @@ function renderUnits(
     if (u.attackCount > 1) badgeList.push(`⚡${u.attackCount}`);
     if (u.aoeLevel > 0) badgeList.push(`🌀${u.aoeLevel > 1 ? u.aoeLevel : ""}`);
     if (u.retaliateLevel > 0) badgeList.push(`↩${u.retaliateLevel > 1 ? u.retaliateLevel : ""}`);
-    if (u.tauntLevel > 0) badgeList.push(`🛡${u.tauntLevel > 1 ? u.tauntLevel : ""}`);
-    // 特性を1本の長いピルで繋げると、連撃+全体攻撃化+反撃+挑発が全部乗ったユニットで
-    // 横幅が伸びすぎて隣のユニット・バッジと衝突し読めなくなる（2026-07-17、ユーザー報告）。
-    // 個別の小さなチップに分けてflex-wrapさせ、横幅を一定以内に収める
+    if (u.tauntLevel > 0) {
+      // 挑発は「Lv（1ラウンドの最大ブロック回数）」の固定表示ではなく、そのラウンド中の
+      // 残りブロック回数を動的に表示する。budgetにまだエントリが無い場合（カードを取った直後、
+      // まだ一度もinitTauntBlockBudget()が走っていない）はtauntLevelそのもの＝満タン扱いにする
+      // （2026-07-17、ユーザー要望：見た目だけでは「ちゃんと盾が減っているか」分からなかった）
+      const remaining = state.tauntBlockBudget.has(u.id) ? state.tauntBlockBudget.get(u.id)! : u.tauntLevel;
+      badgeList.push(remaining > 0 ? `🛡${remaining}` : `🛡✕`);
+    }
+    // 特性ごとに枠線付きの個別チップへ分けると、複数特性が乗ったユニットでバッジが林立して
+    // ごちゃつく（2026-07-17、ユーザー報告：「以前のほうがまだスマート」）。枠線を持つのは
+    // .unit-badges1個だけにし、中身は絵文字+数字を1行に並べたシンプルな帯にする
     const badges = badgeList.length
-      ? `<div class="unit-badges">${badgeList.map((b) => `<span class="badge-chip">${b}</span>`).join("")}</div>`
+      ? `<div class="unit-badges">${badgeList.join(" ")}</div>`
       : "";
 
     el.innerHTML = `<div class="${shapeClass}" style="${shapeStyle}"></div><div class="unit-hp">${Math.max(0, Math.round(u.hp))}</div>
@@ -253,20 +260,20 @@ function renderUnits(
     // 下の行のバッジが上の行のユニットへ縦方向にはみ出す、という2種類の重なりが発生していた
     // （2026-07-17、Codexレビュー指摘）。バッジを.unit-slotという通常フローのラッパーに
     // ユニットと並べて入れることで、バッジの実サイズがflex-wrapのレイアウト計算に
-    // 正しく参加するようにした
-    if (badges) {
-      const slot = document.createElement("div");
-      // バッジが.unitの子から兄弟(.unit-slot内)に移ったため、.unit.deadのopacity:0が
-      // バッジ側には効かなくなり、死亡ユニットのバッジだけ画面に浮いたまま残ってしまう
-      // （2026-07-17、Codexレビュー指摘）。deadクラスをslot側にも付与し、CSS側で
-      // 揃って消えるようにする
-      slot.className = "unit-slot" + (u.alive ? "" : " dead");
-      slot.innerHTML = badges;
-      slot.appendChild(el);
-      container.appendChild(slot);
-    } else {
-      container.appendChild(el);
-    }
+    // 正しく参加するようにした。
+    // バッジの有無に関わらず必ず.unit-slotで包むこと：バッジ有りユニットだけ.unit-slot
+    // 経由にすると、.sideのalign-items:stretchで各slotの縦サイズが行内最大まで伸びる一方、
+    // .unit-slot無しのバッジ無しユニットは自身の固定height分しか伸びず上詰めのまま残るため、
+    // バッジの有無で横一列のユニット本体の位置がズレて見える不具合になる（2026-07-17、ユーザー報告）
+    const slot = document.createElement("div");
+    // バッジが.unitの子から兄弟(.unit-slot内)に移ったため、.unit.deadのopacity:0が
+    // バッジ側には効かなくなり、死亡ユニットのバッジだけ画面に浮いたまま残ってしまう
+    // （2026-07-17、Codexレビュー指摘）。deadクラスをslot側にも付与し、CSS側で
+    // 揃って消えるようにする
+    slot.className = "unit-slot" + (u.alive ? "" : " dead");
+    slot.innerHTML = badges;
+    slot.appendChild(el);
+    container.appendChild(slot);
   });
 }
 
@@ -392,6 +399,32 @@ function popAoeBadge(attackerEl: Element, level: number) {
   badge.style.top = rect.top - arenaRect.top + "px";
   arena.appendChild(badge);
   setTimeout(() => badge.remove(), 720);
+}
+
+/** 挑発のブロック予算をちょうど使い切った瞬間（blockRemainingAfter===0）に、盾が左右に
+ * 真っ二つに割れる演出を出す。左右2枚のspanで同じ🛡️を重ねて表示し、それぞれをclip-pathで
+ * 半分だけ切り抜いてから逆方向に吹き飛ばすことで「割れて破片が飛ぶ」見た目にする
+ * （GAME_DESIGN.md §2.5で検討されていたが未実装だった演出。2026-07-17実装） */
+function popShieldShatter(targetEl: Element) {
+  const rect = targetEl.getBoundingClientRect();
+  const arenaRect = arena.getBoundingClientRect();
+  const left = rect.left - arenaRect.left + rect.width / 2;
+  const top = rect.top - arenaRect.top;
+
+  const halves: Array<{ cls: string; clip: string }> = [
+    { cls: "shield-shard-left", clip: "polygon(0 0, 50% 0, 50% 100%, 0 100%)" },
+    { cls: "shield-shard-right", clip: "polygon(50% 0, 100% 0, 100% 100%, 50% 100%)" },
+  ];
+  for (const half of halves) {
+    const shard = document.createElement("div");
+    shard.className = "shield-shard " + half.cls;
+    shard.style.clipPath = half.clip;
+    shard.style.left = left + "px";
+    shard.style.top = top + "px";
+    shard.textContent = "🛡️";
+    arena.appendChild(shard);
+    setTimeout(() => shard.remove(), 560);
+  }
 }
 
 function hitLabelFor(hitIndex: number): string {
@@ -589,6 +622,10 @@ function animateHits(
             popDamage(tEl, "GUARD", "#5ec8ff", null);
             tEl.classList.add("guard-flash");
             setTimeout(() => tEl.classList.remove("guard-flash"), 260);
+            // ちょうどこのヒットでブロック予算を使い切った（blockRemainingAfter===0）瞬間だけ、
+            // 盾が左右に真っ二つに割れる演出を出す（2026-07-17実装、GAME_DESIGN.md §2.5で
+            // 検討されていたが未実装だった演出。ユーザー要望で今回追加）
+            if (hit.blockRemainingAfter === 0) popShieldShatter(tEl);
           } else {
             const color = kind === "player" ? (hit.isCrit ? "#f4b942" : "#ffffff") : kind === "retaliate" ? "#4fd1c5" : "#e63950";
             const prefix = kind === "enemy" ? "-" : kind === "retaliate" ? "↩" : hit.isCrit ? "CRIT! " : "";
