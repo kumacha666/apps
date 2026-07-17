@@ -74,6 +74,7 @@ ai-workspace側`GAME_DESIGN.md`（§2.3・§2.4・§2.5・§2.6・§2.6.1・§2.
   - 未到達の段階は「？」で伏せて表示し、実際に到達すると解放される。各トラックのセル描画（`gallery-cell-shape`）は`visuals.ts`の`shapeForAtkTier`/`materialClassForDefTier`/`starPolygonClipPath`をそのまま再利用し、戦闘中のユニット表示とロジックを重複させていない。`style.css`の`.unit-shape.mat-*`セレクタは`.gallery-cell-shape.mat-*`も同時に対象にするよう拡張してあるため、DEF素材のグラデーション定義（12段階分）を二重に書いていない
   - `index.html`に`#galleryScreen`（`#titleScreen`/`#gameScreen`と同じ`[hidden]`属性による出し分けパターンを踏襲、CSSの罠は`apps/CLAUDE.md`「新しく`hidden`属性で出し分けるコンテナを追加するたび」の項を参照して回避済み）を新設
   - サーバー・共有機能は無し、自己ベスト記録・HIGH SCOREと同じ「自分だけの記録」という位置付け
+  - **リセット機能を実装済み（2026-07-17）**：`gallery.ts`の`resetGalleryProgress(storage?)`が全軸0の記録を`localStorage`に保存して返す。`main.ts`側は`#galleryResetBtn`（ギャラリー画面ヘッダー右、`.gallery-reset`）のクリックで`confirm()`による確認を挟んでから呼び出す（localStorageを消す不可逆操作のため）。自己ベスト到達ラウンド・HIGH SCOREにはリセット機能が無いが、ギャラリーは「見た目の解放記録」でありゲーム進行上の実害が無いため対象外にしていない
 - **分裂・合体後、見た目が新しいステータスに正しく反映されるか重点確認**：過去に類似の対象ズレバグが実際に起きている（本ファイル「単体強化カードで対象未選択」の項参照）。今回、`renderUnits()`の編集時に`el.className`/`el.dataset.id`の代入を誤って削除してしまい、全ユニットのクラス・data-id・クリックハンドラが丸ごと消える不具合を実装直後に自己発見・修正した実績がある（Playwrightでの実プレイ確認で発覚。ユニットテストだけでは検出できなかった）。DOM要素の`className`/`classList`を扱うコードを編集する際は、既存の代入行を消していないか特に注意する
 
 ## 変更時のチェックリスト

@@ -9,7 +9,7 @@ import { isEndless, roundLabel, RUN_LENGTH_OPTIONS } from "./progress";
 import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBetter, type RunRecord } from "./highscore";
 import { scaledDelay, type BattleSpeed } from "./speed";
 import { atkTier, defTier, hpTier, isHpCapped, materialClassForDefTier, shapeForAtkTier, sizeForHpTier, starPolygonClipPath } from "./visuals";
-import { isGalleryProgressAdvanced, loadGalleryProgress, mergeGalleryProgress, saveGalleryProgress, type GalleryProgress } from "./gallery";
+import { isGalleryProgressAdvanced, loadGalleryProgress, mergeGalleryProgress, resetGalleryProgress, saveGalleryProgress, type GalleryProgress } from "./gallery";
 import { aoePercentForLevel, fontSizeForHitIndex } from "./combat";
 
 const titleScreen = document.getElementById("titleScreen") as HTMLElement;
@@ -18,6 +18,7 @@ const titleModeRow = document.getElementById("titleModeRow") as HTMLElement;
 const galleryScreen = document.getElementById("galleryScreen") as HTMLElement;
 const openGalleryBtn = document.getElementById("openGalleryBtn") as HTMLButtonElement;
 const galleryBackBtn = document.getElementById("galleryBackBtn") as HTMLButtonElement;
+const galleryResetBtn = document.getElementById("galleryResetBtn") as HTMLButtonElement;
 const hpTrack = document.getElementById("hpTrack") as HTMLElement;
 const atkTrack = document.getElementById("atkTrack") as HTMLElement;
 const defTrack = document.getElementById("defTrack") as HTMLElement;
@@ -974,6 +975,12 @@ openGalleryBtn.onclick = () => {
 galleryBackBtn.onclick = () => {
   galleryScreen.hidden = true;
   titleScreen.hidden = false;
+};
+galleryResetBtn.onclick = () => {
+  // localStorageを消す破壊的操作かつ元に戻せないため、必ず確認を挟む
+  if (!confirm("ギャラリーの記録（HP/ATK/DEFの到達段階）を全てリセットします。よろしいですか？")) return;
+  galleryProgress = resetGalleryProgress();
+  renderGalleryScreen();
 };
 
 startBtn.onclick = startBattle;

@@ -680,6 +680,7 @@ h1 {
 .gallery-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   margin-bottom: 6px;
 }
 .gallery-back {
@@ -692,6 +693,18 @@ h1 {
   padding: 6px 0;
 }
 .gallery-back:hover { color: var(--text); }
+/* 破壊的操作（記録を全て消す）なので、通常のバックボタンより控えめかつ警告色にする。
+   誤クリックしても即座には実行されず、main.ts側でconfirm()による確認を挟む（2026-07-17） */
+.gallery-reset {
+  background: transparent;
+  border: 1px solid rgba(230, 57, 80, 0.35);
+  color: var(--crimson);
+  font-size: 10.5px;
+  border-radius: 6px;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+.gallery-reset:hover { background: rgba(230, 57, 80, 0.12); }
 .gallery-title { font-size: 17px; font-weight: 700; margin: 4px 0 6px; letter-spacing: 0.01em; }
 .gallery-note { font-size: 11.5px; color: var(--text-dim); line-height: 1.7; margin: 0 0 16px; }
 .gallery-note .q-mark { color: var(--text); }
