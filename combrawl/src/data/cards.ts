@@ -1,6 +1,6 @@
 import type { Card, GameState, Unit } from "../types";
 import { avgAtk, avgDef, avgHp, makeUnit } from "../units";
-import { aoePercentForLevel, dmgTakenMultForDef } from "../combat";
+import { aoePercentForLevel, dmgTakenMultForDef, retaliateMultFor } from "../combat";
 
 function alivePlayers(state: GameState): Unit[] {
   return state.playerUnits.filter((u) => u.alive);
@@ -11,11 +11,6 @@ function pickTarget(state: GameState, chosenUnit?: Unit | null): Unit | null {
   if (alive.length === 0) return null;
   if (chosenUnit && alive.includes(chosenUnit)) return chosenUnit;
   return alive[Math.floor(Math.random() * alive.length)];
-}
-
-export function retaliateMultForDisplay(level: number): number {
-  if (!level || level <= 0) return 0;
-  return Math.min(3, 1 + 0.35 * (level - 1));
 }
 
 export const CARD_POOL: Card[] = [
@@ -125,7 +120,7 @@ export const CARD_POOL: Card[] = [
       const u = pickTarget(state, chosenUnit);
       if (!u) return { message: "対象なし" };
       u.retaliateLevel += 1;
-      return { message: `1体が反撃の構えを取った！（Lv${u.retaliateLevel}・威力${Math.round(retaliateMultForDisplay(u.retaliateLevel) * 100)}%）`, appliedUnit: u };
+      return { message: `1体が反撃の構えを取った！（Lv${u.retaliateLevel}・威力${Math.round(retaliateMultFor(u.retaliateLevel) * 100)}%）`, appliedUnit: u };
     },
   },
   {
