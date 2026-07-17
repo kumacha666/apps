@@ -230,7 +230,12 @@ function renderUnits(
     if (u.aoeLevel > 0) badgeList.push(`🌀${u.aoeLevel > 1 ? u.aoeLevel : ""}`);
     if (u.retaliateLevel > 0) badgeList.push(`↩${u.retaliateLevel > 1 ? u.retaliateLevel : ""}`);
     if (u.tauntLevel > 0) badgeList.push(`🛡${u.tauntLevel > 1 ? u.tauntLevel : ""}`);
-    const badges = badgeList.length ? `<div class="unit-badges">${badgeList.join(" ")}</div>` : "";
+    // 特性を1本の長いピルで繋げると、連撃+全体攻撃化+反撃+挑発が全部乗ったユニットで
+    // 横幅が伸びすぎて隣のユニット・バッジと衝突し読めなくなる（2026-07-17、ユーザー報告）。
+    // 個別の小さなチップに分けてflex-wrapさせ、横幅を一定以内に収める
+    const badges = badgeList.length
+      ? `<div class="unit-badges">${badgeList.map((b) => `<span class="badge-chip">${b}</span>`).join("")}</div>`
+      : "";
 
     el.innerHTML = `<div class="${shapeClass}" style="${shapeStyle}"></div>${badges}<div class="unit-hp">${Math.max(0, Math.round(u.hp))}</div>
       <div class="hp-bar-wrap"><div class="hp-bar" style="width:${Math.max(0, (u.hp / u.maxHp) * 100)}%; background:${cls === "player-unit" ? "#4fd1c5" : "#e63950"}"></div></div>`;
