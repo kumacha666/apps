@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aoePercentForLevel, computeHitDamage, hitDampen, retaliateMultFor } from "./combat";
+import { aoePercentForLevel, computeHitDamage, fontSizeForHitIndex, hitDampen, retaliateMultFor } from "./combat";
 
 describe("hitDampen", () => {
   it("1発目は満威力", () => {
@@ -28,6 +28,23 @@ describe("aoePercentForLevel", () => {
     // 頭打ちにならず、レベルが上がるほど値も増え続ける
     expect(aoePercentForLevel(20)).toBeGreaterThan(aoePercentForLevel(12));
     expect(aoePercentForLevel(100)).toBeGreaterThan(aoePercentForLevel(20));
+  });
+});
+
+describe("fontSizeForHitIndex", () => {
+  it("1発目(hitIndex=0)は基準サイズ16px", () => {
+    expect(fontSizeForHitIndex(0)).toBe(16);
+  });
+  it("hitIndexが増えるほど3pxずつ大きくなる", () => {
+    expect(fontSizeForHitIndex(1)).toBe(19);
+    expect(fontSizeForHitIndex(3)).toBe(25);
+  });
+  it("hitIndex=6以降は頭打ちになる（連撃・全体化Lvが伸びても際限なく巨大化しない）", () => {
+    expect(fontSizeForHitIndex(6)).toBe(34);
+    expect(fontSizeForHitIndex(20)).toBe(34);
+  });
+  it("負の値は0扱いにする（全体化Lv1のfontSizeForHitIndex(level-1)=fontSizeForHitIndex(0)を想定）", () => {
+    expect(fontSizeForHitIndex(-1)).toBe(16);
   });
 });
 

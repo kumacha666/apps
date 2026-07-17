@@ -10,6 +10,7 @@ import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBette
 import { scaledDelay, type BattleSpeed } from "./speed";
 import { atkTier, defTier, hpTier, isHpCapped, materialClassForDefTier, shapeForAtkTier, sizeForHpTier, starPolygonClipPath } from "./visuals";
 import { isGalleryProgressAdvanced, loadGalleryProgress, mergeGalleryProgress, saveGalleryProgress, type GalleryProgress } from "./gallery";
+import { aoePercentForLevel, fontSizeForHitIndex } from "./combat";
 
 const titleScreen = document.getElementById("titleScreen") as HTMLElement;
 const gameScreen = document.getElementById("gameScreen") as HTMLElement;
@@ -337,8 +338,7 @@ function popDamage(targetEl: Element, text: string, color: string, hitIndex: num
   const pop = document.createElement("div");
   pop.className = "dmg-pop";
   pop.style.color = color;
-  const hitBoost = hitIndex ? Math.min(hitIndex, 6) * 3 : 0;
-  pop.style.fontSize = 16 + hitBoost + "px";
+  pop.style.fontSize = fontSizeForHitIndex(hitIndex ?? 0) + "px";
   if (hitIndex !== null) {
     pop.innerHTML = `<span class="hit-index-tag">${hitLabelFor(hitIndex)}</span>${text}`;
   } else {
@@ -350,6 +350,23 @@ function popDamage(targetEl: Element, text: string, color: string, hitIndex: num
   pop.style.top = rect.top - arenaRect.top + "px";
   arena.appendChild(pop);
   setTimeout(() => pop.remove(), 720);
+}
+
+/** 全体攻撃化のヒット中だけ表示する「全体化◯%」常駐バッジ。攻撃者の上に、ダメージポップと
+ * 同じ間だけ表示する（フォントサイズは連撃のNヒット表示と同じ式を流用し、
+ * fontSizeForHitIndex(level - 1)で計算することでLvが高いほど大きく見せる。GAME_DESIGN.md §2.3） */
+function popAoeBadge(attackerEl: Element, level: number) {
+  const percent = Math.round(aoePercentForLevel(level) * 100);
+  const badge = document.createElement("div");
+  badge.className = "aoe-hit-badge";
+  badge.style.fontSize = fontSizeForHitIndex(level - 1) + "px";
+  badge.textContent = `全体化${percent}%`;
+  const rect = attackerEl.getBoundingClientRect();
+  const arenaRect = arena.getBoundingClientRect();
+  badge.style.left = rect.left - arenaRect.left + rect.width / 2 + "px";
+  badge.style.top = rect.top - arenaRect.top + "px";
+  arena.appendChild(badge);
+  setTimeout(() => badge.remove(), 720);
 }
 
 function hitLabelFor(hitIndex: number): string {
@@ -535,6 +552,7 @@ function animateHits(
       if (aEl) {
         aEl.classList.add("attacking");
         setTimeout(() => aEl.classList.remove("attacking"), 200);
+        if (group[0].attacker.aoeLevel > 0) popAoeBadge(aEl, group[0].attacker.aoeLevel);
       }
 
       for (const hit of group) {
