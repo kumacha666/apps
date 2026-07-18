@@ -814,9 +814,9 @@ h1 {
 }
 .gallery-cell-threshold {
   font-family: "Courier New", monospace;
-  font-size: 7px;
-  color: var(--text-dim);
-  opacity: 0.75;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text);
   white-space: nowrap;
 }
 .gallery-cell-shape { position: relative; flex-shrink: 0; }
