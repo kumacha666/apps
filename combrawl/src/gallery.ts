@@ -7,7 +7,12 @@ export interface GalleryProgress {
   def: number;
 }
 
-const STORAGE_KEY = "combrawl.gallery.v1";
+// v1→v2（2026-07-18）：見た目の段階解放しきい値をレア化(STEP_LOG2 1→3)したことで、
+// v1時代に保存された記録は「古い簡単な基準で到達したtier」をそのまま格納している。
+// mergeGalleryProgressは記録が下がることはない仕様のため、キーをそのままにすると
+// 既存プレイヤーは新しい基準でも「もう全解放済み」に見えてしまう（Codexレビュー指摘）。
+// キーのバージョンを上げて明示的に無効化する
+const STORAGE_KEY = "combrawl.gallery.v2";
 const EMPTY: GalleryProgress = { hp: 0, atk: 0, def: 0 };
 
 function resolveStorage(storage?: StorageLike): StorageLike | null {
