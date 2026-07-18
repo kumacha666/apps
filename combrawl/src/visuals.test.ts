@@ -15,10 +15,15 @@ describe("tierForValue", () => {
   it("基準値ちょうどはtier1", () => {
     expect(tierForValue(8, 8)).toBe(1);
   });
-  it("約2倍ごとに1段階上がる", () => {
+  it("stepLog2省略時は約2倍ごとに1段階上がる（既定値1）", () => {
     expect(tierForValue(16, 8)).toBe(2);
     expect(tierForValue(32, 8)).toBe(3);
     expect(tierForValue(64, 8)).toBe(4);
+  });
+  it("stepLog2を指定すると、1段階に必要な倍率を変えられる（例: stepLog2=3で約8倍ごとに1段階）", () => {
+    expect(tierForValue(8, 8, 3)).toBe(1);
+    expect(tierForValue(8 * 8, 8, 3)).toBe(2); // 8倍でtier2
+    expect(tierForValue(8 * 8 * 8, 8, 3)).toBe(3); // 64倍でtier3
   });
   it("基準値未満でも下限tier1を割らない", () => {
     expect(tierForValue(1, 8)).toBe(1);
@@ -26,19 +31,23 @@ describe("tierForValue", () => {
   });
   it("12段階で頭打ちになる（それ以上は伸びても同じtierを返す）", () => {
     expect(tierForValue(8 * 2 ** 11, 8)).toBe(12);
-    expect(tierForValue(99360, 8)).toBe(12);
     expect(tierForValue(8 * 2 ** 100, 8)).toBe(12);
+    expect(tierForValue(8 * 8 ** 11, 8, 3)).toBe(12); // stepLog2=3でも頭打ちは同じtier12
   });
 });
 
 describe("hpTier / atkTier / defTier", () => {
-  it("初期値(HP24/ATK4/DEF5)は低〜中段階に収まる", () => {
-    expect(hpTier(24)).toBe(2);
-    expect(atkTier(4)).toBe(2);
-    expect(defTier(5)).toBe(2);
+  // 2026-07-18、ユーザー要望でSTEP_LOG2=3（約8倍ごとに1段階）にレア化した結果、
+  // 初期値はいずれも最低段階(tier1)から始まるようになった（以前はSTEP_LOG2=1でtier2）
+  it("初期値(HP24/ATK4/DEF5)は最低段階(tier1)から始まる", () => {
+    expect(hpTier(24)).toBe(1);
+    expect(atkTier(4)).toBe(1);
+    expect(defTier(5)).toBe(1);
   });
-  it("実測の巨大化ビルド(HP約99,360)は最大tier12に達する", () => {
-    expect(hpTier(99360)).toBe(12);
+  it("基準値から約8倍ごとに1段階上がる", () => {
+    expect(hpTier(8 * 8)).toBe(2); // HP_BASE=8
+    expect(atkTier(2 * 8)).toBe(2); // ATK_BASE=2
+    expect(defTier(2 * 8)).toBe(2); // DEF_BASE=2
   });
 });
 
@@ -52,9 +61,9 @@ describe("sizeForHpTier / isHpCapped", () => {
     expect(sizeForHpTier(0)).toBe(22);
     expect(sizeForHpTier(99)).toBe(140);
   });
-  it("tier12に達するとcapped扱いになる", () => {
+  it("tier12に達するとcapped扱いになる（STEP_LOG2=3で頭打ちする桁数の値を使う）", () => {
     expect(isHpCapped(24)).toBe(false);
-    expect(isHpCapped(99360)).toBe(true);
+    expect(isHpCapped(8 * 8 ** 11)).toBe(true);
   });
 });
 
@@ -84,9 +93,15 @@ describe("materialClassForDefTier", () => {
     expect(materialClassForDefTier(1)).toBe("mat-none");
     expect(materialClassForDefTier(12)).toBe("mat-void");
   });
-  it("硬質化(def*=3)でtierが上がる", () => {
+  it("硬質化(def*=3)を1回積んだだけではtierは上がらない（2026-07-18、レア化。8倍ごとに1段階に対し3倍では足りない）", () => {
     const before = defTier(5);
     const after = defTier(5 * 3);
+    expect(after).toBe(before);
+  });
+  it("硬質化(def*=3)を繰り返し積み重ねればtierは上がる", () => {
+    const before = defTier(5);
+    // 8倍(STEP_LOG2=3)を確実に超えるまで積む（3^4=81倍 > 8倍）
+    const after = defTier(5 * 3 * 3 * 3 * 3);
     expect(after).toBeGreaterThan(before);
     expect(materialClassForDefTier(after)).not.toBe(materialClassForDefTier(before));
   });

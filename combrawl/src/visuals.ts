@@ -1,32 +1,41 @@
 /**
  * HP=サイズ／ATK=形（トゲトゲ度）／DEF=素材、という3チャンネルの視覚表現。
- * いずれも「基準値から約2倍ごとに1段階、12段階で頭打ち」という同じ対数しきい値の考え方を使う
- * （GAME_DESIGN.md §2.6）。基準値はいずれも暫定値で、実際の到達分布を見てシミュレーションで調整する。
+ * いずれも「基準値から約8倍ごとに1段階、12段階で頭打ち」という同じ対数しきい値の考え方を使う
+ * （GAME_DESIGN.md §2.6）。基準値・段階の重さ(STEP_LOG2)はいずれも暫定値で、実際の到達分布を
+ * 見てシミュレーションで調整する。
  */
 
-/** 基準値から見て何段階目か（1〜12にクランプ）。3チャンネル共通のしきい値計算 */
-export function tierForValue(value: number, base: number): number {
+/** 基準値から見て何段階目か（1〜12にクランプ）。3チャンネル共通のしきい値計算。
+ * stepLog2は「1段階上がるのに何回の倍化(log2)が必要か」を表す（既定1=約2倍ごとに1段階） */
+export function tierForValue(value: number, base: number, stepLog2 = 1): number {
   if (!Number.isFinite(value) || value <= 0) return 1;
-  const tier = 1 + Math.floor(Math.log2(value / base));
+  const tier = 1 + Math.floor(Math.log2(value / base) / stepLog2);
   return Math.max(1, Math.min(12, tier));
 }
 
-/** HPしきい値の基準値。実測の巨大化ビルド（HP約99,360）まで12段階でちょうど覆えるよう校正済み */
+/** HPしきい値の基準値。 */
 const HP_BASE = 8;
-/** ATK/DEFのしきい値の基準値。初期値（ATK4/DEF5）が低〜中段階に収まるよう暫定的に置いた値 */
+/** ATK/DEFのしきい値の基準値。初期値（ATK4/DEF5）が最低段階から始まるよう暫定的に置いた値 */
 const ATK_BASE = 2;
 const DEF_BASE = 2;
 
+/** 1段階に必要な伸び幅（2^STEP_LOG2倍ごとに1段階）。2026-07-18、ユーザー要望でレア化：
+ * 以前はSTEP_LOG2=1（約2倍ごとに1段階）で、同じ強化カード（HP/ATK/DEFを3倍にする単体強化）
+ * を1つの軸に集中して重ねるだけで7回程度、通常の10〜20層クリアの範囲でも全12段階が
+ * 埋まってしまうほど簡単だった。STEP_LOG2=3（約8倍ごとに1段階）に変更し、同じ計算で
+ * 目安21回程度のスタックが必要な、エンドレスモードでの周回を前提とした難易度にした */
+const STEP_LOG2 = 3;
+
 export function hpTier(hp: number): number {
-  return tierForValue(hp, HP_BASE);
+  return tierForValue(hp, HP_BASE, STEP_LOG2);
 }
 
 export function atkTier(atk: number): number {
-  return tierForValue(atk, ATK_BASE);
+  return tierForValue(atk, ATK_BASE, STEP_LOG2);
 }
 
 export function defTier(def: number): number {
-  return tierForValue(def, DEF_BASE);
+  return tierForValue(def, DEF_BASE, STEP_LOG2);
 }
 
 /** 12段階のユニットサイズ(px)。tier1(22px)〜tier12(140px、サイズ最大) */
