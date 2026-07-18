@@ -27,13 +27,13 @@ describe("loadGalleryProgress", () => {
 
   it("壊れたJSONが保存されていても全軸0にフォールバックする", () => {
     const storage = makeMemoryStorage();
-    storage.data["combrawl.gallery.v1"] = "not json";
+    storage.data["combrawl.gallery.v2"] = "not json";
     expect(loadGalleryProgress(storage)).toEqual({ hp: 0, atk: 0, def: 0 });
   });
 
   it("保存済みの値をそのまま返す", () => {
     const storage = makeMemoryStorage();
-    storage.data["combrawl.gallery.v1"] = JSON.stringify({ hp: 5, atk: 3, def: 8 });
+    storage.data["combrawl.gallery.v2"] = JSON.stringify({ hp: 5, atk: 3, def: 8 });
     expect(loadGalleryProgress(storage)).toEqual({ hp: 5, atk: 3, def: 8 });
   });
 });
