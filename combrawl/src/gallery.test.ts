@@ -3,6 +3,7 @@ import {
   isGalleryProgressAdvanced,
   loadGalleryProgress,
   mergeGalleryProgress,
+  resetGalleryProgress,
   saveGalleryProgress,
   type GalleryProgress,
 } from "./gallery";
@@ -73,5 +74,15 @@ describe("saveGalleryProgress", () => {
     const storage = makeMemoryStorage();
     saveGalleryProgress({ hp: 7, atk: 8, def: 9 }, storage);
     expect(loadGalleryProgress(storage)).toEqual({ hp: 7, atk: 8, def: 9 });
+  });
+});
+
+describe("resetGalleryProgress", () => {
+  it("全軸0に戻した記録を返し、storageにも保存する", () => {
+    const storage = makeMemoryStorage();
+    saveGalleryProgress({ hp: 7, atk: 8, def: 9 }, storage);
+    const reset = resetGalleryProgress(storage);
+    expect(reset).toEqual({ hp: 0, atk: 0, def: 0 });
+    expect(loadGalleryProgress(storage)).toEqual({ hp: 0, atk: 0, def: 0 });
   });
 });

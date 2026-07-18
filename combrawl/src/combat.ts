@@ -35,6 +35,10 @@ export function fontSizeForHitIndex(hitIndex: number): number {
   return BASE + Math.min(Math.max(hitIndex, 0), CAP_INDEX) * STEP;
 }
 
+/** 反撃の威力倍率（Lv1:100%→Lv2:135%→Lv3:170%…、上限300%）。実ダメージ計算（battle.ts）と
+ * カード説明文表示（data/cards.ts）・戦闘中の反撃バッジ表示（main.ts）の全てが必ずこの関数を
+ * 参照すること（以前はdata/cards.tsに同一ロジックの重複定義`retaliateMultForDisplay`があったが、
+ * aoePercentForLevelと同じ理由で統一した。片方だけ直すと表示と実ダメージがズレるため） */
 export function retaliateMultFor(level: number): number {
   if (!level || level <= 0) return 0;
   return Math.min(3, 1 + 0.35 * (level - 1));

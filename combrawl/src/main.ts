@@ -9,8 +9,8 @@ import { isEndless, roundLabel, RUN_LENGTH_OPTIONS } from "./progress";
 import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBetter, type RunRecord } from "./highscore";
 import { scaledDelay, type BattleSpeed } from "./speed";
 import { atkTier, defTier, hpTier, isHpCapped, materialClassForDefTier, shapeForAtkTier, sizeForHpTier, starPolygonClipPath } from "./visuals";
-import { isGalleryProgressAdvanced, loadGalleryProgress, mergeGalleryProgress, saveGalleryProgress, type GalleryProgress } from "./gallery";
-import { aoePercentForLevel, fontSizeForHitIndex } from "./combat";
+import { isGalleryProgressAdvanced, loadGalleryProgress, mergeGalleryProgress, resetGalleryProgress, saveGalleryProgress, type GalleryProgress } from "./gallery";
+import { aoePercentForLevel, fontSizeForHitIndex, retaliateMultFor } from "./combat";
 
 const titleScreen = document.getElementById("titleScreen") as HTMLElement;
 const gameScreen = document.getElementById("gameScreen") as HTMLElement;
@@ -18,6 +18,7 @@ const titleModeRow = document.getElementById("titleModeRow") as HTMLElement;
 const galleryScreen = document.getElementById("galleryScreen") as HTMLElement;
 const openGalleryBtn = document.getElementById("openGalleryBtn") as HTMLButtonElement;
 const galleryBackBtn = document.getElementById("galleryBackBtn") as HTMLButtonElement;
+const galleryResetBtn = document.getElementById("galleryResetBtn") as HTMLButtonElement;
 const hpTrack = document.getElementById("hpTrack") as HTMLElement;
 const atkTrack = document.getElementById("atkTrack") as HTMLElement;
 const defTrack = document.getElementById("defTrack") as HTMLElement;
@@ -420,6 +421,24 @@ function popAoeBadge(attackerEl: Element, level: number) {
   setTimeout(() => badge.remove(), 720);
 }
 
+/** 反撃のヒット中だけ表示する「反撃◯%」常駐バッジ。popAoeBadgeと全く同じ見た目・タイミングで、
+ * 反撃の威力%（combat.tsのretaliateMultFor、カード説明文と共通）を攻撃者の頭上に表示する
+ * （2026-07-17実装。以前は全体化◯%だけ実戦闘中に確認できて、反撃の威力はカード取得時の
+ * トーストでしか見えなかった、というユーザー指摘を受けた対応） */
+function popRetaliateBadge(attackerEl: Element, level: number) {
+  const percent = Math.round(retaliateMultFor(level) * 100);
+  const badge = document.createElement("div");
+  badge.className = "aoe-hit-badge";
+  badge.style.fontSize = fontSizeForHitIndex(level - 1) + "px";
+  badge.textContent = `反撃${percent}%`;
+  const rect = attackerEl.getBoundingClientRect();
+  const arenaRect = arena.getBoundingClientRect();
+  badge.style.left = rect.left - arenaRect.left + rect.width / 2 + "px";
+  badge.style.top = rect.top - arenaRect.top + "px";
+  arena.appendChild(badge);
+  setTimeout(() => badge.remove(), 720);
+}
+
 /** 挑発のブロック予算をちょうど使い切った瞬間（blockRemainingAfter===0）に、盾が左右に
  * 真っ二つに割れる演出を出す。左右2枚のspanで同じ🛡️を重ねて表示し、それぞれをclip-pathで
  * 半分だけ切り抜いてから逆方向に吹き飛ばすことで「割れて破片が飛ぶ」見た目にする
@@ -646,7 +665,14 @@ function animateHits(
       if (aEl) {
         aEl.classList.add("attacking");
         setTimeout(() => aEl.classList.remove("attacking"), 200);
-        if (group[0].attacker.aoeLevel > 0) popAoeBadge(aEl, group[0].attacker.aoeLevel);
+        // 反撃持ちが同時に全体化も持っている場合、どちらのバッジも同じ攻撃者頭上の同じ座標に
+        // 出そうとして重なってしまう。反撃ターン中は反撃%バッジを優先して表示する
+        // （通常の攻撃ターンでは従来通り全体化%バッジのみ）
+        if (kind === "retaliate") {
+          if (group[0].attacker.retaliateLevel > 0) popRetaliateBadge(aEl, group[0].attacker.retaliateLevel);
+        } else if (group[0].attacker.aoeLevel > 0) {
+          popAoeBadge(aEl, group[0].attacker.aoeLevel);
+        }
       }
 
       for (const hit of group) {
@@ -974,6 +1000,12 @@ openGalleryBtn.onclick = () => {
 galleryBackBtn.onclick = () => {
   galleryScreen.hidden = true;
   titleScreen.hidden = false;
+};
+galleryResetBtn.onclick = () => {
+  // localStorageを消す破壊的操作かつ元に戻せないため、必ず確認を挟む
+  if (!confirm("ギャラリーの記録（HP/ATK/DEFの到達段階）を全てリセットします。よろしいですか？")) return;
+  galleryProgress = resetGalleryProgress();
+  renderGalleryScreen();
 };
 
 startBtn.onclick = startBattle;

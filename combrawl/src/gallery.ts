@@ -72,3 +72,9 @@ export function saveGalleryProgress(progress: GalleryProgress, storage?: Storage
     // 保存に失敗しても致命的ではない（次回到達時に再度保存を試みるだけ）
   }
 }
+
+/** ギャラリーの記録を全軸0に戻し、その空の記録を返す（呼び出し側は戻り値をそのままgalleryProgressに反映する） */
+export function resetGalleryProgress(storage?: StorageLike): GalleryProgress {
+  saveGalleryProgress({ ...EMPTY }, storage);
+  return { ...EMPTY };
+}
