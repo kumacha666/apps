@@ -389,8 +389,12 @@ h1 {
   100% { transform: translateY(-60px) scale(1); opacity: 0; }
 }
 
-/* 全体攻撃化のヒット中だけ表示する「全体化◯%」常駐バッジ。ダメージポップと違い上に
-   流れていかず、攻撃者の頭上にとどまったまま短くフェードイン/アウトする（GAME_DESIGN.md §2.3） */
+/* 全体攻撃化/反撃/挑発ブロックのヒット中だけ表示する「全体化◯%」「反撃◯%」「GUARD」の
+   常駐バッジ。ダメージポップと違い上に流れていかず、その場にとどまったまま短くフェードイン/
+   アウトする（GAME_DESIGN.md §2.3）。位置はmain.tsのbadgeAnchorRect()で決める：
+   常駐の特性バッジ（.unit-badges）が既にユニット直上を専有しているため、素朴にユニット自身の
+   真上に出すと常駐バッジと重なってしまう（2026-07-17、ユーザー報告）。badgeAnchorRect()が
+   常駐バッジがあればその更に上、無ければユニット自身の上、を返すことで一段上に逃がしている */
 .aoe-hit-badge {
   position: absolute;
   transform: translate(-50%, -100%);
@@ -402,10 +406,14 @@ h1 {
   white-space: nowrap;
   text-shadow: 0 0 10px rgba(244,185,66,0.7), 0 2px 4px rgba(0,0,0,0.6);
   text-align: center;
-  /* AoE持ちは常駐の🌀バッジ（.unit-badges）も同じ座標に浮いているため、
-     ヒット中の演出は常にその手前に表示する（2026-07-17、Codexレビュー指摘） */
   z-index: 9;
   animation: aoe-badge-fade 0.72s var(--ease-out-smooth) forwards;
+}
+/* GUARD表示は挑発ブロックの色（.guard-flashと同じ青白）に差し替える（2026-07-17実装、
+   全体化%/反撃%と同じ位置・アニメーションに揃えつつ、意味が違うので配色だけ区別する） */
+.guard-hit-badge {
+  color: #5ec8ff;
+  text-shadow: 0 0 10px rgba(94,200,255,0.7), 0 2px 4px rgba(0,0,0,0.6);
 }
 @keyframes aoe-badge-fade {
   0% { opacity: 0; transform: translate(-50%, -100%) scale(0.7); }

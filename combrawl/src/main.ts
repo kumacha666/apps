@@ -386,6 +386,18 @@ function renderGalleryScreen() {
   });
 }
 
+/** ユニットの真上に浮かせる系の演出（全体化%/反撃%バッジ、GUARD表示、盾シャッター）が
+ * 基準にすべき座標を返す。常駐の特性バッジ(.unit-badges)が既にユニット直上を専有しているため
+ * （連撃⚡/全体化🌀/反撃↩/挑発🛡のいずれかを持つユニットなら必ず存在する）、単純に
+ * ユニット自身の上端を基準にすると常駐バッジと同じ位置に重なってしまう
+ * （2026-07-17、ユーザー報告）。常駐バッジがあればその上端、無ければユニット自身の上端を返す */
+function badgeAnchorRect(unitEl: Element): { left: number; top: number; width: number } {
+  const slot = unitEl.closest(".unit-slot");
+  const persistentBadge = slot?.querySelector(".unit-badges");
+  const rect = (persistentBadge ?? unitEl).getBoundingClientRect();
+  return { left: rect.left, top: rect.top, width: rect.width };
+}
+
 function popDamage(targetEl: Element, text: string, color: string, hitIndex: number | null) {
   const pop = document.createElement("div");
   pop.className = "dmg-pop";
@@ -413,7 +425,7 @@ function popAoeBadge(attackerEl: Element, level: number) {
   badge.className = "aoe-hit-badge";
   badge.style.fontSize = fontSizeForHitIndex(level - 1) + "px";
   badge.textContent = `全体化${percent}%`;
-  const rect = attackerEl.getBoundingClientRect();
+  const rect = badgeAnchorRect(attackerEl);
   const arenaRect = arena.getBoundingClientRect();
   badge.style.left = rect.left - arenaRect.left + rect.width / 2 + "px";
   badge.style.top = rect.top - arenaRect.top + "px";
@@ -431,7 +443,23 @@ function popRetaliateBadge(attackerEl: Element, level: number) {
   badge.className = "aoe-hit-badge";
   badge.style.fontSize = fontSizeForHitIndex(level - 1) + "px";
   badge.textContent = `反撃${percent}%`;
-  const rect = attackerEl.getBoundingClientRect();
+  const rect = badgeAnchorRect(attackerEl);
+  const arenaRect = arena.getBoundingClientRect();
+  badge.style.left = rect.left - arenaRect.left + rect.width / 2 + "px";
+  badge.style.top = rect.top - arenaRect.top + "px";
+  arena.appendChild(badge);
+  setTimeout(() => badge.remove(), 720);
+}
+
+/** 挑発でダメージを完全無効化した瞬間に表示する「GUARD」バッジ。popAoeBadge/popRetaliateBadge
+ * と全く同じ見た目・アンカー位置（badgeAnchorRect、常駐バッジの上）にすることで、全体化%・
+ * 反撃%と一貫した「ヒット中に一瞬出て消える」表現に揃えた（2026-07-17、ユーザー報告：
+ * 以前はダメージポップと同じ上に流れていく演出だったため、常駐バッジと重なって見づらかった） */
+function popGuardBadge(targetEl: Element) {
+  const badge = document.createElement("div");
+  badge.className = "aoe-hit-badge guard-hit-badge";
+  badge.textContent = "GUARD";
+  const rect = badgeAnchorRect(targetEl);
   const arenaRect = arena.getBoundingClientRect();
   badge.style.left = rect.left - arenaRect.left + rect.width / 2 + "px";
   badge.style.top = rect.top - arenaRect.top + "px";
@@ -444,7 +472,7 @@ function popRetaliateBadge(attackerEl: Element, level: number) {
  * 半分だけ切り抜いてから逆方向に吹き飛ばすことで「割れて破片が飛ぶ」見た目にする
  * （GAME_DESIGN.md §2.5で検討されていたが未実装だった演出。2026-07-17実装） */
 function popShieldShatter(targetEl: Element) {
-  const rect = targetEl.getBoundingClientRect();
+  const rect = badgeAnchorRect(targetEl);
   const arenaRect = arena.getBoundingClientRect();
   const left = rect.left - arenaRect.left + rect.width / 2;
   const top = rect.top - arenaRect.top;
@@ -681,7 +709,7 @@ function animateHits(
           if (hit.blocked) {
             // damage===0だけでは「挑発でブロックされた」のか「DEF軽減で自然に0になった」のか
             // 見分けがつかないため、専用のGUARD表示にする（通常のダメージポップは出さない）
-            popDamage(tEl, "GUARD", "#5ec8ff", null);
+            popGuardBadge(tEl);
             tEl.classList.add("guard-flash");
             setTimeout(() => tEl.classList.remove("guard-flash"), 260);
             // ちょうどこのヒットでブロック予算を使い切った（blockRemainingAfter===0）瞬間だけ、
