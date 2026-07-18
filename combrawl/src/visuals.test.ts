@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  atkThresholdForTier,
   atkTier,
+  defThresholdForTier,
   defTier,
+  hpThresholdForTier,
   hpTier,
   isHpCapped,
   materialClassForDefTier,
   shapeForAtkTier,
   sizeForHpTier,
   starPolygonClipPath,
+  thresholdForValue,
   tierForValue,
 } from "./visuals";
 
@@ -48,6 +52,40 @@ describe("hpTier / atkTier / defTier", () => {
     expect(hpTier(8 * 8)).toBe(2); // HP_BASE=8
     expect(atkTier(2 * 8)).toBe(2); // ATK_BASE=2
     expect(defTier(2 * 8)).toBe(2); // DEF_BASE=2
+  });
+});
+
+describe("thresholdForValue", () => {
+  it("tier1は基準値そのもの", () => {
+    expect(thresholdForValue(1, 8)).toBe(8);
+  });
+  it("stepLog2ぶんの倍率でしきい値が上がる（既定stepLog2=1で約2倍ごと）", () => {
+    expect(thresholdForValue(2, 8)).toBe(16);
+    expect(thresholdForValue(3, 8)).toBe(32);
+  });
+  it("stepLog2=3では約8倍ごとにしきい値が上がる", () => {
+    expect(thresholdForValue(1, 8, 3)).toBe(8);
+    expect(thresholdForValue(2, 8, 3)).toBe(64); // 8倍
+    expect(thresholdForValue(3, 8, 3)).toBe(512); // 64倍
+  });
+  it("tierForValueの逆関数になっている（往復させると元のtierに戻る）", () => {
+    for (let tier = 1; tier <= 12; tier++) {
+      const value = thresholdForValue(tier, 8, 3);
+      expect(tierForValue(value, 8, 3)).toBe(tier);
+    }
+  });
+  it("範囲外のtierも1〜12にクランプする", () => {
+    expect(thresholdForValue(0, 8)).toBe(thresholdForValue(1, 8));
+    expect(thresholdForValue(99, 8)).toBe(thresholdForValue(12, 8));
+  });
+});
+
+describe("hpThresholdForTier / atkThresholdForTier / defThresholdForTier", () => {
+  it("各チャンネルの基準値・STEP_LOG2でしきい値を返す", () => {
+    expect(hpThresholdForTier(1)).toBe(8); // HP_BASE=8
+    expect(atkThresholdForTier(1)).toBe(2); // ATK_BASE=2
+    expect(defThresholdForTier(1)).toBe(2); // DEF_BASE=2
+    expect(hpThresholdForTier(2)).toBe(8 * 8); // 8倍ごとに1段階
   });
 });
 
