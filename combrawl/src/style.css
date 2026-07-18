@@ -102,6 +102,25 @@ h1 {
   gap: 3px;
 }
 
+/* ATK/DEFの実数値。見た目（トゲトゲ度・素材）だけでは実際の数値が分からず、段階解放を
+   レア化した(STEP_LOG2 1→3)ことで見た目が変わらないまま数値だけ積み上がる期間が
+   長くなり、余計に判別しづらくなっていた（2026-07-18、ユーザー報告）。ユニット下に
+   常時2行で表示する。バッジと違い特性の有無に関わらず全ユニットに表示するため、
+   .unit-slotの最後の子要素として常に存在し、justify-content:flex-endの下端アンカーの
+   役割も担う（バッジ有無による位置ズレ防止は変わらずこの要素が担保する） */
+.unit-stats {
+  font-family: "Courier New", monospace;
+  font-size: 8.5px;
+  line-height: 1.3;
+  color: var(--text-dim);
+  text-align: center;
+  white-space: nowrap;
+  /* .hp-bar-wrapは.unit本体の下端からposition:absolute; bottom:-7pxではみ出しており、
+     .unit-slotのgap(3px)だけでは足りず1行目(ATK)がHPバーの背景と重なって読めなくなる。
+     はみ出し分より広い余白を確保する（2026-07-18） */
+  margin-top: 8px;
+}
+
 .unit {
   width: 46px;
   height: 46px;
@@ -306,6 +325,12 @@ h1 {
   transition: opacity 0.25s var(--ease-out-smooth);
 }
 .unit-slot.dead .unit-badges { opacity: 0; }
+/* ATK/DEF数値表示も同じ理由でユニット本体と揃ってフェードさせる（2026-07-18） */
+.unit-stats {
+  opacity: 1;
+  transition: opacity 0.25s var(--ease-out-smooth);
+}
+.unit-slot.dead .unit-stats { opacity: 0; }
 
 .unit.selectable {
   cursor: pointer;
