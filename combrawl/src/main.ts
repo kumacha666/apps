@@ -293,6 +293,15 @@ function renderUnits(
     slot.className = "unit-slot" + (u.alive ? "" : " dead");
     slot.innerHTML = badges;
     slot.appendChild(el);
+    // ATK/DEFは見た目（形のトゲトゲ度・素材）だけでは実際の数値が分からない。
+    // 段階解放をレア化した（STEP_LOG2 1→3）ことで、見た目が変わらないまま数値だけ
+    // 積み上がる期間が長くなり、余計に判別しづらくなったというユーザー指摘を受けて追加
+    // （2026-07-18）。ユニットの下に常時表示する（常駐バッジと違い、特性の有無に関わらず
+    // 全ユニットに表示する）
+    const stats = document.createElement("div");
+    stats.className = "unit-stats";
+    stats.innerHTML = `ATK:${Math.round(u.atk)}<br>DEF:${Math.round(u.def)}`;
+    slot.appendChild(stats);
     container.appendChild(slot);
   });
 }
