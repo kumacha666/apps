@@ -38,6 +38,28 @@ export function defTier(def: number): number {
   return tierForValue(def, DEF_BASE, STEP_LOG2);
 }
 
+/** tierForValueの逆関数：その段階に到達するために最低限必要な値を返す（1〜12にクランプ）。
+ * ギャラリーの未到達セルに「あと何が必要か」の目安を表示するために追加した
+ * （2026-07-18、ユーザー要望：「それぞれHP、ATK、DEFがいくつ以上でその見た目になるのか、
+ * ？状態でも出してあげてほしい」）。tierForValue(thresholdForValue(t, base, step), base, step)
+ * は常にtに一致する（visuals.test.tsで往復検証済み） */
+export function thresholdForValue(tier: number, base: number, stepLog2 = 1): number {
+  const t = Math.max(1, Math.min(12, tier));
+  return base * 2 ** ((t - 1) * stepLog2);
+}
+
+export function hpThresholdForTier(tier: number): number {
+  return thresholdForValue(tier, HP_BASE, STEP_LOG2);
+}
+
+export function atkThresholdForTier(tier: number): number {
+  return thresholdForValue(tier, ATK_BASE, STEP_LOG2);
+}
+
+export function defThresholdForTier(tier: number): number {
+  return thresholdForValue(tier, DEF_BASE, STEP_LOG2);
+}
+
 /** 12段階のユニットサイズ(px)。tier1(22px)〜tier12(140px、サイズ最大) */
 const HP_TIER_SIZES = [22, 27, 33, 40, 48, 58, 69, 82, 96, 111, 126, 140];
 

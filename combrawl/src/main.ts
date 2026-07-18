@@ -8,7 +8,19 @@ import { applyHitsBySwing, applyScoreGain, initialStats } from "./stats";
 import { isEndless, roundLabel, RUN_LENGTH_OPTIONS } from "./progress";
 import { loadBestRecord, loadBestScore, saveBestScoreIfBetter, saveRecordIfBetter, type RunRecord } from "./highscore";
 import { scaledDelay, type BattleSpeed } from "./speed";
-import { atkTier, defTier, hpTier, isHpCapped, materialClassForDefTier, shapeForAtkTier, sizeForHpTier, starPolygonClipPath } from "./visuals";
+import {
+  atkThresholdForTier,
+  atkTier,
+  defThresholdForTier,
+  defTier,
+  hpThresholdForTier,
+  hpTier,
+  isHpCapped,
+  materialClassForDefTier,
+  shapeForAtkTier,
+  sizeForHpTier,
+  starPolygonClipPath,
+} from "./visuals";
 import { isGalleryProgressAdvanced, loadGalleryProgress, mergeGalleryProgress, resetGalleryProgress, saveGalleryProgress, type GalleryProgress } from "./gallery";
 import { aoePercentForLevel, fontSizeForHitIndex, retaliateMultFor } from "./combat";
 
@@ -320,11 +332,32 @@ function updateGalleryFromPlayerUnits(units: Unit[]) {
   }
 }
 
+/** 大きな数値をK/M/B/T単位で短縮表示する。ギャラリーの未到達セルは高tierになるほど
+ * しきい値が桁違いに大きくなる（例: HP tier12のしきい値は約687億）ため、通常の
+ * toLocaleString()（他のスコア表示で使っている桁区切り）では横幅わずか約63pxの
+ * セルに収まらない（2026-07-18） */
+function formatCompactNumber(n: number): string {
+  const units: Array<[number, string]> = [
+    [1e12, "T"],
+    [1e9, "B"],
+    [1e6, "M"],
+    [1e3, "K"],
+  ];
+  for (const [threshold, suffix] of units) {
+    if (n >= threshold) {
+      const v = n / threshold;
+      return (v >= 100 ? v.toFixed(0) : v.toFixed(1).replace(/\.0$/, "")) + suffix;
+    }
+  }
+  return String(Math.round(n));
+}
+
 function buildGalleryTrack(
   container: HTMLElement,
   countEl: HTMLElement,
   unlockedTier: number,
-  renderShape: (tier: number) => HTMLElement
+  renderShape: (tier: number) => HTMLElement,
+  thresholdForTier: (tier: number) => number
 ) {
   container.innerHTML = "";
   for (let tier = 1; tier <= 12; tier++) {
@@ -338,10 +371,21 @@ function buildGalleryTrack(
     if (unlocked) {
       cell.appendChild(renderShape(tier));
     } else {
+      // 「？」本体としきい値の目安を縦に並べるため、.gallery-cell（横方向center揃え）とは別に
+      // 縦積み用のラッパーで包む
+      const locked = document.createElement("div");
+      locked.className = "gallery-cell-locked";
       const q = document.createElement("div");
       q.className = "gallery-cell-locked-mark";
       q.textContent = "？";
-      cell.appendChild(q);
+      locked.appendChild(q);
+      // 未到達でも目指すべき数値の目安を出す（2026-07-18、ユーザー要望：
+      // 「それぞれHP、ATK、DEFがいくつ以上でその見た目になるのか、？状態でも出してほしい」）
+      const threshold = document.createElement("div");
+      threshold.className = "gallery-cell-threshold";
+      threshold.textContent = formatCompactNumber(thresholdForTier(tier)) + "〜";
+      locked.appendChild(threshold);
+      cell.appendChild(locked);
     }
     container.appendChild(cell);
   }
@@ -369,7 +413,7 @@ function renderGalleryScreen() {
     d.style.height = size + "px";
     d.style.borderRadius = "6%";
     return d;
-  });
+  }, hpThresholdForTier);
 
   buildGalleryTrack(atkTrack, atkTrackCount, atk, (tier) => {
     const d = document.createElement("div");
@@ -383,7 +427,7 @@ function renderGalleryScreen() {
       d.style.clipPath = starPolygonClipPath(shape.points);
     }
     return d;
-  });
+  }, atkThresholdForTier);
 
   buildGalleryTrack(defTrack, defTrackCount, def, (tier) => {
     const d = document.createElement("div");
@@ -392,7 +436,7 @@ function renderGalleryScreen() {
     d.style.height = "34px";
     d.style.borderRadius = "6%";
     return d;
-  });
+  }, defThresholdForTier);
 }
 
 /** ユニットの真上に浮かせる系の演出（全体化%/反撃%バッジ、GUARD表示、盾シャッター）が
