@@ -114,7 +114,7 @@ export const CARD_POOL: Card[] = [
   {
     id: "retaliate",
     name: "反撃の型",
-    desc: "選んだ（またはランダムな）1体が、味方が攻撃を受けるたびに自動で反撃するように。重ねがけで反撃威力上昇（Lv1:100%→Lv2:135%→Lv3:170%…）",
+    desc: "選んだ（またはランダムな）1体が、敵ターン終了後、味方が受けた攻撃の回数ぶんまとめて反撃するように。重ねがけで反撃威力上昇（Lv1:100%→Lv2:135%→Lv3:170%…）",
     singleTarget: true,
     apply: (state, chosenUnit) => {
       const u = pickTarget(state, chosenUnit);
