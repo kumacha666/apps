@@ -24,7 +24,7 @@
 
 - **フレームワーク**: Vitest
 - **テストファイル**: `src/combat.test.ts`, `src/run.test.ts`, `src/save.test.ts`, `src/data/classes.test.ts`, `src/data/enemies.test.ts`, `src/data/upgrades.test.ts`, `src/data/permanentUpgrades.test.ts`
-- **実行タイミング**: `npm run build` の prebuild で自動実行。テスト失敗時はビルドが中断される
+- **実行タイミング**: `npm run build`（`scripts/build.mjs`）が内部で実行。テスト失敗時はビルドが中断される（後述）
 - **前提**: `combat.ts`（ダメージ計算）や `data/*.ts`（クラス・敵・強化・血統データ）を変更した場合は必ずテストを追加・更新すること
 
 ### シミュレーションテスト (`npm run sim`)
@@ -43,7 +43,7 @@
 
 - `npm run build` — テスト → ビルド
 - `npm run deploy` — ビルド → dist/ を `game.js`/`style.css`/`manifest.json`/`index.html` としてルート直下にコピー → SW バージョン自動更新（1コマンドで完結）
-- `scripts/restore-entry.mjs` が root index.html の `./game.js` 参照を `./src/main.ts` に書き換えてからVite（デフォルトのindex.html entry検出）がビルドする。このスクリプトは `prebuild`（`npm run build`単体でも実行される）と `predeploy` の両方から呼ばれる（2026-07-15、7metchで`npm run build`単体だとentry書き換えが走らずsrcの変更が一切バンドルされない事故が発生したため、`prebuild`側にも追加して単体実行時も安全にした）。index.html の手動編集は不要。デプロイ後は `dist/index.html` がroot index.htmlを上書きするため、`restore-entry.mjs`によるscript src変更は毎回一時的なもの
+- `npm run build` は `scripts/build.mjs` を実行する。このスクリプトが `restore-entry.mjs`（root index.htmlの`./game.js`参照を`./src/main.ts`に書き換え）→ `npm test` → `vite build` → `reset-entry.mjs`（index.htmlを元に戻す、try/finallyで失敗時も必ず実行）を1つのNodeスクリプトとしてオーケストレーションする（2026-07-15、prebuild/build/postbuildの3スクリプト分割だと失敗時にpostbuildが走らず書き換え後のindex.htmlが残ってしまう問題があったため統合。旧prebuild/predeploy方式の記述はここで置き換え）。index.html の手動編集は不要。デプロイ後は `dist/index.html` がroot index.htmlを上書きするため、書き換えは毎回一時的なもの
 
 ## 変更時チェックリスト
 
