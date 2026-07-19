@@ -804,6 +804,11 @@ function endBattle(won: boolean) {
       sfxVictory();
     } else {
       state.playerUnits.forEach((u) => { u.hp = u.maxHp; u.alive = true; });
+      // 挑発の残ブロック数もここでリセットする（次のinitTauntBlockBudget()までの間、
+      // renderUnits()が前ラウンド終了時点の使い切った値（例: 🛡✕）を読んでしまい、
+      // カード選択画面で挑発をさらに取ってtauntLevelが増えても表示が更新されない
+      // 不具合があった。2026-07-19、ユーザー報告）
+      state.tauntBlockBudget = new Map();
       const endless = isEndless(state.round, state.finalRound);
       if (endless) {
         // エンドレス継続中の各勝利ごとに自己ベストを更新する
@@ -861,6 +866,7 @@ function showTenFloorClearPanel() {
   };
   (panel.querySelector("#endlessBtn") as HTMLButtonElement).onclick = () => {
     state.playerUnits.forEach((u) => { u.hp = u.maxHp; u.alive = true; });
+    state.tauntBlockBudget = new Map();
     statusLine.textContent = "エンドレス突入！ カードを1枚選んでください";
     showCardChoices();
   };
@@ -876,6 +882,7 @@ function showTenFloorClearPanel() {
 function enterAutoEndless(speed: "fast" | "ultra") {
   speedMode = speed;
   state.playerUnits.forEach((u) => { u.hp = u.maxHp; u.alive = true; });
+  state.tauntBlockBudget = new Map();
   state.round += 1;
   state.enemyUnits = [];
   cardArea.innerHTML = "";
