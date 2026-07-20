@@ -102,12 +102,12 @@ export const CARD_POOL: Card[] = [
   {
     id: "aoe_convert",
     name: "全体攻撃化",
-    desc: "選んだ（またはランダムな）1体が、敵全体に同時攻撃するように。重ねがけで威力上昇（Lv1:80%→Lv2:95%→Lv3:110%…上限なし）",
+    desc: "選んだ（またはランダムな）1体が、敵全体に同時攻撃するように。1回でLvが5上がり威力上昇（重ねがけでさらに上昇、上限なし）",
     singleTarget: true,
     apply: (state, chosenUnit) => {
       const u = pickTarget(state, chosenUnit);
       if (!u) return { message: "対象なし" };
-      u.aoeLevel += 1;
+      u.aoeLevel += 5;
       return { message: `1体が全体攻撃化した！（Lv${u.aoeLevel}・威力${Math.round(aoePercentForLevel(u.aoeLevel) * 100)}%）`, appliedUnit: u };
     },
   },
@@ -152,12 +152,12 @@ export const CARD_POOL: Card[] = [
   {
     id: "sharpen",
     name: "先鋭化",
-    desc: "選んだ（またはランダムな）1体だけ攻撃力が3倍になる",
+    desc: "選んだ（またはランダムな）1体だけ攻撃力が4倍になる",
     singleTarget: true,
     apply: (state, chosenUnit) => {
       const u = pickTarget(state, chosenUnit);
       if (!u) return { message: "対象なし" };
-      u.atk = u.atk * 3;
+      u.atk = u.atk * 4;
       return { message: "1体が先鋭化した！", appliedUnit: u };
     },
   },
