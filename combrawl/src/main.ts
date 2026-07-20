@@ -22,7 +22,7 @@ import {
   starPolygonClipPath,
 } from "./visuals";
 import { isGalleryProgressAdvanced, loadGalleryProgress, mergeGalleryProgress, resetGalleryProgress, saveGalleryProgress, type GalleryProgress } from "./gallery";
-import { aoePercentForLevel, fontSizeForHitIndex, retaliateMultFor } from "./combat";
+import { attackBadgeInfo, fontSizeForHitIndex, type AttackBadgeInfo } from "./combat";
 
 const titleScreen = document.getElementById("titleScreen") as HTMLElement;
 const gameScreen = document.getElementById("gameScreen") as HTMLElement;
@@ -469,39 +469,43 @@ function popDamage(targetEl: Element, text: string, color: string, hitIndex: num
   setTimeout(() => pop.remove(), 720);
 }
 
-/** 全体攻撃化のヒット中だけ表示する「全体化◯%」常駐バッジ。攻撃者の上に、ダメージポップと
- * 同じ間だけ表示する（フォントサイズは連撃のNヒット表示と同じ式を流用し、
- * fontSizeForHitIndex(level - 1)で計算することでLvが高いほど大きく見せる。GAME_DESIGN.md §2.3） */
-function popAoeBadge(attackerEl: Element, level: number) {
-  const percent = Math.round(aoePercentForLevel(level) * 100);
-  const badge = document.createElement("div");
-  badge.className = "aoe-hit-badge";
-  badge.style.fontSize = fontSizeForHitIndex(level - 1) + "px";
-  badge.textContent = `全体化${percent}%`;
+/** 全体化%・反撃%のうち、そのヒットで実際に効いているものを攻撃者の頭上にまとめて表示する。
+ * `combat.ts`の`attackBadgeInfo`（実ダメージ計算と同じ式を使う純粋関数）が返した内容をそのまま
+ * 描画するだけで、どちらか一方しか表示しない・実際の倍率とズレる、といったことが起きないようにする
+ * （2026-07-20、ユーザー報告：以前は反撃ターン中は反撃%を優先表示し、同時に効いている全体化%が
+ * 消えてしまっていた）。両方同時に有効な場合（反撃ターンに全体化持ちが反撃するケース）は、
+ * 内訳（掛け算のまま）を薄く小さく上段に、実際の合計（基準100%からの増分）を通常サイズで下段に出す */
+function popAttackBadge(attackerEl: Element, info: AttackBadgeInfo, attacker: Unit) {
   const rect = badgeAnchorRect(attackerEl);
   const arenaRect = arena.getBoundingClientRect();
-  badge.style.left = rect.left - arenaRect.left + rect.width / 2 + "px";
-  badge.style.top = rect.top - arenaRect.top + "px";
-  arena.appendChild(badge);
-  setTimeout(() => badge.remove(), 720);
-}
+  const left = rect.left - arenaRect.left + rect.width / 2;
+  const top = rect.top - arenaRect.top;
 
-/** 反撃のヒット中だけ表示する「反撃◯%」常駐バッジ。popAoeBadgeと全く同じ見た目・タイミングで、
- * 反撃の威力%（combat.tsのretaliateMultFor、カード説明文と共通）を攻撃者の頭上に表示する
- * （2026-07-17実装。以前は全体化◯%だけ実戦闘中に確認できて、反撃の威力はカード取得時の
- * トーストでしか見えなかった、というユーザー指摘を受けた対応） */
-function popRetaliateBadge(attackerEl: Element, level: number) {
-  const percent = Math.round(retaliateMultFor(level) * 100);
-  const badge = document.createElement("div");
-  badge.className = "aoe-hit-badge";
-  badge.style.fontSize = fontSizeForHitIndex(level - 1) + "px";
-  badge.textContent = `反撃${percent}%`;
-  const rect = badgeAnchorRect(attackerEl);
-  const arenaRect = arena.getBoundingClientRect();
-  badge.style.left = rect.left - arenaRect.left + rect.width / 2 + "px";
-  badge.style.top = rect.top - arenaRect.top + "px";
-  arena.appendChild(badge);
-  setTimeout(() => badge.remove(), 720);
+  const spawn = (text: string, extraClass: string, fontSize: number, topOffset: number) => {
+    const badge = document.createElement("div");
+    badge.className = extraClass ? `aoe-hit-badge ${extraClass}` : "aoe-hit-badge";
+    badge.style.fontSize = fontSize + "px";
+    badge.textContent = text;
+    badge.style.left = left + "px";
+    badge.style.top = top + topOffset + "px";
+    arena.appendChild(badge);
+    setTimeout(() => badge.remove(), 720);
+  };
+
+  if (info.comboDeltaPercent !== undefined) {
+    // 内訳は上段（アンカーから離れる方向）に少し浮かせ、合計はいつもの位置に出す
+    spawn(`反撃${info.retaliatePercent}%×全体化${info.aoePercent}%`, "attack-badge-breakdown", 11, -16);
+    const level = Math.max(attacker.aoeLevel, attacker.retaliateLevel);
+    spawn(`攻撃力+${info.comboDeltaPercent}%`, "", fontSizeForHitIndex(level - 1), 0);
+    return;
+  }
+  if (info.retaliatePercent !== undefined) {
+    spawn(`反撃${info.retaliatePercent}%`, "", fontSizeForHitIndex(attacker.retaliateLevel - 1), 0);
+    return;
+  }
+  if (info.aoePercent !== undefined) {
+    spawn(`全体化${info.aoePercent}%`, "", fontSizeForHitIndex(attacker.aoeLevel - 1), 0);
+  }
 }
 
 /** 挑発でダメージを完全無効化した瞬間に表示する「GUARD」バッジ。popAoeBadge/popRetaliateBadge
@@ -746,14 +750,12 @@ function animateHits(
       if (aEl) {
         aEl.classList.add("attacking");
         setTimeout(() => aEl.classList.remove("attacking"), 200);
-        // 反撃持ちが同時に全体化も持っている場合、どちらのバッジも同じ攻撃者頭上の同じ座標に
-        // 出そうとして重なってしまう。反撃ターン中は反撃%バッジを優先して表示する
-        // （通常の攻撃ターンでは従来通り全体化%バッジのみ）
-        if (kind === "retaliate") {
-          if (group[0].attacker.retaliateLevel > 0) popRetaliateBadge(aEl, group[0].attacker.retaliateLevel);
-        } else if (group[0].attacker.aoeLevel > 0) {
-          popAoeBadge(aEl, group[0].attacker.aoeLevel);
-        }
+        const badgeInfo = attackBadgeInfo({
+          aoeLevel: group[0].attacker.aoeLevel,
+          retaliateLevel: group[0].attacker.retaliateLevel,
+          isRetaliateSwing: kind === "retaliate",
+        });
+        if (badgeInfo) popAttackBadge(aEl, badgeInfo, group[0].attacker);
       }
 
       for (const hit of group) {

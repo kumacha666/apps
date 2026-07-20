@@ -44,6 +44,36 @@ export function retaliateMultFor(level: number): number {
   return Math.min(3, 1 + 0.35 * (level - 1));
 }
 
+export interface AttackBadgeInfo {
+  aoePercent?: number;
+  retaliatePercent?: number;
+  /** 全体化・反撃の両方が有効な場合のみ設定。両者の積を基準100%からの増分で表す（例: 238%→138） */
+  comboDeltaPercent?: number;
+}
+
+/** 攻撃者頭上のバッジに表示すべき情報を、実ダメージ計算と同じ式(aoePercentForLevel/retaliateMultFor)
+ * から導出する。全体化%・反撃%が両方有効な振り（反撃ターンに全体化持ちが反撃する場合）は
+ * 実際のダメージ倍率が両者の積になるため、内訳と合計(comboDeltaPercent)の両方を返す
+ * （2026-07-20、ユーザー報告：以前はどちらか一方しか表示されず、実際の倍率と表示がズレていた） */
+export function attackBadgeInfo(params: {
+  aoeLevel: number;
+  retaliateLevel: number;
+  isRetaliateSwing: boolean;
+}): AttackBadgeInfo | null {
+  const aoeActive = params.aoeLevel > 0;
+  const retaliateActive = params.isRetaliateSwing && params.retaliateLevel > 0;
+  if (!aoeActive && !retaliateActive) return null;
+
+  const info: AttackBadgeInfo = {};
+  if (aoeActive) info.aoePercent = Math.round(aoePercentForLevel(params.aoeLevel) * 100);
+  if (retaliateActive) info.retaliatePercent = Math.round(retaliateMultFor(params.retaliateLevel) * 100);
+  if (aoeActive && retaliateActive) {
+    const comboMult = aoePercentForLevel(params.aoeLevel) * retaliateMultFor(params.retaliateLevel);
+    info.comboDeltaPercent = Math.round(comboMult * 100) - 100;
+  }
+  return info;
+}
+
 export function computeHitDamage(params: {
   atk: number;
   dmgOutMult: number;

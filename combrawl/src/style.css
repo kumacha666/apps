@@ -434,6 +434,14 @@ h1 {
   z-index: 9;
   animation: aoe-badge-fade 0.72s var(--ease-out-smooth) forwards;
 }
+/* 全体化%・反撃%が両方有効な振りで、内訳（掛け算のまま）を合計より小さく・薄く出す段。
+   合計(.aoe-hit-badge単体)と同時に2枚出るため、情報の主従がひと目でわかるようにする
+   （2026-07-20実装、内訳と合計を2段で正しく表示する対応） */
+.attack-badge-breakdown {
+  font-weight: 700;
+  color: var(--text-dim);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+}
 /* GUARD表示は挑発ブロックの色（.guard-flashと同じ青白）に差し替える（2026-07-17実装、
    全体化%/反撃%と同じ位置・アニメーションに揃えつつ、意味が違うので配色だけ区別する） */
 .guard-hit-badge {
