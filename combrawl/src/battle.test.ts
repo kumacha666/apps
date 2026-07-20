@@ -122,8 +122,28 @@ describe("enemyAttackTurn", () => {
     // ちょうどこの1発でブロック予算(1回分)を使い切ったので、blockRemainingAfterは0
     // （盾シャッター演出の発火判定に使う。main.tsのCLAUDE.md参照）
     expect(result!.hits[0].blockRemainingAfter).toBe(0);
-    // 2発目: 予算を使い切ったので、taunterはもう優先されない（候補は生存者全体）
+    // 2発目: 予算を使い切ったので無効化はされないが、taunterへの引きつけ自体は続く
     expect(result!.hits[1].blocked).toBeFalsy();
+  });
+
+  it("ブロック予算を使い切った後も、taunterが他の生存ユニットより優先して狙われ続ける（引きつけ役として機能し続ける）", () => {
+    const taunter = makeUnit("player", 30, 2);
+    taunter.tauntLevel = 1; // ブロック予算1回分
+    const other1 = makeUnit("player", 30, 2);
+    const other2 = makeUnit("player", 30, 2);
+    const enemy = makeUnit("enemy", 20, 3);
+    enemy.attackCount = 4; // 連撃を想定した多段攻撃
+    const state = makeState({ playerUnits: [taunter, other1, other2], enemyUnits: [enemy] });
+    initTauntBlockBudget(state);
+
+    // rngを0.9に固定：フォールバック先が「生存者全体」（旧バグ）だと3体中の後方(other2)が
+    // 選ばれてしまうが、正しい実装（taunter全体へのフォールバック）ならtaunterしか候補にならない
+    const result = enemyAttackTurn(state, () => 0.9);
+
+    expect(result!.hits.length).toBe(4);
+    expect(result!.hits[0].blocked).toBe(true); // 1発目のみブロック予算で無効化
+    expect(result!.hits.slice(1).every((h) => h.target === taunter)).toBe(true);
+    expect(result!.hits.slice(1).every((h) => !h.blocked)).toBe(true); // 無効化はされない素の被弾
   });
 
   it("ブロック予算が複数回分あるtaunterは、blockRemainingAfterが1発ごとにカウントダウンする", () => {

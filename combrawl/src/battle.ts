@@ -117,12 +117,21 @@ export function enemyAttackTurn(state: GameState, rng: Rng = Math.random): { hit
         attacker.attackCount,
         rng,
         (alive) => {
-          // ブロック予算が残っているtaunterを優先する。優先しないと予算が余ったまま被弾する
-          // （＝挑発スキルが機能していないように見える）バグになる
-          const tautersWithBudget = alive.filter(
-            (u) => u.tauntLevel > 0 && (state.tauntBlockBudget.get(u.id) ?? 0) > 0
+          // アグロ（引きつけ）はブロック予算の有無に関係なく常に機能する（GAME_DESIGN.md §2.5：
+          // 「敵の攻撃（通常・連撃問わず）を優先的に受ける」）。ブロック予算はあくまで「無効化できる
+          // 回数」であり、予算を使い切ってもtaunterへの集中砲火自体は続き、以後は無効化されない
+          // 通常の被弾になるだけ——になるはずが、以前はtauntersWithBudgetが空になった瞬間に
+          // フォールバック先が「生存者全体」になっており、taunterが他ユニットと同列にランダム化
+          // されてしまっていた（連撃のような多段攻撃で、1スイングの途中で予算切れになると
+          // 残りの発が他ユニットに逸れる形で顕在化するバグだった。2026-07-20、ユーザー報告）。
+          // 正しくは「taunter全体」へのフォールバックに留め、taunterが1体もいない場合のみ
+          // 生存者全体まで広げる
+          const taunters = alive.filter((u) => u.tauntLevel > 0);
+          if (taunters.length === 0) return alive;
+          const tautersWithBudget = taunters.filter(
+            (u) => (state.tauntBlockBudget.get(u.id) ?? 0) > 0
           );
-          return tautersWithBudget.length > 0 ? tautersWithBudget : alive;
+          return tautersWithBudget.length > 0 ? tautersWithBudget : taunters;
         },
         state.tauntBlockBudget
       )
