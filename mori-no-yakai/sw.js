@@ -1,4 +1,4 @@
-const CACHE = 'mori-no-yakai-v0.1.20';
+const CACHE = 'mori-no-yakai-v0.1.22';
 const ASSETS = ['/mori-no-yakai/', '/mori-no-yakai/index.html', '/mori-no-yakai/style.css', '/mori-no-yakai/game.js'];
 
 self.addEventListener('install', (e) => {

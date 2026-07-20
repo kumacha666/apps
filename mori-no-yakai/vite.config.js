@@ -6,20 +6,6 @@ const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 export default defineConfig({
   root: ".",
   base: "./",
-  plugins: [
-    {
-      name: "entry-rewrite",
-      transformIndexHtml: {
-        order: "pre",
-        handler(html) {
-          return html.replace(
-            /<script type="module"[^>]*src="[^"]*game\.js"/,
-            '<script type="module" src="./src/main.ts"'
-          );
-        },
-      },
-    },
-  ],
   build: {
     outDir: "dist",
     emptyOutDir: true,
