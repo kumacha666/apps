@@ -55,11 +55,11 @@ describe("特大化", () => {
 });
 
 describe("先鋭化", () => {
-  it("対象ユニットのみATKが3倍になり、HP・DEFは変化しない", () => {
+  it("対象ユニットのみATKが4倍になり、HP・DEFは変化しない", () => {
     const state = makeState();
     const [target, other] = state.playerUnits;
     findCard("sharpen").apply(state, target);
-    expect(target.atk).toBe(12);
+    expect(target.atk).toBe(16);
     expect(target.maxHp).toBe(24);
     expect(target.def).toBe(5);
     expect(other.atk).toBe(4);
@@ -163,7 +163,7 @@ describe("全体攻撃化 / 反撃の型 / 挑発", () => {
     const u = state.playerUnits[0];
     findCard("aoe_convert").apply(state, u);
     findCard("aoe_convert").apply(state, u);
-    expect(u.aoeLevel).toBe(2);
+    expect(u.aoeLevel).toBe(10);
 
     findCard("retaliate").apply(state, u);
     expect(u.retaliateLevel).toBe(1);
