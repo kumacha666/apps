@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aoePercentForLevel, computeHitDamage, fontSizeForHitIndex, hitDampen, retaliateMultFor } from "./combat";
+import { aoePercentForLevel, attackBadgeInfo, computeHitDamage, fontSizeForHitIndex, hitDampen, retaliateMultFor } from "./combat";
 
 describe("hitDampen", () => {
   it("1発目は満威力", () => {
@@ -95,5 +95,33 @@ describe("computeHitDamage", () => {
       critMult: 2,
     });
     expect(dmg).toBe(5);
+  });
+});
+
+describe("attackBadgeInfo", () => {
+  it("どちらも無効なら null（バッジを出さない）", () => {
+    expect(attackBadgeInfo({ aoeLevel: 0, retaliateLevel: 0, isRetaliateSwing: false })).toBeNull();
+    // 反撃レベルを持っていても、反撃の振りでなければ表示しない
+    expect(attackBadgeInfo({ aoeLevel: 0, retaliateLevel: 3, isRetaliateSwing: false })).toBeNull();
+  });
+
+  it("全体化のみ有効なら全体化%だけを返す", () => {
+    const info = attackBadgeInfo({ aoeLevel: 5, retaliateLevel: 0, isRetaliateSwing: false });
+    expect(info).toEqual({ aoePercent: 140 });
+  });
+
+  it("反撃の振りで反撃のみ有効なら反撃%だけを返す", () => {
+    const info = attackBadgeInfo({ aoeLevel: 0, retaliateLevel: 3, isRetaliateSwing: true });
+    expect(info).toEqual({ retaliatePercent: 170 });
+  });
+
+  it("反撃の振りで全体化も有効なら、内訳(2つ)と実際の積からの増分(comboDeltaPercent)を返す（170%×140%=238%→+138）", () => {
+    const info = attackBadgeInfo({ aoeLevel: 5, retaliateLevel: 3, isRetaliateSwing: true });
+    expect(info).toEqual({ aoePercent: 140, retaliatePercent: 170, comboDeltaPercent: 138 });
+  });
+
+  it("全体化持ちが反撃以外のターンで攻撃しても、反撃%は混ざらない", () => {
+    const info = attackBadgeInfo({ aoeLevel: 5, retaliateLevel: 3, isRetaliateSwing: false });
+    expect(info).toEqual({ aoePercent: 140 });
   });
 });
