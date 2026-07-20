@@ -87,8 +87,9 @@ Firebaseプロジェクト `mori-no-yakai`（AI学習用アカウント、Realti
 Vite + TypeScript構成（`7metch`/`enblo`と同様）。
 
 - `npm test`: Vitestでユニットテスト実行。`src/roles.ts`（役職構成アルゴリズム、3〜8人の内訳・中央2/3枚・不正構成の検証）と `src/gameLogic.ts`（投票集計・勝敗判定・夜ステップ全員タップ判定・フェーズ遷移の純粋関数）が対象。**ゲームロジックを変更する場合は必ず対応するテストも更新すること**（`apps/CLAUDE.md` AI開発ルール1）
-- `npm run build`: `prebuild`フックで自動的に`npm test`が走る。Vite entry rewriteプラグイン（`vite.config.js`）で `index.html` の `./game.js` 参照を `./src/main.ts` に差し替えてビルドする点に注意（他アプリと同じ7metchパターン）
-- `npm run deploy`: **先に**`scripts/update-sw-version.mjs`でバージョン自動更新（`package.json`のパッチバージョンをインクリメントし、`sw.js`のキャッシュ名と`version.json`を同期）→ビルド→`dist/game.js`/`style.css`/`manifest.json`をルート直下にコピー。**この順序は変えないこと**：ビルドは`package.json`のバージョンを`__APP_VERSION__`として`game.js`に焼き込むため、ビルド後にバージョンを上げると`game.js`と`version.json`が恒久的に食い違い、全クライアントが`checkForUpdate()`で無限リロードループに陥る
+- `npm run build`: `scripts/build.mjs`が`restore-entry.mjs`（root index.htmlの`./game.js`参照を`./src/main.ts`に書き換え）→ `npm test` → `vite build` → `reset-entry.mjs`（index.htmlを元に戻す、try/finallyで失敗時も必ず実行）を1つのNodeスクリプトとしてオーケストレーションする（`enblo`/`combrawl`と同じ方式）。**2026-07-19、旧方式（`vite.config.js`内の未ガード`transformIndexHtml`プラグイン、`rollupOptions.input`未指定）から移行した**：旧方式はVite 6.4系でRollupのentry検出に反映されず`src`の変更が一切バンドルされない既知の不具合（7metch/enblo/combrawlで2026-07-15発覚）と同型のパターンで、fresh install時にVite 6.4系が解決されると再発しうる状態だった。実際にVite 6.4.3がインストールされる環境で再現し、修正後は`src`変更が`dist/game.js`に反映されることを確認済み（一時的なマーカー文字列を仕込んでビルド→grepで確認→リバートする方法で検証）
+- `npm run deploy`: **先に**`scripts/update-sw-version.mjs`でバージョン自動更新（`package.json`のパッチバージョンをインクリメントし、`sw.js`のキャッシュ名と`version.json`を同期）→ビルド→`dist/game.js`/`manifest.json`をルート直下にコピー。**この順序は変えないこと**：ビルドは`package.json`のバージョンを`__APP_VERSION__`として`game.js`に焼き込むため、ビルド後にバージョンを上げると`game.js`と`version.json`が恒久的に食い違い、全クライアントが`checkForUpdate()`で無限リロードループに陥る
+- **`style.css`はViteのビルド対象外、ルート直下で直接手動編集するファイル**（`src/`にCSSファイルもJS内`import`も無い。`enblo`/`combrawl`とは異なりCSSをViteでバンドルしていない）。2026-07-19以前の`deploy`スクリプトは存在しない`dist/style.css`を`cp`しようとして毎回失敗しており（`game.js`/`manifest.json`のコピー自体は成功するため気づきにくい）、`deploy`コマンドから`dist/style.css`を除去して修正した。スタイルを変更する場合はこのファイルを直接編集すること
 - アイコン（`icon-192.png`/`icon-512.png`）は依存パッケージなしで`scripts/generate-icons.mjs`が生成する三日月アイコン。デザインを変更する場合はこのスクリプトを編集して再生成する
 
 ## 実装メモ
