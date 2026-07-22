@@ -22,11 +22,19 @@
  * では、E2Eをハードゲートにすると npm run deploy 自体が失敗してしまう。
  * chromiumの実体が見つかる場合のみE2Eを実行し、見つからない場合は警告を出して
  * スキップする（silent skipにはしない。ビルド自体は止めない）
+ *
+ * 2026-07-22、Codexレビュー指摘（さらに追加）: `~/.cache/ms-playwright`を
+ * 決め打ちで見に行く実装だと、macOS/Windows/`PLAYWRIGHT_BROWSERS_PATH=0`等の
+ * プラットフォーム固有キャッシュ位置では常にfalse判定になり、視覚E2Eが
+ * 無言でスキップされ続けてしまう。キャッシュ位置を自前で推測せず、
+ * `@playwright/test`自身の解決ロジック（`chromium.executablePath()`）に
+ * 判定を委ねる（このサンドボックス環境固有の安定シンボリックリンクだけは
+ * 例外的にそのまま先に見る。インストール済みのPlaywrightのバージョンが
+ * このサンドボックスに焼き込まれたリビジョンと一致しないケースがあるため）
  */
 import { execSync } from "child_process";
-import { existsSync, readdirSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
+import { existsSync } from "fs";
+import { chromium } from "@playwright/test";
 
 const root = new URL("..", import.meta.url).pathname;
 const run = (cmd) => execSync(cmd, { stdio: "inherit", cwd: root });
@@ -34,15 +42,11 @@ const run = (cmd) => execSync(cmd, { stdio: "inherit", cwd: root });
 function hasPlaywrightChromium() {
   if (process.env.PLAYWRIGHT_CHROMIUM_PATH) return true;
   if (existsSync("/opt/pw-browsers/chromium")) return true;
-  const cacheDir = process.env.PLAYWRIGHT_BROWSERS_PATH || join(homedir(), ".cache", "ms-playwright");
-  if (existsSync(cacheDir)) {
-    try {
-      return readdirSync(cacheDir).some((entry) => entry.startsWith("chromium-"));
-    } catch {
-      return false;
-    }
+  try {
+    return existsSync(chromium.executablePath());
+  } catch {
+    return false;
   }
-  return false;
 }
 
 run("node scripts/restore-entry.mjs");
