@@ -37,10 +37,20 @@
  * `npx playwright install chromium` で自前でインストールしてから必ずE2Eを実行する
  * （インストール自体が失敗する＝ネットワーク等の環境要因の場合は、素直にビルドが
  * 失敗するのが正しい。silent successより明示的なfailureの方が安全）
+ *
+ * 2026-07-22、Codexレビュー指摘（さらに追加）: 汎用フォールバック分岐で
+ * `chromium.executablePath()`（通常のchromeバイナリ）の存在だけを見ていたが、
+ * このE2E設定はexecutablePath未指定・headless実行のため、Playwrightは
+ * 実際には別バイナリ（chromium-headless-shell）を起動しに行く。chrome本体は
+ * あってもheadless-shellが無い環境では、この判定が誤ってtrueを返し
+ * installがスキップされてしまっていた。汎用フォールバックでは「入っているか」を
+ * 自前で推測するのをやめ、判断不能な場合は常にinstallを試みる（このサンドボックス
+ * 固有の2つの近道はネットワーク不要なのでそのまま残す。実際に`npx playwright
+ * install chromium`を無条件実行するとこのサンドボックスではネットワーク制限で
+ * 失敗することを確認済み）
  */
 import { execSync } from "child_process";
 import { existsSync } from "fs";
-import { chromium } from "@playwright/test";
 
 const root = new URL("..", import.meta.url).pathname;
 const run = (cmd) => execSync(cmd, { stdio: "inherit", cwd: root });
@@ -48,11 +58,7 @@ const run = (cmd) => execSync(cmd, { stdio: "inherit", cwd: root });
 function hasPlaywrightChromium() {
   if (process.env.PLAYWRIGHT_CHROMIUM_PATH) return true;
   if (existsSync("/opt/pw-browsers/chromium")) return true;
-  try {
-    return existsSync(chromium.executablePath());
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 run("node scripts/restore-entry.mjs");
