@@ -37,13 +37,14 @@
 
 - **フレームワーク**: Playwright（`e2e/screen-flow.spec.ts`, `playwright.config.ts`）
 - 起動→クラス選択→戦闘→強化選択→…→ゲームオーバーまでの画面遷移が通ることを確認する疎通テスト。ユニットテストの代替ではない
-- 大きな画面遷移・状態遷移の変更をした場合に実施。旧仕様前提のテストなので、再設計を実装した際は更新が必要
+- **2026-07-22から`npm run build`（`scripts/build.mjs`）に組み込み済み**：unit test直後・vite build前に自動実行され、失敗するとビルドが止まる（apps/CLAUDE.mdの「視覚的なUI崩れの検証」ルール対応）。手動での実行判断は不要になった
+- 旧仕様前提のテストなので、再設計を実装した際は更新が必要
 
 ## ビルド・デプロイ
 
 - `npm run build` — テスト → ビルド
 - `npm run deploy` — ビルド → dist/ を `game.js`/`style.css`/`manifest.json`/`index.html` としてルート直下にコピー → SW バージョン自動更新（1コマンドで完結）
-- `npm run build` は `scripts/build.mjs` を実行する。このスクリプトが `restore-entry.mjs`（root index.htmlの`./game.js`参照を`./src/main.ts`に書き換え）→ `npm test` → `vite build` → `reset-entry.mjs`（index.htmlを元に戻す、try/finallyで失敗時も必ず実行）を1つのNodeスクリプトとしてオーケストレーションする（2026-07-15、prebuild/build/postbuildの3スクリプト分割だと失敗時にpostbuildが走らず書き換え後のindex.htmlが残ってしまう問題があったため統合。旧prebuild/predeploy方式の記述はここで置き換え）。index.html の手動編集は不要。デプロイ後は `dist/index.html` がroot index.htmlを上書きするため、書き換えは毎回一時的なもの
+- `npm run build` は `scripts/build.mjs` を実行する。このスクリプトが `restore-entry.mjs`（root index.htmlの`./game.js`参照を`./src/main.ts`に書き換え）→ `npm test` → `npm run test:e2e`（2026-07-22追加）→ `vite build` → `reset-entry.mjs`（index.htmlを元に戻す、try/finallyで失敗時も必ず実行）を1つのNodeスクリプトとしてオーケストレーションする（2026-07-15、prebuild/build/postbuildの3スクリプト分割だと失敗時にpostbuildが走らず書き換え後のindex.htmlが残ってしまう問題があったため統合。旧prebuild/predeploy方式の記述はここで置き換え）。index.html の手動編集は不要。デプロイ後は `dist/index.html` がroot index.htmlを上書きするため、書き換えは毎回一時的なもの
 
 ## 変更時チェックリスト
 
