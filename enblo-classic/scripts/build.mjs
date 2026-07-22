@@ -20,8 +20,6 @@
  * 2026-07-22、Codexレビュー指摘（追加）: Playwrightのchromiumが一切
  * インストールされていない環境（フレッシュチェックアウト・Codex自身のレビュー環境等）
  * では、E2Eをハードゲートにすると npm run deploy 自体が失敗してしまう。
- * chromiumの実体が見つかる場合のみE2Eを実行し、見つからない場合は警告を出して
- * スキップする（silent skipにはしない。ビルド自体は止めない）
  *
  * 2026-07-22、Codexレビュー指摘（さらに追加）: `~/.cache/ms-playwright`を
  * 決め打ちで見に行く実装だと、macOS/Windows/`PLAYWRIGHT_BROWSERS_PATH=0`等の
@@ -31,6 +29,14 @@
  * 判定を委ねる（このサンドボックス環境固有の安定シンボリックリンクだけは
  * 例外的にそのまま先に見る。インストール済みのPlaywrightのバージョンが
  * このサンドボックスに焼き込まれたリビジョンと一致しないケースがあるため）
+ *
+ * 2026-07-22、Codexレビュー指摘（さらに追加）: 「見つからなければ警告してスキップ」
+ * だと、ブラウザ未インストール環境でE2Eを一度も実行せずに`npm run deploy`が
+ * 成功してしまい、「視覚崩れをE2Eで必ず検知する」という本来の目的を満たせない。
+ * スキップして成功扱いにするのではなく、見つからない場合は
+ * `npx playwright install chromium` で自前でインストールしてから必ずE2Eを実行する
+ * （インストール自体が失敗する＝ネットワーク等の環境要因の場合は、素直にビルドが
+ * 失敗するのが正しい。silent successより明示的なfailureの方が安全）
  */
 import { execSync } from "child_process";
 import { existsSync } from "fs";
@@ -52,13 +58,11 @@ function hasPlaywrightChromium() {
 run("node scripts/restore-entry.mjs");
 try {
   run("npm test");
-  if (hasPlaywrightChromium()) {
-    run("npm run test:e2e");
-  } else {
-    console.warn(
-      "⚠️  Playwright chromiumが見つからないため、視覚E2Eチェックをスキップしました。`npx playwright install chromium` でインストールすると有効になります。"
-    );
+  if (!hasPlaywrightChromium()) {
+    console.warn("Playwright chromiumが見つからないため、npx playwright install chromiumでインストールします…");
+    run("npx playwright install chromium");
   }
+  run("npm run test:e2e");
   run("npx vite build");
 } finally {
   run("node scripts/reset-entry.mjs");
