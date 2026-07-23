@@ -34,6 +34,16 @@ test("badged units in a wrapped multi-row layout do not overlap each other", asy
     setPlayerUnits(units);
   });
 
+  // 2026-07-23、Codexレビュー指摘: フィクスチャが実際にレンダリングされたことを先に
+  // 確認する。ここを飛ばすと、renderUnits()側の回帰で.unit-slot/.unit-badges自体が
+  // 描画されなくなった場合でも、比較対象が0件のままoverlapsが空配列になり、
+  // 「レイアウトが壊れていない」ことの証明ではなく「何も検証していない」だけの
+  // 状態でテストが緑になってしまう。
+  const slotCount = await page.locator("#playerSide .unit-slot").count();
+  expect(slotCount).toBe(8);
+  const badgeCount = await page.locator("#playerSide .unit-badges").count();
+  expect(badgeCount).toBe(8);
+
   const overlaps = await page.evaluate(() => {
     const slots = [...document.querySelectorAll("#playerSide .unit-slot")];
     const results: Array<{ badgeOwner: string; overlapsWith: string; area: number }> = [];
@@ -48,15 +58,18 @@ test("badged units in a wrapped multi-row layout do not overlap each other", asy
       const badge = slot.querySelector(".unit-badges");
       if (!badge) return;
       const badgeRect = badge.getBoundingClientRect();
+      // 2026-07-23、Codexレビュー指摘: 自分自身のスロットも比較対象に含める
+      // （元々このテストが再発防止の対象としていたのは「バッジが自分自身の
+      // ユニット本体に重なる」不具合であり、他ユニットとの重なりだけを見ていると
+      // その回帰を検知できない）。除外するのはバッジ要素自身の座標との比較のみ。
       slots.forEach((otherSlot, j) => {
-        if (i === j) return;
         const unitEl = otherSlot.querySelector(".unit");
-        if (!unitEl) return;
+        if (!unitEl || unitEl === badge) return;
         const area = rectArea(badgeRect, unitEl.getBoundingClientRect());
         if (area > 0) {
           results.push({
-            badgeOwner: slot.getAttribute("data-testid") || `slot-${i}`,
-            overlapsWith: `slot-${j}`,
+            badgeOwner: `slot-${i}`,
+            overlapsWith: i === j ? `slot-${j} (own unit)` : `slot-${j}`,
             area: Math.round(area),
           });
         }
