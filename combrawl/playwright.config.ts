@@ -13,10 +13,16 @@ import { existsSync } from "fs";
 // フレッシュなチェックアウトで単独実行するケース——では、index.htmlが直近デプロイの
 // `./game.js`を指したままになる。この場合、直近デプロイのビルド成果物には
 // window.__e2eフックが含まれていない可能性が高く、visual-layout.spec.tsが
-// レイアウトを検証する前に別の理由で失敗する。restore-entry.mjsを毎回明示的に
-// 実行してからdevサーバーを起動するようにし、実行経路によらず常にsrc/main.tsの
-// 現在のソースを検証対象にする（restore-entry.mjs自体は既にバックアップ済みなら
-// 再実行しても安全なよう冪等に作られている）。
+// レイアウトを検証する前に別の理由で失敗する。
+//
+// restore/resetの責務は`npm run test:e2e`本体（scripts/test-e2e.mjs）側に持たせた。
+// 当初はこのwebServer.command側でPlaywrightのプロセス終了シグナルをフックして
+// 後始末する方式を試したが、Playwrightがテスト終了時にwebServerへ送る停止シグナルは
+// Node側でトラップできない（実機検証で、子プロセスにSIGTERMを手動送信した場合は
+// 後始末できるのに、Playwright管理下の停止では後始末が一切走らないことを確認した）。
+// そのため、Playwrightの終了処理に依存せず、build.mjsと同じ「restore→処理→
+// try/finallyでreset」という自分たちが完全に制御できる形に置き換えた
+// （詳細はscripts/test-e2e.mjs参照）。ここではviteを素朴に起動するだけでよい。
 const sandboxChromium = "/opt/pw-browsers/chromium";
 const chromiumPath =
   process.env.PLAYWRIGHT_CHROMIUM_PATH || (existsSync(sandboxChromium) ? sandboxChromium : undefined);
@@ -30,7 +36,7 @@ export default defineConfig({
     launchOptions,
   },
   webServer: {
-    command: "node scripts/restore-entry.mjs && npx vite --port 5189",
+    command: "npx vite --port 5189",
     url: "http://localhost:5189",
     reuseExistingServer: false,
     timeout: 30000,
