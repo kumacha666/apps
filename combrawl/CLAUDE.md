@@ -92,6 +92,16 @@ ai-workspace側`GAME_DESIGN.md`（§2.3・§2.4・§2.5・§2.6・§2.6.1・§2.
   - **リセット機能を実装済み（2026-07-17）**：`gallery.ts`の`resetGalleryProgress(storage?)`が全軸0の記録を`localStorage`に保存して返す。`main.ts`側は`#galleryResetBtn`（ギャラリー画面ヘッダー右、`.gallery-reset`）のクリックで`confirm()`による確認を挟んでから呼び出す（localStorageを消す不可逆操作のため）。自己ベスト到達ラウンド・HIGH SCOREにはリセット機能が無いが、ギャラリーは「見た目の解放記録」でありゲーム進行上の実害が無いため対象外にしていない
 - **分裂・合体後、見た目が新しいステータスに正しく反映されるか重点確認**：過去に類似の対象ズレバグが実際に起きている（本ファイル「単体強化カードで対象未選択」の項参照）。今回、`renderUnits()`の編集時に`el.className`/`el.dataset.id`の代入を誤って削除してしまい、全ユニットのクラス・data-id・クリックハンドラが丸ごと消える不具合を実装直後に自己発見・修正した実績がある（Playwrightでの実プレイ確認で発覚。ユニットテストだけでは検出できなかった）。DOM要素の`className`/`classList`を扱うコードを編集する際は、既存の代入行を消していないか特に注意する
 
+## E2Eテスト（`npm run test:e2e`）
+
+`apps/CLAUDE.md`の「視覚的なUI崩れの検証」ルール対応で2026-07-23に整備（`enblo`/`enblo-classic`と同じくPlaywright、devサーバーは他アプリと重複しないポート5189を使用）。
+
+- **フレームワーク**: Playwright（`e2e/`, `playwright.config.ts`）
+- `e2e/screen-flow.spec.ts`：タイトル→ゲーム画面→戦闘開始→1ラウンド目の決着、ギャラリー画面への往復、という基本的な画面遷移の疎通確認
+- `e2e/visual-layout.spec.ts`：**見た目の重なり回帰テスト**。過去に発生した「特性バッジがユニット本体・隣接ユニットに重なって読めなくなる」不具合の再発防止用。通常のランダムなカード進行では体数・特性の組み合わせを毎回同じ形で再現しづらいため、`src/main.ts`末尾のE2E専用フック`window.__e2e`（`makeUnit`/`setPlayerUnits`を公開、本番プレイのUIからは一切呼ばれない）で「8体・全員が4種の特性持ち」という境界ケースを直接構成し、`getBoundingClientRect()`で実際の座標を測って重なりが無いことを確認する。新しくユニット頭上に浮かせる演出やバッジを追加した場合は、このテストが実際に重なりを検知できるか確認すること
+- **2026-07-23から`npm run build`（`scripts/build.mjs`）に組み込み済み**：unit test直後・vite build前に自動実行され、失敗するとビルドが止まる。Playwrightのchromiumが見つからない環境では`npx playwright install chromium`で自動インストールしてから実行する（enblo/enblo-classicと同じ方式、詳細は`apps/CLAUDE.md`参照）
+- `window.__e2e`フックは本番ビルドにもそのまま含まれる（分岐で除外していない）。ゲーム状態を外部から直接書き換えられるが、`window`直下のプロパティ1つを増やすだけで実害は無いため、ビルド設定を複雑にしてまで本番ビルドから除外していない
+
 ## 変更時のチェックリスト
 
 - ゲームロジック（`src/`直下・`src/data/`）を変更する前に、対応するテストが存在するか確認する。無ければ先にテストを書く
@@ -115,4 +125,4 @@ ai-workspace側`GAME_DESIGN.md`（§2.3・§2.4・§2.5・§2.6・§2.6.1・§2.
 - ドット絵化は未着手。着手時はHP連動の連続サイズ変化（`src/main.ts`の`renderUnits`内`size`計算）を廃し、HPバー＋スプライト差し替え方式に再設計する（GAME_DESIGN.md §14参照）
 - **BGM追加・SE強化は未着手**（2026-07-15、ロードマップに追加）：現状SEは`playTone`ベースのWeb Audio API簡易合成音のみ、BGMは無し。着手時の検討事項はGAME_DESIGN.md §14参照。高速/超速自動周回中はSEをミュートする既存仕様（本ファイルの「エンドレスの高速/超速自動周回」参照）と矛盾しないよう、BGMの扱い（鳴らし続けるか等）も合わせて設計する
 - `public/icon-192.png` / `icon-512.png`はプレースホルダー（`scripts/gen-icons.mjs`で生成した単色リング）。本番公開前に正式なアイコンに差し替える
-- Playwright E2Eテストは未整備（`enblo`にはあるが本アプリはまだ導入していない）
+- ~~Playwright E2Eテストは未整備~~ → 2026-07-23に整備済み（下記「E2Eテスト」参照）

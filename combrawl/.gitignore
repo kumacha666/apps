@@ -1,3 +1,4 @@
 node_modules/
 dist/
 .entry-backup.html
+test-results/

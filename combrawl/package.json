@@ -7,11 +7,13 @@
     "predev": "node scripts/restore-entry.mjs",
     "dev": "vite",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "build": "node scripts/build.mjs",
     "preview": "vite preview",
     "deploy": "npm run build && cp dist/game.js dist/style.css dist/manifest.json dist/index.html dist/icon-192.png dist/icon-512.png . && node scripts/normalize-index.mjs && node scripts/update-sw-version.mjs && echo 'Deploy complete.'"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "terser": "^5.48.0",
     "typescript": "^5.7.0",
     "vite": "^6.3.0",

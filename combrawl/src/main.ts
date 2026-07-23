@@ -1115,3 +1115,18 @@ RUN_LENGTH_OPTIONS.forEach((floors) => {
   };
   titleModeRow.appendChild(btn);
 });
+
+/**
+ * E2Eの視覚崩れ回帰テスト（e2e/visual-layout.spec.ts）専用フック。本番プレイのUIからは
+ * 一切呼ばれない。ランダムなカード進行だけでは「体数が多い・複数特性を持つ」といった
+ * 境界ケースを毎回同じ形で再現しづらいため、状態を直接構成してrenderArena()で
+ * 実際のCSS/DOMに反映させ、要素の重なりをgetBoundingClientRect()で実測できるようにする
+ * （2026-07-23、apps/CLAUDE.mdの「視覚的なUI崩れの検証」ルール対応）。
+ */
+(window as any).__e2e = {
+  makeUnit,
+  setPlayerUnits(units: Unit[]) {
+    state.playerUnits = units;
+    renderArena();
+  },
+};
