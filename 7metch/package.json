@@ -6,12 +6,14 @@
   "scripts": {
     "dev": "vite",
     "test": "vitest run",
-    "prebuild": "npm test",
+    "test:e2e": "playwright test",
+    "prebuild": "npm test && node scripts/ensure-playwright-chromium.mjs && npm run test:e2e",
     "build": "vite build && node --input-type=module -e \"import{readFileSync}from'fs';const j=readFileSync('dist/game.js','utf8');const m=['pointerdown','pointerup','pointermove'].filter(s=>!j.includes(s));if(m.length){console.error('BUILD CHECK FAILED: missing: '+m.join(', '));process.exit(1)}console.log('Build check passed.')\"",
     "sim": "npx vite-node scripts/simulate.mjs",
     "deploy": "npm run build && cp dist/game.js dist/style.css dist/manifest.json . && node scripts/update-sw-version.mjs && echo 'Deploy complete.'"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "terser": "^5.48.0",
     "typescript": "^6.0.3",
     "vite": "^6.3.0",

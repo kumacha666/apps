@@ -46,7 +46,7 @@
 - `package.json` の `prebuild` フックで `npm test`（Vitest）を自動実行 → テスト失敗時はビルド自体が止まる
 - `npm run deploy` で「ビルド → dist/ を所定の場所にコピー → SWバージョン自動更新」まで1コマンドで完結（手動コピー・手動バージョン更新はしない方針）
 - ルート直下に存在する `game.js` / `style.css` / `sw.js` は **ビルド成果物のコピー**（dist/からコピーされたもの）。ソースは常に `src/` 配下を編集すること
-- `enblo`/`enblo-classic`/`combrawl` は Playwright による E2E テスト（`e2e/`, `npm run test:e2e`）を持つ。画面遷移の疎通確認用で、ユニットテストの代替ではない（`combrawl`は加えて、特性バッジ等の見た目の重なりを座標で検証する回帰テストも持つ。詳細は各アプリの`CLAUDE.md`参照）。`7metch`/`7metch2`/`mori-no-yakai`は未整備
+- `enblo`/`enblo-classic`/`combrawl`/`7metch` は Playwright による E2E テスト（`e2e/`, `npm run test:e2e`）を持つ。画面遷移の疎通確認用で、ユニットテストの代替ではない（`combrawl`は加えて、特性バッジ等の見た目の重なりを座標で検証する回帰テストも持つ。詳細は各アプリの`CLAUDE.md`参照）。`7metch2`/`mori-no-yakai`は未整備
 - **`enblo-classic`は凍結アプリ**。`enblo`の大規模再設計に着手する前の完成形をそのままコピーしたもので、以降は変更しない前提（バグ修正のみ最小対応）
 - **`7metch2`は開発中につきPWA未対応**（`manifest.json`/`sw.js`なし、CSSは`index.html`にインライン）。`npm run deploy` は `dist/game.js` のコピーのみで現状の構成としては完結している。公開時にPWA化とdeployスクリプト拡充（manifest/SWコピー・SWバージョン自動更新）を行うこと
 - 詳細なテスト方針・難易度パラメータ・変更時チェックリストはアプリごとの `CLAUDE.md`（例: `7metch/CLAUDE.md`, `7metch2/CLAUDE.md`, `enblo/CLAUDE.md`, `enblo-classic/CLAUDE.md`, `combrawl/CLAUDE.md`）を参照
@@ -112,7 +112,8 @@
 - ビルドが必要なアプリ（7metch, 7metch2, enblo, enblo-classic, combrawl, mori-no-yakai）は、コミット前に `npm run deploy` を実行してビルド成果物をルート直下に反映させてからコミットする
 - **コードレビュー（Codexの自動レビューに代わる社内チェック、2026-07-22追加）**：PR作成後、`/code-review --comment` でセルフレビューを実行し、PR本文のTest planに実行有無をチェック項目として明記する（例：`- [x] /code-review --comment 実施済み`）。実行を強制する仕組みは無いため、マージ判断をする人間がPR本文でチェック有無を確認する運用に乗せる（本リポジトリは元々マージを人間が判断するため、この可視化は判断を素早くするための補助）
   - **`/code-review`はAIが自分自身で起動できない**（`disable-model-invocation`設定のため、`Skill`ツール経由の呼び出しは常に拒否される）。PR作成後、AIはユーザーに実行を依頼する運用とする（2026-07-24確認）。依頼する際は「プロンプト欄に直接入力してください」と伝えること。チャット上に貼り付けられた`/code-review --comment`という文字列をAIが受け取って実行しようとしても同じ理由で失敗する（**コピペでは起動しない**、ユーザーの入力欄からの直接入力のみ有効。2026-07-24、Claude Code on the webのセッションで実際に確認済み）
-- **視覚的なUI崩れの検証**：CSS/DOM構造/アニメーションに関わる変更を含むPRで、対象アプリにPlaywright E2Eがある場合は、境界ケース（要素の重なりが起きやすい状態）を実際にレンダリングして検証する。E2Eが無いアプリで見た目に関わる変更をした場合は、その旨をPR本文に明記する。**`enblo`/`enblo-classic`/`combrawl`は`npm run build`（`scripts/build.mjs`）に`npm run test:e2e`が組み込み済み（2026-07-22〜23対応、テスト失敗時はビルドが止まる）。E2Eがまだ無いアプリ（`7metch`, `7metch2`, `mori-no-yakai`）は今後整備予定で、それまではPR本文に「E2E未整備」である旨を明記する**
+  - **`/code-review`の出力は英語になる**（プロジェクトの「日本語でやりとり」方針に関わらず、スキル自体の既定言語のため）。ユーザーがコマンドを実行した後、AIは結果を日本語で要約してから対応方針を提示すること（2026-07-24追加）
+- **視覚的なUI崩れの検証**：CSS/DOM構造/アニメーションに関わる変更を含むPRで、対象アプリにPlaywright E2Eがある場合は、境界ケース（要素の重なりが起きやすい状態）を実際にレンダリングして検証する。E2Eが無いアプリで見た目に関わる変更をした場合は、その旨をPR本文に明記する。**`enblo`/`enblo-classic`/`combrawl`/`7metch`は`npm run build`に`npm run test:e2e`が組み込み済み（`enblo`/`enblo-classic`/`combrawl`は2026-07-22〜23対応`scripts/build.mjs`経由、`7metch`は2026-07-24対応・`prebuild`スクリプト経由。いずれもテスト失敗時はビルドが止まる）。E2Eがまだ無いアプリ（`7metch2`, `mori-no-yakai`）は今後整備予定で、それまではPR本文に「E2E未整備」である旨を明記する**
 - 1PRに複数アプリ・複数の大きな変更を詰め込まない（上記「AI開発ルール」参照）
 - **新しいアプリディレクトリ（`apps/<name>/`）を追加したら、本CLAUDE.mdの「リポジトリ構成」「アプリ種別とアーキテクチャパターン」セクションに反映し、テスト・ビルド構成があればアプリ固有の`CLAUDE.md`を作成する**（`ai-workspace`の`save-tokens`スキル参照。過去にenblo追加時にこれを怠り、CLAUDE.mdが実態とズレた実績がある）
 
