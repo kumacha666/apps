@@ -115,17 +115,20 @@ export function buildStages(): StageConfig[] {
         const targetColor = i % colors;
         mission = { type: "color", colorIndex: targetColor, count: Math.floor(moves * 0.8) };
       } else if (slot === 1) {
-        mission = { type: "special", count: 2 + Math.floor((i - 350) / 60) };
+        // special/chainは3→4に上げるとhole配置次第でクリア率が5%を割る
+        // ステージが一定確率で出る（シミュレーションで確認、2026-07-24）。
+        // 350面到達直後の最低値(旧: 2)からは引き上げつつ、安全な3で固定する
+        mission = { type: "special", count: 3 };
       } else if (slot === 2) {
-        mission = { type: "chain", count: 2 + Math.floor((i - 350) / 100) };
+        mission = { type: "chain", count: 3 };
       } else if (slot === 3) {
         mission = { type: "score", target: Math.floor(moves * Math.min(55, 30 + i * 0.2)) };
       } else if (slot === 4) {
         mission = { type: "clear", count: Math.floor(moves * Math.min(4.5, 2.5 + i * 0.01)) };
       } else if (slot === 5) {
-        mission = { type: "special", count: 3 + Math.floor((i - 350) / 75) };
+        mission = { type: "special", count: 3 };
       } else {
-        mission = { type: "chain", count: 3 + Math.floor((i - 350) / 125) };
+        mission = { type: "chain", count: 3 };
       }
     } else if (i % 5 === 0 && i > 0) {
       const targetColor = i % colors;

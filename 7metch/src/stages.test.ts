@@ -176,6 +176,21 @@ describe("buildStages", () => {
     expect(types.has("special")).toBe(true);
     expect(types.has("chain")).toBe(true);
   });
+
+  // 350面以降のspecial/chainミッションが最低値2に張り付いたまま
+  // 152面分ほとんど伸びなかった問題の再発防止（2026-07-24修正）。
+  // count=4まで上げるとhole配置次第でクリア率が5%を割るステージが
+  // 一定確率で発生することをシミュレーションで確認したため、
+  // 350面直後の最低値(旧: 2)から3へ引き上げた上で、
+  // 350〜499面を通して固定値3とする（伸び続けない設計は意図的）
+  it("350面以降のspecial/chainミッションは全ステージでcount=3固定", () => {
+    for (let i = 350; i < 500; i++) {
+      const m = stages[i].mission;
+      if (m.type === "special" || m.type === "chain") {
+        expect(m.count).toBe(3);
+      }
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
