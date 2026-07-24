@@ -54,6 +54,7 @@ export default defineConfig(({ command }) => ({
   },
   test: {
     environment: "node",
+    exclude: ["e2e/**", "node_modules/**"],
     alias: {
       "./audio": resolve("src/__mocks__/audio.ts"),
       "./animations": resolve("src/__mocks__/animations.ts"),
