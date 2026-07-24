@@ -17,6 +17,13 @@ export function getGateFor(i: number): StarGate | null {
   return STAR_GATES.find((g) => g.stage === i) || null;
 }
 
+// 350面以降、special/chainミッションのcount。4以上にするとhole配置
+// (i%5のバリアント)次第でクリア率が5%を割るステージが一定確率で発生する
+// ことをシミュレーションで確認済み(2026-07-24)。350面到達直後の最低値
+// (旧: slot1/2は2、slot5/6は3からスタート)を全slotとも安全な3で統一し、
+// 固定する(伸び続けない設計は意図的)
+const POST_350_SPECIAL_CHAIN_COUNT = 3;
+
 // --- Stages ---
 export function boardSizeForStage(i: number): { cols: number; rows: number } {
   if (i < 10) return { cols: 6, rows: 7 };
@@ -114,18 +121,15 @@ export function buildStages(): StageConfig[] {
       if (slot === 0) {
         const targetColor = i % colors;
         mission = { type: "color", colorIndex: targetColor, count: Math.floor(moves * 0.8) };
-      } else if (slot === 1) {
-        mission = { type: "special", count: 2 + Math.floor((i - 350) / 60) };
-      } else if (slot === 2) {
-        mission = { type: "chain", count: 2 + Math.floor((i - 350) / 100) };
+      } else if (slot === 1 || slot === 5) {
+        mission = { type: "special", count: POST_350_SPECIAL_CHAIN_COUNT };
       } else if (slot === 3) {
         mission = { type: "score", target: Math.floor(moves * Math.min(55, 30 + i * 0.2)) };
       } else if (slot === 4) {
         mission = { type: "clear", count: Math.floor(moves * Math.min(4.5, 2.5 + i * 0.01)) };
-      } else if (slot === 5) {
-        mission = { type: "special", count: 3 + Math.floor((i - 350) / 75) };
       } else {
-        mission = { type: "chain", count: 3 + Math.floor((i - 350) / 125) };
+        // slot === 2 || slot === 6
+        mission = { type: "chain", count: POST_350_SPECIAL_CHAIN_COUNT };
       }
     } else if (i % 5 === 0 && i > 0) {
       const targetColor = i % colors;
