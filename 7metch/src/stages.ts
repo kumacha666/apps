@@ -20,7 +20,8 @@ export function getGateFor(i: number): StarGate | null {
 // 350面以降、special/chainミッションのcount。4以上にするとhole配置
 // (i%5のバリアント)次第でクリア率が5%を割るステージが一定確率で発生する
 // ことをシミュレーションで確認済み(2026-07-24)。350面到達直後の最低値
-// (旧: 2)からは引き上げつつ、安全な3で固定する(伸び続けない設計は意図的)
+// (旧: slot1/2は2、slot5/6は3からスタート)を全slotとも安全な3で統一し、
+// 固定する(伸び続けない設計は意図的)
 const POST_350_SPECIAL_CHAIN_COUNT = 3;
 
 // --- Stages ---
