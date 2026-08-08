@@ -89,7 +89,7 @@ function renderList() {
     return;
   }
 
-  for (const group of groupMovies(displayList)) {
+  for (const group of groupMovies(displayList, universeFiltered)) {
     const groupEl = document.createElement("div");
     groupEl.className = "group";
 

@@ -49,22 +49,39 @@ export function filterUnwatched(movies, state) {
   return movies.filter((m) => !getEntry(state, m.id).watched);
 }
 
-// Buckets by `group` (first-appearance order decides group order), then
-// sorts each bucket by release date. Sorting here — rather than relying on
-// insertion order in movies.json — lets movies and TV series share a phase
-// group and still display in true chronological (watch) order regardless of
-// where each entry happens to sit in the source data file.
-export function groupMovies(list) {
-  const groups = [];
+// Buckets `list` by `group`, then sorts each bucket by release date (so
+// movies and TV series sharing a phase group display in true chronological
+// order regardless of where each entry sits in the source data file).
+//
+// Group *order* is derived from `orderSource` (defaults to `list` itself)
+// rather than from `list`'s own first-appearance order. This matters
+// because `list` is often a further-filtered view (e.g. "unwatched only")
+// of a larger set: if group order tracked that filtered list directly, a
+// group's position could jump around the page every time its watched items
+// got hidden and a different group's item happened to lead. Callers that
+// apply a display-only filter on top of a stable subset (e.g. universe
+// selection) should pass that stable subset as `orderSource`.
+export function groupMovies(list, orderSource = list) {
+  const orderIndex = new Map();
+  let nextIndex = 0;
+  for (const m of orderSource) {
+    if (!orderIndex.has(m.group)) orderIndex.set(m.group, nextIndex++);
+  }
+
   const map = new Map();
   for (const m of list) {
     if (!map.has(m.group)) {
-      const g = { title: m.group, items: [] };
-      map.set(m.group, g);
-      groups.push(g);
+      map.set(m.group, { title: m.group, items: [] });
     }
     map.get(m.group).items.push(m);
   }
+
+  const groups = [...map.values()];
+  groups.sort((a, b) => {
+    const ai = orderIndex.has(a.title) ? orderIndex.get(a.title) : nextIndex;
+    const bi = orderIndex.has(b.title) ? orderIndex.get(b.title) : nextIndex;
+    return ai - bi;
+  });
   for (const g of groups) {
     g.items.sort((a, b) => parseLocalDate(a.releaseDate) - parseLocalDate(b.releaseDate));
   }
