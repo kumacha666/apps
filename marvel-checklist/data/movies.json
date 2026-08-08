@@ -61,7 +61,7 @@
   { "id": "x-men", "title": "X-MEN", "releaseDate": "2000-07-14", "universe": "fox", "group": "X-MEN オリジナル三部作〜前日譚" },
   { "id": "x2", "title": "X-MEN2", "releaseDate": "2003-05-02", "universe": "fox", "group": "X-MEN オリジナル三部作〜前日譚" },
   { "id": "x-men-last-stand", "title": "X-MEN：ファイナルディシジョン", "releaseDate": "2006-05-26", "universe": "fox", "group": "X-MEN オリジナル三部作〜前日譚" },
-  { "id": "x-men-origins-wolverine", "title": "X-MEN ザ・ウルヴァリン", "releaseDate": "2009-05-01", "universe": "fox", "group": "X-MEN オリジナル三部作〜前日譚" },
+  { "id": "x-men-origins-wolverine", "title": "ウルヴァリン: X-MEN ZERO", "releaseDate": "2009-05-01", "universe": "fox", "group": "X-MEN オリジナル三部作〜前日譚" },
   { "id": "x-men-first-class", "title": "X-MEN：ファースト・ジェネレーション", "releaseDate": "2011-06-03", "universe": "fox", "group": "X-MEN オリジナル三部作〜前日譚" },
   { "id": "the-wolverine", "title": "ウルヴァリン：SAMURAI", "releaseDate": "2013-07-26", "universe": "fox", "group": "X-MEN オリジナル三部作〜前日譚" },
   { "id": "x-men-days-of-future-past", "title": "X-MEN：フューチャー&パスト", "releaseDate": "2014-05-23", "universe": "fox", "group": "X-MEN オリジナル三部作〜前日譚" },

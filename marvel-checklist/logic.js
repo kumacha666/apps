@@ -64,18 +64,21 @@ export function groupMovies(list) {
 }
 
 /**
- * Validates and normalizes an imported backup payload. Rejects arrays and
- * non-object payloads outright, and drops any entry that isn't a well-formed
- * { watched, rating } record rather than trusting it as-is.
+ * Validates and normalizes an imported backup payload. Rejects the whole
+ * payload (returns null) if it isn't an object, or if any entry isn't a
+ * well-formed { watched, rating } record — a partially-garbage file must
+ * not be silently accepted as "valid but mostly empty", since the caller
+ * replaces the user's existing state with the result.
  */
 export function validateImportedState(data) {
   if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
   const result = {};
   for (const [id, entry] of Object.entries(data)) {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
-    const watched = entry.watched === true;
-    const rating = VALID_RATINGS.has(entry.rating) ? entry.rating : null;
-    result[id] = { watched, rating };
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return null;
+    if (typeof entry.watched !== "boolean") return null;
+    const rating = entry.rating ?? null;
+    if (rating !== null && !VALID_RATINGS.has(rating)) return null;
+    result[id] = { watched: entry.watched, rating };
   }
   return result;
 }

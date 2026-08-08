@@ -127,7 +127,12 @@ function restoreFocus(emptyStateEl) {
     return;
   }
 
-  const fallback = document.querySelector(".movie-check");
+  // The exact control is gone; fall back to any other focusable control in
+  // the current view. A disabled checkbox (an unreleased movie) can't
+  // actually receive focus, so skip those and try a rating button next —
+  // rating buttons are never disabled.
+  const fallback =
+    document.querySelector(".movie-check:not(:disabled)") || document.querySelector(".rating-btn");
   if (fallback) {
     fallback.focus();
     return;
@@ -285,6 +290,28 @@ async function init() {
   setupBackup();
   renderCountdown();
   renderList();
+  setupDateRolloverRefresh();
+}
+
+// Countdown text and release-date gating are only computed at render time,
+// so a PWA left open across midnight (or resumed from background the next
+// day) would keep showing yesterday's countdown and disabled checkboxes for
+// movies that released overnight. Re-render whenever the tab regains
+// visibility or the calendar date actually changes while foregrounded.
+function setupDateRolloverRefresh() {
+  let lastDateKey = new Date().toDateString();
+  const refreshIfDateChanged = () => {
+    const key = new Date().toDateString();
+    if (key !== lastDateKey) {
+      lastDateKey = key;
+      renderCountdown();
+      renderList();
+    }
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshIfDateChanged();
+  });
+  setInterval(refreshIfDateChanged, 60 * 1000);
 }
 
 init();

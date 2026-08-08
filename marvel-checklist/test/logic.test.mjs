@@ -97,19 +97,29 @@ test("validateImportedState rejects arrays and non-objects", () => {
   assert.equal(validateImportedState(42), null);
 });
 
-test("validateImportedState drops malformed entries and normalizes valid ones", () => {
+test("validateImportedState normalizes a fully well-formed payload", () => {
   const result = validateImportedState({
     "iron-man": { watched: true, rating: "◎" },
-    "bad-rating": { watched: true, rating: "invalid" },
-    "not-an-object": "nope",
-    "array-entry": [],
-    "missing-fields": {},
+    "thor": { watched: false, rating: null },
+    "no-rating-field": { watched: true },
   });
   assert.deepEqual(result["iron-man"], { watched: true, rating: "◎" });
-  assert.deepEqual(result["bad-rating"], { watched: true, rating: null });
-  assert.equal(result["not-an-object"], undefined);
-  assert.equal(result["array-entry"], undefined);
-  assert.deepEqual(result["missing-fields"], { watched: false, rating: null });
+  assert.deepEqual(result["thor"], { watched: false, rating: null });
+  assert.deepEqual(result["no-rating-field"], { watched: true, rating: null });
+});
+
+test("validateImportedState rejects the whole payload if any single entry is malformed", () => {
+  // Regression test: an unrelated object like {"foo":"bar"} must not be
+  // silently accepted as an empty-but-valid backup — that would replace the
+  // user's real watch/rating data with nothing on import.
+  assert.equal(validateImportedState({ foo: "bar" }), null);
+  assert.equal(
+    validateImportedState({ "iron-man": { watched: true, rating: "◎" }, "bad-rating": { watched: true, rating: "invalid" } }),
+    null
+  );
+  assert.equal(validateImportedState({ "not-an-object": "nope" }), null);
+  assert.equal(validateImportedState({ "array-entry": [] }), null);
+  assert.equal(validateImportedState({ "missing-watched": { rating: "◎" } }), null);
 });
 
 test("RATINGS exposes exactly the four supported symbols", () => {
