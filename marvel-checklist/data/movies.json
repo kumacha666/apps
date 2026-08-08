@@ -39,10 +39,10 @@
   { "id": "deadpool-and-wolverine", "title": "デッドプール&ウルヴァリン", "releaseDate": "2024-07-26", "universe": "mcu", "group": "フェイズ5" },
   { "id": "captain-america-brave-new-world", "title": "キャプテン・アメリカ：ブレイブ・ニュー・ワールド", "releaseDate": "2025-02-14", "universe": "mcu", "group": "フェイズ5" },
   { "id": "thunderbolts", "title": "サンダーボルツ*", "releaseDate": "2025-05-02", "universe": "mcu", "group": "フェイズ5" },
-  { "id": "fantastic-four-first-steps", "title": "ファンタスティック・フォー：ファースト・ステップ", "releaseDate": "2025-07-25", "universe": "mcu", "group": "フェイズ5" },
+  { "id": "fantastic-four-first-steps", "title": "ファンタスティック・フォー：ファースト・ステップ", "releaseDate": "2025-07-25", "universe": "mcu", "group": "フェイズ6" },
 
   { "id": "spider-man-brand-new-day", "title": "スパイダーマン：ブランニュー・デイ", "releaseDate": "2026-07-31", "universe": "mcu", "group": "フェイズ6", "tentative": true },
-  { "id": "avengers-doomsday", "title": "アベンジャーズ：ダウムズデイ", "releaseDate": "2026-12-18", "universe": "mcu", "group": "フェイズ6", "tentative": true },
+  { "id": "avengers-doomsday", "title": "アベンジャーズ／ドゥームズデイ", "releaseDate": "2026-12-18", "universe": "mcu", "group": "フェイズ6", "tentative": true },
 
   { "id": "spider-man", "title": "スパイダーマン", "releaseDate": "2002-05-03", "universe": "sony", "group": "サム・ライミ版 三部作" },
   { "id": "spider-man-2", "title": "スパイダーマン2", "releaseDate": "2004-06-30", "universe": "sony", "group": "サム・ライミ版 三部作" },

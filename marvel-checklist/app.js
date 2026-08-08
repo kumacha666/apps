@@ -1,12 +1,25 @@
+import {
+  RATINGS,
+  UNIVERSE_LABELS,
+  DOOMSDAY_ID,
+  isReleased,
+  daysUntil,
+  formatMonth,
+  getEntry,
+  computeProgress,
+  filterByUniverse,
+  filterUnwatched,
+  groupMovies,
+  validateImportedState,
+} from "./logic.js";
+
 const STORAGE_KEY = "marvel-checklist-state-v1";
-const RATINGS = ["◎", "〇", "△", "✕"];
-const UNIVERSE_LABELS = { mcu: "MCU", sony: "ソニー", fox: "フォックス", other: "その他" };
-const DOOMSDAY_ID = "avengers-doomsday";
 
 let movies = [];
 let state = loadState();
 let currentUniverse = "all";
 let unwatchedOnly = false;
+let pendingFocus = null; // { movieId, control } to restore focus after a re-render
 
 function loadState() {
   try {
@@ -21,31 +34,16 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-function getEntry(id) {
-  return state[id] || { watched: false, rating: null };
-}
-
 function setWatched(id, watched) {
-  const entry = getEntry(id);
-  entry.watched = watched;
-  state[id] = entry;
+  const entry = getEntry(state, id);
+  state[id] = { ...entry, watched };
   saveState();
 }
 
 function setRating(id, rating) {
-  const entry = getEntry(id);
-  entry.rating = entry.rating === rating ? null : rating;
-  state[id] = entry;
+  const entry = getEntry(state, id);
+  state[id] = { ...entry, rating: entry.rating === rating ? null : rating };
   saveState();
-}
-
-function isReleased(movie) {
-  return new Date(movie.releaseDate) <= new Date();
-}
-
-function formatDate(dateStr) {
-  const d = new Date(dateStr);
-  return `${d.getFullYear()}年${d.getMonth() + 1}月`;
 }
 
 function renderCountdown() {
@@ -55,9 +53,7 @@ function renderCountdown() {
     el.textContent = "";
     return;
   }
-  const today = new Date();
-  const target = new Date(doomsday.releaseDate);
-  const diffDays = Math.ceil((target - today) / (1000 * 60 * 60 * 24));
+  const diffDays = daysUntil(doomsday.releaseDate);
   if (diffDays > 0) {
     el.innerHTML = `『${doomsday.title}』公開まで <strong>あと${diffDays}日</strong>`;
   } else if (diffDays === 0) {
@@ -67,44 +63,23 @@ function renderCountdown() {
   }
 }
 
-function renderProgress(filtered) {
-  const total = filtered.filter(isReleased).length;
-  const watched = filtered.filter((m) => isReleased(m) && getEntry(m.id).watched).length;
-  const pct = total > 0 ? Math.round((watched / total) * 100) : 0;
+function renderProgress(universeFiltered) {
+  const { total, watched, pct } = computeProgress(universeFiltered, state);
   document.getElementById("progress-fill").style.width = `${pct}%`;
   document.getElementById("progress-text").textContent =
     total > 0 ? `視聴済み ${watched} / ${total} 本（${pct}%）` : "対象の映画がありません";
 }
 
-function filteredMovies() {
-  return movies.filter((m) => {
-    if (currentUniverse !== "all" && m.universe !== currentUniverse) return false;
-    if (unwatchedOnly && getEntry(m.id).watched) return false;
-    return true;
-  });
-}
-
-function groupMovies(list) {
-  const groups = [];
-  const map = new Map();
-  for (const m of list) {
-    if (!map.has(m.group)) {
-      const g = { title: m.group, items: [] };
-      map.set(m.group, g);
-      groups.push(g);
-    }
-    map.get(m.group).items.push(m);
-  }
-  return groups;
-}
-
 function renderList() {
-  const filtered = filteredMovies();
-  renderProgress(filtered);
+  const universeFiltered = filterByUniverse(movies, currentUniverse);
+  renderProgress(universeFiltered);
+
+  const displayList = unwatchedOnly ? filterUnwatched(universeFiltered, state) : universeFiltered;
+
   const listEl = document.getElementById("movie-list");
   listEl.innerHTML = "";
 
-  if (filtered.length === 0) {
+  if (displayList.length === 0) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
     empty.textContent = "該当する映画がありません";
@@ -112,8 +87,7 @@ function renderList() {
     return;
   }
 
-  const groups = groupMovies(filtered);
-  for (const group of groups) {
+  for (const group of groupMovies(displayList)) {
     const groupEl = document.createElement("div");
     groupEl.className = "group";
 
@@ -127,10 +101,24 @@ function renderList() {
     }
     listEl.appendChild(groupEl);
   }
+
+  restoreFocus();
+}
+
+function restoreFocus() {
+  if (!pendingFocus) return;
+  const { movieId, control } = pendingFocus;
+  pendingFocus = null;
+  const selector =
+    control === "check"
+      ? `.movie-check[data-movie-id="${movieId}"]`
+      : `.rating-btn[data-movie-id="${movieId}"][data-rating="${control}"]`;
+  const el = document.querySelector(selector);
+  if (el) el.focus();
 }
 
 function renderMovieCard(movie) {
-  const entry = getEntry(movie.id);
+  const entry = getEntry(state, movie.id);
   const released = isReleased(movie);
 
   const card = document.createElement("div");
@@ -142,9 +130,11 @@ function renderMovieCard(movie) {
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.className = "movie-check";
+  checkbox.dataset.movieId = movie.id;
   checkbox.checked = entry.watched;
   checkbox.disabled = !released;
   checkbox.addEventListener("change", () => {
+    pendingFocus = { movieId: movie.id, control: "check" };
     setWatched(movie.id, checkbox.checked);
     renderCountdown();
     renderList();
@@ -159,7 +149,7 @@ function renderMovieCard(movie) {
 
   const metaEl = document.createElement("p");
   metaEl.className = "movie-meta";
-  metaEl.innerHTML = `<span>${UNIVERSE_LABELS[movie.universe]}</span><span>${formatDate(movie.releaseDate)}</span>`;
+  metaEl.innerHTML = `<span>${UNIVERSE_LABELS[movie.universe]}</span><span>${formatMonth(movie.releaseDate)}</span>`;
   if (!released) {
     const badge = document.createElement("span");
     badge.className = "badge-upcoming";
@@ -175,12 +165,19 @@ function renderMovieCard(movie) {
 
   const ratingRow = document.createElement("div");
   ratingRow.className = "rating-row";
+  ratingRow.setAttribute("role", "group");
+  ratingRow.setAttribute("aria-label", `${movie.title}の見るべき度合い`);
   for (const symbol of RATINGS) {
+    const selected = entry.rating === symbol;
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "rating-btn" + (entry.rating === symbol ? " selected" : "");
+    btn.className = "rating-btn" + (selected ? " selected" : "");
     btn.textContent = symbol;
+    btn.dataset.movieId = movie.id;
+    btn.dataset.rating = symbol;
+    btn.setAttribute("aria-pressed", String(selected));
     btn.addEventListener("click", () => {
+      pendingFocus = { movieId: movie.id, control: symbol };
       setRating(movie.id, symbol);
       renderList();
     });
@@ -195,8 +192,12 @@ function setupTabs() {
   const tabs = document.querySelectorAll("#universe-tabs .tab");
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
-      tabs.forEach((t) => t.classList.remove("active"));
+      tabs.forEach((t) => {
+        t.classList.remove("active");
+        t.setAttribute("aria-pressed", "false");
+      });
       tab.classList.add("active");
+      tab.setAttribute("aria-pressed", "true");
       currentUniverse = tab.dataset.universe;
       renderList();
     });
@@ -229,15 +230,20 @@ function setupBackup() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
+      let parsed;
       try {
-        const imported = JSON.parse(reader.result);
-        if (typeof imported !== "object" || imported === null) throw new Error("invalid");
-        state = imported;
+        parsed = JSON.parse(reader.result);
+      } catch (e) {
+        parsed = undefined;
+      }
+      const validated = parsed === undefined ? null : validateImportedState(parsed);
+      if (!validated) {
+        alert("読み込みに失敗しました。正しいバックアップファイルを選択してください。");
+      } else {
+        state = validated;
         saveState();
         renderCountdown();
         renderList();
-      } catch (e) {
-        alert("読み込みに失敗しました。正しいバックアップファイルを選択してください。");
       }
       fileInput.value = "";
     };

@@ -24,12 +24,12 @@
     </section>
 
     <section class="controls">
-      <div id="universe-tabs" class="tabs" role="tablist">
-        <button class="tab active" data-universe="all">すべて</button>
-        <button class="tab" data-universe="mcu">MCU</button>
-        <button class="tab" data-universe="sony">ソニー</button>
-        <button class="tab" data-universe="fox">フォックス</button>
-        <button class="tab" data-universe="other">その他</button>
+      <div id="universe-tabs" class="tabs" role="group" aria-label="ユニバースで絞り込み">
+        <button class="tab active" data-universe="all" aria-pressed="true">すべて</button>
+        <button class="tab" data-universe="mcu" aria-pressed="false">MCU</button>
+        <button class="tab" data-universe="sony" aria-pressed="false">ソニー</button>
+        <button class="tab" data-universe="fox" aria-pressed="false">フォックス</button>
+        <button class="tab" data-universe="other" aria-pressed="false">その他</button>
       </div>
       <label class="unwatched-toggle">
         <input type="checkbox" id="unwatched-only">
@@ -57,7 +57,7 @@
     </section>
   </div>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
   <script>
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("sw.js");
