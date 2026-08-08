@@ -67,7 +67,7 @@ function renderProgress(universeFiltered) {
   const { total, watched, pct } = computeProgress(universeFiltered, state);
   document.getElementById("progress-fill").style.width = `${pct}%`;
   document.getElementById("progress-text").textContent =
-    total > 0 ? `視聴済み ${watched} / ${total} 本（${pct}%）` : "対象の映画がありません";
+    total > 0 ? `視聴済み ${watched} / ${total} 作品（${pct}%）` : "対象の作品がありません";
 }
 
 function renderList() {
@@ -82,7 +82,7 @@ function renderList() {
   if (displayList.length === 0) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
-    empty.textContent = "該当する映画がありません";
+    empty.textContent = "該当する作品がありません";
     empty.tabIndex = -1;
     listEl.appendChild(empty);
     restoreFocus(empty);
@@ -283,7 +283,7 @@ async function init() {
     movies = await res.json();
   } catch (e) {
     document.getElementById("movie-list").innerHTML =
-      '<p class="empty-state">映画データを読み込めませんでした。通信環境を確認して再読み込みしてください。</p>';
+      '<p class="empty-state">作品データを読み込めませんでした。通信環境を確認して再読み込みしてください。</p>';
     return;
   }
   setupTabs();

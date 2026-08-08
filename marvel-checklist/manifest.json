@@ -1,7 +1,7 @@
 {
-  "name": "マーベル映画チェックリスト",
+  "name": "マーベル映画・ドラマチェックリスト",
   "short_name": "Marvelチェック",
-  "description": "公開済みマーベル映画の視聴済みチェック＆見るべき度合い管理",
+  "description": "公開済みマーベル映画・ドラマシリーズの視聴済みチェック＆見るべき度合い管理",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#12080a",
