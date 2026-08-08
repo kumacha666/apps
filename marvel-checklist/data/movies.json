@@ -91,7 +91,10 @@
   { "id": "daredevil-born-again-s1", "title": "デアデビル：ボーン・アゲイン シーズン1", "releaseDate": "2025-03-04", "universe": "mcu", "group": "フェイズ5", "type": "series" },
   { "id": "ironheart-s1", "title": "アイアンハート シーズン1", "releaseDate": "2025-06-24", "universe": "mcu", "group": "フェイズ5", "type": "series" },
   { "id": "spider-man-friendly-neighborhood-s1", "title": "スパイダーマン：フレンドリー・ネイバーフッド シーズン1", "releaseDate": "2025-01-29", "universe": "mcu", "group": "フェイズ5", "type": "series" },
-  { "id": "eyes-of-wakanda-s1", "title": "アイズ・オブ・ワカンダ シーズン1", "releaseDate": "2025-08-06", "universe": "mcu", "group": "フェイズ6", "type": "series" },
+  { "id": "eyes-of-wakanda-s1", "title": "アイズ・オブ・ワカンダ シーズン1", "releaseDate": "2025-08-01", "universe": "mcu", "group": "フェイズ6", "type": "series" },
   { "id": "marvel-zombies-s1", "title": "マーベル・ゾンビーズ シーズン1", "releaseDate": "2025-09-24", "universe": "mcu", "group": "フェイズ6", "type": "series" },
-  { "id": "wonder-man-s1", "title": "ワンダーマン シーズン1", "releaseDate": "2026-01-14", "universe": "mcu", "group": "フェイズ6", "type": "series", "tentative": true }
+  { "id": "wonder-man-s1", "title": "ワンダーマン シーズン1", "releaseDate": "2026-01-27", "universe": "mcu", "group": "フェイズ6", "type": "series" },
+  { "id": "i-am-groot-s1", "title": "アイ・アム・グルート シーズン1", "releaseDate": "2022-08-10", "universe": "mcu", "group": "フェイズ4", "type": "series" },
+  { "id": "i-am-groot-s2", "title": "アイ・アム・グルート シーズン2", "releaseDate": "2023-08-10", "universe": "mcu", "group": "フェイズ5", "type": "series" },
+  { "id": "daredevil-born-again-s2", "title": "デアデビル：ボーン・アゲイン シーズン2", "releaseDate": "2026-03-04", "universe": "mcu", "group": "フェイズ5", "type": "series" }
 ]
