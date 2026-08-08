@@ -173,7 +173,8 @@ function renderMovieCard(movie) {
 
   const metaEl = document.createElement("p");
   metaEl.className = "movie-meta";
-  metaEl.innerHTML = `<span>${UNIVERSE_LABELS[movie.universe]}</span><span>${formatMonth(movie.releaseDate)}</span>`;
+  const typeLabel = movie.type === "series" ? "📺 シリーズ" : "🎬 映画";
+  metaEl.innerHTML = `<span class="type-badge">${typeLabel}</span><span>${UNIVERSE_LABELS[movie.universe]}</span><span>${formatMonth(movie.releaseDate)}</span>`;
   if (!released) {
     const badge = document.createElement("span");
     badge.className = "badge-upcoming";

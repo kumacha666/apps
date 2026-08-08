@@ -90,6 +90,21 @@ test("groupMovies preserves first-appearance group order and buckets correctly",
   assert.equal(groups[0].items.length, 2);
 });
 
+test("groupMovies sorts each group's items by release date, independent of input order", () => {
+  // A movie and a TV series can share a phase group but be added to
+  // movies.json in any order; display order must still follow release date.
+  const outOfOrder = [
+    { id: "later-series", title: "Later Series S1", releaseDate: "2022-06-01", universe: "mcu", group: "フェイズ4", type: "series" },
+    { id: "earliest-movie", title: "Earliest Movie", releaseDate: "2021-01-01", universe: "mcu", group: "フェイズ4", type: "movie" },
+    { id: "middle-series", title: "Middle Series S1", releaseDate: "2021-06-01", universe: "mcu", group: "フェイズ4", type: "series" },
+  ];
+  const groups = groupMovies(outOfOrder);
+  assert.deepEqual(
+    groups[0].items.map((m) => m.id),
+    ["earliest-movie", "middle-series", "later-series"]
+  );
+});
+
 test("validateImportedState rejects arrays and non-objects", () => {
   assert.equal(validateImportedState([]), null);
   assert.equal(validateImportedState(null), null);

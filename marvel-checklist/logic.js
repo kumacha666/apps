@@ -49,6 +49,11 @@ export function filterUnwatched(movies, state) {
   return movies.filter((m) => !getEntry(state, m.id).watched);
 }
 
+// Buckets by `group` (first-appearance order decides group order), then
+// sorts each bucket by release date. Sorting here — rather than relying on
+// insertion order in movies.json — lets movies and TV series share a phase
+// group and still display in true chronological (watch) order regardless of
+// where each entry happens to sit in the source data file.
 export function groupMovies(list) {
   const groups = [];
   const map = new Map();
@@ -59,6 +64,9 @@ export function groupMovies(list) {
       groups.push(g);
     }
     map.get(m.group).items.push(m);
+  }
+  for (const g of groups) {
+    g.items.sort((a, b) => parseLocalDate(a.releaseDate) - parseLocalDate(b.releaseDate));
   }
   return groups;
 }
