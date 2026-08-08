@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>マーベル映画チェックリスト</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#12080a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <h1>マーベル映画<br>チェックリスト</h1>
+      <p id="countdown" class="countdown"></p>
+    </header>
+
+    <section class="progress-section">
+      <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+      <p id="progress-text" class="progress-text"></p>
+    </section>
+
+    <section class="controls">
+      <div id="universe-tabs" class="tabs" role="tablist">
+        <button class="tab active" data-universe="all">すべて</button>
+        <button class="tab" data-universe="mcu">MCU</button>
+        <button class="tab" data-universe="sony">ソニー</button>
+        <button class="tab" data-universe="fox">フォックス</button>
+        <button class="tab" data-universe="other">その他</button>
+      </div>
+      <label class="unwatched-toggle">
+        <input type="checkbox" id="unwatched-only">
+        未視聴のみ表示
+      </label>
+    </section>
+
+    <main id="movie-list" class="movie-list"></main>
+
+    <section class="settings-section">
+      <details>
+        <summary>使い方・データについて</summary>
+        <div class="settings-content">
+          <div class="guide-item"><span class="guide-icon">✅</span><span>タイトルをタップで視聴済みをオン/オフ</span></div>
+          <div class="guide-item"><span class="guide-icon">⭐</span><span>◎〇△✕ ボタンで「見るべき度合い」を設定（もう一度押すと解除）</span></div>
+          <div class="guide-item"><span class="guide-icon">💾</span><span>データはこの端末のブラウザ内（localStorage）にのみ保存されます</span></div>
+          <div class="guide-item"><span class="guide-icon">📱</span><span>ホーム画面に追加するとオフラインでも使えます</span></div>
+          <div class="backup-buttons">
+            <button id="btn-export" class="btn btn-secondary">データを書き出す</button>
+            <button id="btn-import" class="btn btn-secondary">データを読み込む</button>
+            <input type="file" id="import-file" accept="application/json" hidden>
+          </div>
+        </div>
+      </details>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js");
+    }
+  </script>
+</body>
+</html>
