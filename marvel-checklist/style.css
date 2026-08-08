@@ -1,0 +1,294 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #12080a;
+  color: #f0e6e0;
+  font-family: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1.6;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  padding-bottom: 40px;
+}
+
+#app {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+.app-header {
+  text-align: center;
+  padding: 28px 0 12px;
+}
+
+.app-header h1 {
+  font-size: 1.5rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  background: linear-gradient(135deg, #ff3b3b, #ffb020);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.countdown {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: #d8a0a0;
+}
+
+.countdown strong {
+  color: #ffb020;
+  font-size: 1rem;
+}
+
+.progress-section {
+  margin: 8px 0 16px;
+}
+
+.progress-bar {
+  height: 10px;
+  background: #2a1416;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #ff3b3b, #ffb020);
+  border-radius: 5px;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  text-align: center;
+  font-size: 0.8rem;
+  color: #c09090;
+  margin-top: 8px;
+}
+
+.controls {
+  margin-bottom: 16px;
+}
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.tab {
+  flex: 0 0 auto;
+  background: #1d1113;
+  border: 1px solid #3a2224;
+  color: #d0b0b0;
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab.active {
+  background: linear-gradient(135deg, #ff3b3b, #b8202a);
+  border-color: transparent;
+  color: #fff;
+  font-weight: bold;
+}
+
+.unwatched-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: #c8a8a8;
+  margin-top: 12px;
+  cursor: pointer;
+}
+
+.unwatched-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: #ff3b3b;
+}
+
+.movie-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.group-title {
+  font-size: 0.78rem;
+  color: #ff9a4a;
+  font-weight: bold;
+  letter-spacing: 0.04em;
+  padding-left: 2px;
+}
+
+.movie-card {
+  background: #1a0f11;
+  border: 1px solid #2e181a;
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.movie-card.watched {
+  border-color: #4a2a1a;
+  background: #1d1512;
+}
+
+.movie-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.movie-check {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  accent-color: #ff3b3b;
+  margin-top: 2px;
+}
+
+.movie-check:disabled {
+  opacity: 0.35;
+}
+
+.movie-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.movie-title {
+  font-size: 0.95rem;
+  color: #f0e6e0;
+}
+
+.movie-card.watched .movie-title {
+  color: #a09090;
+  text-decoration: line-through;
+  text-decoration-color: #6a4040;
+}
+
+.movie-meta {
+  font-size: 0.75rem;
+  color: #a07070;
+  margin-top: 2px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.badge-upcoming {
+  display: inline-block;
+  background: #4a2a10;
+  color: #ffb020;
+  font-size: 0.68rem;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+.rating-row {
+  display: flex;
+  gap: 6px;
+}
+
+.rating-btn {
+  flex: 1;
+  background: #241416;
+  border: 1px solid #3a2224;
+  color: #b09090;
+  border-radius: 8px;
+  padding: 8px 0;
+  font-size: 1.05rem;
+  font-family: inherit;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.rating-btn.selected {
+  background: linear-gradient(135deg, #ff3b3b, #ffb020);
+  border-color: transparent;
+  color: #1a0f11;
+  font-weight: bold;
+}
+
+.empty-state {
+  text-align: center;
+  color: #a07070;
+  padding: 40px 0;
+  font-size: 0.9rem;
+}
+
+.settings-section {
+  margin-top: 28px;
+  font-size: 0.85rem;
+}
+
+.settings-section summary {
+  cursor: pointer;
+  color: #d0b0b0;
+  padding: 8px 0;
+}
+
+.settings-content {
+  padding: 8px 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.guide-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: #b09090;
+  font-size: 0.82rem;
+}
+
+.guide-icon {
+  flex-shrink: 0;
+}
+
+.backup-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.btn {
+  font-family: inherit;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  border: none;
+}
+
+.btn-secondary {
+  flex: 1;
+  background: #241416;
+  border: 1px solid #3a2224;
+  color: #d0b0b0;
+}

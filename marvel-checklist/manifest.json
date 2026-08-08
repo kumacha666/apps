@@ -1,0 +1,17 @@
+{
+  "name": "マーベル映画チェックリスト",
+  "short_name": "Marvelチェック",
+  "description": "公開済みマーベル映画の視聴済みチェック＆見るべき度合い管理",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#12080a",
+  "theme_color": "#12080a",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

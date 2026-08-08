@@ -20,6 +20,7 @@
 /emoji-dm/           絵文字チャット — 静的PWA + Firebase (RTDB/Functions/FCM)
 /lifelog/            ライフログ＋ライフコーチ — 静的PWA
 /love-lab/           静的PWA
+/marvel-checklist/   マーベル映画チェックリスト（視聴済み管理＋見るべき度合い評価）— 静的PWA、JSONデータ駆動
 /mhwilds-karikan/    モンハンワイルズ計算ツール — 静的PWA、JSONデータ駆動
 /mori-no-yakai/      「森の夜会」ワンナイト人狼系アプリ — Vite+TS、ビルド有、Firebase RTDB
 /tapu-neko/          シンプルな単独ウィジェット（PWA化なし）
@@ -32,13 +33,14 @@
 ## アプリ種別とアーキテクチャパターン
 
 ### A. 静的PWA（ビルド不要）
-`emoji-dm`, `lifelog`, `love-lab`, `mhwilds-karikan` が該当。共通構成:
+`emoji-dm`, `lifelog`, `love-lab`, `marvel-checklist`, `mhwilds-karikan` が該当。共通構成:
 - `index.html` + `style.css` + `app.js`（バニラJS、フレームワーク無し）
 - `manifest.json` + `sw.js`（PWA化、アイコン `icon-192.png` / `icon-512.png`）
 - Service Worker はネットワーク優先設計（キャッシュはオフライン用フォールバック）。「新しいバージョンがあります」のような更新トースト通知は、ネットワーク優先では常に最新を取得するため不正確になりやすく、過去に削除された実績がある（`tapu-neko`/`mhwilds-karikan`/`love-lab` 一括追加コミット参照）
 - 変更はファイルを直接編集してコミットするだけで GitHub Pages に反映される（ビルドステップなし）
 - `tapu-neko` はPWA化されていない最小構成（`manifest.json`はあるが`sw.js`なし）
 - `lifelog` はCSS/JSを分離せず、単一の`index.html`にインライン（`style.css`/`app.js`は無い）。アイコンは`manifest.json`内のSVGデータURI（📔）のみで`icon-192.png`/`icon-512.png`ファイルは無い
+- `marvel-checklist` は`icon-192.png`/`icon-512.png`のPNGファイルを持たず、単一の`icon.svg`（`sizes: "any"`）を`manifest.json`から参照する方式（PNG生成不要でスケーラブル）。データは`data/movies.json`にMCU（フェイズ別）・ソニー（サム・ライミ版／アメイジング・スパイダーマン／SSU）・フォックス（X-MEN系／ファンタスティック・フォー）・その他（ブレイド等）の作品を`releaseDate`付きで収録し、視聴済みフラグと見るべき度合い評価（◎〇△✕、任意項目）は`localStorage`（`marvel-checklist-state-v1`）に保存。未公開作品（`releaseDate`が未来）は視聴済みチェックを無効化しつつ評価のみ設定可能。2026-08-08時点でランディングページ未掲載（URLを直接踏んで確認する運用）。**A系の中で唯一ユニットテストを持つ例外**（ビルドステップは無いが、公開日判定・進捗集計・インポート検証などのロジックを`logic.js`に切り出しており、`npm test`（Node標準テストランナー、`test/logic.test.mjs`）で検証する。`app.js`はDOM描画のみを担当しESモジュールとして`logic.js`を読み込む）
 
 ### B. Vite+TypeScriptビルドアプリ
 `7metch`, `7metch2`, `enblo`, `enblo-classic`, `combrawl` が該当。共通構成:
