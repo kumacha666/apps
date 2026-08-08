@@ -83,7 +83,9 @@ function renderList() {
     const empty = document.createElement("p");
     empty.className = "empty-state";
     empty.textContent = "該当する映画がありません";
+    empty.tabIndex = -1;
     listEl.appendChild(empty);
+    restoreFocus(empty);
     return;
   }
 
@@ -102,19 +104,36 @@ function renderList() {
     listEl.appendChild(groupEl);
   }
 
-  restoreFocus();
+  restoreFocus(null);
 }
 
-function restoreFocus() {
+// Restores keyboard focus to the control the user just interacted with.
+// When that control's movie no longer appears in the current view (e.g. it
+// was just marked watched while "unwatched only" is active), focus falls
+// back to the next visible checkbox, or to the empty-state message if the
+// list is now empty, rather than being silently dropped to <body>.
+function restoreFocus(emptyStateEl) {
   if (!pendingFocus) return;
   const { movieId, control } = pendingFocus;
   pendingFocus = null;
+
   const selector =
     control === "check"
       ? `.movie-check[data-movie-id="${movieId}"]`
       : `.rating-btn[data-movie-id="${movieId}"][data-rating="${control}"]`;
-  const el = document.querySelector(selector);
-  if (el) el.focus();
+  const exact = document.querySelector(selector);
+  if (exact) {
+    exact.focus();
+    return;
+  }
+
+  const fallback = document.querySelector(".movie-check");
+  if (fallback) {
+    fallback.focus();
+    return;
+  }
+
+  if (emptyStateEl) emptyStateEl.focus();
 }
 
 function renderMovieCard(movie) {
@@ -252,8 +271,15 @@ function setupBackup() {
 }
 
 async function init() {
-  const res = await fetch("data/movies.json");
-  movies = await res.json();
+  try {
+    const res = await fetch("data/movies.json");
+    if (!res.ok) throw new Error(`movies.json fetch failed: ${res.status}`);
+    movies = await res.json();
+  } catch (e) {
+    document.getElementById("movie-list").innerHTML =
+      '<p class="empty-state">映画データを読み込めませんでした。通信環境を確認して再読み込みしてください。</p>';
+    return;
+  }
   setupTabs();
   setupUnwatchedToggle();
   setupBackup();
