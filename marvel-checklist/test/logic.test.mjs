@@ -90,6 +90,59 @@ test("groupMovies preserves first-appearance group order and buckets correctly",
   assert.equal(groups[0].items.length, 2);
 });
 
+test("groupMovies keeps group order stable across a display-only filter, using orderSource", () => {
+  // Regression test mirroring the real bug: movies.json lists all MCU
+  // *movies* first (establishing early group ranks for フェイズ1/フェイズ4),
+  // then Sony, then the MCU *series* entries appended at the very end. As
+  // long as a group's "anchor" movie is present, its rank looks fine — but
+  // once that anchor is filtered out (e.g. marked watched) while only its
+  // late-positioned series sibling remains, the OLD implementation (which
+  // derived group order from the filtered list's own first-appearance)
+  // would push フェイズ4 after ソニー, since the series entry physically
+  // sits after the Sony movie in the source array.
+  const orderSource = [
+    { id: "mcu-phase1-movie", title: "Phase1 Movie", releaseDate: "2008-01-01", universe: "mcu", group: "フェイズ1" },
+    { id: "mcu-phase4-anchor-movie", title: "Phase4 Anchor Movie", releaseDate: "2021-07-01", universe: "mcu", group: "フェイズ4" },
+    { id: "sony-movie", title: "Sony Movie", releaseDate: "2002-01-01", universe: "sony", group: "旧三部作" },
+    { id: "mcu-phase4-series", title: "Phase4 Series S1", releaseDate: "2021-01-01", universe: "mcu", group: "フェイズ4" },
+  ];
+  // Simulate "unwatched only": both MCU movies (フェイズ1 and the フェイズ4
+  // anchor) were watched and filtered out, leaving only Sony's movie and
+  // the フェイズ4 series unwatched.
+  const displayList = orderSource.filter(
+    (m) => m.id !== "mcu-phase1-movie" && m.id !== "mcu-phase4-anchor-movie"
+  );
+
+  const buggyGroupOrder = groupMovies(displayList); // orderSource defaults to displayList itself
+  assert.deepEqual(
+    buggyGroupOrder.map((g) => g.title),
+    ["旧三部作", "フェイズ4"],
+    "sanity check: without a stable orderSource, フェイズ4 does drift after 旧三部作"
+  );
+
+  const fixedGroupOrder = groupMovies(displayList, orderSource);
+  assert.deepEqual(
+    fixedGroupOrder.map((g) => g.title),
+    ["フェイズ4", "旧三部作"],
+    "with orderSource, フェイズ4 keeps its rank from the stable universe list"
+  );
+});
+
+test("groupMovies sorts each group's items by release date, independent of input order", () => {
+  // A movie and a TV series can share a phase group but be added to
+  // movies.json in any order; display order must still follow release date.
+  const outOfOrder = [
+    { id: "later-series", title: "Later Series S1", releaseDate: "2022-06-01", universe: "mcu", group: "フェイズ4", type: "series" },
+    { id: "earliest-movie", title: "Earliest Movie", releaseDate: "2021-01-01", universe: "mcu", group: "フェイズ4", type: "movie" },
+    { id: "middle-series", title: "Middle Series S1", releaseDate: "2021-06-01", universe: "mcu", group: "フェイズ4", type: "series" },
+  ];
+  const groups = groupMovies(outOfOrder);
+  assert.deepEqual(
+    groups[0].items.map((m) => m.id),
+    ["earliest-movie", "middle-series", "later-series"]
+  );
+});
+
 test("validateImportedState rejects arrays and non-objects", () => {
   assert.equal(validateImportedState([]), null);
   assert.equal(validateImportedState(null), null);

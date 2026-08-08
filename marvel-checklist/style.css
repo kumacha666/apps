@@ -200,6 +200,11 @@ body {
   align-items: center;
 }
 
+.type-badge {
+  color: #d0a0a0;
+  white-space: nowrap;
+}
+
 .badge-upcoming {
   display: inline-block;
   background: #4a2a10;
