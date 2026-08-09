@@ -78,16 +78,16 @@
   { "id": "rocket-raccoon", "name": "ロケット", "appearances": [
     { "movieId": "guardians-of-the-galaxy", "role": "main" }, { "movieId": "guardians-of-the-galaxy-vol-2", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
     { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "guardians-of-the-galaxy-vol-3", "role": "main" },
-    { "movieId": "thor-love-and-thunder", "role": "main" }
+    { "movieId": "thor-love-and-thunder", "role": "sub" }
   ] },
   { "id": "groot", "name": "グルート", "appearances": [
     { "movieId": "guardians-of-the-galaxy", "role": "main" }, { "movieId": "guardians-of-the-galaxy-vol-2", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
     { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "guardians-of-the-galaxy-vol-3", "role": "main" },
-    { "movieId": "thor-love-and-thunder", "role": "main" }, { "movieId": "i-am-groot-s1", "role": "main" }, { "movieId": "i-am-groot-s2", "role": "main" }
+    { "movieId": "thor-love-and-thunder", "role": "sub" }, { "movieId": "i-am-groot-s1", "role": "main" }, { "movieId": "i-am-groot-s2", "role": "main" }
   ] },
   { "id": "drax", "name": "ドラックス", "appearances": [
     { "movieId": "guardians-of-the-galaxy", "role": "main" }, { "movieId": "guardians-of-the-galaxy-vol-2", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
-    { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "guardians-of-the-galaxy-vol-3", "role": "main" }
+    { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "guardians-of-the-galaxy-vol-3", "role": "main" }, { "movieId": "thor-love-and-thunder", "role": "sub" }
   ] },
   { "id": "nebula", "name": "ネビュラ", "appearances": [
     { "movieId": "guardians-of-the-galaxy", "role": "main" }, { "movieId": "guardians-of-the-galaxy-vol-2", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
@@ -95,7 +95,7 @@
   ] },
   { "id": "mantis", "name": "マンティス", "appearances": [
     { "movieId": "guardians-of-the-galaxy-vol-2", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" }, { "movieId": "avengers-endgame", "role": "main" },
-    { "movieId": "guardians-of-the-galaxy-vol-3", "role": "main" }, { "movieId": "thor-love-and-thunder", "role": "main" }
+    { "movieId": "guardians-of-the-galaxy-vol-3", "role": "main" }, { "movieId": "thor-love-and-thunder", "role": "sub" }
   ] },
   { "id": "carol-danvers", "name": "キャロル・ダンヴァース／キャプテン・マーベル", "appearances": [
     { "movieId": "captain-marvel", "role": "main" }, { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "the-marvels", "role": "main" }

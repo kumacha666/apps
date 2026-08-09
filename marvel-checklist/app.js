@@ -34,7 +34,7 @@ let movies = [];
 let characters = [];
 let ownState = loadJSON(OWN_STATE_KEY, {});
 let friends = loadJSON(FRIENDS_KEY, {});
-let activeProfileId = localStorage.getItem(ACTIVE_PROFILE_KEY) || SELF;
+let activeProfileId = loadString(ACTIVE_PROFILE_KEY, SELF);
 let currentUniverse = "all";
 let unwatchedOnly = false;
 let activeRatingFilters = new Set(); // display-only filter, like unwatchedOnly — never affects progress or group order
@@ -44,6 +44,19 @@ function loadJSON(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
     return raw ? JSON.parse(raw) : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+// localStorage.getItem() can itself throw (e.g. SecurityError when storage
+// is disabled/blocked by browser settings). The three `let` initializers
+// above run at module top-level during ES module evaluation, so an
+// uncaught exception here — unlike one inside init() — would abort module
+// evaluation entirely and the app would never even call init().
+function loadString(key, fallback) {
+  try {
+    return localStorage.getItem(key) || fallback;
   } catch (e) {
     return fallback;
   }
@@ -387,6 +400,19 @@ function setLocalStorageItem(key, raw) {
 // impersonating its old share identity, so a future share link would still
 // look, to a friend's device, like an update from the *previous* identity
 // rather than the (possibly different) restored one.
+const BACKUP_KEYS = [OWN_STATE_KEY, FRIENDS_KEY, ACTIVE_PROFILE_KEY, SHARE_ID_KEY];
+
+// Removes all four keys, then writes `values` for each — in that order.
+// Removing first (rather than overwriting in place) guarantees maximum
+// available headroom regardless of how the old and new values compare in
+// size: e.g. if the old `own` was larger than the new one but the new
+// `friends` is larger than the old one, writing in place could still throw
+// partway through even though the *total* new footprint fits.
+function writeAllBackupKeys(values) {
+  for (const key of BACKUP_KEYS) localStorage.removeItem(key);
+  for (const key of BACKUP_KEYS) setLocalStorageItem(key, values[key]);
+}
+
 function restoreFullBackup(validated) {
   const nextActiveProfile =
     validated.activeProfile === SELF || Object.prototype.hasOwnProperty.call(validated.friends, validated.activeProfile)
@@ -399,14 +425,26 @@ function restoreFullBackup(validated) {
     [ACTIVE_PROFILE_KEY]: localStorage.getItem(ACTIVE_PROFILE_KEY),
     [SHARE_ID_KEY]: localStorage.getItem(SHARE_ID_KEY),
   };
+  const next = {
+    [OWN_STATE_KEY]: JSON.stringify(validated.own),
+    [FRIENDS_KEY]: JSON.stringify(validated.friends),
+    [ACTIVE_PROFILE_KEY]: nextActiveProfile,
+    [SHARE_ID_KEY]: validated.shareId,
+  };
 
   try {
-    localStorage.setItem(OWN_STATE_KEY, JSON.stringify(validated.own));
-    localStorage.setItem(FRIENDS_KEY, JSON.stringify(validated.friends));
-    localStorage.setItem(ACTIVE_PROFILE_KEY, nextActiveProfile);
-    setLocalStorageItem(SHARE_ID_KEY, validated.shareId);
+    writeAllBackupKeys(next);
   } catch (e) {
-    for (const [key, raw] of Object.entries(previous)) setLocalStorageItem(key, raw);
+    // The rollback itself removes all keys first for the same headroom
+    // reason, so it can restore the previous (smaller-or-larger) values
+    // even if the failed attempt above left an oversized key behind.
+    try {
+      writeAllBackupKeys(previous);
+    } catch (e2) {
+      // Storage is exhausted even for the pre-restore values (e.g. another
+      // app on the same origin has since consumed the remaining quota) —
+      // nothing more can be safely persisted here.
+    }
     return false;
   }
 
@@ -562,15 +600,29 @@ function handleIncomingShareLink() {
     name = entered.trim();
   }
 
-  friends = upsertFriend(friends, payload.id, {
+  const previousFriends = friends;
+  const previousActiveProfileId = activeProfileId;
+  const nextFriends = upsertFriend(friends, payload.id, {
     name,
     state: payload.state,
     exportedAt: payload.exportedAt,
     importedAt: new Date().toISOString(),
   });
-  saveFriends();
-  activeProfileId = payload.id;
-  saveActiveProfile();
+  // This runs synchronously during init(), before setupTabs()/renderList()/etc.
+  // are wired up. If localStorage.setItem() throws (e.g. QuotaExceededError)
+  // and it isn't caught here, the exception propagates out of init() itself
+  // — nothing downstream of this call would ever run, leaving the whole
+  // checklist blank instead of just failing to save this one friend.
+  try {
+    friends = nextFriends;
+    activeProfileId = payload.id;
+    saveFriends();
+    saveActiveProfile();
+  } catch (e) {
+    friends = previousFriends;
+    activeProfileId = previousActiveProfileId;
+    alert("友達データの保存に失敗しました（保存容量が不足している可能性があります）。");
+  }
 }
 
 async function init() {
