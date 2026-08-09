@@ -48,6 +48,36 @@ body {
   font-size: 1rem;
 }
 
+.profile-switcher-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.profile-switcher-label {
+  font-size: 0.78rem;
+  color: #c8a8a8;
+}
+
+.profile-switcher {
+  background: #1d1113;
+  border: 1px solid #3a2224;
+  color: #f0e6e0;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.friend-view-label {
+  margin-top: 8px;
+  font-size: 0.75rem;
+  color: #ffb020;
+  text-align: center;
+}
+
 .progress-section {
   margin: 8px 0 16px;
 }
@@ -307,10 +337,12 @@ body {
   flex-shrink: 0;
 }
 
+.share-buttons,
 .backup-buttons {
   display: flex;
   gap: 8px;
   margin-top: 8px;
+  flex-wrap: wrap;
 }
 
 .btn {
@@ -327,4 +359,11 @@ body {
   background: #241416;
   border: 1px solid #3a2224;
   color: #d0b0b0;
+}
+
+.btn-danger {
+  flex: 1;
+  background: #2a1416;
+  border: 1px solid #6a2a2a;
+  color: #ff9a9a;
 }

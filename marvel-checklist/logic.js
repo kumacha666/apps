@@ -129,3 +129,128 @@ export function validateImportedState(data) {
   }
   return result;
 }
+
+// --- Friend sharing -------------------------------------------------------
+//
+// A "friend" is a named, locally-stored snapshot of someone else's watch
+// state, imported once via a share link and never auto-synced afterward.
+// The link carries a stable per-sender `id` (generated once on the sender's
+// device and reused across re-shares) so re-importing a later link from the
+// same person updates the same local entry instead of creating a duplicate.
+
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isParsableDate(value) {
+  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+}
+
+export function buildSharePayload({ id, exportedAt, state }) {
+  return JSON.stringify({ id, exportedAt, state });
+}
+
+/**
+ * Parses and validates a share-link payload string (the raw `share` query
+ * param value). Returns null for anything malformed — same "reject the
+ * whole thing" posture as validateImportedState, since a partially-garbage
+ * link must not silently create/overwrite a friend entry with junk data.
+ */
+export function parseSharePayload(raw) {
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(parsed)) return null;
+  if (typeof parsed.id !== "string" || parsed.id === "") return null;
+  if (!isParsableDate(parsed.exportedAt)) return null;
+  const state = validateImportedState(parsed.state);
+  if (!state) return null;
+  return { id: parsed.id, exportedAt: parsed.exportedAt, state };
+}
+
+export function buildShareUrl(baseUrl, payload) {
+  const url = new URL(baseUrl);
+  url.searchParams.set("share", buildSharePayload(payload));
+  return url.toString();
+}
+
+export function extractShareParam(urlString) {
+  return new URL(urlString).searchParams.get("share");
+}
+
+export function upsertFriend(friends, id, entry) {
+  return { ...friends, [id]: { ...entry } };
+}
+
+export function removeFriend(friends, id) {
+  const next = { ...friends };
+  delete next[id];
+  return next;
+}
+
+export function listFriends(friends) {
+  return Object.entries(friends)
+    .map(([id, f]) => ({ id, ...f }))
+    .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+}
+
+// --- Full backup (own state + all friends) ---------------------------------
+
+export const BACKUP_VERSION = 2;
+
+export function buildFullBackup({ own, friends, shareId, activeProfile }) {
+  return { version: BACKUP_VERSION, own, friends, shareId: shareId ?? null, activeProfile: activeProfile ?? "self" };
+}
+
+/**
+ * Validates a backup payload and normalizes it to { own, friends, shareId,
+ * activeProfile }, or returns null if malformed. Understands two shapes:
+ *
+ * - Current (versioned): { version: 2, own, friends, shareId, activeProfile }
+ * - Legacy (pre-friends-feature): a bare { [movieId]: {watched,rating} }
+ *   object, i.e. exactly what validateImportedState already accepts — old
+ *   exports never had a "version" key, so its absence is the discriminator.
+ *   These restore as own-state-only with no friends, matching what such a
+ *   file actually contained.
+ *
+ * As with validateImportedState, any single malformed piece (a bad friend
+ * entry, a bad own-state entry) rejects the entire backup rather than
+ * silently dropping data, since the caller replaces everything on restore.
+ */
+export function validateFullBackup(data) {
+  if (!isPlainObject(data)) return null;
+
+  if (!("version" in data)) {
+    const own = validateImportedState(data);
+    if (!own) return null;
+    return { own, friends: {}, shareId: null, activeProfile: "self" };
+  }
+
+  if (data.version !== BACKUP_VERSION) return null;
+
+  const own = validateImportedState(data.own ?? {});
+  if (!own) return null;
+
+  const friendsRaw = data.friends ?? {};
+  if (!isPlainObject(friendsRaw)) return null;
+
+  const friends = {};
+  for (const [id, entry] of Object.entries(friendsRaw)) {
+    if (!isPlainObject(entry)) return null;
+    if (typeof entry.name !== "string" || entry.name.trim() === "") return null;
+    const friendState = validateImportedState(entry.state ?? {});
+    if (!friendState) return null;
+    if (!isParsableDate(entry.exportedAt)) return null;
+    if (!isParsableDate(entry.importedAt)) return null;
+    friends[id] = { name: entry.name, state: friendState, exportedAt: entry.exportedAt, importedAt: entry.importedAt };
+  }
+
+  const shareId = typeof data.shareId === "string" ? data.shareId : null;
+  const activeProfile = typeof data.activeProfile === "string" ? data.activeProfile : "self";
+
+  return { own, friends, shareId, activeProfile };
+}

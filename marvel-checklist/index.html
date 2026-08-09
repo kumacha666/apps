@@ -16,6 +16,11 @@
     <header class="app-header">
       <h1>マーベル映画・ドラマ<br>チェックリスト</h1>
       <p id="countdown" class="countdown"></p>
+      <div class="profile-switcher-row">
+        <label for="profile-switcher" class="profile-switcher-label">表示中のリスト</label>
+        <select id="profile-switcher" class="profile-switcher"></select>
+      </div>
+      <p id="friend-view-label" class="friend-view-label" hidden></p>
     </header>
 
     <section class="progress-section">
@@ -48,11 +53,17 @@
           <div class="guide-item"><span class="guide-icon">✅</span><span>タイトルをタップで視聴済みをオン/オフ</span></div>
           <div class="guide-item"><span class="guide-icon">⭐</span><span>◎〇△✕ ボタンで「見るべき度合い」を設定（もう一度押すと解除）</span></div>
           <div class="guide-item"><span class="guide-icon">🔍</span><span>「見るべき優先度で絞り込み」で複数選択可（例：◎と〇だけ表示）。未評価の作品だけ絞り込むこともできます</span></div>
+          <div class="guide-item"><span class="guide-icon">👥</span><span>「共有リンクを作成」で自分のリストのリンクを発行し、友達に送れます。友達がそのリンクを開くとリンク先ではなく開いた側の端末に、名前付きでリストが保存されます（以後の自動同期はされません）</span></div>
+          <div class="guide-item"><span class="guide-icon">🔀</span><span>ヘッダーの「表示中のリスト」で自分／保存した友達のリストを切り替えられます。友達のリストを表示中に視聴済み・評価を編集すると、その友達のデータとして保存されます（自分のデータは変わりません）</span></div>
           <div class="guide-item"><span class="guide-icon">💾</span><span>データはこの端末のブラウザ内（localStorage）にのみ保存されます</span></div>
           <div class="guide-item"><span class="guide-icon">📱</span><span>ホーム画面に追加するとオフラインでも使えます</span></div>
+          <div class="share-buttons">
+            <button id="btn-share" class="btn btn-secondary">共有リンクを作成</button>
+            <button id="btn-remove-friend" class="btn btn-danger" hidden>表示中の友達を削除</button>
+          </div>
           <div class="backup-buttons">
-            <button id="btn-export" class="btn btn-secondary">データを書き出す</button>
-            <button id="btn-import" class="btn btn-secondary">データを読み込む</button>
+            <button id="btn-export" class="btn btn-secondary">データを書き出す（バックアップ）</button>
+            <button id="btn-import" class="btn btn-secondary">データを読み込む（復元）</button>
             <input type="file" id="import-file" accept="application/json" hidden>
           </div>
         </div>

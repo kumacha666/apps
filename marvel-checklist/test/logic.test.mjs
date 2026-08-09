@@ -14,6 +14,16 @@ import {
   RATINGS,
   UNRATED_FILTER,
   RATING_FILTER_OPTIONS,
+  buildSharePayload,
+  parseSharePayload,
+  buildShareUrl,
+  extractShareParam,
+  upsertFriend,
+  removeFriend,
+  listFriends,
+  buildFullBackup,
+  validateFullBackup,
+  BACKUP_VERSION,
 } from "../logic.js";
 
 const movies = [
@@ -212,4 +222,127 @@ test("validateImportedState rejects the whole payload if any single entry is mal
 
 test("RATINGS exposes exactly the four supported symbols", () => {
   assert.deepEqual(RATINGS, ["◎", "〇", "△", "✕"]);
+});
+
+// --- Friend sharing ---------------------------------------------------
+
+test("parseSharePayload round-trips through buildSharePayload", () => {
+  const payload = { id: "friend-123", exportedAt: "2026-08-09T12:00:00.000Z", state: { "iron-man": { watched: true, rating: "◎" } } };
+  const raw = buildSharePayload(payload);
+  assert.deepEqual(parseSharePayload(raw), payload);
+});
+
+test("parseSharePayload rejects malformed payloads", () => {
+  assert.equal(parseSharePayload(""), null);
+  assert.equal(parseSharePayload(null), null);
+  assert.equal(parseSharePayload("not json"), null);
+  assert.equal(parseSharePayload(JSON.stringify([1, 2, 3])), null);
+  assert.equal(parseSharePayload(JSON.stringify({ exportedAt: "2026-08-09", state: {} })), null, "missing id");
+  assert.equal(parseSharePayload(JSON.stringify({ id: "", exportedAt: "2026-08-09", state: {} })), null, "empty id");
+  assert.equal(parseSharePayload(JSON.stringify({ id: "x", exportedAt: "not-a-date", state: {} })), null, "bad date");
+  assert.equal(
+    parseSharePayload(JSON.stringify({ id: "x", exportedAt: "2026-08-09", state: { a: { watched: "yes" } } })),
+    null,
+    "malformed nested state is rejected (delegates to validateImportedState)"
+  );
+});
+
+test("buildShareUrl / extractShareParam round-trip, including unicode names in state", () => {
+  const payload = { id: "friend-abc", exportedAt: "2026-08-09T00:00:00.000Z", state: { "loki-s2": { watched: true, rating: "〇" } } };
+  const url = buildShareUrl("https://honeypawlab.com/marvel-checklist/", payload);
+  assert.ok(url.startsWith("https://honeypawlab.com/marvel-checklist/?share="));
+  const extracted = extractShareParam(url);
+  assert.deepEqual(parseSharePayload(extracted), payload);
+});
+
+test("upsertFriend adds/replaces an entry without mutating the input", () => {
+  const friends = { a: { name: "Aさん", state: {}, exportedAt: "2026-01-01", importedAt: "2026-01-01" } };
+  const updated = upsertFriend(friends, "b", { name: "Bさん", state: {}, exportedAt: "2026-02-01", importedAt: "2026-02-01" });
+  assert.deepEqual(Object.keys(updated).sort(), ["a", "b"]);
+  assert.ok(!("b" in friends), "original object is not mutated");
+});
+
+test("removeFriend removes only the targeted entry without mutating the input", () => {
+  const friends = {
+    a: { name: "A", state: {}, exportedAt: "x", importedAt: "x" },
+    b: { name: "B", state: {}, exportedAt: "x", importedAt: "x" },
+  };
+  const updated = removeFriend(friends, "a");
+  assert.deepEqual(Object.keys(updated), ["b"]);
+  assert.ok("a" in friends, "original object is not mutated");
+});
+
+test("listFriends returns id-tagged entries sorted by name", () => {
+  const friends = {
+    z: { name: "ジロー", state: {}, exportedAt: "x", importedAt: "x" },
+    a: { name: "アキラ", state: {}, exportedAt: "x", importedAt: "x" },
+  };
+  const list = listFriends(friends);
+  assert.deepEqual(
+    list.map((f) => f.id),
+    ["a", "z"]
+  );
+  assert.equal(list[0].name, "アキラ");
+});
+
+// --- Full backup --------------------------------------------------------
+
+test("validateFullBackup round-trips through buildFullBackup", () => {
+  const backup = buildFullBackup({
+    own: { "iron-man": { watched: true, rating: "◎" } },
+    friends: { f1: { name: "友人A", state: { thor: { watched: false, rating: null } }, exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-02T00:00:00.000Z" } },
+    shareId: "my-share-id",
+    activeProfile: "f1",
+  });
+  assert.equal(backup.version, BACKUP_VERSION);
+  assert.deepEqual(validateFullBackup(backup), {
+    own: { "iron-man": { watched: true, rating: "◎" } },
+    friends: { f1: { name: "友人A", state: { thor: { watched: false, rating: null } }, exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-02T00:00:00.000Z" } },
+    shareId: "my-share-id",
+    activeProfile: "f1",
+  });
+});
+
+test("validateFullBackup treats a version-less payload as a legacy own-state-only export", () => {
+  const legacy = { "iron-man": { watched: true, rating: "◎" } };
+  assert.deepEqual(validateFullBackup(legacy), { own: legacy, friends: {}, shareId: null, activeProfile: "self" });
+});
+
+test("validateFullBackup rejects malformed backups, including a bad friend entry", () => {
+  assert.equal(validateFullBackup(null), null);
+  assert.equal(validateFullBackup([]), null);
+  assert.equal(validateFullBackup({ version: 999, own: {} }), null, "unknown version");
+  assert.equal(validateFullBackup({ version: BACKUP_VERSION, own: { a: { watched: "not-a-bool" } } }), null, "bad own state");
+  assert.equal(
+    validateFullBackup({
+      version: BACKUP_VERSION,
+      own: {},
+      friends: { f1: { name: "", state: {}, exportedAt: "2026-01-01", importedAt: "2026-01-01" } },
+    }),
+    null,
+    "blank friend name"
+  );
+  assert.equal(
+    validateFullBackup({
+      version: BACKUP_VERSION,
+      own: {},
+      friends: { f1: { name: "友人", state: { x: { watched: "nope" } }, exportedAt: "2026-01-01", importedAt: "2026-01-01" } },
+    }),
+    null,
+    "malformed nested friend state"
+  );
+  assert.equal(
+    validateFullBackup({
+      version: BACKUP_VERSION,
+      own: {},
+      friends: { f1: { name: "友人", state: {}, exportedAt: "not-a-date", importedAt: "2026-01-01" } },
+    }),
+    null,
+    "unparsable exportedAt"
+  );
+});
+
+test("validateFullBackup defaults missing friends/shareId/activeProfile", () => {
+  const result = validateFullBackup({ version: BACKUP_VERSION, own: {} });
+  assert.deepEqual(result, { own: {}, friends: {}, shareId: null, activeProfile: "self" });
 });

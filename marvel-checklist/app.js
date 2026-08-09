@@ -13,41 +13,93 @@ import {
   filterUnwatched,
   filterByRating,
   groupMovies,
-  validateImportedState,
+  parseSharePayload,
+  buildShareUrl,
+  extractShareParam,
+  upsertFriend,
+  removeFriend,
+  listFriends,
+  buildFullBackup,
+  validateFullBackup,
 } from "./logic.js";
 
-const STORAGE_KEY = "marvel-checklist-state-v1";
+const OWN_STATE_KEY = "marvel-checklist-state-v1";
+const FRIENDS_KEY = "marvel-checklist-friends-v1";
+const SHARE_ID_KEY = "marvel-checklist-share-id-v1";
+const ACTIVE_PROFILE_KEY = "marvel-checklist-active-profile-v1";
+const SELF = "self";
 
 let movies = [];
-let state = loadState();
+let ownState = loadJSON(OWN_STATE_KEY, {});
+let friends = loadJSON(FRIENDS_KEY, {});
+let activeProfileId = localStorage.getItem(ACTIVE_PROFILE_KEY) || SELF;
 let currentUniverse = "all";
 let unwatchedOnly = false;
 let activeRatingFilters = new Set(); // display-only filter, like unwatchedOnly — never affects progress or group order
 let pendingFocus = null; // { movieId, control } to restore focus after a re-render
 
-function loadState() {
+function loadJSON(key, fallback) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
   } catch (e) {
-    return {};
+    return fallback;
   }
 }
 
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+function saveOwnState() {
+  localStorage.setItem(OWN_STATE_KEY, JSON.stringify(ownState));
+}
+
+function saveFriends() {
+  localStorage.setItem(FRIENDS_KEY, JSON.stringify(friends));
+}
+
+function saveActiveProfile() {
+  localStorage.setItem(ACTIVE_PROFILE_KEY, activeProfileId);
+}
+
+// If activeProfileId points at a friend that no longer exists (e.g. it was
+// deleted, or came from a stale localStorage value), fall back to "self"
+// rather than rendering against an undefined state.
+function isViewingValidFriend() {
+  return activeProfileId !== SELF && Object.prototype.hasOwnProperty.call(friends, activeProfileId);
+}
+
+function getActiveStateStore() {
+  if (activeProfileId === SELF || !isViewingValidFriend()) return ownState;
+  return friends[activeProfileId].state;
+}
+
+function saveActiveState() {
+  if (activeProfileId === SELF || !isViewingValidFriend()) {
+    saveOwnState();
+  } else {
+    saveFriends();
+  }
 }
 
 function setWatched(id, watched) {
-  const entry = getEntry(state, id);
-  state[id] = { ...entry, watched };
-  saveState();
+  const store = getActiveStateStore();
+  const entry = getEntry(store, id);
+  store[id] = { ...entry, watched };
+  saveActiveState();
 }
 
 function setRating(id, rating) {
-  const entry = getEntry(state, id);
-  state[id] = { ...entry, rating: entry.rating === rating ? null : rating };
-  saveState();
+  const store = getActiveStateStore();
+  const entry = getEntry(store, id);
+  store[id] = { ...entry, rating: entry.rating === rating ? null : rating };
+  saveActiveState();
+}
+
+function getOwnShareId() {
+  let id = localStorage.getItem(SHARE_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(SHARE_ID_KEY, id);
+  }
+  return id;
 }
 
 function renderCountdown() {
@@ -68,18 +120,19 @@ function renderCountdown() {
 }
 
 function renderProgress(universeFiltered) {
-  const { total, watched, pct } = computeProgress(universeFiltered, state);
+  const { total, watched, pct } = computeProgress(universeFiltered, getActiveStateStore());
   document.getElementById("progress-fill").style.width = `${pct}%`;
   document.getElementById("progress-text").textContent =
     total > 0 ? `視聴済み ${watched} / ${total} 作品（${pct}%）` : "対象の作品がありません";
 }
 
 function renderList() {
+  const activeState = getActiveStateStore();
   const universeFiltered = filterByUniverse(movies, currentUniverse);
   renderProgress(universeFiltered);
 
-  let displayList = unwatchedOnly ? filterUnwatched(universeFiltered, state) : universeFiltered;
-  displayList = filterByRating(displayList, state, activeRatingFilters);
+  let displayList = unwatchedOnly ? filterUnwatched(universeFiltered, activeState) : universeFiltered;
+  displayList = filterByRating(displayList, activeState, activeRatingFilters);
 
   const listEl = document.getElementById("movie-list");
   listEl.innerHTML = "";
@@ -147,7 +200,7 @@ function restoreFocus(emptyStateEl) {
 }
 
 function renderMovieCard(movie) {
-  const entry = getEntry(state, movie.id);
+  const entry = getEntry(getActiveStateStore(), movie.id);
   const released = isReleased(movie);
 
   const card = document.createElement("div");
@@ -265,9 +318,18 @@ function setupRatingFilter() {
   }
 }
 
+// Full backup covers everything (own list + all saved friends' lists), so
+// restoring on a new device/browser brings back the whole picture — not
+// just whichever profile happened to be selected when exporting.
 function setupBackup() {
   document.getElementById("btn-export").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    const backup = buildFullBackup({
+      own: ownState,
+      friends,
+      shareId: localStorage.getItem(SHARE_ID_KEY),
+      activeProfile: activeProfileId,
+    });
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -289,12 +351,21 @@ function setupBackup() {
       } catch (e) {
         parsed = undefined;
       }
-      const validated = parsed === undefined ? null : validateImportedState(parsed);
+      const validated = parsed === undefined ? null : validateFullBackup(parsed);
       if (!validated) {
         alert("読み込みに失敗しました。正しいバックアップファイルを選択してください。");
       } else {
-        state = validated;
-        saveState();
+        ownState = validated.own;
+        friends = validated.friends;
+        activeProfileId =
+          validated.activeProfile === SELF || Object.prototype.hasOwnProperty.call(friends, validated.activeProfile)
+            ? validated.activeProfile
+            : SELF;
+        saveOwnState();
+        saveFriends();
+        saveActiveProfile();
+        if (validated.shareId) localStorage.setItem(SHARE_ID_KEY, validated.shareId);
+        renderProfileSwitcher();
         renderCountdown();
         renderList();
       }
@@ -302,6 +373,114 @@ function setupBackup() {
     };
     reader.readAsText(file);
   });
+}
+
+function renderProfileSwitcher() {
+  const select = document.getElementById("profile-switcher");
+  select.innerHTML = "";
+  select.appendChild(new Option("自分", SELF));
+  for (const friend of listFriends(friends)) {
+    select.appendChild(new Option(friend.name, friend.id));
+  }
+  if (!isViewingValidFriend() && activeProfileId !== SELF) {
+    // activeProfileId pointed at a friend that no longer exists (e.g. deleted).
+    activeProfileId = SELF;
+    saveActiveProfile();
+  }
+  select.value = activeProfileId;
+  updateFriendViewIndicators();
+}
+
+function updateFriendViewIndicators() {
+  const viewingFriend = isViewingValidFriend();
+  document.getElementById("btn-share").hidden = viewingFriend;
+  document.getElementById("btn-remove-friend").hidden = !viewingFriend;
+  const label = document.getElementById("friend-view-label");
+  if (viewingFriend) {
+    label.textContent = `「${friends[activeProfileId].name}」さんのリストを表示中（自分のリストとは別に保存されます）`;
+    label.hidden = false;
+  } else {
+    label.hidden = true;
+  }
+}
+
+function setupProfileSwitcher() {
+  const select = document.getElementById("profile-switcher");
+  select.addEventListener("change", () => {
+    activeProfileId = select.value;
+    saveActiveProfile();
+    updateFriendViewIndicators();
+    renderList();
+  });
+}
+
+function setupShareButton() {
+  document.getElementById("btn-share").addEventListener("click", async () => {
+    const payload = { id: getOwnShareId(), exportedAt: new Date().toISOString(), state: ownState };
+    const url = buildShareUrl(location.origin + location.pathname, payload);
+    try {
+      await navigator.clipboard.writeText(url);
+      alert("共有リンクをコピーしました。友達に送ってください。");
+    } catch (e) {
+      prompt("このリンクをコピーして友達に送ってください。", url);
+    }
+  });
+}
+
+function setupFriendRemoval() {
+  document.getElementById("btn-remove-friend").addEventListener("click", () => {
+    if (!isViewingValidFriend()) return;
+    const name = friends[activeProfileId].name;
+    if (!confirm(`「${name}」さんのリストを削除しますか？この操作は取り消せません。`)) return;
+    friends = removeFriend(friends, activeProfileId);
+    saveFriends();
+    activeProfileId = SELF;
+    saveActiveProfile();
+    renderProfileSwitcher();
+    renderList();
+  });
+}
+
+// Handles a `?share=...` link generated by another device's "共有リンクを
+// 作成" button. Never auto-syncs afterward — this is a one-time snapshot the
+// user can keep editing locally (e.g. checking off a movie a friend
+// mentioned watching), independent of the sender's own list going forward.
+function handleIncomingShareLink() {
+  const raw = extractShareParam(location.href);
+  if (!raw) return;
+  const payload = parseSharePayload(raw);
+  // Clean the URL regardless of outcome so a reload doesn't reprocess it.
+  history.replaceState(null, "", location.pathname);
+  if (!payload) {
+    alert("共有リンクの読み込みに失敗しました。リンクが壊れている可能性があります。");
+    return;
+  }
+
+  const existing = friends[payload.id];
+  let name;
+  if (existing) {
+    const existingDate = new Date(existing.exportedAt).toLocaleString("ja-JP");
+    const incomingDate = new Date(payload.exportedAt).toLocaleString("ja-JP");
+    const ok = confirm(
+      `「${existing.name}」さんのデータは既に保存されています。\n\n保存済みデータの共有日時: ${existingDate}\n今回のリンクの共有日時: ${incomingDate}\n\n上書きしますか？（自分で手動編集した内容は失われます）`
+    );
+    if (!ok) return;
+    name = existing.name;
+  } else {
+    const entered = prompt("この友達の名前を入力してください");
+    if (!entered || !entered.trim()) return;
+    name = entered.trim();
+  }
+
+  friends = upsertFriend(friends, payload.id, {
+    name,
+    state: payload.state,
+    exportedAt: payload.exportedAt,
+    importedAt: new Date().toISOString(),
+  });
+  saveFriends();
+  activeProfileId = payload.id;
+  saveActiveProfile();
 }
 
 async function init() {
@@ -314,10 +493,15 @@ async function init() {
       '<p class="empty-state">作品データを読み込めませんでした。通信環境を確認して再読み込みしてください。</p>';
     return;
   }
+  handleIncomingShareLink();
   setupTabs();
   setupUnwatchedToggle();
   setupRatingFilter();
   setupBackup();
+  setupProfileSwitcher();
+  setupShareButton();
+  setupFriendRemoval();
+  renderProfileSwitcher();
   renderCountdown();
   renderList();
   setupDateRolloverRefresh();

@@ -22,6 +22,14 @@
 - `validateImportedState`（インポート検証）は**壊れたエントリが1件でもあればファイル全体を`null`で拒否**する設計。一部だけ取り込んで残りを黙って捨てると、既存の視聴履歴を空データで上書きしてしまうため（2026-08-08、Codexレビュー指摘で修正。`{"foo":"bar"}`のような無関係なJSONが「空だが有効なバックアップ」として誤って受理されていたバグの再発防止）
 - カウントダウン表示・公開日ゲート（チェック可否）はレンダー時にしか再計算されないため、PWAを開いたまま日付をまたぐケースに対応する`setupDateRolloverRefresh()`（`visibilitychange`＋60秒ポーリング）が`init()`から仕込まれている。日付依存の表示を追加する場合はこの再描画経路にも乗るようにすること
 - 2026-08-08、見るべき優先度（◎〇△✕＋未評価）での絞り込みを追加。`logic.js`の`filterByRating(movies, state, activeRatings)`が本体で、`activeRatings`は複数選択可（OR条件、例：◎と〇を同時に選ぶとどちらかに該当する作品を表示）。「未評価」は`state`に`rating: null`の作品を指すUI専用センチネル`UNRATED_FILTER`で表現する（`state`自体には`null`のまま保存され、`"unrated"`のような文字列は書き込まない）。**この絞り込みも`unwatchedOnly`と同じく表示専用フィルター**であり、進捗集計（`computeProgress`）とグループ順（`groupMovies`の`orderSource`）は`universeFiltered`のまま変えないこと（未視聴フィルターと同じ設計原則）
+- 2026-08-09、友達のリストを共有リンク経由で自分の端末にローカル保存し、閲覧・手動編集できる機能（「友達」機能）を追加。設計方針:
+  - **バックエンド無し・自動同期無し**。共有は「送信側が現在の`own`状態をURLの`share`クエリパラメータに埋め込んだリンクを発行し、受信側がそのリンクを開いた瞬間に1回だけ取り込む」方式（`logic.js`の`buildShareUrl`/`extractShareParam`/`parseSharePayload`）。取り込んだ後は送信側の更新を追いかけない。相手の近況を反映したい場合は、受信側が**自分でチェック・評価を手動編集する**（例：「スパイダーマン見たよ」と聞いたら受信側がチェックを付ける）か、送信側が新しいリンクを再送する
+  - 送信側の識別子（`id`）は送信側の端末に`marvel-checklist-share-id-v1`として一度だけ生成・永続化される（`app.js`の`getOwnShareId()`）。同じ人が何度リンクを再発行しても同じ`id`になるため、受信側は「これは前に保存した友達と同一人物か」を判定できる
+  - 受信側のローカルストレージ構造：`marvel-checklist-friends-v1` = `{ [id]: { name, state, exportedAt, importedAt } }`。`name`は受信側が初回インポート時に`prompt()`で入力する（送信側は関与しない）。`exportedAt`はリンクを発行した日時、`importedAt`は受信側が最後に取り込んだ日時
+  - 同じ`id`のリンクを再度開いた場合（`app.js`の`handleIncomingShareLink()`）、**無条件に上書きはしない**。既存データの`exportedAt`と今回のリンクの`exportedAt`を両方`confirm()`ダイアログで提示し、受信側に上書き可否を判断させる（受信側が手動編集した内容を誤って消さないため）。却下すれば何も変更しない
+  - `activeProfileId`（`"self"`または友達の`id`、`marvel-checklist-active-profile-v1`に保存）でヘッダーの「表示中のリスト」ドロップダウン（`#profile-switcher`）と連動。**`logic.js`側の関数は元々どれも`state`を引数で受け取る設計だったため、プロフィール切り替えは`app.js`の`getActiveStateStore()`が「今どの状態オブジェクトを見せるか」を差し替えるだけで実現できている**（`logic.js`自体の変更は不要）。友達を表示中に視聴済み・評価を編集すると、その友達の`state`だけが更新され、自分の`state`には一切影響しない
+  - 共有リンクは友達1人ぶんの状態を丸ごとURLクエリに含めるため、視聴履歴が多いほどリンクが長くなる（現状のデータ量なら数KB程度で実用上問題ないが、将来的に収録作品数が大きく増える場合は留意する）
+  - バックアップ（後述）は`own`だけでなく`friends`丸ごとを含む。共有リンクによる単発インポートとは別の仕組みなので、両者を混同しないこと
 
 ## テスト
 
@@ -29,7 +37,7 @@
 
 - **フレームワーク**: Node標準テストランナー（`node --test`）。Vitest等の追加依存は無い
 - **テストファイル**: `test/logic.test.mjs`
-- **対象**: `logic.js` の `parseLocalDate`, `isReleased`, `daysUntil`, `formatMonth`, `computeProgress`, `filterByUniverse`, `filterUnwatched`, `filterByRating`, `groupMovies`, `validateImportedState`
+- **対象**: `logic.js` の `parseLocalDate`, `isReleased`, `daysUntil`, `formatMonth`, `computeProgress`, `filterByUniverse`, `filterUnwatched`, `filterByRating`, `groupMovies`, `validateImportedState`, `buildSharePayload`/`parseSharePayload`, `buildShareUrl`/`extractShareParam`, `upsertFriend`/`removeFriend`/`listFriends`, `buildFullBackup`/`validateFullBackup`
 - **前提**: `app.js`（DOM操作）は対象外。UI側の回帰確認はPlaywrightでの手動スモークテストで代替する（E2Eスイートは本アプリには未整備）
 
 ### 手動確認（E2E未整備のため）
@@ -38,6 +46,7 @@ CSS/DOM構造に関わる変更をした場合は、Playwrightで以下を最低
 - 視聴済みチェック・評価ボタンの状態が `localStorage`（`marvel-checklist-state-v1`）にリロード後も保持される
 - 「未視聴のみ表示」トグル・見るべき優先度フィルター使用時、進捗表示（視聴済み数）がユニバース全体を母集団に計算されていること（表示専用フィルターに巻き込まれて数値が変わらないこと）
 - チェック/評価ボタン操作後もキーボードフォーカスが失われないこと（対象が一覧から消える場合は次の要素に移ること）
+- 友達機能を変更した場合、2つのブラウザコンテキスト（送信側・受信側）でPlaywrightを使い、共有リンクの発行→受信側での取り込み（初回は名前入力、2回目以降は上書き確認ダイアログ）→プロフィール切り替え→友達側での手動編集が自分側のデータに影響しないこと→バックアップのエクスポート/インポートで`own`と`friends`が両方復元されること、を一通り確認する
 
 ## Service Worker (`sw.js`)
 
