@@ -97,7 +97,13 @@ function getActiveStateStore() {
 // object) but silently reverts on the next reload with no explanation.
 function applyStateChange(movieId, field, value) {
   if (activeProfileId === SELF || !isViewingValidFriend()) {
-    const nextOwnState = { ...ownState, [movieId]: { ...getEntry(ownState, movieId), [field]: value } };
+    // Same reasoning as the friend branch below: read the latest persisted
+    // OWN_STATE_KEY right before merging, not this tab's possibly-stale
+    // in-memory `ownState` — otherwise a different movie edited in another
+    // tab since this tab's own load would be silently overwritten here.
+    const latestOwnState = loadJSON(OWN_STATE_KEY, {});
+    const latestEntry = getEntry(latestOwnState, movieId);
+    const nextOwnState = { ...latestOwnState, [movieId]: { ...latestEntry, [field]: value } };
     try {
       localStorage.setItem(OWN_STATE_KEY, JSON.stringify(nextOwnState));
     } catch (e) {
