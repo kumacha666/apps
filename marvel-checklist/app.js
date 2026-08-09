@@ -87,34 +87,50 @@ function getActiveStateStore() {
   return friends[activeProfileId].state;
 }
 
-function saveActiveState() {
+// `movieId` is the single entry that was just edited. For a friend profile,
+// only that one entry is merged into the latest persisted friend record —
+// not the whole friend object or its whole `state` — so that a *different*
+// movie edited for the same friend in another tab isn't clobbered by this
+// tab's stale in-memory copy of the rest of that friend's state.
+function saveActiveState(movieId) {
   if (activeProfileId === SELF || !isViewingValidFriend()) {
     saveOwnState();
-  } else {
-    // Merge only the active friend's just-edited entry into the latest
-    // persisted friends list, rather than writing this tab's whole (possibly
-    // stale) in-memory `friends` back over it — otherwise a friend imported
-    // or edited in another tab since this tab last loaded `friends` would be
-    // silently dropped when this tab's checkbox/rating edit gets saved.
-    const latestFriends = loadJSON(FRIENDS_KEY, {});
-    latestFriends[activeProfileId] = friends[activeProfileId];
-    friends = latestFriends;
-    saveFriends();
+    return;
   }
+  const latestFriends = loadJSON(FRIENDS_KEY, {});
+  if (!Object.prototype.hasOwnProperty.call(latestFriends, activeProfileId)) {
+    // The friend was removed (in another tab, or via this one) since this
+    // tab's own `friends` snapshot was taken. Don't resurrect a deleted
+    // friend just because this tab still had it in memory — fall back to
+    // viewing "自分" instead, matching what actually exists in storage.
+    friends = latestFriends;
+    activeProfileId = SELF;
+    saveActiveProfile();
+    alert("表示中の友達データは削除されています。自分のリストを表示します。");
+    renderProfileSwitcher();
+    return;
+  }
+  const editedEntry = friends[activeProfileId].state[movieId];
+  latestFriends[activeProfileId] = {
+    ...latestFriends[activeProfileId],
+    state: { ...latestFriends[activeProfileId].state, [movieId]: editedEntry },
+  };
+  friends = latestFriends;
+  saveFriends();
 }
 
 function setWatched(id, watched) {
   const store = getActiveStateStore();
   const entry = getEntry(store, id);
   store[id] = { ...entry, watched };
-  saveActiveState();
+  saveActiveState(id);
 }
 
 function setRating(id, rating) {
   const store = getActiveStateStore();
   const entry = getEntry(store, id);
   store[id] = { ...entry, rating: entry.rating === rating ? null : rating };
-  saveActiveState();
+  saveActiveState(id);
 }
 
 function getOwnShareId() {
@@ -469,9 +485,12 @@ function restoreFullBackup(validated) {
 // just whichever profile happened to be selected when exporting.
 function setupBackup() {
   document.getElementById("btn-export").addEventListener("click", () => {
+    // Read the latest persisted own/friends state rather than this tab's
+    // possibly-stale in-memory copies — otherwise edits made in another tab
+    // since this tab's own load would be missing from the exported backup.
     const backup = buildFullBackup({
-      own: ownState,
-      friends,
+      own: loadJSON(OWN_STATE_KEY, {}),
+      friends: loadJSON(FRIENDS_KEY, {}),
       shareId: localStorage.getItem(SHARE_ID_KEY),
       activeProfile: activeProfileId,
     });
@@ -554,7 +573,23 @@ function setupProfileSwitcher() {
 
 function setupShareButton() {
   document.getElementById("btn-share").addEventListener("click", async () => {
-    const payload = { id: getOwnShareId(), exportedAt: new Date().toISOString(), state: ownState };
+    let shareId;
+    try {
+      shareId = getOwnShareId();
+    } catch (e) {
+      // getItem()/setItem() inside getOwnShareId() can throw (SecurityError
+      // when storage is blocked, QuotaExceededError when persisting a
+      // freshly-generated id for the first time). Left uncaught, this async
+      // handler would abort silently — no copy, no fallback prompt, no
+      // error message at all.
+      alert("共有リンクの作成に失敗しました（保存容量が不足している可能性があります）。");
+      return;
+    }
+    // Read the latest persisted own state rather than this tab's possibly-
+    // stale in-memory ownState, so edits made in another tab since this
+    // tab's own load aren't missing from the generated link.
+    const latestOwnState = loadJSON(OWN_STATE_KEY, {});
+    const payload = { id: shareId, exportedAt: new Date().toISOString(), state: latestOwnState };
     const url = buildShareUrl(location.origin + location.pathname, payload);
     try {
       await navigator.clipboard.writeText(url);
@@ -572,11 +607,23 @@ function setupFriendRemoval() {
     if (!confirm(`「${name}」さんのリストを削除しますか？この操作は取り消せません。`)) return;
     // Base the removal on the latest persisted friends list (see
     // saveActiveState()'s comment) so a friend added in another tab isn't
-    // silently wiped out by this tab's stale in-memory `friends`.
-    friends = removeFriend(loadJSON(FRIENDS_KEY, {}), activeProfileId);
-    saveFriends();
+    // silently wiped out by this tab's stale in-memory `friends`. Persist
+    // FRIENDS_KEY and ACTIVE_PROFILE_KEY together so a failure partway
+    // through can't leave ACTIVE_PROFILE_KEY pointing at the now-deleted
+    // friend (with in-memory state already showing "自分" but storage
+    // disagreeing) or abort this handler before the profile switcher/list
+    // are refreshed.
+    const nextFriends = removeFriend(loadJSON(FRIENDS_KEY, {}), activeProfileId);
+    const persisted = persistLocalStorageAtomically([FRIENDS_KEY, ACTIVE_PROFILE_KEY], {
+      [FRIENDS_KEY]: JSON.stringify(nextFriends),
+      [ACTIVE_PROFILE_KEY]: SELF,
+    });
+    if (!persisted) {
+      alert("友達データの削除に失敗しました（保存容量が不足している可能性があります）。");
+      return;
+    }
+    friends = nextFriends;
     activeProfileId = SELF;
-    saveActiveProfile();
     renderProfileSwitcher();
     renderList();
   });
