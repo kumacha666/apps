@@ -1,4 +1,9 @@
 export const RATINGS = ["◎", "〇", "△", "✕"];
+// Sentinel used in rating-filter selections to mean "no rating set yet".
+// Never stored in state — entry.rating uses `null` for that; this is purely
+// a UI-facing filter token so RATING_FILTER_OPTIONS can be a flat array.
+export const UNRATED_FILTER = "unrated";
+export const RATING_FILTER_OPTIONS = [...RATINGS, UNRATED_FILTER];
 export const UNIVERSE_LABELS = { mcu: "MCU", sony: "ソニー", fox: "フォックス", other: "その他" };
 export const DOOMSDAY_ID = "avengers-doomsday";
 
@@ -47,6 +52,23 @@ export function filterByUniverse(movies, universe) {
 
 export function filterUnwatched(movies, state) {
   return movies.filter((m) => !getEntry(state, m.id).watched);
+}
+
+// `activeRatings` is a Set (or array) of RATINGS symbols and/or
+// UNRATED_FILTER. Empty/falsy means "no rating filter applied" — return
+// everything. A movie matches if its rating (or the UNRATED_FILTER
+// sentinel, for unrated movies) is present in `activeRatings` — i.e.
+// selecting multiple ratings is an OR, matching the "◎ and 〇 at once"
+// requirement. Accepts a Set directly (as app.js's `activeRatingFilters`
+// already is) to avoid a pointless Set→Array→Set round-trip on every render.
+export function filterByRating(movies, state, activeRatings) {
+  if (!activeRatings) return movies;
+  const set = activeRatings instanceof Set ? activeRatings : new Set(activeRatings);
+  if (set.size === 0) return movies;
+  return movies.filter((m) => {
+    const rating = getEntry(state, m.id).rating;
+    return rating === null ? set.has(UNRATED_FILTER) : set.has(rating);
+  });
 }
 
 // Buckets `list` by `group`, then sorts each bucket by release date (so

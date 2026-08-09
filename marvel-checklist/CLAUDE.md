@@ -21,6 +21,7 @@
 - アプリ名・説明文（`index.html`のタイトル/見出し、`manifest.json`のname/description、`app.js`の進捗・空状態文言）は映画限定の表現（「〜映画」「〜本」）を避け、「映画・ドラマ」「〜作品」のようにシリーズも含む表現にする。UIに新しい種別を追加した際は、ラベル文言も一括で見直すこと（2026-08-08、ドラマシリーズ追加時に「映画」限定表現が残っていた指摘を修正）
 - `validateImportedState`（インポート検証）は**壊れたエントリが1件でもあればファイル全体を`null`で拒否**する設計。一部だけ取り込んで残りを黙って捨てると、既存の視聴履歴を空データで上書きしてしまうため（2026-08-08、Codexレビュー指摘で修正。`{"foo":"bar"}`のような無関係なJSONが「空だが有効なバックアップ」として誤って受理されていたバグの再発防止）
 - カウントダウン表示・公開日ゲート（チェック可否）はレンダー時にしか再計算されないため、PWAを開いたまま日付をまたぐケースに対応する`setupDateRolloverRefresh()`（`visibilitychange`＋60秒ポーリング）が`init()`から仕込まれている。日付依存の表示を追加する場合はこの再描画経路にも乗るようにすること
+- 2026-08-08、見るべき優先度（◎〇△✕＋未評価）での絞り込みを追加。`logic.js`の`filterByRating(movies, state, activeRatings)`が本体で、`activeRatings`は複数選択可（OR条件、例：◎と〇を同時に選ぶとどちらかに該当する作品を表示）。「未評価」は`state`に`rating: null`の作品を指すUI専用センチネル`UNRATED_FILTER`で表現する（`state`自体には`null`のまま保存され、`"unrated"`のような文字列は書き込まない）。**この絞り込みも`unwatchedOnly`と同じく表示専用フィルター**であり、進捗集計（`computeProgress`）とグループ順（`groupMovies`の`orderSource`）は`universeFiltered`のまま変えないこと（未視聴フィルターと同じ設計原則）
 
 ## テスト
 
@@ -28,14 +29,14 @@
 
 - **フレームワーク**: Node標準テストランナー（`node --test`）。Vitest等の追加依存は無い
 - **テストファイル**: `test/logic.test.mjs`
-- **対象**: `logic.js` の `parseLocalDate`, `isReleased`, `daysUntil`, `formatMonth`, `computeProgress`, `filterByUniverse`, `filterUnwatched`, `groupMovies`, `validateImportedState`
+- **対象**: `logic.js` の `parseLocalDate`, `isReleased`, `daysUntil`, `formatMonth`, `computeProgress`, `filterByUniverse`, `filterUnwatched`, `filterByRating`, `groupMovies`, `validateImportedState`
 - **前提**: `app.js`（DOM操作）は対象外。UI側の回帰確認はPlaywrightでの手動スモークテストで代替する（E2Eスイートは本アプリには未整備）
 
 ### 手動確認（E2E未整備のため）
 
 CSS/DOM構造に関わる変更をした場合は、Playwrightで以下を最低限確認する:
 - 視聴済みチェック・評価ボタンの状態が `localStorage`（`marvel-checklist-state-v1`）にリロード後も保持される
-- 「未視聴のみ表示」トグル使用時、進捗表示（視聴済み数）がユニバース全体を母集団に計算されていること（未視聴フィルターに巻き込まれて0にならないこと）
+- 「未視聴のみ表示」トグル・見るべき優先度フィルター使用時、進捗表示（視聴済み数）がユニバース全体を母集団に計算されていること（表示専用フィルターに巻き込まれて数値が変わらないこと）
 - チェック/評価ボタン操作後もキーボードフォーカスが失われないこと（対象が一覧から消える場合は次の要素に移ること）
 
 ## Service Worker (`sw.js`)

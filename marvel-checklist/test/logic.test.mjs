@@ -8,9 +8,12 @@ import {
   computeProgress,
   filterByUniverse,
   filterUnwatched,
+  filterByRating,
   groupMovies,
   validateImportedState,
   RATINGS,
+  UNRATED_FILTER,
+  RATING_FILTER_OPTIONS,
 } from "../logic.js";
 
 const movies = [
@@ -79,6 +82,38 @@ test("filterUnwatched excludes movies marked watched", () => {
   const result = filterUnwatched(movies, state);
   assert.ok(!result.some((m) => m.id === "a"));
   assert.equal(result.length, movies.length - 1);
+});
+
+test("filterByRating with no active filters returns everything unchanged", () => {
+  assert.deepEqual(filterByRating(movies, {}, []), movies);
+  assert.deepEqual(filterByRating(movies, {}, null), movies);
+});
+
+test("filterByRating matches any of multiple selected ratings (OR, not AND)", () => {
+  const state = {
+    a: { watched: false, rating: "◎" },
+    b: { watched: false, rating: "〇" },
+    c: { watched: false, rating: "△" },
+  };
+  const result = filterByRating(movies, state, ["◎", "〇"]);
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["a", "b"]
+  );
+});
+
+test("filterByRating treats a null rating as UNRATED_FILTER", () => {
+  const state = { a: { watched: false, rating: "◎" } };
+  // b, c, future all have no state entry at all -> getEntry defaults rating to null
+  const result = filterByRating(movies, state, [UNRATED_FILTER]);
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["b", "c", "future"]
+  );
+});
+
+test("RATING_FILTER_OPTIONS is RATINGS plus the unrated sentinel, in order", () => {
+  assert.deepEqual(RATING_FILTER_OPTIONS, ["◎", "〇", "△", "✕", UNRATED_FILTER]);
 });
 
 test("groupMovies preserves first-appearance group order and buckets correctly", () => {
