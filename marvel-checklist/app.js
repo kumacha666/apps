@@ -91,6 +91,14 @@ function saveActiveState() {
   if (activeProfileId === SELF || !isViewingValidFriend()) {
     saveOwnState();
   } else {
+    // Merge only the active friend's just-edited entry into the latest
+    // persisted friends list, rather than writing this tab's whole (possibly
+    // stale) in-memory `friends` back over it — otherwise a friend imported
+    // or edited in another tab since this tab last loaded `friends` would be
+    // silently dropped when this tab's checkbox/rating edit gets saved.
+    const latestFriends = loadJSON(FRIENDS_KEY, {});
+    latestFriends[activeProfileId] = friends[activeProfileId];
+    friends = latestFriends;
     saveFriends();
   }
 }
@@ -562,7 +570,10 @@ function setupFriendRemoval() {
     if (!isViewingValidFriend()) return;
     const name = friends[activeProfileId].name;
     if (!confirm(`「${name}」さんのリストを削除しますか？この操作は取り消せません。`)) return;
-    friends = removeFriend(friends, activeProfileId);
+    // Base the removal on the latest persisted friends list (see
+    // saveActiveState()'s comment) so a friend added in another tab isn't
+    // silently wiped out by this tab's stale in-memory `friends`.
+    friends = removeFriend(loadJSON(FRIENDS_KEY, {}), activeProfileId);
     saveFriends();
     activeProfileId = SELF;
     saveActiveProfile();
