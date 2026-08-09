@@ -39,6 +39,7 @@ let currentUniverse = "all";
 let unwatchedOnly = false;
 let activeRatingFilters = new Set(); // display-only filter, like unwatchedOnly — never affects progress or group order
 let pendingFocus = null; // { movieId, control } to restore focus after a re-render
+let openPrereqMovieIds = new Set(); // one-shot: which "前提作品" <details> to re-open after a render, then cleared
 
 function loadJSON(key, fallback) {
   try {
@@ -312,6 +313,8 @@ function renderPrerequisites(movie) {
 
   const details = document.createElement("details");
   details.className = "prereq-details";
+  details.dataset.movieId = movie.id;
+  if (openPrereqMovieIds.has(movie.id)) details.open = true;
   const summary = document.createElement("summary");
   summary.textContent = `🔗 前提作品：${unwatched.length}件未視聴（全${prereqs.length}件）`;
   details.appendChild(summary);
@@ -402,15 +405,36 @@ function setLocalStorageItem(key, raw) {
 // rather than the (possibly different) restored one.
 const BACKUP_KEYS = [OWN_STATE_KEY, FRIENDS_KEY, ACTIVE_PROFILE_KEY, SHARE_ID_KEY];
 
-// Removes all four keys, then writes `values` for each — in that order.
-// Removing first (rather than overwriting in place) guarantees maximum
-// available headroom regardless of how the old and new values compare in
-// size: e.g. if the old `own` was larger than the new one but the new
-// `friends` is larger than the old one, writing in place could still throw
-// partway through even though the *total* new footprint fits.
-function writeAllBackupKeys(values) {
-  for (const key of BACKUP_KEYS) localStorage.removeItem(key);
-  for (const key of BACKUP_KEYS) setLocalStorageItem(key, values[key]);
+// Writes `next[key]` for every key in `keys`, or leaves localStorage exactly
+// as it was before the call — used any time more than one localStorage key
+// must change together (a full-backup restore, or a share-link import that
+// touches both FRIENDS_KEY and ACTIVE_PROFILE_KEY).
+//
+// Both the write and the rollback-on-failure clear every targeted key first
+// rather than overwriting in place. That matters because old and new values
+// don't all grow/shrink together — e.g. a restore where the old `own` was
+// larger than the new one but the new `friends` is larger than the old one
+// — so writing (or rolling back) in place can throw partway through even
+// though the total new (or total old) footprint would fit on its own.
+function persistLocalStorageAtomically(keys, next) {
+  const previous = {};
+  for (const key of keys) previous[key] = localStorage.getItem(key);
+
+  try {
+    for (const key of keys) localStorage.removeItem(key);
+    for (const key of keys) setLocalStorageItem(key, next[key]);
+    return true;
+  } catch (e) {
+    try {
+      for (const key of keys) localStorage.removeItem(key);
+      for (const key of keys) setLocalStorageItem(key, previous[key]);
+    } catch (e2) {
+      // Storage is exhausted even for the pre-call values (e.g. another app
+      // on the same origin has since consumed the remaining quota) —
+      // nothing more can be safely persisted here.
+    }
+    return false;
+  }
 }
 
 function restoreFullBackup(validated) {
@@ -419,34 +443,13 @@ function restoreFullBackup(validated) {
       ? validated.activeProfile
       : SELF;
 
-  const previous = {
-    [OWN_STATE_KEY]: localStorage.getItem(OWN_STATE_KEY),
-    [FRIENDS_KEY]: localStorage.getItem(FRIENDS_KEY),
-    [ACTIVE_PROFILE_KEY]: localStorage.getItem(ACTIVE_PROFILE_KEY),
-    [SHARE_ID_KEY]: localStorage.getItem(SHARE_ID_KEY),
-  };
-  const next = {
+  const persisted = persistLocalStorageAtomically(BACKUP_KEYS, {
     [OWN_STATE_KEY]: JSON.stringify(validated.own),
     [FRIENDS_KEY]: JSON.stringify(validated.friends),
     [ACTIVE_PROFILE_KEY]: nextActiveProfile,
     [SHARE_ID_KEY]: validated.shareId,
-  };
-
-  try {
-    writeAllBackupKeys(next);
-  } catch (e) {
-    // The rollback itself removes all keys first for the same headroom
-    // reason, so it can restore the previous (smaller-or-larger) values
-    // even if the failed attempt above left an oversized key behind.
-    try {
-      writeAllBackupKeys(previous);
-    } catch (e2) {
-      // Storage is exhausted even for the pre-restore values (e.g. another
-      // app on the same origin has since consumed the remaining quota) —
-      // nothing more can be safely persisted here.
-    }
-    return false;
-  }
+  });
+  if (!persisted) return false;
 
   ownState = validated.own;
   friends = validated.friends;
@@ -600,8 +603,6 @@ function handleIncomingShareLink() {
     name = entered.trim();
   }
 
-  const previousFriends = friends;
-  const previousActiveProfileId = activeProfileId;
   const nextFriends = upsertFriend(friends, payload.id, {
     name,
     state: payload.state,
@@ -609,20 +610,21 @@ function handleIncomingShareLink() {
     importedAt: new Date().toISOString(),
   });
   // This runs synchronously during init(), before setupTabs()/renderList()/etc.
-  // are wired up. If localStorage.setItem() throws (e.g. QuotaExceededError)
-  // and it isn't caught here, the exception propagates out of init() itself
-  // — nothing downstream of this call would ever run, leaving the whole
-  // checklist blank instead of just failing to save this one friend.
-  try {
-    friends = nextFriends;
-    activeProfileId = payload.id;
-    saveFriends();
-    saveActiveProfile();
-  } catch (e) {
-    friends = previousFriends;
-    activeProfileId = previousActiveProfileId;
+  // are wired up. If localStorage.setItem() throws (e.g. QuotaExceededError),
+  // an uncaught exception here would propagate out of init() itself, leaving
+  // the whole checklist blank. persistLocalStorageAtomically() also guards
+  // against a partial write (FRIENDS_KEY saved but ACTIVE_PROFILE_KEY failing)
+  // leaving the two keys inconsistent with each other.
+  const persisted = persistLocalStorageAtomically([FRIENDS_KEY, ACTIVE_PROFILE_KEY], {
+    [FRIENDS_KEY]: JSON.stringify(nextFriends),
+    [ACTIVE_PROFILE_KEY]: payload.id,
+  });
+  if (!persisted) {
     alert("友達データの保存に失敗しました（保存容量が不足している可能性があります）。");
+    return;
   }
+  friends = nextFriends;
+  activeProfileId = payload.id;
 }
 
 async function init() {
@@ -660,11 +662,32 @@ function loadCharactersInBackground() {
     .then((res) => (res.ok ? res.json() : []))
     .then((data) => {
       characters = Array.isArray(data) ? data : [];
-      if (characters.length > 0) renderList();
+      if (characters.length > 0) {
+        // This re-render happens on whatever schedule the network delivers
+        // characters.json, possibly while the user already has a checkbox/
+        // rating button focused or a "前提作品" <details> open. renderList()
+        // rebuilds every card's DOM, so without this, focus would drop to
+        // <body> and any open prereq panel would silently close.
+        captureInteractionStateForRerender();
+        renderList();
+        openPrereqMovieIds = new Set(); // one-shot — don't affect later, unrelated renders
+      }
     })
     .catch(() => {
       characters = [];
     });
+}
+
+function captureInteractionStateForRerender() {
+  const active = document.activeElement;
+  if (active && active.classList.contains("movie-check")) {
+    pendingFocus = { movieId: active.dataset.movieId, control: "check" };
+  } else if (active && active.classList.contains("rating-btn")) {
+    pendingFocus = { movieId: active.dataset.movieId, control: active.dataset.rating };
+  }
+  openPrereqMovieIds = new Set(
+    [...document.querySelectorAll(".prereq-details[open]")].map((el) => el.dataset.movieId)
+  );
 }
 
 // Countdown text and release-date gating are only computed at render time,
