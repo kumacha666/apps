@@ -24,7 +24,8 @@
 - 2026-08-08、見るべき優先度（◎〇△✕＋未評価）での絞り込みを追加。`logic.js`の`filterByRating(movies, state, activeRatings)`が本体で、`activeRatings`は複数選択可（OR条件、例：◎と〇を同時に選ぶとどちらかに該当する作品を表示）。「未評価」は`state`に`rating: null`の作品を指すUI専用センチネル`UNRATED_FILTER`で表現する（`state`自体には`null`のまま保存され、`"unrated"`のような文字列は書き込まない）。**この絞り込みも`unwatchedOnly`と同じく表示専用フィルター**であり、進捗集計（`computeProgress`）とグループ順（`groupMovies`の`orderSource`）は`universeFiltered`のまま変えないこと（未視聴フィルターと同じ設計原則）
 - 2026-08-09、友達のリストを共有リンク経由で自分の端末にローカル保存し、閲覧・手動編集できる機能（「友達」機能）を追加。設計方針:
   - **バックエンド無し・自動同期無し**。共有は「送信側が現在の`own`状態をURLの`share`クエリパラメータに埋め込んだリンクを発行し、受信側がそのリンクを開いた瞬間に1回だけ取り込む」方式（`logic.js`の`buildShareUrl`/`extractShareParam`/`parseSharePayload`）。取り込んだ後は送信側の更新を追いかけない。相手の近況を反映したい場合は、受信側が**自分でチェック・評価を手動編集する**（例：「スパイダーマン見たよ」と聞いたら受信側がチェックを付ける）か、送信側が新しいリンクを再送する
-  - 送信側の識別子（`id`）は送信側の端末に`marvel-checklist-share-id-v1`として一度だけ生成・永続化される（`app.js`の`getOwnShareId()`）。同じ人が何度リンクを再発行しても同じ`id`になるため、受信側は「これは前に保存した友達と同一人物か」を判定できる
+  - 送信側の識別子（`id`）は送信側の端末に`marvel-checklist-share-id-v1`として一度だけ生成・永続化される（`app.js`の`getOwnShareId()`、`crypto.randomUUID()`を使用）。同じ人が何度リンクを再発行しても同じ`id`になるため、受信側は「これは前に保存した友達と同一人物か」を判定できる
+  - **友達`id`は必ず`crypto.randomUUID()`の形式（`logic.js`の`UUID_PATTERN`）で検証すること**。単に非空文字列かだけを見ていると、細工した共有リンクや壊れたバックアップで`id: "self"`（自分用プロフィールの予約語と衝突し、取り込んだ友達データが`profile-switcher`から実質アクセス不能になる）や`id: "__proto__"`（`friends[id] = ...`という代入がオブジェクトのプロトタイプそのものを書き換えてしまい、エントリが黙って消える）を渡されうる。この検証は`parseSharePayload`（共有リンク経路）と`validateFullBackup`（バックアップ復元経路）の**両方**に必要（2026-08-09、Codexレビューで前者を先に修正した後、同じ穴が後者にも残っていることを指摘され追加修正した実績あり。友達`id`を扱う新しい経路を追加する場合は必ず両方と同じ検証を通すこと）
   - 受信側のローカルストレージ構造：`marvel-checklist-friends-v1` = `{ [id]: { name, state, exportedAt, importedAt } }`。`name`は受信側が初回インポート時に`prompt()`で入力する（送信側は関与しない）。`exportedAt`はリンクを発行した日時、`importedAt`は受信側が最後に取り込んだ日時
   - 同じ`id`のリンクを再度開いた場合（`app.js`の`handleIncomingShareLink()`）、**無条件に上書きはしない**。既存データの`exportedAt`と今回のリンクの`exportedAt`を両方`confirm()`ダイアログで提示し、受信側に上書き可否を判断させる（受信側が手動編集した内容を誤って消さないため）。却下すれば何も変更しない
   - `activeProfileId`（`"self"`または友達の`id`、`marvel-checklist-active-profile-v1`に保存）でヘッダーの「表示中のリスト」ドロップダウン（`#profile-switcher`）と連動。**`logic.js`側の関数は元々どれも`state`を引数で受け取る設計だったため、プロフィール切り替えは`app.js`の`getActiveStateStore()`が「今どの状態オブジェクトを見せるか」を差し替えるだけで実現できている**（`logic.js`自体の変更は不要）。友達を表示中に視聴済み・評価を編集すると、その友達の`state`だけが更新され、自分の`state`には一切影響しない
@@ -63,3 +64,4 @@ CSS/DOM構造に関わる変更をした場合は、Playwrightで以下を最低
 - キャッシュへの書き込みは成功レスポンス（`res.ok`）のみ対象。404/5xx をキャッシュすると、オフライン時に壊れたレスポンスがフォールバックされる
 - `ASSETS` に新しい静的ファイルを追加した場合は忘れずにここにも追記する
 - バージョンを上げる際は `CACHE_NAME` の末尾（`v1` など）をインクリメントする
+- オフライン時のフォールバックで`caches.match(e.request)`がヒットしない場合、ナビゲーションリクエスト（`e.request.mode === "navigate"`）に限り`caches.match("index.html")`にフォールバックする（2026-08-09、Codexレビュー指摘で追加）。共有リンク（`?share=...`）はクエリ文字列付きの完全なURLなので、事前キャッシュ済みの`index.html`（クエリ無し）とは別リクエストとして扱われ、素の`caches.match(e.request)`だけではオフライン初回アクセス時にアプリ自体が起動できなかった。アプリは`location.search`をクライアント側で読むだけなので、この用途では文書自体のキャッシュを返せば十分

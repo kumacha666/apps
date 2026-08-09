@@ -249,6 +249,13 @@ export function validateFullBackup(data) {
 
   const friends = {};
   for (const [id, entry] of Object.entries(friendsRaw)) {
+    // Same UUID-format check as parseSharePayload's `id`, and for the same
+    // reason: a friend id of "self" (or "__proto__"/"constructor", which
+    // would corrupt this very object when assigned via friends[id] = ...)
+    // must never make it into the restored friends store, whether it
+    // arrives via a share link or — as here — a hand-edited/corrupted
+    // backup file.
+    if (!UUID_PATTERN.test(id)) return null;
     if (!isPlainObject(entry)) return null;
     if (typeof entry.name !== "string" || entry.name.trim() === "") return null;
     const friendState = validateImportedState(entry.state ?? {});

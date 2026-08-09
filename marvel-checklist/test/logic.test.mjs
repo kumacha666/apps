@@ -315,16 +315,16 @@ test("listFriends returns id-tagged entries sorted by name", () => {
 test("validateFullBackup round-trips through buildFullBackup", () => {
   const backup = buildFullBackup({
     own: { "iron-man": { watched: true, rating: "◎" } },
-    friends: { f1: { name: "友人A", state: { thor: { watched: false, rating: null } }, exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-02T00:00:00.000Z" } },
+    friends: { [SAMPLE_UUID]: { name: "友人A", state: { thor: { watched: false, rating: null } }, exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-02T00:00:00.000Z" } },
     shareId: "my-share-id",
-    activeProfile: "f1",
+    activeProfile: SAMPLE_UUID,
   });
   assert.equal(backup.version, BACKUP_VERSION);
   assert.deepEqual(validateFullBackup(backup), {
     own: { "iron-man": { watched: true, rating: "◎" } },
-    friends: { f1: { name: "友人A", state: { thor: { watched: false, rating: null } }, exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-02T00:00:00.000Z" } },
+    friends: { [SAMPLE_UUID]: { name: "友人A", state: { thor: { watched: false, rating: null } }, exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-02T00:00:00.000Z" } },
     shareId: "my-share-id",
-    activeProfile: "f1",
+    activeProfile: SAMPLE_UUID,
   });
 });
 
@@ -342,7 +342,7 @@ test("validateFullBackup rejects malformed backups, including a bad friend entry
     validateFullBackup({
       version: BACKUP_VERSION,
       own: {},
-      friends: { f1: { name: "", state: {}, exportedAt: "2026-01-01", importedAt: "2026-01-01" } },
+      friends: { [SAMPLE_UUID]: { name: "", state: {}, exportedAt: "2026-01-01", importedAt: "2026-01-01" } },
     }),
     null,
     "blank friend name"
@@ -351,7 +351,7 @@ test("validateFullBackup rejects malformed backups, including a bad friend entry
     validateFullBackup({
       version: BACKUP_VERSION,
       own: {},
-      friends: { f1: { name: "友人", state: { x: { watched: "nope" } }, exportedAt: "2026-01-01", importedAt: "2026-01-01" } },
+      friends: { [SAMPLE_UUID]: { name: "友人", state: { x: { watched: "nope" } }, exportedAt: "2026-01-01", importedAt: "2026-01-01" } },
     }),
     null,
     "malformed nested friend state"
@@ -360,11 +360,28 @@ test("validateFullBackup rejects malformed backups, including a bad friend entry
     validateFullBackup({
       version: BACKUP_VERSION,
       own: {},
-      friends: { f1: { name: "友人", state: {}, exportedAt: "not-a-date", importedAt: "2026-01-01" } },
+      friends: { [SAMPLE_UUID]: { name: "友人", state: {}, exportedAt: "not-a-date", importedAt: "2026-01-01" } },
     }),
     null,
     "unparsable exportedAt"
   );
+});
+
+test("validateFullBackup rejects non-UUID friend ids, including reserved/pathological values", () => {
+  // Regression test (Codex review, PR #338): the same "self"/"__proto__"
+  // collision fixed for share links also applied to the full-backup restore
+  // path, since friends[id] = ... there is equally vulnerable.
+  for (const badId of ["self", "__proto__", "constructor", "not-a-uuid"]) {
+    assert.equal(
+      validateFullBackup({
+        version: BACKUP_VERSION,
+        own: {},
+        friends: { [badId]: { name: "友人", state: {}, exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-01T00:00:00.000Z" } },
+      }),
+      null,
+      `friend id "${badId}" must be rejected`
+    );
+  }
 });
 
 test("validateFullBackup defaults missing friends/shareId/activeProfile", () => {

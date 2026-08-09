@@ -33,6 +33,18 @@ self.addEventListener("fetch", (e) => {
         }
         return res;
       })
-      .catch(() => caches.match(e.request))
+      .catch(async () => {
+        const cached = await caches.match(e.request);
+        if (cached) return cached;
+        // A navigation request (e.g. opening a friend's `?share=...` link)
+        // won't exact-match the precached "index.html" entry because of the
+        // query string. The app only reads location.search client-side
+        // after the document loads, so falling back to the cached document
+        // itself is correct — this is what lets share links work offline.
+        if (e.request.mode === "navigate") {
+          return caches.match("index.html");
+        }
+        return undefined;
+      })
   );
 });
