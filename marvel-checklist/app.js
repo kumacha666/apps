@@ -63,14 +63,6 @@ function loadString(key, fallback) {
   }
 }
 
-function saveOwnState() {
-  localStorage.setItem(OWN_STATE_KEY, JSON.stringify(ownState));
-}
-
-function saveFriends() {
-  localStorage.setItem(FRIENDS_KEY, JSON.stringify(friends));
-}
-
 function saveActiveProfile() {
   localStorage.setItem(ACTIVE_PROFILE_KEY, activeProfileId);
 }
@@ -87,16 +79,35 @@ function getActiveStateStore() {
   return friends[activeProfileId].state;
 }
 
-// `movieId` is the single entry that was just edited. For a friend profile,
-// only that one entry is merged into the latest persisted friend record —
-// not the whole friend object or its whole `state` — so that a *different*
-// movie edited for the same friend in another tab isn't clobbered by this
-// tab's stale in-memory copy of the rest of that friend's state.
-function saveActiveState(movieId) {
+// Applies a single-field edit (watched or rating) for `movieId` in the
+// active profile's state, and persists it.
+//
+// For a friend profile, this reads the latest persisted FRIENDS_KEY right
+// before merging and writes back only that one `{ watched, rating }` field
+// for that one movie — not the whole friend record, and not even the whole
+// per-movie entry — so that a *different* tab's concurrent edit to a
+// different field (e.g. this tab changes `watched` while another tab is
+// mid-edit on `rating` for the very same movie/friend) survives.
+//
+// Either branch only commits the change to in-memory `ownState`/`friends`
+// after `localStorage.setItem()` succeeds. A failed write (e.g.
+// QuotaExceededError) leaves both storage and in-memory state exactly as
+// they were, with a failure alert, instead of a change that looks applied
+// on screen (because some earlier code already mutated the live state
+// object) but silently reverts on the next reload with no explanation.
+function applyStateChange(movieId, field, value) {
   if (activeProfileId === SELF || !isViewingValidFriend()) {
-    saveOwnState();
+    const nextOwnState = { ...ownState, [movieId]: { ...getEntry(ownState, movieId), [field]: value } };
+    try {
+      localStorage.setItem(OWN_STATE_KEY, JSON.stringify(nextOwnState));
+    } catch (e) {
+      alert("視聴状況の保存に失敗しました（保存容量が不足している可能性があります）。変更は取り消されました。");
+      return;
+    }
+    ownState = nextOwnState;
     return;
   }
+
   const latestFriends = loadJSON(FRIENDS_KEY, {});
   if (!Object.prototype.hasOwnProperty.call(latestFriends, activeProfileId)) {
     // The friend was removed (in another tab, or via this one) since this
@@ -110,27 +121,30 @@ function saveActiveState(movieId) {
     renderProfileSwitcher();
     return;
   }
-  const editedEntry = friends[activeProfileId].state[movieId];
-  latestFriends[activeProfileId] = {
-    ...latestFriends[activeProfileId],
-    state: { ...latestFriends[activeProfileId].state, [movieId]: editedEntry },
+  const latestEntry = getEntry(latestFriends[activeProfileId].state, movieId);
+  const nextFriends = {
+    ...latestFriends,
+    [activeProfileId]: {
+      ...latestFriends[activeProfileId],
+      state: { ...latestFriends[activeProfileId].state, [movieId]: { ...latestEntry, [field]: value } },
+    },
   };
-  friends = latestFriends;
-  saveFriends();
+  try {
+    localStorage.setItem(FRIENDS_KEY, JSON.stringify(nextFriends));
+  } catch (e) {
+    alert("友達データの保存に失敗しました（保存容量が不足している可能性があります）。変更は取り消されました。");
+    return;
+  }
+  friends = nextFriends;
 }
 
 function setWatched(id, watched) {
-  const store = getActiveStateStore();
-  const entry = getEntry(store, id);
-  store[id] = { ...entry, watched };
-  saveActiveState(id);
+  applyStateChange(id, "watched", watched);
 }
 
 function setRating(id, rating) {
-  const store = getActiveStateStore();
-  const entry = getEntry(store, id);
-  store[id] = { ...entry, rating: entry.rating === rating ? null : rating };
-  saveActiveState(id);
+  const entry = getEntry(getActiveStateStore(), id);
+  applyStateChange(id, "rating", entry.rating === rating ? null : rating);
 }
 
 function getOwnShareId() {
@@ -606,7 +620,7 @@ function setupFriendRemoval() {
     const name = friends[activeProfileId].name;
     if (!confirm(`「${name}」さんのリストを削除しますか？この操作は取り消せません。`)) return;
     // Base the removal on the latest persisted friends list (see
-    // saveActiveState()'s comment) so a friend added in another tab isn't
+    // applyStateChange()'s comment) so a friend added in another tab isn't
     // silently wiped out by this tab's stale in-memory `friends`. Persist
     // FRIENDS_KEY and ACTIVE_PROFILE_KEY together so a failure partway
     // through can't leave ACTIVE_PROFILE_KEY pointing at the now-deleted
@@ -644,14 +658,13 @@ function handleIncomingShareLink() {
     return;
   }
 
-  // Re-read the currently persisted friends list rather than trusting the
-  // module-level `friends` this tab loaded back at its own init() time —
-  // e.g. another tab may have imported a different friend since then, and
-  // merging into a stale in-memory copy would silently drop that friend
-  // when this tab overwrites FRIENDS_KEY below.
-  const latestFriends = loadJSON(FRIENDS_KEY, {});
-
-  const existing = latestFriends[payload.id];
+  // Read the currently persisted friends list (not the module-level
+  // `friends` this tab loaded back at its own init() time) just to decide
+  // which dialog to show. confirm()/prompt() block this tab's own JS while
+  // open, but NOT other tabs — another tab can freely write FRIENDS_KEY
+  // during that wait, so this snapshot is re-read again below, right before
+  // the actual merge, rather than reused across the dialog.
+  const existing = loadJSON(FRIENDS_KEY, {})[payload.id];
   let name;
   if (existing) {
     const existingDate = new Date(existing.exportedAt).toLocaleString("ja-JP");
@@ -667,6 +680,10 @@ function handleIncomingShareLink() {
     name = entered.trim();
   }
 
+  // Re-read again here, after the blocking dialog(s) above, so a friend
+  // another tab added/updated/removed while this tab was waiting on user
+  // input isn't silently dropped when this tab overwrites FRIENDS_KEY below.
+  const latestFriends = loadJSON(FRIENDS_KEY, {});
   const nextFriends = upsertFriend(latestFriends, payload.id, {
     name,
     state: payload.state,
