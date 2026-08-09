@@ -21,6 +21,7 @@ import {
   listFriends,
   buildFullBackup,
   validateFullBackup,
+  computePrerequisites,
 } from "./logic.js";
 
 const OWN_STATE_KEY = "marvel-checklist-state-v1";
@@ -30,6 +31,7 @@ const ACTIVE_PROFILE_KEY = "marvel-checklist-active-profile-v1";
 const SELF = "self";
 
 let movies = [];
+let characters = [];
 let ownState = loadJSON(OWN_STATE_KEY, {});
 let friends = loadJSON(FRIENDS_KEY, {});
 let activeProfileId = localStorage.getItem(ACTIVE_PROFILE_KEY) || SELF;
@@ -268,7 +270,51 @@ function renderMovieCard(movie) {
   }
   card.appendChild(ratingRow);
 
+  const prereqEl = renderPrerequisites(movie);
+  if (prereqEl) card.appendChild(prereqEl);
+
   return card;
+}
+
+// Shows which other works you should have seen first to understand this
+// movie/series's characters, based on computePrerequisites(). Watched state
+// reflects whichever profile (self or a friend) is currently active, same
+// as the rest of the card. Returns null (nothing rendered) when there are
+// no prerequisites at all, to keep standalone films' cards uncluttered.
+function renderPrerequisites(movie) {
+  const prereqs = computePrerequisites(movie.id, movies, characters);
+  if (prereqs.length === 0) return null;
+
+  const activeState = getActiveStateStore();
+  const unwatched = prereqs.filter((m) => !getEntry(activeState, m.id).watched);
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "prereq-section";
+
+  if (unwatched.length === 0) {
+    wrapper.classList.add("prereq-all-watched");
+    wrapper.textContent = "✓ 前提作品はすべて視聴済み";
+    return wrapper;
+  }
+
+  const details = document.createElement("details");
+  details.className = "prereq-details";
+  const summary = document.createElement("summary");
+  summary.textContent = `🔗 前提作品：${unwatched.length}件未視聴（全${prereqs.length}件）`;
+  details.appendChild(summary);
+
+  const list = document.createElement("ul");
+  list.className = "prereq-list";
+  for (const prereqMovie of prereqs) {
+    const watched = getEntry(activeState, prereqMovie.id).watched;
+    const li = document.createElement("li");
+    li.className = watched ? "prereq-watched" : "prereq-unwatched";
+    li.textContent = `${watched ? "✓" : "○"} ${prereqMovie.title}`;
+    list.appendChild(li);
+  }
+  details.appendChild(list);
+  wrapper.appendChild(details);
+  return wrapper;
 }
 
 function setupTabs() {
@@ -492,6 +538,14 @@ async function init() {
     document.getElementById("movie-list").innerHTML =
       '<p class="empty-state">作品データを読み込めませんでした。通信環境を確認して再読み込みしてください。</p>';
     return;
+  }
+  try {
+    // Character/prerequisite data is supplementary — if it fails to load,
+    // the core checklist should still work, just without prerequisite badges.
+    const charRes = await fetch("data/characters.json");
+    characters = charRes.ok ? await charRes.json() : [];
+  } catch (e) {
+    characters = [];
   }
   handleIncomingShareLink();
   setupTabs();

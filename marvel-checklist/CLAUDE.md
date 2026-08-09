@@ -30,6 +30,14 @@
   - `activeProfileId`（`"self"`または友達の`id`、`marvel-checklist-active-profile-v1`に保存）でヘッダーの「表示中のリスト」ドロップダウン（`#profile-switcher`）と連動。**`logic.js`側の関数は元々どれも`state`を引数で受け取る設計だったため、プロフィール切り替えは`app.js`の`getActiveStateStore()`が「今どの状態オブジェクトを見せるか」を差し替えるだけで実現できている**（`logic.js`自体の変更は不要）。友達を表示中に視聴済み・評価を編集すると、その友達の`state`だけが更新され、自分の`state`には一切影響しない
   - 共有リンクは友達1人ぶんの状態を丸ごとURLクエリに含めるため、視聴履歴が多いほどリンクが長くなる（現状のデータ量なら数KB程度で実用上問題ないが、将来的に収録作品数が大きく増える場合は留意する）
   - バックアップ（後述）は`own`だけでなく`friends`丸ごとを含む。共有リンクによる単発インポートとは別の仕組みなので、両者を混同しないこと
+- 2026-08-09、「前提作品」機能（登場キャラクターの都合で先に見ておくとよい作品を各カードに表示）を追加。設計方針:
+  - `data/characters.json` に `{ id, name, appearances: [{ movieId, role }] }` の配列でキャラクターの登場作品を収録する（`role`は`"main"`＝そのキャラが主要な役どころで登場／`"sub"`＝カメオ・脇役的な登場、の2値）
+  - **記録対象は2作品以上に登場するキャラクターのみ**（1作品にしか出ないキャラは定義上どの依存関係も生まないため、収録の意味が無い）。「ほぼ全員カバーしたい」という要望に対し、現実的な精度・作業量を保つための意図的なスコープ限定。詳細は該当PRの説明を参照
+  - 依存関係の計算ロジックは`logic.js`の`computePrerequisites(movieId, movies, characters)`（純粋関数、`test/logic.test.mjs`でテスト済み）。ルール：**対象作品Mで`role: "main"`のキャラクターについてのみ、そのキャラの過去（Mより`releaseDate`が早い）の`role: "main"`な登場作品を前提作品として集める**。Mでカメオ（`sub`）扱いのキャラは前提を生成しない（カメオの理解に予習は不要という想定）。あるキャラの過去のカメオ登場（`sub`）も前提には含めない（カメオだけでは理解の助けにならないため）
+  - UIは`app.js`の`renderPrerequisites()`。前提が0件ならカードに何も表示しない（スタンドアロン作品を煩雑にしないため）。前提が全て視聴済みなら「✓ 前提作品はすべて視聴済み」の一行のみ。未視聴が残る場合は`<details>`で折りたたみ、開くと前提作品一覧を視聴済み（✓）/未視聴（○）付きで列挙する。**視聴済み判定は表示中のプロフィール（自分／選択中の友達）の`state`を使う**（`getActiveStateStore()`）
+  - `data/characters.json`のフェッチ失敗はチェックリスト本体をブロックしない設計（`characters = []`にフォールバックし、全カードで前提表示なしになるだけ）。`movies.json`と異なり必須データではない
+  - 未公開作品には、レビュー時点で公式に判明している登場人物のみを収録する（憶測でキャストを追加しない）
+  - **キャラクターデータもタイトル・配信日と同様、AIの学習データだけでは網羅性・正確性を保証できない領域**。初回実装時点（2026-08-09）で約80キャラクター・350件超の登場記録を収録したが、悪意なき見落とし・誤りが残っている可能性が高い。新しい映画・シリーズを追加する際は、その作品に登場する既存キャラクター（と、その作品で新規に複数作登場が確定しているキャラクター）を`data/characters.json`にも反映することを忘れないこと
 
 ## テスト
 
@@ -37,7 +45,7 @@
 
 - **フレームワーク**: Node標準テストランナー（`node --test`）。Vitest等の追加依存は無い
 - **テストファイル**: `test/logic.test.mjs`
-- **対象**: `logic.js` の `parseLocalDate`, `isReleased`, `daysUntil`, `formatMonth`, `computeProgress`, `filterByUniverse`, `filterUnwatched`, `filterByRating`, `groupMovies`, `validateImportedState`, `buildSharePayload`/`parseSharePayload`, `buildShareUrl`/`extractShareParam`, `upsertFriend`/`removeFriend`/`listFriends`, `buildFullBackup`/`validateFullBackup`
+- **対象**: `logic.js` の `parseLocalDate`, `isReleased`, `daysUntil`, `formatMonth`, `computeProgress`, `filterByUniverse`, `filterUnwatched`, `filterByRating`, `groupMovies`, `validateImportedState`, `buildSharePayload`/`parseSharePayload`, `buildShareUrl`/`extractShareParam`, `upsertFriend`/`removeFriend`/`listFriends`, `buildFullBackup`/`validateFullBackup`, `computePrerequisites`
 - **前提**: `app.js`（DOM操作）は対象外。UI側の回帰確認はPlaywrightでの手動スモークテストで代替する（E2Eスイートは本アプリには未整備）
 
 ### 手動確認（E2E未整備のため）
@@ -47,6 +55,7 @@ CSS/DOM構造に関わる変更をした場合は、Playwrightで以下を最低
 - 「未視聴のみ表示」トグル・見るべき優先度フィルター使用時、進捗表示（視聴済み数）がユニバース全体を母集団に計算されていること（表示専用フィルターに巻き込まれて数値が変わらないこと）
 - チェック/評価ボタン操作後もキーボードフォーカスが失われないこと（対象が一覧から消える場合は次の要素に移ること）
 - 友達機能を変更した場合、2つのブラウザコンテキスト（送信側・受信側）でPlaywrightを使い、共有リンクの発行→受信側での取り込み（初回は名前入力、2回目以降は上書き確認ダイアログ）→プロフィール切り替え→友達側での手動編集が自分側のデータに影響しないこと→バックアップのエクスポート/インポートで`own`と`friends`が両方復元されること、を一通り確認する
+- `data/characters.json`を変更した場合、代表的な作品（スタンドアロン作品＝前提0件、クロスオーバーが多い作品＝前提多数）でカードの「前提作品」表示を確認し、チェックを付けたり外したりして未視聴件数のバッジ・一覧の✓/○表示が連動すること、`data/characters.json`のfetch失敗を模擬してもチェックリスト本体は動作し続けることを確認する
 
 ## Service Worker (`sw.js`)
 

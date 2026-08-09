@@ -24,6 +24,7 @@ import {
   buildFullBackup,
   validateFullBackup,
   BACKUP_VERSION,
+  computePrerequisites,
 } from "../logic.js";
 
 const movies = [
@@ -369,4 +370,84 @@ test("validateFullBackup rejects malformed backups, including a bad friend entry
 test("validateFullBackup defaults missing friends/shareId/activeProfile", () => {
   const result = validateFullBackup({ version: BACKUP_VERSION, own: {} });
   assert.deepEqual(result, { own: {}, friends: {}, shareId: null, activeProfile: "self" });
+});
+
+// --- Character-based prerequisites --------------------------------------
+
+const prereqMovies = [
+  { id: "origin", title: "Origin", releaseDate: "2010-01-01", universe: "mcu", group: "g" },
+  { id: "team-up-1", title: "Team-Up 1", releaseDate: "2012-01-01", universe: "mcu", group: "g" },
+  { id: "solo-cameo-only", title: "Solo (cameo only)", releaseDate: "2013-01-01", universe: "mcu", group: "g" },
+  { id: "team-up-2", title: "Team-Up 2", releaseDate: "2018-01-01", universe: "mcu", group: "g" },
+  { id: "unrelated", title: "Unrelated", releaseDate: "2011-01-01", universe: "mcu", group: "g" },
+];
+
+const prereqCharacters = [
+  {
+    id: "hero-a",
+    name: "Hero A",
+    appearances: [
+      { movieId: "origin", role: "main" },
+      { movieId: "team-up-1", role: "main" },
+      { movieId: "solo-cameo-only", role: "sub" }, // an earlier SUB appearance must not count as a prerequisite
+      { movieId: "team-up-2", role: "main" },
+    ],
+  },
+  {
+    id: "hero-b-cameo-in-target",
+    name: "Hero B",
+    // Only ever a cameo in team-up-2 itself -> must not generate a prerequisite
+    // even though they have an earlier main appearance elsewhere.
+    appearances: [
+      { movieId: "origin", role: "main" },
+      { movieId: "team-up-2", role: "sub" },
+    ],
+  },
+  {
+    id: "hero-c-unrelated",
+    name: "Hero C",
+    appearances: [{ movieId: "unrelated", role: "main" }],
+  },
+];
+
+test("computePrerequisites collects earlier MAIN appearances of characters who are MAIN in the target movie", () => {
+  const result = computePrerequisites("team-up-2", prereqMovies, prereqCharacters);
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["origin", "team-up-1"]
+  );
+});
+
+test("computePrerequisites ignores a character's earlier SUB/cameo appearances as prerequisites", () => {
+  // hero-a's "solo-cameo-only" appearance is role:"sub", so it must be excluded
+  // even though it chronologically precedes team-up-2.
+  const result = computePrerequisites("team-up-2", prereqMovies, prereqCharacters);
+  assert.ok(!result.some((m) => m.id === "solo-cameo-only"));
+});
+
+test("computePrerequisites ignores characters who are only a SUB/cameo in the target movie itself", () => {
+  // hero-b-cameo-in-target has an earlier main appearance in "origin", but
+  // since they're only a cameo in team-up-2, that doesn't need explaining.
+  const result = computePrerequisites("team-up-2", prereqMovies, prereqCharacters);
+  // "origin" is still a prerequisite via hero-a, but not *because* of hero-b.
+  const viaOnlyHeroB = computePrerequisites("team-up-2", prereqMovies, [prereqCharacters[1]]);
+  assert.deepEqual(viaOnlyHeroB, []);
+});
+
+test("computePrerequisites returns nothing for a character's own earliest appearance", () => {
+  const result = computePrerequisites("origin", prereqMovies, prereqCharacters);
+  assert.deepEqual(result, []);
+});
+
+test("computePrerequisites sorts results chronologically and returns full movie objects", () => {
+  const result = computePrerequisites("team-up-2", prereqMovies, prereqCharacters);
+  assert.deepEqual(
+    result.map((m) => m.releaseDate),
+    ["2010-01-01", "2012-01-01"]
+  );
+  assert.equal(result[0].title, "Origin");
+});
+
+test("computePrerequisites returns an empty array for an unknown movie id", () => {
+  assert.deepEqual(computePrerequisites("does-not-exist", prereqMovies, prereqCharacters), []);
 });

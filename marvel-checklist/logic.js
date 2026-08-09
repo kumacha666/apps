@@ -263,3 +263,39 @@ export function validateFullBackup(data) {
 
   return { own, friends, shareId, activeProfile };
 }
+
+// --- Character-based prerequisites ------------------------------------
+//
+// "To understand the characters in movie/series M, which other works
+// should I have seen first?" — computed from `characters` (an array of
+// { id, name, appearances: [{ movieId, role }] }, role is "main" | "sub").
+//
+// Only characters who play a MAIN role in M generate a recommendation
+// (a "sub"/cameo appearance in M doesn't require prior context to enjoy
+// M itself). For each such character, every one of their EARLIER "main"
+// appearances (by release date) becomes a prerequisite — an earlier "sub"
+// appearance is skipped, since a cameo elsewhere doesn't meaningfully
+// build understanding of the character either. A character who is only
+// ever "sub" everywhere never produces a prerequisite in either direction.
+export function computePrerequisites(movieId, movies, characters) {
+  const movieById = new Map(movies.map((m) => [m.id, m]));
+  const target = movieById.get(movieId);
+  if (!target) return [];
+  const targetDate = parseLocalDate(target.releaseDate);
+
+  const prereqIds = new Set();
+  for (const character of characters) {
+    const isMainHere = character.appearances.some((a) => a.movieId === movieId && a.role === "main");
+    if (!isMainHere) continue;
+    for (const appearance of character.appearances) {
+      if (appearance.movieId === movieId || appearance.role !== "main") continue;
+      const otherMovie = movieById.get(appearance.movieId);
+      if (!otherMovie) continue;
+      if (parseLocalDate(otherMovie.releaseDate) < targetDate) {
+        prereqIds.add(appearance.movieId);
+      }
+    }
+  }
+
+  return [...prereqIds].map((id) => movieById.get(id)).sort((a, b) => parseLocalDate(a.releaseDate) - parseLocalDate(b.releaseDate));
+}
