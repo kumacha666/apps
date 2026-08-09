@@ -79,7 +79,7 @@ function renderList() {
   renderProgress(universeFiltered);
 
   let displayList = unwatchedOnly ? filterUnwatched(universeFiltered, state) : universeFiltered;
-  displayList = filterByRating(displayList, state, [...activeRatingFilters]);
+  displayList = filterByRating(displayList, state, activeRatingFilters);
 
   const listEl = document.getElementById("movie-list");
   listEl.innerHTML = "";
@@ -242,15 +242,13 @@ function setupUnwatchedToggle() {
   });
 }
 
-const RATING_FILTER_LABELS = { "◎": "◎", "〇": "〇", "△": "△", "✕": "✕", [UNRATED_FILTER]: "未評価" };
-
 function setupRatingFilter() {
   const container = document.getElementById("rating-filter");
   for (const option of RATING_FILTER_OPTIONS) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "rating-filter-btn";
-    btn.textContent = RATING_FILTER_LABELS[option];
+    btn.textContent = option === UNRATED_FILTER ? "未評価" : option;
     btn.setAttribute("aria-pressed", "false");
     btn.addEventListener("click", () => {
       const nowActive = !activeRatingFilters.has(option);
