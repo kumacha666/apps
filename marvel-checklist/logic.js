@@ -146,6 +146,15 @@ function isParsableDate(value) {
   return typeof value === "string" && !Number.isNaN(Date.parse(value));
 }
 
+// The exact shape produced by crypto.randomUUID(), which is how app.js
+// generates a sender's share id. Validating against this format (rather
+// than just "non-empty string") rejects reserved/pathological values like
+// "self" (the app's own-profile sentinel) or "__proto__"/"constructor" —
+// any of which, if accepted as a friend id, would collide with either the
+// own-profile switch in app.js or a built-in Object.prototype property when
+// looked up as `friends[id]`.
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function buildSharePayload({ id, exportedAt, state }) {
   return JSON.stringify({ id, exportedAt, state });
 }
@@ -165,7 +174,7 @@ export function parseSharePayload(raw) {
     return null;
   }
   if (!isPlainObject(parsed)) return null;
-  if (typeof parsed.id !== "string" || parsed.id === "") return null;
+  if (typeof parsed.id !== "string" || !UUID_PATTERN.test(parsed.id)) return null;
   if (!isParsableDate(parsed.exportedAt)) return null;
   const state = validateImportedState(parsed.state);
   if (!state) return null;

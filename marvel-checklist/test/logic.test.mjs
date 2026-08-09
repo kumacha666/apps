@@ -226,8 +226,11 @@ test("RATINGS exposes exactly the four supported symbols", () => {
 
 // --- Friend sharing ---------------------------------------------------
 
+const SAMPLE_UUID = "b3b7f6a0-1c2d-4e5f-8a9b-0123456789ab";
+const SAMPLE_UUID_2 = "11111111-2222-4333-8444-555555555555";
+
 test("parseSharePayload round-trips through buildSharePayload", () => {
-  const payload = { id: "friend-123", exportedAt: "2026-08-09T12:00:00.000Z", state: { "iron-man": { watched: true, rating: "◎" } } };
+  const payload = { id: SAMPLE_UUID, exportedAt: "2026-08-09T12:00:00.000Z", state: { "iron-man": { watched: true, rating: "◎" } } };
   const raw = buildSharePayload(payload);
   assert.deepEqual(parseSharePayload(raw), payload);
 });
@@ -239,16 +242,37 @@ test("parseSharePayload rejects malformed payloads", () => {
   assert.equal(parseSharePayload(JSON.stringify([1, 2, 3])), null);
   assert.equal(parseSharePayload(JSON.stringify({ exportedAt: "2026-08-09", state: {} })), null, "missing id");
   assert.equal(parseSharePayload(JSON.stringify({ id: "", exportedAt: "2026-08-09", state: {} })), null, "empty id");
-  assert.equal(parseSharePayload(JSON.stringify({ id: "x", exportedAt: "not-a-date", state: {} })), null, "bad date");
   assert.equal(
-    parseSharePayload(JSON.stringify({ id: "x", exportedAt: "2026-08-09", state: { a: { watched: "yes" } } })),
+    parseSharePayload(JSON.stringify({ id: SAMPLE_UUID, exportedAt: "not-a-date", state: {} })),
+    null,
+    "bad date"
+  );
+  assert.equal(
+    parseSharePayload(JSON.stringify({ id: SAMPLE_UUID, exportedAt: "2026-08-09", state: { a: { watched: "yes" } } })),
     null,
     "malformed nested state is rejected (delegates to validateImportedState)"
   );
 });
 
+test("parseSharePayload rejects ids that aren't the generator's UUID format, including reserved/pathological values", () => {
+  // Regression test (Codex review, PR #338): a crafted link with id:"self"
+  // would collide with the app's own-profile sentinel, making the imported
+  // friend's data unreachable through the profile switcher. "__proto__" and
+  // "constructor" are rejected too since `friends[id]` on a plain object
+  // would resolve to an inherited Object.prototype value instead of
+  // undefined for those keys, corrupting the "does this friend already
+  // exist" check in app.js.
+  for (const badId of ["self", "__proto__", "constructor", "prototype", "not-a-uuid", "123", ""]) {
+    assert.equal(
+      parseSharePayload(JSON.stringify({ id: badId, exportedAt: "2026-08-09T00:00:00.000Z", state: {} })),
+      null,
+      `id "${badId}" must be rejected`
+    );
+  }
+});
+
 test("buildShareUrl / extractShareParam round-trip, including unicode names in state", () => {
-  const payload = { id: "friend-abc", exportedAt: "2026-08-09T00:00:00.000Z", state: { "loki-s2": { watched: true, rating: "〇" } } };
+  const payload = { id: SAMPLE_UUID_2, exportedAt: "2026-08-09T00:00:00.000Z", state: { "loki-s2": { watched: true, rating: "〇" } } };
   const url = buildShareUrl("https://honeypawlab.com/marvel-checklist/", payload);
   assert.ok(url.startsWith("https://honeypawlab.com/marvel-checklist/?share="));
   const extracted = extractShareParam(url);
