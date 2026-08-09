@@ -417,10 +417,9 @@ const BACKUP_KEYS = [OWN_STATE_KEY, FRIENDS_KEY, ACTIVE_PROFILE_KEY, SHARE_ID_KE
 // — so writing (or rolling back) in place can throw partway through even
 // though the total new (or total old) footprint would fit on its own.
 function persistLocalStorageAtomically(keys, next) {
-  const previous = {};
-  for (const key of keys) previous[key] = localStorage.getItem(key);
-
+  let previous = {};
   try {
+    for (const key of keys) previous[key] = localStorage.getItem(key);
     for (const key of keys) localStorage.removeItem(key);
     for (const key of keys) setLocalStorageItem(key, next[key]);
     return true;
@@ -587,7 +586,14 @@ function handleIncomingShareLink() {
     return;
   }
 
-  const existing = friends[payload.id];
+  // Re-read the currently persisted friends list rather than trusting the
+  // module-level `friends` this tab loaded back at its own init() time —
+  // e.g. another tab may have imported a different friend since then, and
+  // merging into a stale in-memory copy would silently drop that friend
+  // when this tab overwrites FRIENDS_KEY below.
+  const latestFriends = loadJSON(FRIENDS_KEY, {});
+
+  const existing = latestFriends[payload.id];
   let name;
   if (existing) {
     const existingDate = new Date(existing.exportedAt).toLocaleString("ja-JP");
@@ -603,7 +609,7 @@ function handleIncomingShareLink() {
     name = entered.trim();
   }
 
-  const nextFriends = upsertFriend(friends, payload.id, {
+  const nextFriends = upsertFriend(latestFriends, payload.id, {
     name,
     state: payload.state,
     exportedAt: payload.exportedAt,
