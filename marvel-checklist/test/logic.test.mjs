@@ -230,32 +230,54 @@ test("RATINGS exposes exactly the four supported symbols", () => {
 const SAMPLE_UUID = "b3b7f6a0-1c2d-4e5f-8a9b-0123456789ab";
 const SAMPLE_UUID_2 = "11111111-2222-4333-8444-555555555555";
 
-test("parseSharePayload round-trips through buildSharePayload", () => {
+test("parseSharePayload round-trips through buildSharePayload", async () => {
   const payload = { id: SAMPLE_UUID, exportedAt: "2026-08-09T12:00:00.000Z", state: { "iron-man": { watched: true, rating: "◎" } } };
-  const raw = buildSharePayload(payload);
-  assert.deepEqual(parseSharePayload(raw), payload);
+  const raw = await buildSharePayload(payload);
+  assert.deepEqual(await parseSharePayload(raw), payload);
 });
 
-test("parseSharePayload rejects malformed payloads", () => {
-  assert.equal(parseSharePayload(""), null);
-  assert.equal(parseSharePayload(null), null);
-  assert.equal(parseSharePayload("not json"), null);
-  assert.equal(parseSharePayload(JSON.stringify([1, 2, 3])), null);
-  assert.equal(parseSharePayload(JSON.stringify({ exportedAt: "2026-08-09", state: {} })), null, "missing id");
-  assert.equal(parseSharePayload(JSON.stringify({ id: "", exportedAt: "2026-08-09", state: {} })), null, "empty id");
+// Regression test (Codex review, PR #338): an uncompressed JSON share
+// payload for a heavily-used state ran to ~8.7 KB once URL-encoded, past
+// the length many messaging apps/WebViews/CDNs treat as safe. Payloads are
+// now gzip-compressed + base64url-encoded before going into the URL.
+test("buildSharePayload compresses the payload well below the uncompressed size", async () => {
+  const state = {};
+  for (let i = 0; i < 98; i++) state[`movie-${i}`] = { watched: true, rating: "◎" };
+  const payload = { id: SAMPLE_UUID, exportedAt: "2026-08-09T12:00:00.000Z", state };
+  const uncompressedLength = JSON.stringify(payload).length;
+  const raw = await buildSharePayload(payload);
+  assert.ok(raw.length < uncompressedLength / 2, `compressed (${raw.length}) should be well under half of uncompressed (${uncompressedLength})`);
+  assert.deepEqual(await parseSharePayload(raw), payload);
+});
+
+// Regression test: share links generated before compression was introduced
+// (plain, uncompressed JSON) must still be importable.
+test("parseSharePayload still accepts the pre-compression plain-JSON format", async () => {
+  const payload = { id: SAMPLE_UUID, exportedAt: "2026-08-09T12:00:00.000Z", state: { thor: { watched: true, rating: null } } };
+  const rawPlainJson = JSON.stringify(payload);
+  assert.deepEqual(await parseSharePayload(rawPlainJson), payload);
+});
+
+test("parseSharePayload rejects malformed payloads", async () => {
+  assert.equal(await parseSharePayload(""), null);
+  assert.equal(await parseSharePayload(null), null);
+  assert.equal(await parseSharePayload("not json"), null);
+  assert.equal(await parseSharePayload(JSON.stringify([1, 2, 3])), null);
+  assert.equal(await parseSharePayload(JSON.stringify({ exportedAt: "2026-08-09", state: {} })), null, "missing id");
+  assert.equal(await parseSharePayload(JSON.stringify({ id: "", exportedAt: "2026-08-09", state: {} })), null, "empty id");
   assert.equal(
-    parseSharePayload(JSON.stringify({ id: SAMPLE_UUID, exportedAt: "not-a-date", state: {} })),
+    await parseSharePayload(JSON.stringify({ id: SAMPLE_UUID, exportedAt: "not-a-date", state: {} })),
     null,
     "bad date"
   );
   assert.equal(
-    parseSharePayload(JSON.stringify({ id: SAMPLE_UUID, exportedAt: "2026-08-09", state: { a: { watched: "yes" } } })),
+    await parseSharePayload(JSON.stringify({ id: SAMPLE_UUID, exportedAt: "2026-08-09", state: { a: { watched: "yes" } } })),
     null,
     "malformed nested state is rejected (delegates to validateImportedState)"
   );
 });
 
-test("parseSharePayload rejects ids that aren't the generator's UUID format, including reserved/pathological values", () => {
+test("parseSharePayload rejects ids that aren't the generator's UUID format, including reserved/pathological values", async () => {
   // Regression test (Codex review, PR #338): a crafted link with id:"self"
   // would collide with the app's own-profile sentinel, making the imported
   // friend's data unreachable through the profile switcher. "__proto__" and
@@ -265,19 +287,19 @@ test("parseSharePayload rejects ids that aren't the generator's UUID format, inc
   // exist" check in app.js.
   for (const badId of ["self", "__proto__", "constructor", "prototype", "not-a-uuid", "123", ""]) {
     assert.equal(
-      parseSharePayload(JSON.stringify({ id: badId, exportedAt: "2026-08-09T00:00:00.000Z", state: {} })),
+      await parseSharePayload(JSON.stringify({ id: badId, exportedAt: "2026-08-09T00:00:00.000Z", state: {} })),
       null,
       `id "${badId}" must be rejected`
     );
   }
 });
 
-test("buildShareUrl / extractShareParam round-trip, including unicode names in state", () => {
+test("buildShareUrl / extractShareParam round-trip, including unicode names in state", async () => {
   const payload = { id: SAMPLE_UUID_2, exportedAt: "2026-08-09T00:00:00.000Z", state: { "loki-s2": { watched: true, rating: "〇" } } };
-  const url = buildShareUrl("https://honeypawlab.com/marvel-checklist/", payload);
+  const url = await buildShareUrl("https://honeypawlab.com/marvel-checklist/", payload);
   assert.ok(url.startsWith("https://honeypawlab.com/marvel-checklist/?share="));
   const extracted = extractShareParam(url);
-  assert.deepEqual(parseSharePayload(extracted), payload);
+  assert.deepEqual(await parseSharePayload(extracted), payload);
 });
 
 test("upsertFriend adds/replaces an entry without mutating the input", () => {

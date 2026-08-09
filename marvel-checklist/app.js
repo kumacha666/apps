@@ -629,7 +629,7 @@ function setupShareButton() {
     // tab's own load aren't missing from the generated link.
     const latestOwnState = loadJSON(OWN_STATE_KEY, {});
     const payload = { id: shareId, exportedAt: new Date().toISOString(), state: latestOwnState };
-    const url = buildShareUrl(location.origin + location.pathname, payload);
+    const url = await buildShareUrl(location.origin + location.pathname, payload);
     try {
       await navigator.clipboard.writeText(url);
       alert("共有リンクをコピーしました。友達に送ってください。");
@@ -672,10 +672,10 @@ function setupFriendRemoval() {
 // 作成" button. Never auto-syncs afterward — this is a one-time snapshot the
 // user can keep editing locally (e.g. checking off a movie a friend
 // mentioned watching), independent of the sender's own list going forward.
-function handleIncomingShareLink() {
+async function handleIncomingShareLink() {
   const raw = extractShareParam(location.href);
   if (!raw) return;
-  const payload = parseSharePayload(raw);
+  const payload = await parseSharePayload(raw);
   // Clean the URL regardless of outcome so a reload doesn't reprocess it.
   history.replaceState(null, "", location.pathname);
   if (!payload) {
@@ -715,7 +715,7 @@ function handleIncomingShareLink() {
     exportedAt: payload.exportedAt,
     importedAt: new Date().toISOString(),
   });
-  // This runs synchronously during init(), before setupTabs()/renderList()/etc.
+  // This runs (awaited) during init(), before setupTabs()/renderList()/etc.
   // are wired up. If localStorage.setItem() throws (e.g. QuotaExceededError),
   // an uncaught exception here would propagate out of init() itself, leaving
   // the whole checklist blank. persistLocalStorageAtomically() also guards
@@ -743,7 +743,7 @@ async function init() {
       '<p class="empty-state">作品データを読み込めませんでした。通信環境を確認して再読み込みしてください。</p>';
     return;
   }
-  handleIncomingShareLink();
+  await handleIncomingShareLink();
   setupTabs();
   setupUnwatchedToggle();
   setupRatingFilter();

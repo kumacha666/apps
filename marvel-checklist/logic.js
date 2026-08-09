@@ -155,8 +155,37 @@ function isParsableDate(value) {
 // looked up as `friends[id]`.
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function buildSharePayload({ id, exportedAt, state }) {
-  return JSON.stringify({ id, exportedAt, state });
+// The share payload is gzip-compressed and base64url-encoded before going
+// into the URL's `share` query param. An uncompressed JSON payload for a
+// user who has watched/rated every catalog entry runs to ~8.7 KB once
+// URL-encoded — over the ~2000-character length many messaging apps,
+// in-app WebViews, and CDNs treat as safe, and past the request-line limits
+// (commonly 8 KiB) some servers reject outright. Gzip brings the same
+// worst-case payload down to roughly 1.3 KB (repetitive `{"watched":true,
+// "rating":"◎"}`-shaped JSON compresses well). Uses the standard
+// CompressionStream/DecompressionStream Web APIs (also available as globals
+// in Node 18+, so this needs no bundler/dependency and runs the same way
+// under `node --test`).
+async function gzipToBase64Url(text) {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  const buffer = await new Response(stream).arrayBuffer();
+  let binary = "";
+  for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function gunzipFromBase64Url(str) {
+  const base64 = str.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return await new Response(stream).text();
+}
+
+export async function buildSharePayload({ id, exportedAt, state }) {
+  return await gzipToBase64Url(JSON.stringify({ id, exportedAt, state }));
 }
 
 /**
@@ -165,13 +194,20 @@ export function buildSharePayload({ id, exportedAt, state }) {
  * whole thing" posture as validateImportedState, since a partially-garbage
  * link must not silently create/overwrite a friend entry with junk data.
  */
-export function parseSharePayload(raw) {
+export async function parseSharePayload(raw) {
   if (!raw) return null;
   let parsed;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(await gunzipFromBase64Url(raw));
   } catch {
-    return null;
+    // Fall back to plain (uncompressed) JSON: links generated before
+    // compression was introduced are still floating around in chat
+    // histories and must keep working when opened.
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
   }
   if (!isPlainObject(parsed)) return null;
   if (typeof parsed.id !== "string" || !UUID_PATTERN.test(parsed.id)) return null;
@@ -181,9 +217,9 @@ export function parseSharePayload(raw) {
   return { id: parsed.id, exportedAt: parsed.exportedAt, state };
 }
 
-export function buildShareUrl(baseUrl, payload) {
+export async function buildShareUrl(baseUrl, payload) {
   const url = new URL(baseUrl);
-  url.searchParams.set("share", buildSharePayload(payload));
+  url.searchParams.set("share", await buildSharePayload(payload));
   return url.toString();
 }
 
