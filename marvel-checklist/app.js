@@ -364,6 +364,58 @@ function setupRatingFilter() {
   }
 }
 
+function setLocalStorageItem(key, raw) {
+  if (raw === null) {
+    localStorage.removeItem(key);
+  } else {
+    localStorage.setItem(key, raw);
+  }
+}
+
+// Persists a validated full backup across all four localStorage keys and
+// commits it to in-memory state, or leaves everything untouched on failure.
+// A naive sequential write (own, then friends, then...) risks a partial
+// restore if e.g. localStorage fills up partway through (GitHub Pages apps
+// share one origin's quota) — this device would end up with new own data
+// but stale friends data, silently. So every previous raw value is captured
+// first, and any write failure rolls all four keys back to those values
+// before returning false.
+//
+// A validated `shareId` of null must actively clear any existing
+// SHARE_ID_KEY (not just leave it alone) — otherwise restoring someone
+// else's backup (or one predating any share) would keep this device
+// impersonating its old share identity, so a future share link would still
+// look, to a friend's device, like an update from the *previous* identity
+// rather than the (possibly different) restored one.
+function restoreFullBackup(validated) {
+  const nextActiveProfile =
+    validated.activeProfile === SELF || Object.prototype.hasOwnProperty.call(validated.friends, validated.activeProfile)
+      ? validated.activeProfile
+      : SELF;
+
+  const previous = {
+    [OWN_STATE_KEY]: localStorage.getItem(OWN_STATE_KEY),
+    [FRIENDS_KEY]: localStorage.getItem(FRIENDS_KEY),
+    [ACTIVE_PROFILE_KEY]: localStorage.getItem(ACTIVE_PROFILE_KEY),
+    [SHARE_ID_KEY]: localStorage.getItem(SHARE_ID_KEY),
+  };
+
+  try {
+    localStorage.setItem(OWN_STATE_KEY, JSON.stringify(validated.own));
+    localStorage.setItem(FRIENDS_KEY, JSON.stringify(validated.friends));
+    localStorage.setItem(ACTIVE_PROFILE_KEY, nextActiveProfile);
+    setLocalStorageItem(SHARE_ID_KEY, validated.shareId);
+  } catch (e) {
+    for (const [key, raw] of Object.entries(previous)) setLocalStorageItem(key, raw);
+    return false;
+  }
+
+  ownState = validated.own;
+  friends = validated.friends;
+  activeProfileId = nextActiveProfile;
+  return true;
+}
+
 // Full backup covers everything (own list + all saved friends' lists), so
 // restoring on a new device/browser brings back the whole picture — not
 // just whichever profile happened to be selected when exporting.
@@ -400,17 +452,9 @@ function setupBackup() {
       const validated = parsed === undefined ? null : validateFullBackup(parsed);
       if (!validated) {
         alert("読み込みに失敗しました。正しいバックアップファイルを選択してください。");
+      } else if (!restoreFullBackup(validated)) {
+        alert("データの復元に失敗しました（保存容量が不足している可能性があります）。変更は取り消されました。");
       } else {
-        ownState = validated.own;
-        friends = validated.friends;
-        activeProfileId =
-          validated.activeProfile === SELF || Object.prototype.hasOwnProperty.call(friends, validated.activeProfile)
-            ? validated.activeProfile
-            : SELF;
-        saveOwnState();
-        saveFriends();
-        saveActiveProfile();
-        if (validated.shareId) localStorage.setItem(SHARE_ID_KEY, validated.shareId);
         renderProfileSwitcher();
         renderCountdown();
         renderList();

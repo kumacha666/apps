@@ -250,7 +250,11 @@ export function validateFullBackup(data) {
   const own = validateImportedState(data.own);
   if (!own) return null;
 
-  const friendsRaw = data.friends ?? {};
+  // Same reasoning as `own`: a real v2 export always includes `friends`
+  // (as `{}` when there are none), so its absence means corruption — must
+  // not silently default to {} and overwrite every saved friend on restore.
+  if (!("friends" in data)) return null;
+  const friendsRaw = data.friends;
   if (!isPlainObject(friendsRaw)) return null;
 
   const friends = {};

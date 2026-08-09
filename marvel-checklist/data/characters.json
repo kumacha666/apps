@@ -32,7 +32,7 @@
   { "id": "nick-fury", "name": "ニック・フューリー", "appearances": [
     { "movieId": "iron-man", "role": "sub" }, { "movieId": "iron-man-2", "role": "main" }, { "movieId": "thor", "role": "sub" },
     { "movieId": "avengers", "role": "main" }, { "movieId": "captain-america-winter-soldier", "role": "main" }, { "movieId": "avengers-age-of-ultron", "role": "sub" },
-    { "movieId": "captain-america-civil-war", "role": "sub" }, { "movieId": "avengers-infinity-war", "role": "main" }, { "movieId": "captain-marvel", "role": "main" },
+    { "movieId": "captain-america-civil-war", "role": "sub" }, { "movieId": "avengers-infinity-war", "role": "sub" }, { "movieId": "captain-marvel", "role": "main" },
     { "movieId": "spider-man-far-from-home", "role": "main" }, { "movieId": "secret-invasion-s1", "role": "main" }
   ] },
   { "id": "loki", "name": "ロキ", "appearances": [
@@ -293,5 +293,18 @@
   ] },
   { "id": "ben-grimm-fox", "name": "ベン・グリム／シング（フォックス版）", "appearances": [
     { "movieId": "fantastic-four-2005", "role": "main" }, { "movieId": "fantastic-four-rise-of-the-silver-surfer", "role": "main" }
+  ] },
+  { "id": "agatha-harkness", "name": "アガサ・ハークネス", "appearances": [
+    { "movieId": "wandavision-s1", "role": "main" }, { "movieId": "agatha-all-along-s1", "role": "main" }
+  ] },
+  { "id": "maya-lopez", "name": "マヤ・ロペス／エコー", "appearances": [
+    { "movieId": "hawkeye-s1", "role": "main" }, { "movieId": "echo-s1", "role": "main" }
+  ] },
+  { "id": "riri-williams", "name": "リリ・ウィリアムズ／アイアンハート", "appearances": [
+    { "movieId": "black-panther-wakanda-forever", "role": "main" }, { "movieId": "ironheart-s1", "role": "main" }
+  ] },
+  { "id": "wilson-fisk", "name": "ウィルソン・フィスク／キングピン", "appearances": [
+    { "movieId": "hawkeye-s1", "role": "main" }, { "movieId": "echo-s1", "role": "main" }, { "movieId": "daredevil-born-again-s1", "role": "main" },
+    { "movieId": "daredevil-born-again-s2", "role": "main" }
   ] }
 ]

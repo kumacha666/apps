@@ -391,7 +391,7 @@ test("validateFullBackup rejects a backup where the own field is missing entirel
   // restoring "empty" would wipe the caller's actual watch history.
   assert.equal(validateFullBackup({ version: BACKUP_VERSION, friends: {} }), null);
   // An explicitly-present, empty own state is fine — that's a legitimate export.
-  assert.deepEqual(validateFullBackup({ version: BACKUP_VERSION, own: {} }), {
+  assert.deepEqual(validateFullBackup({ version: BACKUP_VERSION, own: {}, friends: {} }), {
     own: {},
     friends: {},
     shareId: null,
@@ -414,13 +414,21 @@ test("validateFullBackup coerces a non-UUID shareId to null instead of rejecting
   // shareId only seeds this device's own future outgoing links, so unlike
   // the friend-id checks above it doesn't need to fail the whole restore —
   // an invalid value should just fall back to null.
-  const result = validateFullBackup({ version: BACKUP_VERSION, own: {}, shareId: "not-a-uuid" });
+  const result = validateFullBackup({ version: BACKUP_VERSION, own: {}, friends: {}, shareId: "not-a-uuid" });
   assert.equal(result.shareId, null);
 });
 
-test("validateFullBackup defaults missing friends/shareId/activeProfile", () => {
-  const result = validateFullBackup({ version: BACKUP_VERSION, own: {} });
+test("validateFullBackup defaults missing shareId/activeProfile, but requires friends to be present", () => {
+  const result = validateFullBackup({ version: BACKUP_VERSION, own: {}, friends: {} });
   assert.deepEqual(result, { own: {}, friends: {}, shareId: null, activeProfile: "self" });
+});
+
+test("validateFullBackup rejects a backup where friends is missing entirely (not just empty)", () => {
+  // Regression test (Codex review): same reasoning as the "own" check —
+  // every real v2 export includes "friends" (as {} when there are none),
+  // so its absence means corruption. Silently defaulting to {} would wipe
+  // every saved friend on restore instead of rejecting the broken file.
+  assert.equal(validateFullBackup({ version: BACKUP_VERSION, own: {} }), null);
 });
 
 // --- Character-based prerequisites --------------------------------------
