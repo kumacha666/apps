@@ -1,5 +1,7 @@
 import {
   RATINGS,
+  UNRATED_FILTER,
+  RATING_FILTER_OPTIONS,
   UNIVERSE_LABELS,
   DOOMSDAY_ID,
   isReleased,
@@ -9,6 +11,7 @@ import {
   computeProgress,
   filterByUniverse,
   filterUnwatched,
+  filterByRating,
   groupMovies,
   validateImportedState,
 } from "./logic.js";
@@ -19,6 +22,7 @@ let movies = [];
 let state = loadState();
 let currentUniverse = "all";
 let unwatchedOnly = false;
+let activeRatingFilters = new Set(); // display-only filter, like unwatchedOnly — never affects progress or group order
 let pendingFocus = null; // { movieId, control } to restore focus after a re-render
 
 function loadState() {
@@ -74,7 +78,8 @@ function renderList() {
   const universeFiltered = filterByUniverse(movies, currentUniverse);
   renderProgress(universeFiltered);
 
-  const displayList = unwatchedOnly ? filterUnwatched(universeFiltered, state) : universeFiltered;
+  let displayList = unwatchedOnly ? filterUnwatched(universeFiltered, state) : universeFiltered;
+  displayList = filterByRating(displayList, state, [...activeRatingFilters]);
 
   const listEl = document.getElementById("movie-list");
   listEl.innerHTML = "";
@@ -237,6 +242,31 @@ function setupUnwatchedToggle() {
   });
 }
 
+const RATING_FILTER_LABELS = { "◎": "◎", "〇": "〇", "△": "△", "✕": "✕", [UNRATED_FILTER]: "未評価" };
+
+function setupRatingFilter() {
+  const container = document.getElementById("rating-filter");
+  for (const option of RATING_FILTER_OPTIONS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "rating-filter-btn";
+    btn.textContent = RATING_FILTER_LABELS[option];
+    btn.setAttribute("aria-pressed", "false");
+    btn.addEventListener("click", () => {
+      const nowActive = !activeRatingFilters.has(option);
+      if (nowActive) {
+        activeRatingFilters.add(option);
+      } else {
+        activeRatingFilters.delete(option);
+      }
+      btn.classList.toggle("active", nowActive);
+      btn.setAttribute("aria-pressed", String(nowActive));
+      renderList();
+    });
+    container.appendChild(btn);
+  }
+}
+
 function setupBackup() {
   document.getElementById("btn-export").addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
@@ -288,6 +318,7 @@ async function init() {
   }
   setupTabs();
   setupUnwatchedToggle();
+  setupRatingFilter();
   setupBackup();
   renderCountdown();
   renderList();

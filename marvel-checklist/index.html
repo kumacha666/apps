@@ -35,6 +35,8 @@
         <input type="checkbox" id="unwatched-only">
         未視聴のみ表示
       </label>
+      <p class="filter-label">見るべき優先度で絞り込み</p>
+      <div id="rating-filter" class="rating-filter" role="group" aria-label="見るべき優先度で絞り込み"></div>
     </section>
 
     <main id="movie-list" class="movie-list"></main>
@@ -45,6 +47,7 @@
         <div class="settings-content">
           <div class="guide-item"><span class="guide-icon">✅</span><span>タイトルをタップで視聴済みをオン/オフ</span></div>
           <div class="guide-item"><span class="guide-icon">⭐</span><span>◎〇△✕ ボタンで「見るべき度合い」を設定（もう一度押すと解除）</span></div>
+          <div class="guide-item"><span class="guide-icon">🔍</span><span>「見るべき優先度で絞り込み」で複数選択可（例：◎と〇だけ表示）。未評価の作品だけ絞り込むこともできます</span></div>
           <div class="guide-item"><span class="guide-icon">💾</span><span>データはこの端末のブラウザ内（localStorage）にのみ保存されます</span></div>
           <div class="guide-item"><span class="guide-icon">📱</span><span>ホーム画面に追加するとオフラインでも使えます</span></div>
           <div class="backup-buttons">
