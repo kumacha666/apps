@@ -349,18 +349,16 @@ function renderPrerequisites(movie) {
   const wrapper = document.createElement("div");
   wrapper.className = "prereq-section";
 
-  if (unwatched.length === 0) {
-    wrapper.classList.add("prereq-all-watched");
-    wrapper.textContent = "✓ 前提作品はすべて視聴済み";
-    return wrapper;
-  }
-
   const details = document.createElement("details");
   details.className = "prereq-details";
+  if (unwatched.length === 0) details.classList.add("prereq-all-watched");
   details.dataset.movieId = movie.id;
   if (openPrereqMovieIds.has(movie.id)) details.open = true;
   const summary = document.createElement("summary");
-  summary.textContent = `🔗 前提作品：${unwatched.length}件未視聴（全${prereqs.length}件）`;
+  summary.textContent =
+    unwatched.length === 0
+      ? `✓ 前提作品：全${prereqs.length}件視聴済み`
+      : `🔗 前提作品：${unwatched.length}件未視聴（全${prereqs.length}件）`;
   details.appendChild(summary);
 
   const list = document.createElement("ul");

@@ -304,14 +304,14 @@ body {
   font-size: 0.78rem;
 }
 
-.prereq-all-watched {
-  color: #7ec98f;
-}
-
 .prereq-details summary {
   color: #ffb020;
   cursor: pointer;
   list-style: none;
+}
+
+.prereq-details.prereq-all-watched summary {
+  color: #7ec98f;
 }
 
 .prereq-details summary::-webkit-details-marker {
