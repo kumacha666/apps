@@ -14,6 +14,17 @@ import {
   RATINGS,
   UNRATED_FILTER,
   RATING_FILTER_OPTIONS,
+  buildSharePayload,
+  parseSharePayload,
+  buildShareUrl,
+  extractShareParam,
+  upsertFriend,
+  removeFriend,
+  listFriends,
+  buildFullBackup,
+  validateFullBackup,
+  BACKUP_VERSION,
+  computePrerequisites,
 } from "../logic.js";
 
 const movies = [
@@ -212,4 +223,312 @@ test("validateImportedState rejects the whole payload if any single entry is mal
 
 test("RATINGS exposes exactly the four supported symbols", () => {
   assert.deepEqual(RATINGS, ["◎", "〇", "△", "✕"]);
+});
+
+// --- Friend sharing ---------------------------------------------------
+
+const SAMPLE_UUID = "b3b7f6a0-1c2d-4e5f-8a9b-0123456789ab";
+const SAMPLE_UUID_2 = "11111111-2222-4333-8444-555555555555";
+
+test("parseSharePayload round-trips through buildSharePayload", async () => {
+  const payload = { id: SAMPLE_UUID, exportedAt: "2026-08-09T12:00:00.000Z", state: { "iron-man": { watched: true, rating: "◎" } } };
+  const raw = await buildSharePayload(payload);
+  assert.deepEqual(await parseSharePayload(raw), payload);
+});
+
+// Regression test (Codex review, PR #338): an uncompressed JSON share
+// payload for a heavily-used state ran to ~8.7 KB once URL-encoded, past
+// the length many messaging apps/WebViews/CDNs treat as safe. Payloads are
+// now gzip-compressed + base64url-encoded before going into the URL.
+test("buildSharePayload compresses the payload well below the uncompressed size", async () => {
+  const state = {};
+  for (let i = 0; i < 98; i++) state[`movie-${i}`] = { watched: true, rating: "◎" };
+  const payload = { id: SAMPLE_UUID, exportedAt: "2026-08-09T12:00:00.000Z", state };
+  const uncompressedLength = JSON.stringify(payload).length;
+  const raw = await buildSharePayload(payload);
+  assert.ok(raw.length < uncompressedLength / 2, `compressed (${raw.length}) should be well under half of uncompressed (${uncompressedLength})`);
+  assert.deepEqual(await parseSharePayload(raw), payload);
+});
+
+// Regression test: share links generated before compression was introduced
+// (plain, uncompressed JSON) must still be importable.
+test("parseSharePayload still accepts the pre-compression plain-JSON format", async () => {
+  const payload = { id: SAMPLE_UUID, exportedAt: "2026-08-09T12:00:00.000Z", state: { thor: { watched: true, rating: null } } };
+  const rawPlainJson = JSON.stringify(payload);
+  assert.deepEqual(await parseSharePayload(rawPlainJson), payload);
+});
+
+test("parseSharePayload rejects malformed payloads", async () => {
+  assert.equal(await parseSharePayload(""), null);
+  assert.equal(await parseSharePayload(null), null);
+  assert.equal(await parseSharePayload("not json"), null);
+  assert.equal(await parseSharePayload(JSON.stringify([1, 2, 3])), null);
+  assert.equal(await parseSharePayload(JSON.stringify({ exportedAt: "2026-08-09", state: {} })), null, "missing id");
+  assert.equal(await parseSharePayload(JSON.stringify({ id: "", exportedAt: "2026-08-09", state: {} })), null, "empty id");
+  assert.equal(
+    await parseSharePayload(JSON.stringify({ id: SAMPLE_UUID, exportedAt: "not-a-date", state: {} })),
+    null,
+    "bad date"
+  );
+  assert.equal(
+    await parseSharePayload(JSON.stringify({ id: SAMPLE_UUID, exportedAt: "2026-08-09", state: { a: { watched: "yes" } } })),
+    null,
+    "malformed nested state is rejected (delegates to validateImportedState)"
+  );
+});
+
+test("parseSharePayload rejects ids that aren't the generator's UUID format, including reserved/pathological values", async () => {
+  // Regression test (Codex review, PR #338): a crafted link with id:"self"
+  // would collide with the app's own-profile sentinel, making the imported
+  // friend's data unreachable through the profile switcher. "__proto__" and
+  // "constructor" are rejected too since `friends[id]` on a plain object
+  // would resolve to an inherited Object.prototype value instead of
+  // undefined for those keys, corrupting the "does this friend already
+  // exist" check in app.js.
+  for (const badId of ["self", "__proto__", "constructor", "prototype", "not-a-uuid", "123", ""]) {
+    assert.equal(
+      await parseSharePayload(JSON.stringify({ id: badId, exportedAt: "2026-08-09T00:00:00.000Z", state: {} })),
+      null,
+      `id "${badId}" must be rejected`
+    );
+  }
+});
+
+test("buildShareUrl / extractShareParam round-trip, including unicode names in state", async () => {
+  const payload = { id: SAMPLE_UUID_2, exportedAt: "2026-08-09T00:00:00.000Z", state: { "loki-s2": { watched: true, rating: "〇" } } };
+  const url = await buildShareUrl("https://honeypawlab.com/marvel-checklist/", payload);
+  assert.ok(url.startsWith("https://honeypawlab.com/marvel-checklist/?share="));
+  const extracted = extractShareParam(url);
+  assert.deepEqual(await parseSharePayload(extracted), payload);
+});
+
+test("upsertFriend adds/replaces an entry without mutating the input", () => {
+  const friends = { a: { name: "Aさん", state: {}, exportedAt: "2026-01-01", importedAt: "2026-01-01" } };
+  const updated = upsertFriend(friends, "b", { name: "Bさん", state: {}, exportedAt: "2026-02-01", importedAt: "2026-02-01" });
+  assert.deepEqual(Object.keys(updated).sort(), ["a", "b"]);
+  assert.ok(!("b" in friends), "original object is not mutated");
+});
+
+test("removeFriend removes only the targeted entry without mutating the input", () => {
+  const friends = {
+    a: { name: "A", state: {}, exportedAt: "x", importedAt: "x" },
+    b: { name: "B", state: {}, exportedAt: "x", importedAt: "x" },
+  };
+  const updated = removeFriend(friends, "a");
+  assert.deepEqual(Object.keys(updated), ["b"]);
+  assert.ok("a" in friends, "original object is not mutated");
+});
+
+test("listFriends returns id-tagged entries sorted by name", () => {
+  const friends = {
+    z: { name: "ジロー", state: {}, exportedAt: "x", importedAt: "x" },
+    a: { name: "アキラ", state: {}, exportedAt: "x", importedAt: "x" },
+  };
+  const list = listFriends(friends);
+  assert.deepEqual(
+    list.map((f) => f.id),
+    ["a", "z"]
+  );
+  assert.equal(list[0].name, "アキラ");
+});
+
+// --- Full backup --------------------------------------------------------
+
+test("validateFullBackup round-trips through buildFullBackup", () => {
+  const backup = buildFullBackup({
+    own: { "iron-man": { watched: true, rating: "◎" } },
+    friends: { [SAMPLE_UUID]: { name: "友人A", state: { thor: { watched: false, rating: null } }, exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-02T00:00:00.000Z" } },
+    shareId: SAMPLE_UUID_2,
+    activeProfile: SAMPLE_UUID,
+  });
+  assert.equal(backup.version, BACKUP_VERSION);
+  assert.deepEqual(validateFullBackup(backup), {
+    own: { "iron-man": { watched: true, rating: "◎" } },
+    friends: { [SAMPLE_UUID]: { name: "友人A", state: { thor: { watched: false, rating: null } }, exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-02T00:00:00.000Z" } },
+    shareId: SAMPLE_UUID_2,
+    activeProfile: SAMPLE_UUID,
+  });
+});
+
+test("validateFullBackup treats a version-less payload as a legacy own-state-only export", () => {
+  const legacy = { "iron-man": { watched: true, rating: "◎" } };
+  assert.deepEqual(validateFullBackup(legacy), { own: legacy, friends: {}, shareId: null, activeProfile: "self" });
+});
+
+test("validateFullBackup rejects malformed backups, including a bad friend entry", () => {
+  assert.equal(validateFullBackup(null), null);
+  assert.equal(validateFullBackup([]), null);
+  assert.equal(validateFullBackup({ version: 999, own: {} }), null, "unknown version");
+  assert.equal(validateFullBackup({ version: BACKUP_VERSION, own: { a: { watched: "not-a-bool" } } }), null, "bad own state");
+  assert.equal(
+    validateFullBackup({
+      version: BACKUP_VERSION,
+      own: {},
+      friends: { [SAMPLE_UUID]: { name: "", state: {}, exportedAt: "2026-01-01", importedAt: "2026-01-01" } },
+    }),
+    null,
+    "blank friend name"
+  );
+  assert.equal(
+    validateFullBackup({
+      version: BACKUP_VERSION,
+      own: {},
+      friends: { [SAMPLE_UUID]: { name: "友人", state: { x: { watched: "nope" } }, exportedAt: "2026-01-01", importedAt: "2026-01-01" } },
+    }),
+    null,
+    "malformed nested friend state"
+  );
+  assert.equal(
+    validateFullBackup({
+      version: BACKUP_VERSION,
+      own: {},
+      friends: { [SAMPLE_UUID]: { name: "友人", state: {}, exportedAt: "not-a-date", importedAt: "2026-01-01" } },
+    }),
+    null,
+    "unparsable exportedAt"
+  );
+});
+
+test("validateFullBackup rejects non-UUID friend ids, including reserved/pathological values", () => {
+  // Regression test (Codex review, PR #338): the same "self"/"__proto__"
+  // collision fixed for share links also applied to the full-backup restore
+  // path, since friends[id] = ... there is equally vulnerable.
+  for (const badId of ["self", "__proto__", "constructor", "not-a-uuid"]) {
+    assert.equal(
+      validateFullBackup({
+        version: BACKUP_VERSION,
+        own: {},
+        friends: { [badId]: { name: "友人", state: {}, exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-01T00:00:00.000Z" } },
+      }),
+      null,
+      `friend id "${badId}" must be rejected`
+    );
+  }
+});
+
+test("validateFullBackup rejects a backup where the own field is missing entirely (not just empty)", () => {
+  // Regression test (Codex review): a truncated/corrupted v2 backup that
+  // lacks "own" must not silently restore as an empty own state — a real
+  // export always includes it, so its absence means data loss, and
+  // restoring "empty" would wipe the caller's actual watch history.
+  assert.equal(validateFullBackup({ version: BACKUP_VERSION, friends: {} }), null);
+  // An explicitly-present, empty own state is fine — that's a legitimate export.
+  assert.deepEqual(validateFullBackup({ version: BACKUP_VERSION, own: {}, friends: {} }), {
+    own: {},
+    friends: {},
+    shareId: null,
+    activeProfile: "self",
+  });
+});
+
+test("validateFullBackup rejects a friend entry where state is missing entirely", () => {
+  assert.equal(
+    validateFullBackup({
+      version: BACKUP_VERSION,
+      own: {},
+      friends: { [SAMPLE_UUID]: { name: "友人", exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-01T00:00:00.000Z" } },
+    }),
+    null
+  );
+});
+
+test("validateFullBackup coerces a non-UUID shareId to null instead of rejecting the whole backup", () => {
+  // shareId only seeds this device's own future outgoing links, so unlike
+  // the friend-id checks above it doesn't need to fail the whole restore —
+  // an invalid value should just fall back to null.
+  const result = validateFullBackup({ version: BACKUP_VERSION, own: {}, friends: {}, shareId: "not-a-uuid" });
+  assert.equal(result.shareId, null);
+});
+
+test("validateFullBackup defaults missing shareId/activeProfile, but requires friends to be present", () => {
+  const result = validateFullBackup({ version: BACKUP_VERSION, own: {}, friends: {} });
+  assert.deepEqual(result, { own: {}, friends: {}, shareId: null, activeProfile: "self" });
+});
+
+test("validateFullBackup rejects a backup where friends is missing entirely (not just empty)", () => {
+  // Regression test (Codex review): same reasoning as the "own" check —
+  // every real v2 export includes "friends" (as {} when there are none),
+  // so its absence means corruption. Silently defaulting to {} would wipe
+  // every saved friend on restore instead of rejecting the broken file.
+  assert.equal(validateFullBackup({ version: BACKUP_VERSION, own: {} }), null);
+});
+
+// --- Character-based prerequisites --------------------------------------
+
+const prereqMovies = [
+  { id: "origin", title: "Origin", releaseDate: "2010-01-01", universe: "mcu", group: "g" },
+  { id: "team-up-1", title: "Team-Up 1", releaseDate: "2012-01-01", universe: "mcu", group: "g" },
+  { id: "solo-cameo-only", title: "Solo (cameo only)", releaseDate: "2013-01-01", universe: "mcu", group: "g" },
+  { id: "team-up-2", title: "Team-Up 2", releaseDate: "2018-01-01", universe: "mcu", group: "g" },
+  { id: "unrelated", title: "Unrelated", releaseDate: "2011-01-01", universe: "mcu", group: "g" },
+];
+
+const prereqCharacters = [
+  {
+    id: "hero-a",
+    name: "Hero A",
+    appearances: [
+      { movieId: "origin", role: "main" },
+      { movieId: "team-up-1", role: "main" },
+      { movieId: "solo-cameo-only", role: "sub" }, // an earlier SUB appearance must not count as a prerequisite
+      { movieId: "team-up-2", role: "main" },
+    ],
+  },
+  {
+    id: "hero-b-cameo-in-target",
+    name: "Hero B",
+    // Only ever a cameo in team-up-2 itself -> must not generate a prerequisite
+    // even though they have an earlier main appearance elsewhere.
+    appearances: [
+      { movieId: "origin", role: "main" },
+      { movieId: "team-up-2", role: "sub" },
+    ],
+  },
+  {
+    id: "hero-c-unrelated",
+    name: "Hero C",
+    appearances: [{ movieId: "unrelated", role: "main" }],
+  },
+];
+
+test("computePrerequisites collects earlier MAIN appearances of characters who are MAIN in the target movie", () => {
+  const result = computePrerequisites("team-up-2", prereqMovies, prereqCharacters);
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["origin", "team-up-1"]
+  );
+});
+
+test("computePrerequisites ignores a character's earlier SUB/cameo appearances as prerequisites", () => {
+  // hero-a's "solo-cameo-only" appearance is role:"sub", so it must be excluded
+  // even though it chronologically precedes team-up-2.
+  const result = computePrerequisites("team-up-2", prereqMovies, prereqCharacters);
+  assert.ok(!result.some((m) => m.id === "solo-cameo-only"));
+});
+
+test("computePrerequisites ignores characters who are only a SUB/cameo in the target movie itself", () => {
+  // hero-b-cameo-in-target has an earlier main appearance in "origin", but
+  // since they're only a cameo in team-up-2, that doesn't need explaining.
+  const result = computePrerequisites("team-up-2", prereqMovies, prereqCharacters);
+  // "origin" is still a prerequisite via hero-a, but not *because* of hero-b.
+  const viaOnlyHeroB = computePrerequisites("team-up-2", prereqMovies, [prereqCharacters[1]]);
+  assert.deepEqual(viaOnlyHeroB, []);
+});
+
+test("computePrerequisites returns nothing for a character's own earliest appearance", () => {
+  const result = computePrerequisites("origin", prereqMovies, prereqCharacters);
+  assert.deepEqual(result, []);
+});
+
+test("computePrerequisites sorts results chronologically and returns full movie objects", () => {
+  const result = computePrerequisites("team-up-2", prereqMovies, prereqCharacters);
+  assert.deepEqual(
+    result.map((m) => m.releaseDate),
+    ["2010-01-01", "2012-01-01"]
+  );
+  assert.equal(result[0].title, "Origin");
+});
+
+test("computePrerequisites returns an empty array for an unknown movie id", () => {
+  assert.deepEqual(computePrerequisites("does-not-exist", prereqMovies, prereqCharacters), []);
 });

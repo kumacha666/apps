@@ -13,41 +13,153 @@ import {
   filterUnwatched,
   filterByRating,
   groupMovies,
-  validateImportedState,
+  parseSharePayload,
+  buildShareUrl,
+  extractShareParam,
+  upsertFriend,
+  removeFriend,
+  listFriends,
+  buildFullBackup,
+  validateFullBackup,
+  computePrerequisites,
 } from "./logic.js";
 
-const STORAGE_KEY = "marvel-checklist-state-v1";
+const OWN_STATE_KEY = "marvel-checklist-state-v1";
+const FRIENDS_KEY = "marvel-checklist-friends-v1";
+const SHARE_ID_KEY = "marvel-checklist-share-id-v1";
+const ACTIVE_PROFILE_KEY = "marvel-checklist-active-profile-v1";
+const SELF = "self";
 
 let movies = [];
-let state = loadState();
+let characters = [];
+let ownState = loadJSON(OWN_STATE_KEY, {});
+let friends = loadJSON(FRIENDS_KEY, {});
+let activeProfileId = loadString(ACTIVE_PROFILE_KEY, SELF);
 let currentUniverse = "all";
 let unwatchedOnly = false;
 let activeRatingFilters = new Set(); // display-only filter, like unwatchedOnly — never affects progress or group order
 let pendingFocus = null; // { movieId, control } to restore focus after a re-render
+let openPrereqMovieIds = new Set(); // one-shot: which "前提作品" <details> to re-open after a render, then cleared
 
-function loadState() {
+function loadJSON(key, fallback) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
   } catch (e) {
-    return {};
+    return fallback;
   }
 }
 
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+// localStorage.getItem() can itself throw (e.g. SecurityError when storage
+// is disabled/blocked by browser settings). The three `let` initializers
+// above run at module top-level during ES module evaluation, so an
+// uncaught exception here — unlike one inside init() — would abort module
+// evaluation entirely and the app would never even call init().
+function loadString(key, fallback) {
+  try {
+    return localStorage.getItem(key) || fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function saveActiveProfile() {
+  localStorage.setItem(ACTIVE_PROFILE_KEY, activeProfileId);
+}
+
+// If activeProfileId points at a friend that no longer exists (e.g. it was
+// deleted, or came from a stale localStorage value), fall back to "self"
+// rather than rendering against an undefined state.
+function isViewingValidFriend() {
+  return activeProfileId !== SELF && Object.prototype.hasOwnProperty.call(friends, activeProfileId);
+}
+
+function getActiveStateStore() {
+  if (activeProfileId === SELF || !isViewingValidFriend()) return ownState;
+  return friends[activeProfileId].state;
+}
+
+// Applies a single-field edit (watched or rating) for `movieId` in the
+// active profile's state, and persists it.
+//
+// For a friend profile, this reads the latest persisted FRIENDS_KEY right
+// before merging and writes back only that one `{ watched, rating }` field
+// for that one movie — not the whole friend record, and not even the whole
+// per-movie entry — so that a *different* tab's concurrent edit to a
+// different field (e.g. this tab changes `watched` while another tab is
+// mid-edit on `rating` for the very same movie/friend) survives.
+//
+// Either branch only commits the change to in-memory `ownState`/`friends`
+// after `localStorage.setItem()` succeeds. A failed write (e.g.
+// QuotaExceededError) leaves both storage and in-memory state exactly as
+// they were, with a failure alert, instead of a change that looks applied
+// on screen (because some earlier code already mutated the live state
+// object) but silently reverts on the next reload with no explanation.
+function applyStateChange(movieId, field, value) {
+  if (activeProfileId === SELF || !isViewingValidFriend()) {
+    // Same reasoning as the friend branch below: read the latest persisted
+    // OWN_STATE_KEY right before merging, not this tab's possibly-stale
+    // in-memory `ownState` — otherwise a different movie edited in another
+    // tab since this tab's own load would be silently overwritten here.
+    const latestOwnState = loadJSON(OWN_STATE_KEY, {});
+    const latestEntry = getEntry(latestOwnState, movieId);
+    const nextOwnState = { ...latestOwnState, [movieId]: { ...latestEntry, [field]: value } };
+    try {
+      localStorage.setItem(OWN_STATE_KEY, JSON.stringify(nextOwnState));
+    } catch (e) {
+      alert("視聴状況の保存に失敗しました（保存容量が不足している可能性があります）。変更は取り消されました。");
+      return;
+    }
+    ownState = nextOwnState;
+    return;
+  }
+
+  const latestFriends = loadJSON(FRIENDS_KEY, {});
+  if (!Object.prototype.hasOwnProperty.call(latestFriends, activeProfileId)) {
+    // The friend was removed (in another tab, or via this one) since this
+    // tab's own `friends` snapshot was taken. Don't resurrect a deleted
+    // friend just because this tab still had it in memory — fall back to
+    // viewing "自分" instead, matching what actually exists in storage.
+    friends = latestFriends;
+    activeProfileId = SELF;
+    saveActiveProfile();
+    alert("表示中の友達データは削除されています。自分のリストを表示します。");
+    renderProfileSwitcher();
+    return;
+  }
+  const latestEntry = getEntry(latestFriends[activeProfileId].state, movieId);
+  const nextFriends = {
+    ...latestFriends,
+    [activeProfileId]: {
+      ...latestFriends[activeProfileId],
+      state: { ...latestFriends[activeProfileId].state, [movieId]: { ...latestEntry, [field]: value } },
+    },
+  };
+  try {
+    localStorage.setItem(FRIENDS_KEY, JSON.stringify(nextFriends));
+  } catch (e) {
+    alert("友達データの保存に失敗しました（保存容量が不足している可能性があります）。変更は取り消されました。");
+    return;
+  }
+  friends = nextFriends;
 }
 
 function setWatched(id, watched) {
-  const entry = getEntry(state, id);
-  state[id] = { ...entry, watched };
-  saveState();
+  applyStateChange(id, "watched", watched);
 }
 
 function setRating(id, rating) {
-  const entry = getEntry(state, id);
-  state[id] = { ...entry, rating: entry.rating === rating ? null : rating };
-  saveState();
+  const entry = getEntry(getActiveStateStore(), id);
+  applyStateChange(id, "rating", entry.rating === rating ? null : rating);
+}
+
+function getOwnShareId() {
+  let id = localStorage.getItem(SHARE_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(SHARE_ID_KEY, id);
+  }
+  return id;
 }
 
 function renderCountdown() {
@@ -68,18 +180,19 @@ function renderCountdown() {
 }
 
 function renderProgress(universeFiltered) {
-  const { total, watched, pct } = computeProgress(universeFiltered, state);
+  const { total, watched, pct } = computeProgress(universeFiltered, getActiveStateStore());
   document.getElementById("progress-fill").style.width = `${pct}%`;
   document.getElementById("progress-text").textContent =
     total > 0 ? `視聴済み ${watched} / ${total} 作品（${pct}%）` : "対象の作品がありません";
 }
 
 function renderList() {
+  const activeState = getActiveStateStore();
   const universeFiltered = filterByUniverse(movies, currentUniverse);
   renderProgress(universeFiltered);
 
-  let displayList = unwatchedOnly ? filterUnwatched(universeFiltered, state) : universeFiltered;
-  displayList = filterByRating(displayList, state, activeRatingFilters);
+  let displayList = unwatchedOnly ? filterUnwatched(universeFiltered, activeState) : universeFiltered;
+  displayList = filterByRating(displayList, activeState, activeRatingFilters);
 
   const listEl = document.getElementById("movie-list");
   listEl.innerHTML = "";
@@ -147,7 +260,7 @@ function restoreFocus(emptyStateEl) {
 }
 
 function renderMovieCard(movie) {
-  const entry = getEntry(state, movie.id);
+  const entry = getEntry(getActiveStateStore(), movie.id);
   const released = isReleased(movie);
 
   const card = document.createElement("div");
@@ -215,7 +328,53 @@ function renderMovieCard(movie) {
   }
   card.appendChild(ratingRow);
 
+  const prereqEl = renderPrerequisites(movie);
+  if (prereqEl) card.appendChild(prereqEl);
+
   return card;
+}
+
+// Shows which other works you should have seen first to understand this
+// movie/series's characters, based on computePrerequisites(). Watched state
+// reflects whichever profile (self or a friend) is currently active, same
+// as the rest of the card. Returns null (nothing rendered) when there are
+// no prerequisites at all, to keep standalone films' cards uncluttered.
+function renderPrerequisites(movie) {
+  const prereqs = computePrerequisites(movie.id, movies, characters);
+  if (prereqs.length === 0) return null;
+
+  const activeState = getActiveStateStore();
+  const unwatched = prereqs.filter((m) => !getEntry(activeState, m.id).watched);
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "prereq-section";
+
+  if (unwatched.length === 0) {
+    wrapper.classList.add("prereq-all-watched");
+    wrapper.textContent = "✓ 前提作品はすべて視聴済み";
+    return wrapper;
+  }
+
+  const details = document.createElement("details");
+  details.className = "prereq-details";
+  details.dataset.movieId = movie.id;
+  if (openPrereqMovieIds.has(movie.id)) details.open = true;
+  const summary = document.createElement("summary");
+  summary.textContent = `🔗 前提作品：${unwatched.length}件未視聴（全${prereqs.length}件）`;
+  details.appendChild(summary);
+
+  const list = document.createElement("ul");
+  list.className = "prereq-list";
+  for (const prereqMovie of prereqs) {
+    const watched = getEntry(activeState, prereqMovie.id).watched;
+    const li = document.createElement("li");
+    li.className = watched ? "prereq-watched" : "prereq-unwatched";
+    li.textContent = `${watched ? "✓" : "○"} ${prereqMovie.title}`;
+    list.appendChild(li);
+  }
+  details.appendChild(list);
+  wrapper.appendChild(details);
+  return wrapper;
 }
 
 function setupTabs() {
@@ -265,9 +424,109 @@ function setupRatingFilter() {
   }
 }
 
+function setLocalStorageItem(key, raw) {
+  if (raw === null) {
+    localStorage.removeItem(key);
+  } else {
+    localStorage.setItem(key, raw);
+  }
+}
+
+// Persists a validated full backup across all four localStorage keys and
+// commits it to in-memory state, or leaves everything untouched on failure.
+// A naive sequential write (own, then friends, then...) risks a partial
+// restore if e.g. localStorage fills up partway through (GitHub Pages apps
+// share one origin's quota) — this device would end up with new own data
+// but stale friends data, silently. So every previous raw value is captured
+// first, and any write failure rolls all four keys back to those values
+// before returning false.
+//
+// A validated `shareId` of null must actively clear any existing
+// SHARE_ID_KEY (not just leave it alone) — otherwise restoring someone
+// else's backup (or one predating any share) would keep this device
+// impersonating its old share identity, so a future share link would still
+// look, to a friend's device, like an update from the *previous* identity
+// rather than the (possibly different) restored one.
+const BACKUP_KEYS = [OWN_STATE_KEY, FRIENDS_KEY, ACTIVE_PROFILE_KEY, SHARE_ID_KEY];
+
+// Writes `next[key]` for every key in `keys`, or leaves localStorage exactly
+// as it was before the call — used any time more than one localStorage key
+// must change together (a full-backup restore, or a share-link import that
+// touches both FRIENDS_KEY and ACTIVE_PROFILE_KEY).
+//
+// Both the write and the rollback-on-failure clear every targeted key first
+// rather than overwriting in place. That matters because old and new values
+// don't all grow/shrink together — e.g. a restore where the old `own` was
+// larger than the new one but the new `friends` is larger than the old one
+// — so writing (or rolling back) in place can throw partway through even
+// though the total new (or total old) footprint would fit on its own.
+function persistLocalStorageAtomically(keys, next) {
+  let previous = {};
+  try {
+    for (const key of keys) previous[key] = localStorage.getItem(key);
+    for (const key of keys) localStorage.removeItem(key);
+    for (const key of keys) setLocalStorageItem(key, next[key]);
+    return true;
+  } catch (e) {
+    try {
+      for (const key of keys) localStorage.removeItem(key);
+      for (const key of keys) setLocalStorageItem(key, previous[key]);
+    } catch (e2) {
+      // Storage is exhausted even for the pre-call values (e.g. another app
+      // on the same origin has since consumed the remaining quota) —
+      // nothing more can be safely persisted here.
+    }
+    return false;
+  }
+}
+
+function restoreFullBackup(validated) {
+  const nextActiveProfile =
+    validated.activeProfile === SELF || Object.prototype.hasOwnProperty.call(validated.friends, validated.activeProfile)
+      ? validated.activeProfile
+      : SELF;
+
+  const persisted = persistLocalStorageAtomically(BACKUP_KEYS, {
+    [OWN_STATE_KEY]: JSON.stringify(validated.own),
+    [FRIENDS_KEY]: JSON.stringify(validated.friends),
+    [ACTIVE_PROFILE_KEY]: nextActiveProfile,
+    [SHARE_ID_KEY]: validated.shareId,
+  });
+  if (!persisted) return false;
+
+  ownState = validated.own;
+  friends = validated.friends;
+  activeProfileId = nextActiveProfile;
+  return true;
+}
+
+// Full backup covers everything (own list + all saved friends' lists), so
+// restoring on a new device/browser brings back the whole picture — not
+// just whichever profile happened to be selected when exporting.
 function setupBackup() {
   document.getElementById("btn-export").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    // Unlike OWN_STATE_KEY/FRIENDS_KEY below (read via loadJSON(), which
+    // already catches its own exceptions), a raw localStorage.getItem() can
+    // still throw (e.g. SecurityError if storage access was revoked after
+    // page load) — left unguarded, that would abort this click handler with
+    // no downloaded file and no failure notice.
+    let shareId;
+    try {
+      shareId = localStorage.getItem(SHARE_ID_KEY);
+    } catch (e) {
+      alert("バックアップの書き出しに失敗しました（ストレージにアクセスできません）。");
+      return;
+    }
+    // Read the latest persisted own/friends state rather than this tab's
+    // possibly-stale in-memory copies — otherwise edits made in another tab
+    // since this tab's own load would be missing from the exported backup.
+    const backup = buildFullBackup({
+      own: loadJSON(OWN_STATE_KEY, {}),
+      friends: loadJSON(FRIENDS_KEY, {}),
+      shareId,
+      activeProfile: activeProfileId,
+    });
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -289,12 +548,13 @@ function setupBackup() {
       } catch (e) {
         parsed = undefined;
       }
-      const validated = parsed === undefined ? null : validateImportedState(parsed);
+      const validated = parsed === undefined ? null : validateFullBackup(parsed);
       if (!validated) {
         alert("読み込みに失敗しました。正しいバックアップファイルを選択してください。");
+      } else if (!restoreFullBackup(validated)) {
+        alert("データの復元に失敗しました（保存容量が不足している可能性があります）。変更は取り消されました。");
       } else {
-        state = validated;
-        saveState();
+        renderProfileSwitcher();
         renderCountdown();
         renderList();
       }
@@ -302,6 +562,205 @@ function setupBackup() {
     };
     reader.readAsText(file);
   });
+}
+
+function renderProfileSwitcher() {
+  const select = document.getElementById("profile-switcher");
+  select.innerHTML = "";
+  select.appendChild(new Option("自分", SELF));
+  for (const friend of listFriends(friends)) {
+    select.appendChild(new Option(friend.name, friend.id));
+  }
+  if (!isViewingValidFriend() && activeProfileId !== SELF) {
+    // activeProfileId pointed at a friend that no longer exists (e.g. deleted).
+    activeProfileId = SELF;
+    saveActiveProfile();
+  }
+  select.value = activeProfileId;
+  updateFriendViewIndicators();
+}
+
+function updateFriendViewIndicators() {
+  const viewingFriend = isViewingValidFriend();
+  document.getElementById("btn-share").hidden = viewingFriend;
+  document.getElementById("btn-remove-friend").hidden = !viewingFriend;
+  const label = document.getElementById("friend-view-label");
+  if (viewingFriend) {
+    label.textContent = `「${friends[activeProfileId].name}」さんのリストを表示中（自分のリストとは別に保存されます）`;
+    label.hidden = false;
+  } else {
+    label.hidden = true;
+  }
+}
+
+function setupProfileSwitcher() {
+  const select = document.getElementById("profile-switcher");
+  select.addEventListener("change", () => {
+    const previousProfileId = activeProfileId;
+    const nextProfileId = select.value;
+    try {
+      localStorage.setItem(ACTIVE_PROFILE_KEY, nextProfileId);
+    } catch (e) {
+      // Revert the dropdown's own selection too — otherwise it would show
+      // the friend the user picked while the label/list (driven by
+      // `activeProfileId`, left unchanged below) still show "自分", and any
+      // card edit made in that inconsistent state would save to the wrong
+      // profile's storage key.
+      select.value = previousProfileId;
+      alert("表示切り替えの保存に失敗しました（保存容量が不足している可能性があります）。");
+      return;
+    }
+    activeProfileId = nextProfileId;
+    updateFriendViewIndicators();
+    renderList();
+  });
+}
+
+function setupShareButton() {
+  document.getElementById("btn-share").addEventListener("click", async () => {
+    let shareId;
+    try {
+      shareId = getOwnShareId();
+    } catch (e) {
+      // getItem()/setItem() inside getOwnShareId() can throw (SecurityError
+      // when storage is blocked, QuotaExceededError when persisting a
+      // freshly-generated id for the first time). Left uncaught, this async
+      // handler would abort silently — no copy, no fallback prompt, no
+      // error message at all.
+      alert("共有リンクの作成に失敗しました（保存容量が不足している可能性があります）。");
+      return;
+    }
+    // Read the latest persisted own state rather than this tab's possibly-
+    // stale in-memory ownState, so edits made in another tab since this
+    // tab's own load aren't missing from the generated link.
+    const latestOwnState = loadJSON(OWN_STATE_KEY, {});
+    const payload = { id: shareId, exportedAt: new Date().toISOString(), state: latestOwnState };
+    let url;
+    try {
+      url = await buildShareUrl(location.origin + location.pathname, payload);
+    } catch (e) {
+      // buildShareUrl() uses CompressionStream, which some older browsers/
+      // WebViews don't implement — that constructor throws synchronously.
+      // Left unguarded, this async handler would abort with no copy, no
+      // fallback prompt, and no error message at all.
+      alert("共有リンクの作成に失敗しました（このブラウザでは利用できない機能が含まれている可能性があります）。");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      alert("共有リンクをコピーしました。友達に送ってください。");
+    } catch (e) {
+      prompt("このリンクをコピーして友達に送ってください。", url);
+    }
+  });
+}
+
+function setupFriendRemoval() {
+  document.getElementById("btn-remove-friend").addEventListener("click", () => {
+    if (!isViewingValidFriend()) return;
+    const name = friends[activeProfileId].name;
+    if (!confirm(`「${name}」さんのリストを削除しますか？この操作は取り消せません。`)) return;
+    // Base the removal on the latest persisted friends list (see
+    // applyStateChange()'s comment) so a friend added in another tab isn't
+    // silently wiped out by this tab's stale in-memory `friends`. Persist
+    // FRIENDS_KEY and ACTIVE_PROFILE_KEY together so a failure partway
+    // through can't leave ACTIVE_PROFILE_KEY pointing at the now-deleted
+    // friend (with in-memory state already showing "自分" but storage
+    // disagreeing) or abort this handler before the profile switcher/list
+    // are refreshed.
+    const nextFriends = removeFriend(loadJSON(FRIENDS_KEY, {}), activeProfileId);
+    const persisted = persistLocalStorageAtomically([FRIENDS_KEY, ACTIVE_PROFILE_KEY], {
+      [FRIENDS_KEY]: JSON.stringify(nextFriends),
+      [ACTIVE_PROFILE_KEY]: SELF,
+    });
+    if (!persisted) {
+      alert("友達データの削除に失敗しました（保存容量が不足している可能性があります）。");
+      return;
+    }
+    friends = nextFriends;
+    activeProfileId = SELF;
+    renderProfileSwitcher();
+    renderList();
+  });
+}
+
+function confirmFriendOverwrite(existingFriend, payload) {
+  const existingDate = new Date(existingFriend.exportedAt).toLocaleString("ja-JP");
+  const incomingDate = new Date(payload.exportedAt).toLocaleString("ja-JP");
+  return confirm(
+    `「${existingFriend.name}」さんのデータは既に保存されています。\n\n保存済みデータの共有日時: ${existingDate}\n今回のリンクの共有日時: ${incomingDate}\n\n上書きしますか？（自分で手動編集した内容は失われます）`
+  );
+}
+
+// Handles a `?share=...` link generated by another device's "共有リンクを
+// 作成" button. Never auto-syncs afterward — this is a one-time snapshot the
+// user can keep editing locally (e.g. checking off a movie a friend
+// mentioned watching), independent of the sender's own list going forward.
+async function handleIncomingShareLink() {
+  const raw = extractShareParam(location.href);
+  if (!raw) return;
+  const payload = await parseSharePayload(raw);
+  // Clean the URL regardless of outcome so a reload doesn't reprocess it.
+  history.replaceState(null, "", location.pathname);
+  if (!payload) {
+    alert("共有リンクの読み込みに失敗しました。リンクが壊れている可能性があります。");
+    return;
+  }
+
+  // Read the currently persisted friends list (not the module-level
+  // `friends` this tab loaded back at its own init() time) just to decide
+  // which dialog to show. confirm()/prompt() block this tab's own JS while
+  // open, but NOT other tabs — another tab can freely write FRIENDS_KEY
+  // during that wait, so this snapshot is re-read again below, right before
+  // the actual merge, rather than reused across the dialog.
+  const existing = loadJSON(FRIENDS_KEY, {})[payload.id];
+  let name;
+  if (existing) {
+    if (!confirmFriendOverwrite(existing, payload)) return;
+    name = existing.name;
+  } else {
+    const entered = prompt("この友達の名前を入力してください");
+    if (!entered || !entered.trim()) return;
+    name = entered.trim();
+  }
+
+  // Re-read again here, after the blocking dialog(s) above, so a friend
+  // another tab added/updated/removed while this tab was waiting on user
+  // input isn't silently dropped when this tab overwrites FRIENDS_KEY below.
+  const latestFriends = loadJSON(FRIENDS_KEY, {});
+  const raceExisting = latestFriends[payload.id];
+  if (raceExisting && !existing) {
+    // Another tab imported the very same sender's link while THIS tab's
+    // name prompt was open (existing was undefined back then, so the user
+    // was never asked to confirm an overwrite). Now that a record for this
+    // id exists after all, re-run the same overwrite confirmation instead
+    // of silently clobbering whatever that other tab just saved (including
+    // its own name and any manual edits already made against it).
+    if (!confirmFriendOverwrite(raceExisting, payload)) return;
+    name = raceExisting.name;
+  }
+  const nextFriends = upsertFriend(latestFriends, payload.id, {
+    name,
+    state: payload.state,
+    exportedAt: payload.exportedAt,
+    importedAt: new Date().toISOString(),
+  });
+  // This runs (awaited) during init(), before setupTabs()/renderList()/etc.
+  // are wired up. If localStorage.setItem() throws (e.g. QuotaExceededError),
+  // an uncaught exception here would propagate out of init() itself, leaving
+  // the whole checklist blank. persistLocalStorageAtomically() also guards
+  // against a partial write (FRIENDS_KEY saved but ACTIVE_PROFILE_KEY failing)
+  // leaving the two keys inconsistent with each other.
+  const persisted = persistLocalStorageAtomically([FRIENDS_KEY, ACTIVE_PROFILE_KEY], {
+    [FRIENDS_KEY]: JSON.stringify(nextFriends),
+    [ACTIVE_PROFILE_KEY]: payload.id,
+  });
+  if (!persisted) {
+    alert("友達データの保存に失敗しました（保存容量が不足している可能性があります）。");
+    return;
+  }
+  friends = nextFriends;
+  activeProfileId = payload.id;
 }
 
 async function init() {
@@ -314,13 +773,57 @@ async function init() {
       '<p class="empty-state">作品データを読み込めませんでした。通信環境を確認して再読み込みしてください。</p>';
     return;
   }
+  await handleIncomingShareLink();
   setupTabs();
   setupUnwatchedToggle();
   setupRatingFilter();
   setupBackup();
+  setupProfileSwitcher();
+  setupShareButton();
+  setupFriendRemoval();
+  renderProfileSwitcher();
   renderCountdown();
   renderList();
   setupDateRolloverRefresh();
+  loadCharactersInBackground();
+}
+
+// Character/prerequisite data is supplementary, so it's fetched *after* the
+// core checklist has already rendered rather than awaited in init() — a
+// slow or hanging request for it must never delay showing movies.json data
+// that's already in hand. Once it resolves, re-render to pick up any
+// prerequisite badges.
+function loadCharactersInBackground() {
+  fetch("data/characters.json")
+    .then((res) => (res.ok ? res.json() : []))
+    .then((data) => {
+      characters = Array.isArray(data) ? data : [];
+      if (characters.length > 0) {
+        // This re-render happens on whatever schedule the network delivers
+        // characters.json, possibly while the user already has a checkbox/
+        // rating button focused or a "前提作品" <details> open. renderList()
+        // rebuilds every card's DOM, so without this, focus would drop to
+        // <body> and any open prereq panel would silently close.
+        captureInteractionStateForRerender();
+        renderList();
+        openPrereqMovieIds = new Set(); // one-shot — don't affect later, unrelated renders
+      }
+    })
+    .catch(() => {
+      characters = [];
+    });
+}
+
+function captureInteractionStateForRerender() {
+  const active = document.activeElement;
+  if (active && active.classList.contains("movie-check")) {
+    pendingFocus = { movieId: active.dataset.movieId, control: "check" };
+  } else if (active && active.classList.contains("rating-btn")) {
+    pendingFocus = { movieId: active.dataset.movieId, control: active.dataset.rating };
+  }
+  openPrereqMovieIds = new Set(
+    [...document.querySelectorAll(".prereq-details[open]")].map((el) => el.dataset.movieId)
+  );
 }
 
 // Countdown text and release-date gating are only computed at render time,

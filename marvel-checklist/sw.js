@@ -2,7 +2,7 @@ const CACHE_PREFIX = "marvel-checklist-";
 const CACHE_NAME = CACHE_PREFIX + "v1";
 const ASSETS = [
   ".", "index.html", "style.css", "app.js", "logic.js", "manifest.json", "icon.svg",
-  "data/movies.json"
+  "data/movies.json", "data/characters.json"
 ];
 
 self.addEventListener("install", (e) => {
@@ -24,15 +24,34 @@ self.addEventListener("activate", (e) => {
 });
 
 self.addEventListener("fetch", (e) => {
+  // A `?share=...` URL embeds someone's full watch-history snapshot in the
+  // query string. Caching that exact request would leave the snapshot
+  // sitting in CacheStorage indefinitely — surviving history.replaceState()
+  // (which only changes the address bar) and even deleting the friend in
+  // the app UI, and growing by one entry per re-share. Never persist it.
+  const hasSharePayload = new URL(e.request.url).searchParams.has("share");
+
   e.respondWith(
     fetch(e.request)
       .then((res) => {
-        if (res.ok) {
+        if (res.ok && !hasSharePayload) {
           const clone = res.clone();
           e.waitUntil(caches.open(CACHE_NAME).then((c) => c.put(e.request, clone)));
         }
         return res;
       })
-      .catch(() => caches.match(e.request))
+      .catch(async () => {
+        const cached = await caches.match(e.request);
+        if (cached) return cached;
+        // A navigation request (e.g. opening a friend's `?share=...` link)
+        // won't exact-match the precached "index.html" entry because of the
+        // query string. The app only reads location.search client-side
+        // after the document loads, so falling back to the cached document
+        // itself is correct — this is what lets share links work offline.
+        if (e.request.mode === "navigate") {
+          return caches.match("index.html");
+        }
+        return undefined;
+      })
   );
 });

@@ -129,3 +129,236 @@ export function validateImportedState(data) {
   }
   return result;
 }
+
+// --- Friend sharing -------------------------------------------------------
+//
+// A "friend" is a named, locally-stored snapshot of someone else's watch
+// state, imported once via a share link and never auto-synced afterward.
+// The link carries a stable per-sender `id` (generated once on the sender's
+// device and reused across re-shares) so re-importing a later link from the
+// same person updates the same local entry instead of creating a duplicate.
+
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isParsableDate(value) {
+  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+}
+
+// The exact shape produced by crypto.randomUUID(), which is how app.js
+// generates a sender's share id. Validating against this format (rather
+// than just "non-empty string") rejects reserved/pathological values like
+// "self" (the app's own-profile sentinel) or "__proto__"/"constructor" —
+// any of which, if accepted as a friend id, would collide with either the
+// own-profile switch in app.js or a built-in Object.prototype property when
+// looked up as `friends[id]`.
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// The share payload is gzip-compressed and base64url-encoded before going
+// into the URL's `share` query param. An uncompressed JSON payload for a
+// user who has watched/rated every catalog entry runs to ~8.7 KB once
+// URL-encoded — over the ~2000-character length many messaging apps,
+// in-app WebViews, and CDNs treat as safe, and past the request-line limits
+// (commonly 8 KiB) some servers reject outright. Gzip brings the same
+// worst-case payload down to roughly 1.3 KB (repetitive `{"watched":true,
+// "rating":"◎"}`-shaped JSON compresses well). Uses the standard
+// CompressionStream/DecompressionStream Web APIs (also available as globals
+// in Node 18+, so this needs no bundler/dependency and runs the same way
+// under `node --test`).
+async function gzipToBase64Url(text) {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  const buffer = await new Response(stream).arrayBuffer();
+  let binary = "";
+  for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function gunzipFromBase64Url(str) {
+  const base64 = str.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return await new Response(stream).text();
+}
+
+export async function buildSharePayload({ id, exportedAt, state }) {
+  return await gzipToBase64Url(JSON.stringify({ id, exportedAt, state }));
+}
+
+/**
+ * Parses and validates a share-link payload string (the raw `share` query
+ * param value). Returns null for anything malformed — same "reject the
+ * whole thing" posture as validateImportedState, since a partially-garbage
+ * link must not silently create/overwrite a friend entry with junk data.
+ */
+export async function parseSharePayload(raw) {
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(await gunzipFromBase64Url(raw));
+  } catch {
+    // Fall back to plain (uncompressed) JSON: links generated before
+    // compression was introduced are still floating around in chat
+    // histories and must keep working when opened.
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!isPlainObject(parsed)) return null;
+  if (typeof parsed.id !== "string" || !UUID_PATTERN.test(parsed.id)) return null;
+  if (!isParsableDate(parsed.exportedAt)) return null;
+  const state = validateImportedState(parsed.state);
+  if (!state) return null;
+  return { id: parsed.id, exportedAt: parsed.exportedAt, state };
+}
+
+export async function buildShareUrl(baseUrl, payload) {
+  const url = new URL(baseUrl);
+  url.searchParams.set("share", await buildSharePayload(payload));
+  return url.toString();
+}
+
+export function extractShareParam(urlString) {
+  return new URL(urlString).searchParams.get("share");
+}
+
+export function upsertFriend(friends, id, entry) {
+  return { ...friends, [id]: { ...entry } };
+}
+
+export function removeFriend(friends, id) {
+  const next = { ...friends };
+  delete next[id];
+  return next;
+}
+
+export function listFriends(friends) {
+  return Object.entries(friends)
+    .map(([id, f]) => ({ id, ...f }))
+    .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+}
+
+// --- Full backup (own state + all friends) ---------------------------------
+
+export const BACKUP_VERSION = 2;
+
+export function buildFullBackup({ own, friends, shareId, activeProfile }) {
+  return { version: BACKUP_VERSION, own, friends, shareId: shareId ?? null, activeProfile: activeProfile ?? "self" };
+}
+
+/**
+ * Validates a backup payload and normalizes it to { own, friends, shareId,
+ * activeProfile }, or returns null if malformed. Understands two shapes:
+ *
+ * - Current (versioned): { version: 2, own, friends, shareId, activeProfile }
+ * - Legacy (pre-friends-feature): a bare { [movieId]: {watched,rating} }
+ *   object, i.e. exactly what validateImportedState already accepts — old
+ *   exports never had a "version" key, so its absence is the discriminator.
+ *   These restore as own-state-only with no friends, matching what such a
+ *   file actually contained.
+ *
+ * As with validateImportedState, any single malformed piece (a bad friend
+ * entry, a bad own-state entry) rejects the entire backup rather than
+ * silently dropping data, since the caller replaces everything on restore.
+ */
+export function validateFullBackup(data) {
+  if (!isPlainObject(data)) return null;
+
+  if (!("version" in data)) {
+    const own = validateImportedState(data);
+    if (!own) return null;
+    return { own, friends: {}, shareId: null, activeProfile: "self" };
+  }
+
+  if (data.version !== BACKUP_VERSION) return null;
+
+  // `own` must actually be present — a real export always includes it, so
+  // its absence means the file was truncated/corrupted. Treating a missing
+  // `own` as "an empty own state" (via `data.own ?? {}`) would silently
+  // wipe the caller's real watch history on restore instead of rejecting
+  // the broken file.
+  if (!("own" in data)) return null;
+  const own = validateImportedState(data.own);
+  if (!own) return null;
+
+  // Same reasoning as `own`: a real v2 export always includes `friends`
+  // (as `{}` when there are none), so its absence means corruption — must
+  // not silently default to {} and overwrite every saved friend on restore.
+  if (!("friends" in data)) return null;
+  const friendsRaw = data.friends;
+  if (!isPlainObject(friendsRaw)) return null;
+
+  const friends = {};
+  for (const [id, entry] of Object.entries(friendsRaw)) {
+    // Same UUID-format check as parseSharePayload's `id`, and for the same
+    // reason: a friend id of "self" (or "__proto__"/"constructor", which
+    // would corrupt this very object when assigned via friends[id] = ...)
+    // must never make it into the restored friends store, whether it
+    // arrives via a share link or — as here — a hand-edited/corrupted
+    // backup file.
+    if (!UUID_PATTERN.test(id)) return null;
+    if (!isPlainObject(entry)) return null;
+    if (typeof entry.name !== "string" || entry.name.trim() === "") return null;
+    // Same reasoning as `own` above: a real export always includes `state`
+    // for every friend entry, so its absence means corruption, not "this
+    // friend has watched nothing" — reject rather than silently emptying it.
+    if (!("state" in entry)) return null;
+    const friendState = validateImportedState(entry.state);
+    if (!friendState) return null;
+    if (!isParsableDate(entry.exportedAt)) return null;
+    if (!isParsableDate(entry.importedAt)) return null;
+    friends[id] = { name: entry.name, state: friendState, exportedAt: entry.exportedAt, importedAt: entry.importedAt };
+  }
+
+  // shareId isn't a security boundary like the friend ids above (it only
+  // seeds this device's *own* future outgoing share links), so an invalid
+  // value doesn't need to fail the whole restore — coercing it to null just
+  // means getOwnShareId() mints a fresh valid UUID next time a link is
+  // shared, instead of silently adopting a value that every recipient's
+  // parseSharePayload() would reject anyway.
+  const shareId = typeof data.shareId === "string" && UUID_PATTERN.test(data.shareId) ? data.shareId : null;
+  const activeProfile = typeof data.activeProfile === "string" ? data.activeProfile : "self";
+
+  return { own, friends, shareId, activeProfile };
+}
+
+// --- Character-based prerequisites ------------------------------------
+//
+// "To understand the characters in movie/series M, which other works
+// should I have seen first?" — computed from `characters` (an array of
+// { id, name, appearances: [{ movieId, role }] }, role is "main" | "sub").
+//
+// Only characters who play a MAIN role in M generate a recommendation
+// (a "sub"/cameo appearance in M doesn't require prior context to enjoy
+// M itself). For each such character, every one of their EARLIER "main"
+// appearances (by release date) becomes a prerequisite — an earlier "sub"
+// appearance is skipped, since a cameo elsewhere doesn't meaningfully
+// build understanding of the character either. A character who is only
+// ever "sub" everywhere never produces a prerequisite in either direction.
+export function computePrerequisites(movieId, movies, characters) {
+  const movieById = new Map(movies.map((m) => [m.id, m]));
+  const target = movieById.get(movieId);
+  if (!target) return [];
+  const targetDate = parseLocalDate(target.releaseDate);
+
+  const prereqIds = new Set();
+  for (const character of characters) {
+    const isMainHere = character.appearances.some((a) => a.movieId === movieId && a.role === "main");
+    if (!isMainHere) continue;
+    for (const appearance of character.appearances) {
+      if (appearance.movieId === movieId || appearance.role !== "main") continue;
+      const otherMovie = movieById.get(appearance.movieId);
+      if (!otherMovie) continue;
+      if (parseLocalDate(otherMovie.releaseDate) < targetDate) {
+        prereqIds.add(appearance.movieId);
+      }
+    }
+  }
+
+  return [...prereqIds].map((id) => movieById.get(id)).sort((a, b) => parseLocalDate(a.releaseDate) - parseLocalDate(b.releaseDate));
+}
