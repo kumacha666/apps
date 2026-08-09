@@ -499,13 +499,25 @@ function restoreFullBackup(validated) {
 // just whichever profile happened to be selected when exporting.
 function setupBackup() {
   document.getElementById("btn-export").addEventListener("click", () => {
+    // Unlike OWN_STATE_KEY/FRIENDS_KEY below (read via loadJSON(), which
+    // already catches its own exceptions), a raw localStorage.getItem() can
+    // still throw (e.g. SecurityError if storage access was revoked after
+    // page load) — left unguarded, that would abort this click handler with
+    // no downloaded file and no failure notice.
+    let shareId;
+    try {
+      shareId = localStorage.getItem(SHARE_ID_KEY);
+    } catch (e) {
+      alert("バックアップの書き出しに失敗しました（ストレージにアクセスできません）。");
+      return;
+    }
     // Read the latest persisted own/friends state rather than this tab's
     // possibly-stale in-memory copies — otherwise edits made in another tab
     // since this tab's own load would be missing from the exported backup.
     const backup = buildFullBackup({
       own: loadJSON(OWN_STATE_KEY, {}),
       friends: loadJSON(FRIENDS_KEY, {}),
-      shareId: localStorage.getItem(SHARE_ID_KEY),
+      shareId,
       activeProfile: activeProfileId,
     });
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
@@ -578,8 +590,21 @@ function updateFriendViewIndicators() {
 function setupProfileSwitcher() {
   const select = document.getElementById("profile-switcher");
   select.addEventListener("change", () => {
-    activeProfileId = select.value;
-    saveActiveProfile();
+    const previousProfileId = activeProfileId;
+    const nextProfileId = select.value;
+    try {
+      localStorage.setItem(ACTIVE_PROFILE_KEY, nextProfileId);
+    } catch (e) {
+      // Revert the dropdown's own selection too — otherwise it would show
+      // the friend the user picked while the label/list (driven by
+      // `activeProfileId`, left unchanged below) still show "自分", and any
+      // card edit made in that inconsistent state would save to the wrong
+      // profile's storage key.
+      select.value = previousProfileId;
+      alert("表示切り替えの保存に失敗しました（保存容量が不足している可能性があります）。");
+      return;
+    }
+    activeProfileId = nextProfileId;
     updateFriendViewIndicators();
     renderList();
   });

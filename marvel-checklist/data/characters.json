@@ -8,12 +8,12 @@
   { "id": "steve-rogers", "name": "スティーブ・ロジャース／キャプテン・アメリカ", "appearances": [
     { "movieId": "captain-america-first-avenger", "role": "main" }, { "movieId": "avengers", "role": "main" }, { "movieId": "captain-america-winter-soldier", "role": "main" },
     { "movieId": "avengers-age-of-ultron", "role": "main" }, { "movieId": "captain-america-civil-war", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
-    { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "spider-man-far-from-home", "role": "sub" }
+    { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "spider-man-far-from-home", "role": "sub" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
   { "id": "thor", "name": "ソー", "appearances": [
     { "movieId": "thor", "role": "main" }, { "movieId": "avengers", "role": "main" }, { "movieId": "thor-dark-world", "role": "main" },
     { "movieId": "avengers-age-of-ultron", "role": "main" }, { "movieId": "thor-ragnarok", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
-    { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "thor-love-and-thunder", "role": "main" }, { "movieId": "guardians-of-the-galaxy-vol-3", "role": "sub" }
+    { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "thor-love-and-thunder", "role": "main" }, { "movieId": "guardians-of-the-galaxy-vol-3", "role": "sub" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
   { "id": "natasha-romanoff", "name": "ナターシャ・ロマノフ／ブラック・ウィドウ", "appearances": [
     { "movieId": "iron-man-2", "role": "main" }, { "movieId": "avengers", "role": "main" }, { "movieId": "captain-america-winter-soldier", "role": "main" },
@@ -38,7 +38,7 @@
   { "id": "loki", "name": "ロキ", "appearances": [
     { "movieId": "thor", "role": "main" }, { "movieId": "avengers", "role": "main" }, { "movieId": "thor-dark-world", "role": "main" },
     { "movieId": "avengers-age-of-ultron", "role": "sub" }, { "movieId": "thor-ragnarok", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
-    { "movieId": "loki-s1", "role": "main" }, { "movieId": "loki-s2", "role": "main" }
+    { "movieId": "loki-s1", "role": "main" }, { "movieId": "loki-s2", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
   { "id": "peter-parker-mcu", "name": "ピーター・パーカー／スパイダーマン（MCU）", "appearances": [
     { "movieId": "captain-america-civil-war", "role": "main" }, { "movieId": "spider-man-homecoming", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
@@ -60,12 +60,12 @@
   { "id": "sam-wilson", "name": "サム・ウィルソン／ファルコン→キャプテン・アメリカ", "appearances": [
     { "movieId": "captain-america-winter-soldier", "role": "main" }, { "movieId": "avengers-age-of-ultron", "role": "sub" }, { "movieId": "captain-america-civil-war", "role": "main" },
     { "movieId": "avengers-infinity-war", "role": "main" }, { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "falcon-winter-soldier-s1", "role": "main" },
-    { "movieId": "captain-america-brave-new-world", "role": "main" }
+    { "movieId": "captain-america-brave-new-world", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
   { "id": "bucky-barnes", "name": "バッキー・バーンズ／ウィンター・ソルジャー", "appearances": [
     { "movieId": "captain-america-first-avenger", "role": "main" }, { "movieId": "captain-america-winter-soldier", "role": "main" }, { "movieId": "captain-america-civil-war", "role": "main" },
     { "movieId": "avengers-infinity-war", "role": "main" }, { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "falcon-winter-soldier-s1", "role": "main" },
-    { "movieId": "thunderbolts", "role": "main" }
+    { "movieId": "thunderbolts", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
   { "id": "peter-quill", "name": "ピーター・クイル／スターロード", "appearances": [
     { "movieId": "guardians-of-the-galaxy", "role": "main" }, { "movieId": "guardians-of-the-galaxy-vol-2", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
@@ -102,7 +102,7 @@
   ] },
   { "id": "scott-lang", "name": "スコット・ラング／アントマン", "appearances": [
     { "movieId": "ant-man", "role": "main" }, { "movieId": "captain-america-civil-war", "role": "main" }, { "movieId": "ant-man-and-the-wasp", "role": "main" },
-    { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "ant-man-quantumania", "role": "main" }
+    { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "ant-man-quantumania", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
   { "id": "hope-van-dyne", "name": "ホープ・ヴァン・ダイン／ワスプ", "appearances": [
     { "movieId": "ant-man-and-the-wasp", "role": "main" }, { "movieId": "avengers-endgame", "role": "sub" }, { "movieId": "ant-man-quantumania", "role": "main" }
@@ -125,16 +125,16 @@
     { "movieId": "captain-marvel", "role": "main" }, { "movieId": "spider-man-far-from-home", "role": "main" }, { "movieId": "secret-invasion-s1", "role": "main" }
   ] },
   { "id": "yelena-belova", "name": "エレーナ・ベロワ", "appearances": [
-    { "movieId": "black-widow", "role": "main" }, { "movieId": "hawkeye-s1", "role": "main" }, { "movieId": "thunderbolts", "role": "main" }
+    { "movieId": "black-widow", "role": "main" }, { "movieId": "hawkeye-s1", "role": "main" }, { "movieId": "thunderbolts", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
   { "id": "john-walker", "name": "ジョン・ウォーカー／US.エージェント", "appearances": [
-    { "movieId": "falcon-winter-soldier-s1", "role": "main" }, { "movieId": "thunderbolts", "role": "main" }
+    { "movieId": "falcon-winter-soldier-s1", "role": "main" }, { "movieId": "thunderbolts", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
   { "id": "ava-starr", "name": "エイヴァ・スター／ゴースト", "appearances": [
-    { "movieId": "ant-man-and-the-wasp", "role": "main" }, { "movieId": "thunderbolts", "role": "main" }
+    { "movieId": "ant-man-and-the-wasp", "role": "main" }, { "movieId": "thunderbolts", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
   { "id": "alexei-shostakov", "name": "アレクセイ／レッドガーディアン", "appearances": [
-    { "movieId": "black-widow", "role": "main" }, { "movieId": "thunderbolts", "role": "main" }
+    { "movieId": "black-widow", "role": "main" }, { "movieId": "thunderbolts", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
   { "id": "taskmaster", "name": "タスクマスター", "appearances": [
     { "movieId": "black-widow", "role": "main" }, { "movieId": "thunderbolts", "role": "sub" }
@@ -247,11 +247,11 @@
     { "movieId": "captain-america-brave-new-world", "role": "main" }
   ] },
   { "id": "m-baku", "name": "エムバク", "appearances": [
-    { "movieId": "black-panther", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "sub" }, { "movieId": "black-panther-wakanda-forever", "role": "main" }
+    { "movieId": "black-panther", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "sub" }, { "movieId": "black-panther-wakanda-forever", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
   { "id": "shuri", "name": "シュリ", "appearances": [
     { "movieId": "black-panther", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "sub" }, { "movieId": "avengers-endgame", "role": "sub" },
-    { "movieId": "black-panther-wakanda-forever", "role": "main" }
+    { "movieId": "black-panther-wakanda-forever", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
   { "id": "okoye", "name": "オコエ", "appearances": [
     { "movieId": "black-panther", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" }, { "movieId": "avengers-endgame", "role": "sub" },
@@ -306,5 +306,38 @@
   { "id": "wilson-fisk", "name": "ウィルソン・フィスク／キングピン", "appearances": [
     { "movieId": "hawkeye-s1", "role": "main" }, { "movieId": "echo-s1", "role": "main" }, { "movieId": "daredevil-born-again-s1", "role": "main" },
     { "movieId": "daredevil-born-again-s2", "role": "main" }
+  ] },
+  { "id": "shang-chi-character", "name": "シャン・チー", "appearances": [
+    { "movieId": "shang-chi", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+  ] },
+  { "id": "namor", "name": "ネイモア", "appearances": [
+    { "movieId": "black-panther-wakanda-forever", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+  ] },
+  { "id": "namora", "name": "ネイモラ", "appearances": [
+    { "movieId": "black-panther-wakanda-forever", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+  ] },
+  { "id": "joaquin-torres", "name": "ホアキン・トーレス／ファルコン", "appearances": [
+    { "movieId": "captain-america-brave-new-world", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+  ] },
+  { "id": "sentry", "name": "セントリー／ヴォイド", "appearances": [
+    { "movieId": "thunderbolts", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+  ] },
+  { "id": "cassie-lang", "name": "キャシー・ラング", "appearances": [
+    { "movieId": "ant-man-quantumania", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+  ] },
+  { "id": "reed-richards-mcu", "name": "リード・リチャーズ／ミスター・ファンタスティック", "appearances": [
+    { "movieId": "fantastic-four-first-steps", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+  ] },
+  { "id": "sue-storm-mcu", "name": "スー・ストーム／インヴィジブル・ウーマン", "appearances": [
+    { "movieId": "fantastic-four-first-steps", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+  ] },
+  { "id": "johnny-storm-mcu", "name": "ジョニー・ストーム／ヒューマン・トーチ", "appearances": [
+    { "movieId": "fantastic-four-first-steps", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+  ] },
+  { "id": "ben-grimm-mcu", "name": "ベン・グリム／シング", "appearances": [
+    { "movieId": "fantastic-four-first-steps", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+  ] },
+  { "id": "gambit", "name": "ガンビット", "appearances": [
+    { "movieId": "deadpool-and-wolverine", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] }
 ]
