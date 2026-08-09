@@ -33,7 +33,7 @@
     { "movieId": "iron-man", "role": "sub" }, { "movieId": "iron-man-2", "role": "main" }, { "movieId": "thor", "role": "sub" },
     { "movieId": "avengers", "role": "main" }, { "movieId": "captain-america-winter-soldier", "role": "main" }, { "movieId": "avengers-age-of-ultron", "role": "sub" },
     { "movieId": "captain-america-civil-war", "role": "sub" }, { "movieId": "avengers-infinity-war", "role": "sub" }, { "movieId": "captain-marvel", "role": "main" },
-    { "movieId": "spider-man-far-from-home", "role": "main" }, { "movieId": "secret-invasion-s1", "role": "main" }
+    { "movieId": "spider-man-far-from-home", "role": "sub" }, { "movieId": "secret-invasion-s1", "role": "main" }
   ] },
   { "id": "loki", "name": "ロキ", "appearances": [
     { "movieId": "thor", "role": "main" }, { "movieId": "avengers", "role": "main" }, { "movieId": "thor-dark-world", "role": "main" },
