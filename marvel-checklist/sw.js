@@ -24,10 +24,17 @@ self.addEventListener("activate", (e) => {
 });
 
 self.addEventListener("fetch", (e) => {
+  // A `?share=...` URL embeds someone's full watch-history snapshot in the
+  // query string. Caching that exact request would leave the snapshot
+  // sitting in CacheStorage indefinitely — surviving history.replaceState()
+  // (which only changes the address bar) and even deleting the friend in
+  // the app UI, and growing by one entry per re-share. Never persist it.
+  const hasSharePayload = new URL(e.request.url).searchParams.has("share");
+
   e.respondWith(
     fetch(e.request)
       .then((res) => {
-        if (res.ok) {
+        if (res.ok && !hasSharePayload) {
           const clone = res.clone();
           e.waitUntil(caches.open(CACHE_NAME).then((c) => c.put(e.request, clone)));
         }

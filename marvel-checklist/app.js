@@ -539,14 +539,6 @@ async function init() {
       '<p class="empty-state">作品データを読み込めませんでした。通信環境を確認して再読み込みしてください。</p>';
     return;
   }
-  try {
-    // Character/prerequisite data is supplementary — if it fails to load,
-    // the core checklist should still work, just without prerequisite badges.
-    const charRes = await fetch("data/characters.json");
-    characters = charRes.ok ? await charRes.json() : [];
-  } catch (e) {
-    characters = [];
-  }
   handleIncomingShareLink();
   setupTabs();
   setupUnwatchedToggle();
@@ -559,6 +551,24 @@ async function init() {
   renderCountdown();
   renderList();
   setupDateRolloverRefresh();
+  loadCharactersInBackground();
+}
+
+// Character/prerequisite data is supplementary, so it's fetched *after* the
+// core checklist has already rendered rather than awaited in init() — a
+// slow or hanging request for it must never delay showing movies.json data
+// that's already in hand. Once it resolves, re-render to pick up any
+// prerequisite badges.
+function loadCharactersInBackground() {
+  fetch("data/characters.json")
+    .then((res) => (res.ok ? res.json() : []))
+    .then((data) => {
+      characters = Array.isArray(data) ? data : [];
+      if (characters.length > 0) renderList();
+    })
+    .catch(() => {
+      characters = [];
+    });
 }
 
 // Countdown text and release-date gating are only computed at render time,

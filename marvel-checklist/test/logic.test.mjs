@@ -316,14 +316,14 @@ test("validateFullBackup round-trips through buildFullBackup", () => {
   const backup = buildFullBackup({
     own: { "iron-man": { watched: true, rating: "◎" } },
     friends: { [SAMPLE_UUID]: { name: "友人A", state: { thor: { watched: false, rating: null } }, exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-02T00:00:00.000Z" } },
-    shareId: "my-share-id",
+    shareId: SAMPLE_UUID_2,
     activeProfile: SAMPLE_UUID,
   });
   assert.equal(backup.version, BACKUP_VERSION);
   assert.deepEqual(validateFullBackup(backup), {
     own: { "iron-man": { watched: true, rating: "◎" } },
     friends: { [SAMPLE_UUID]: { name: "友人A", state: { thor: { watched: false, rating: null } }, exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-02T00:00:00.000Z" } },
-    shareId: "my-share-id",
+    shareId: SAMPLE_UUID_2,
     activeProfile: SAMPLE_UUID,
   });
 });
@@ -382,6 +382,40 @@ test("validateFullBackup rejects non-UUID friend ids, including reserved/patholo
       `friend id "${badId}" must be rejected`
     );
   }
+});
+
+test("validateFullBackup rejects a backup where the own field is missing entirely (not just empty)", () => {
+  // Regression test (Codex review): a truncated/corrupted v2 backup that
+  // lacks "own" must not silently restore as an empty own state — a real
+  // export always includes it, so its absence means data loss, and
+  // restoring "empty" would wipe the caller's actual watch history.
+  assert.equal(validateFullBackup({ version: BACKUP_VERSION, friends: {} }), null);
+  // An explicitly-present, empty own state is fine — that's a legitimate export.
+  assert.deepEqual(validateFullBackup({ version: BACKUP_VERSION, own: {} }), {
+    own: {},
+    friends: {},
+    shareId: null,
+    activeProfile: "self",
+  });
+});
+
+test("validateFullBackup rejects a friend entry where state is missing entirely", () => {
+  assert.equal(
+    validateFullBackup({
+      version: BACKUP_VERSION,
+      own: {},
+      friends: { [SAMPLE_UUID]: { name: "友人", exportedAt: "2026-01-01T00:00:00.000Z", importedAt: "2026-01-01T00:00:00.000Z" } },
+    }),
+    null
+  );
+});
+
+test("validateFullBackup coerces a non-UUID shareId to null instead of rejecting the whole backup", () => {
+  // shareId only seeds this device's own future outgoing links, so unlike
+  // the friend-id checks above it doesn't need to fail the whole restore —
+  // an invalid value should just fall back to null.
+  const result = validateFullBackup({ version: BACKUP_VERSION, own: {}, shareId: "not-a-uuid" });
+  assert.equal(result.shareId, null);
 });
 
 test("validateFullBackup defaults missing friends/shareId/activeProfile", () => {

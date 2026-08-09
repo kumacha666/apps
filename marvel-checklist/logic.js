@@ -241,7 +241,13 @@ export function validateFullBackup(data) {
 
   if (data.version !== BACKUP_VERSION) return null;
 
-  const own = validateImportedState(data.own ?? {});
+  // `own` must actually be present — a real export always includes it, so
+  // its absence means the file was truncated/corrupted. Treating a missing
+  // `own` as "an empty own state" (via `data.own ?? {}`) would silently
+  // wipe the caller's real watch history on restore instead of rejecting
+  // the broken file.
+  if (!("own" in data)) return null;
+  const own = validateImportedState(data.own);
   if (!own) return null;
 
   const friendsRaw = data.friends ?? {};
@@ -258,14 +264,24 @@ export function validateFullBackup(data) {
     if (!UUID_PATTERN.test(id)) return null;
     if (!isPlainObject(entry)) return null;
     if (typeof entry.name !== "string" || entry.name.trim() === "") return null;
-    const friendState = validateImportedState(entry.state ?? {});
+    // Same reasoning as `own` above: a real export always includes `state`
+    // for every friend entry, so its absence means corruption, not "this
+    // friend has watched nothing" — reject rather than silently emptying it.
+    if (!("state" in entry)) return null;
+    const friendState = validateImportedState(entry.state);
     if (!friendState) return null;
     if (!isParsableDate(entry.exportedAt)) return null;
     if (!isParsableDate(entry.importedAt)) return null;
     friends[id] = { name: entry.name, state: friendState, exportedAt: entry.exportedAt, importedAt: entry.importedAt };
   }
 
-  const shareId = typeof data.shareId === "string" ? data.shareId : null;
+  // shareId isn't a security boundary like the friend ids above (it only
+  // seeds this device's *own* future outgoing share links), so an invalid
+  // value doesn't need to fail the whole restore — coercing it to null just
+  // means getOwnShareId() mints a fresh valid UUID next time a link is
+  // shared, instead of silently adopting a value that every recipient's
+  // parseSharePayload() would reject anyway.
+  const shareId = typeof data.shareId === "string" && UUID_PATTERN.test(data.shareId) ? data.shareId : null;
   const activeProfile = typeof data.activeProfile === "string" ? data.activeProfile : "self";
 
   return { own, friends, shareId, activeProfile };
