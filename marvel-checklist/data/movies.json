@@ -36,8 +36,9 @@
   { "id": "captain-america-brave-new-world", "title": "キャプテン・アメリカ：ブレイブ・ニュー・ワールド", "releaseDate": "2025-02-14", "universe": "mcu", "group": "フェイズ5", "type": "movie" },
   { "id": "thunderbolts", "title": "サンダーボルツ*", "releaseDate": "2025-05-02", "universe": "mcu", "group": "フェイズ5", "type": "movie" },
   { "id": "fantastic-four-first-steps", "title": "ファンタスティック・フォー：ファースト・ステップ", "releaseDate": "2025-07-25", "universe": "mcu", "group": "フェイズ6", "type": "movie" },
-  { "id": "spider-man-brand-new-day", "title": "スパイダーマン：ブランニュー・デイ", "releaseDate": "2026-07-31", "universe": "mcu", "group": "フェイズ6", "type": "movie", "tentative": true },
-  { "id": "avengers-doomsday", "title": "アベンジャーズ／ドゥームズデイ", "releaseDate": "2026-12-18", "universe": "mcu", "group": "フェイズ6", "type": "movie", "tentative": true },
+  { "id": "spider-man-brand-new-day", "title": "スパイダーマン：ブランニュー・デイ", "releaseDate": "2026-07-31", "universe": "mcu", "group": "フェイズ6", "type": "movie" },
+  { "id": "avengers-doomsday", "title": "アベンジャーズ／ドゥームズデイ", "releaseDate": "2026-12-18", "universe": "mcu", "group": "フェイズ6", "type": "movie" },
+  { "id": "avengers-secret-wars", "title": "アベンジャーズ／シークレット・ウォーズ", "releaseDate": "2027-12-17", "universe": "mcu", "group": "フェイズ6", "type": "movie", "tentative": true },
   { "id": "spider-man", "title": "スパイダーマン", "releaseDate": "2002-05-03", "universe": "sony", "group": "サム・ライミ版 三部作", "type": "movie" },
   { "id": "spider-man-2", "title": "スパイダーマン2", "releaseDate": "2004-06-30", "universe": "sony", "group": "サム・ライミ版 三部作", "type": "movie" },
   { "id": "spider-man-3", "title": "スパイダーマン3", "releaseDate": "2007-05-04", "universe": "sony", "group": "サム・ライミ版 三部作", "type": "movie" },
@@ -96,5 +97,6 @@
   { "id": "wonder-man-s1", "title": "ワンダーマン シーズン1", "releaseDate": "2026-01-27", "universe": "mcu", "group": "フェイズ6", "type": "series" },
   { "id": "i-am-groot-s1", "title": "アイ・アム・グルート シーズン1", "releaseDate": "2022-08-10", "universe": "mcu", "group": "フェイズ4", "type": "series" },
   { "id": "i-am-groot-s2", "title": "アイ・アム・グルート シーズン2", "releaseDate": "2023-08-10", "universe": "mcu", "group": "フェイズ5", "type": "series" },
-  { "id": "daredevil-born-again-s2", "title": "デアデビル：ボーン・アゲイン シーズン2", "releaseDate": "2026-03-04", "universe": "mcu", "group": "フェイズ5", "type": "series" }
+  { "id": "daredevil-born-again-s2", "title": "デアデビル：ボーン・アゲイン シーズン2", "releaseDate": "2026-03-04", "universe": "mcu", "group": "フェイズ5", "type": "series" },
+  { "id": "daredevil-born-again-s3", "title": "デアデビル：ボーン・アゲイン シーズン3", "releaseDate": "2027-03-01", "universe": "mcu", "group": "フェイズ6", "type": "series", "tentative": true }
 ]
