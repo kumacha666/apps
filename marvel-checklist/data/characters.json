@@ -23,7 +23,7 @@
   { "id": "bruce-banner", "name": "ブルース・バナー／ハルク", "appearances": [
     { "movieId": "incredible-hulk", "role": "main" }, { "movieId": "avengers", "role": "main" }, { "movieId": "avengers-age-of-ultron", "role": "main" },
     { "movieId": "thor-ragnarok", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" }, { "movieId": "avengers-endgame", "role": "main" },
-    { "movieId": "she-hulk-s1", "role": "main" }
+    { "movieId": "she-hulk-s1", "role": "main" }, { "movieId": "spider-man-brand-new-day", "role": "sub" }
   ] },
   { "id": "clint-barton", "name": "クリント・バートン／ホークアイ", "appearances": [
     { "movieId": "thor", "role": "sub" }, { "movieId": "avengers", "role": "main" }, { "movieId": "avengers-age-of-ultron", "role": "main" },
@@ -125,7 +125,8 @@
     { "movieId": "captain-marvel", "role": "main" }, { "movieId": "spider-man-far-from-home", "role": "main" }, { "movieId": "secret-invasion-s1", "role": "main" }
   ] },
   { "id": "yelena-belova", "name": "エレーナ・ベロワ", "appearances": [
-    { "movieId": "black-widow", "role": "main" }, { "movieId": "hawkeye-s1", "role": "main" }, { "movieId": "thunderbolts", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+    { "movieId": "black-widow", "role": "main" }, { "movieId": "hawkeye-s1", "role": "main" }, { "movieId": "thunderbolts", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" },
+    { "movieId": "spider-man-brand-new-day", "role": "sub" }
   ] },
   { "id": "john-walker", "name": "ジョン・ウォーカー／US.エージェント", "appearances": [
     { "movieId": "falcon-winter-soldier-s1", "role": "main" }, { "movieId": "thunderbolts", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
@@ -339,5 +340,8 @@
   ] },
   { "id": "gambit", "name": "ガンビット", "appearances": [
     { "movieId": "deadpool-and-wolverine", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+  ] },
+  { "id": "sheila-rivera", "name": "シーラ・リベラ", "appearances": [
+    { "movieId": "daredevil-born-again-s1", "role": "main" }, { "movieId": "daredevil-born-again-s2", "role": "main" }, { "movieId": "spider-man-brand-new-day", "role": "sub" }
   ] }
 ]
