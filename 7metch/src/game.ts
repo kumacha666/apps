@@ -810,7 +810,8 @@ export function checkWinLose(): void {
       addBurstParticles(cx, cy, color, 8, { speed: 5, size: 6, decay: 0.015, sizeDecay: 0.04 });
     });
     addShockwave(cx, cy, G.boardPixelW * 0.6, 20, "#ffd700");
-    track("stage_clear", { stage: stg.name, stars, moves_used: usedMoves, moves_total: stg.moves, mission_type: stg.mission.type, coins_earned: G.coinsEarned });
+    const isFinalStage = G.currentStage === G.STAGES!.length - 1;
+    track("stage_clear", { stage: stg.name, stars, moves_used: usedMoves, moves_total: stg.moves, mission_type: stg.mission.type, coins_earned: G.coinsEarned, all_stages_cleared: isFinalStage });
     setTimeout(() => showResult(true, stars), 800);
   } else if (G.movesLeft <= 0) {
     const stg = G.STAGES![G.currentStage];
@@ -836,7 +837,8 @@ export function getFailureProgress(mission: Mission): string {
 
 export function showResult(win: boolean, stars: number, failedMission?: Mission): void {
   const d = G.dom!;
-  d.resultTitle.textContent = win ? "クリア！" : "あと少し…";
+  const isFinalStage = win && G.currentStage === G.STAGES!.length - 1;
+  d.resultTitle.textContent = win ? (isFinalStage ? "🎉 全ステージ制覇！ 🎉" : "クリア！") : "あと少し…";
   d.resultStars.innerHTML = "";
 
   if (win) {
@@ -860,6 +862,9 @@ export function showResult(win: boolean, stars: number, failedMission?: Mission)
   let details = `スコア: ${G.score}`;
   if (win && G.coinsEarned > 0) {
     details += `<br><span class="coin-icon"></span> +${G.coinsEarned} コイン（所持: ${G.saveData.coins || 0}）`;
+  }
+  if (isFinalStage) {
+    details += `<br><span style="color:#ffd700">全${G.STAGES!.length}ステージ制覇、おめでとうございます！</span>`;
   }
   if (!win && failedMission) {
     details += `<br><span style="color:#4ecdc4">${getFailureProgress(failedMission)}</span>`;
