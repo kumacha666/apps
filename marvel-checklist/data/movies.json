@@ -97,6 +97,5 @@
   { "id": "wonder-man-s1", "title": "ワンダーマン シーズン1", "releaseDate": "2026-01-27", "universe": "mcu", "group": "フェイズ6", "type": "series" },
   { "id": "i-am-groot-s1", "title": "アイ・アム・グルート シーズン1", "releaseDate": "2022-08-10", "universe": "mcu", "group": "フェイズ4", "type": "series" },
   { "id": "i-am-groot-s2", "title": "アイ・アム・グルート シーズン2", "releaseDate": "2023-08-10", "universe": "mcu", "group": "フェイズ5", "type": "series" },
-  { "id": "daredevil-born-again-s2", "title": "デアデビル：ボーン・アゲイン シーズン2", "releaseDate": "2026-03-04", "universe": "mcu", "group": "フェイズ5", "type": "series" },
-  { "id": "daredevil-born-again-s3", "title": "デアデビル：ボーン・アゲイン シーズン3", "releaseDate": "2027-03-01", "universe": "mcu", "group": "フェイズ6", "type": "series", "tentative": true }
+  { "id": "daredevil-born-again-s2", "title": "デアデビル：ボーン・アゲイン シーズン2", "releaseDate": "2026-03-04", "universe": "mcu", "group": "フェイズ5", "type": "series" }
 ]
