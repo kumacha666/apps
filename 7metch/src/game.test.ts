@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Piece, StageConfig, Mission, GameDom } from "./types";
 import { G, SCORE_PER_PIECE } from "./state";
 import { doMove, activateByTap, checkWinLose, updateHUD, resolveMatches, showResult } from "./game";
@@ -8,12 +8,6 @@ vi.stubGlobal("localStorage", {
   getItem: (k: string) => storage[k] ?? null,
   setItem: (k: string, v: string) => { storage[k] = v; },
   removeItem: (k: string) => { delete storage[k]; },
-});
-vi.stubGlobal("document", {
-  createElement: () => ({
-    textContent: "",
-    style: { color: "", display: "", opacity: "", transform: "", transition: "" },
-  }),
 });
 
 function makeDom(): GameDom {
@@ -311,7 +305,19 @@ describe("checkWinLose", () => {
 // showResult
 // ---------------------------------------------------------------------------
 describe("showResult", () => {
-  beforeEach(() => setupGame());
+  beforeEach(() => {
+    setupGame();
+    vi.stubGlobal("document", {
+      createElement: () => ({
+        textContent: "",
+        style: { color: "", display: "", opacity: "", transform: "", transition: "" },
+      }),
+    });
+  });
+
+  afterEach(() => {
+    vi.stubGlobal("document", undefined);
+  });
 
   it("最終ステージ以外のクリアでは通常のタイトルを表示", () => {
     G.STAGES = [makeStage(), makeStage()];
