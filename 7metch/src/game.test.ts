@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Piece, StageConfig, Mission, GameDom } from "./types";
 import { G, SCORE_PER_PIECE } from "./state";
-import { doMove, activateByTap, checkWinLose, updateHUD, resolveMatches } from "./game";
+import { doMove, activateByTap, checkWinLose, updateHUD, resolveMatches, showResult } from "./game";
 
 const storage: Record<string, string> = {};
 vi.stubGlobal("localStorage", {
@@ -12,7 +12,7 @@ vi.stubGlobal("localStorage", {
 
 function makeDom(): GameDom {
   const el = (): HTMLElement => {
-    const e = { textContent: "", innerHTML: "", style: { color: "", display: "", opacity: "", transform: "", transition: "" } } as unknown as HTMLElement;
+    const e = { textContent: "", innerHTML: "", style: { color: "", display: "", opacity: "", transform: "", transition: "" }, appendChild: () => {} } as unknown as HTMLElement;
     return e;
   };
   return {
@@ -298,6 +298,50 @@ describe("checkWinLose", () => {
     G.movesLeft = 5;
     checkWinLose();
     expect(G.saveData.coins).toBeGreaterThan(coinsBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// showResult
+// ---------------------------------------------------------------------------
+describe("showResult", () => {
+  beforeEach(() => {
+    setupGame();
+    vi.stubGlobal("document", {
+      createElement: () => ({
+        textContent: "",
+        style: { color: "", display: "", opacity: "", transform: "", transition: "" },
+      }),
+    });
+  });
+
+  afterEach(() => {
+    vi.stubGlobal("document", undefined);
+  });
+
+  it("最終ステージ以外のクリアでは通常のタイトルを表示", () => {
+    G.STAGES = [makeStage(), makeStage()];
+    G.currentStage = 0;
+    showResult(true, 3);
+    expect(G.dom!.resultTitle.textContent).toBe("クリア！");
+    expect(G.dom!.resultDetails.innerHTML).not.toContain("制覇");
+  });
+
+  it("最終ステージのクリアでは全ステージ制覇メッセージを表示", () => {
+    G.STAGES = [makeStage(), makeStage()];
+    G.currentStage = 1;
+    showResult(true, 3);
+    expect(G.dom!.resultTitle.textContent).toBe("🎉 全ステージ制覇！ 🎉");
+    expect(G.dom!.resultDetails.innerHTML).toContain("制覇");
+    expect(G.dom!.btnNext.style.display).toBe("none");
+  });
+
+  it("最終ステージでも敗北時は制覇メッセージを表示しない", () => {
+    G.STAGES = [makeStage(), makeStage()];
+    G.currentStage = 1;
+    showResult(false, 0, { type: "clear", count: 10 });
+    expect(G.dom!.resultTitle.textContent).toBe("あと少し…");
+    expect(G.dom!.resultDetails.innerHTML).not.toContain("制覇");
   });
 });
 
