@@ -1076,10 +1076,23 @@ function setupQrModal() {
   urlField.addEventListener("focus", () => urlField.select());
   copyBtn.addEventListener("click", async () => {
     const url = urlField.value;
+    // Snapshots which share flow currently owns the modal at click time.
+    // navigator.clipboard.writeText() can take a while (permission prompt,
+    // slow clipboard backend) and has no cancellation mechanism, so if the
+    // user closes this modal and opens a new share (a newer shareFlowToken)
+    // before it resolves, the write itself can't be stopped — but showing
+    // "リンクをコピーしました" (or the failure alert + refocusing this
+    // textarea) once it finally settles, on top of whatever's now
+    // displayed, would misleadingly suggest that *currently shown* link was
+    // just copied, when it was actually this stale one. Gating the
+    // notification (not the write) on the token still matching is enough
+    // to prevent that confusion.
+    const myFlowToken = shareFlowToken;
     try {
       await navigator.clipboard.writeText(url);
-      alert("リンクをコピーしました。");
+      if (myFlowToken === shareFlowToken) alert("リンクをコピーしました。");
     } catch (e) {
+      if (myFlowToken !== shareFlowToken) return;
       // Clipboard API unavailable/blocked — select the link text so a
       // keyboard user can immediately Ctrl+C it as a manual-copy fallback,
       // without needing a mouse or long-press.
