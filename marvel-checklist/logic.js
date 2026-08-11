@@ -466,3 +466,27 @@ export function createFlowGuard() {
     },
   };
 }
+
+// Per side (left/right or top/bottom), in module-widths — matches the
+// vendored qrcode-generator library's (vendor/qrcode.js) default quiet-zone
+// margin of `cellSize * 4`. The blank border a QR code's quiet zone provides
+// is required for scanners to lock onto the code. Exported so app.js can
+// pass the same value as `margin` to the library's own `createSvgTag()` —
+// both sides need to agree on how much space the quiet zone actually takes,
+// or the fit computed below would be wrong.
+export const QR_QUIET_ZONE_MODULES_PER_SIDE = 4;
+
+// Computes a QR code's per-module pixel size (`cellPx`) so the whole SVG —
+// module grid plus quiet zone — fits within `availableWidth` while staying
+// an exact integer multiple of a pixel (never partial-pixel/anti-aliased,
+// which blurs module edges and hurts scanner reliability — see
+// marvel-checklist/CLAUDE.md's PR #350 log for the sizing bugs this fixed).
+// `moduleCount` is the QR's own grid size (`qr.getModuleCount()`). Clamped
+// to [1, 8]: 1 is the hard floor — a dense code in a narrow viewport must
+// still fit inside `availableWidth`, even at the cost of readability, never
+// 0 or negative; 8 is a soft ceiling so a short share history's small QR
+// doesn't render needlessly huge when there's plenty of room.
+export function computeQrCellPx(availableWidth, moduleCount) {
+  const totalUnits = moduleCount + QR_QUIET_ZONE_MODULES_PER_SIDE * 2;
+  return Math.max(1, Math.min(8, Math.floor(availableWidth / totalUnits)));
+}

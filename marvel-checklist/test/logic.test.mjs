@@ -29,6 +29,7 @@ import {
   computePrerequisites,
   computeRecommendedNext,
   createFlowGuard,
+  computeQrCellPx,
 } from "../logic.js";
 
 const movies = [
@@ -720,4 +721,31 @@ test("createFlowGuard: a stale flow's cleanup cannot release a newer flow's lock
   const aReleasesLock = guard.isCurrent(tokenA);
   assert.equal(bReleasesOwnLock, true, "B is allowed to release/manage its own lock");
   assert.equal(aReleasesLock, false, "A's stale cleanup must not touch B's lock");
+});
+
+// --- computeQrCellPx -------------------------------------------------------
+// Extracted from app.js's QR-sizing math (PR #350's own review history hit
+// two real bugs here — a hardcoded-width overflow and a quiet-zone-margin
+// miscalculation — both only caught by manual Playwright checks at the
+// time). These pin the exact boundary cases from that history as ordinary
+// unit tests instead.
+
+test("computeQrCellPx clamps to the hard floor (1px) for a dense QR in a narrow container", () => {
+  // The exact regression case from PR #350: 320px-wide viewport, full watch
+  // history (137 modules) — container's actual available width ~214px.
+  assert.equal(computeQrCellPx(214, 137), 1);
+});
+
+test("computeQrCellPx never returns less than 1, even for a zero or negative available width", () => {
+  assert.equal(computeQrCellPx(0, 137), 1);
+  assert.equal(computeQrCellPx(-50, 137), 1);
+});
+
+test("computeQrCellPx clamps to the soft ceiling (8px) when there's plenty of room", () => {
+  assert.equal(computeQrCellPx(2000, 25), 8);
+});
+
+test("computeQrCellPx floors to an exact integer within the fit range", () => {
+  // 21 modules + 8 quiet-zone units = 29 total units; 150 / 29 ≈ 5.17 → 5.
+  assert.equal(computeQrCellPx(150, 21), 5);
 });
