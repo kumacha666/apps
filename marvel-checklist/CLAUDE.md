@@ -85,6 +85,11 @@
   - **常に全カタログ（`movies`）に対して計算し、`currentUniverse`タブによる絞り込みの影響を受けない**（「次に見るべき作品」の前提判定と同じ設計原則）。この内訳機能の目的自体が「ユニバース／フェイズ同士を比較できること」であるため、特定のタブを選んでいる間だけ他のユニバースの内訳が消えると本来の目的を果たせない
   - UIは`app.js`の`renderProgressBreakdown()`。`progress-section`内に常設の`<details class="progress-breakdown">`（`index.html`側に静的に配置、初期状態は折りたたみ）を置き、**`app.js`側は内部の`#progress-breakdown-content`だけを`innerHTML`で再構築し、`<details>`要素自体には触れない**——これにより、他の再描画（視聴済みチェック等）が走っても開閉状態が自動的に保持される（前提作品の`<details>`のように`openPrereqMovieIds`で明示的に開閉状態を追跡する必要が無い、より単純な設計にできた。理由：前提作品の`<details>`はカードごとに毎回作り直されるため状態追跡が要るが、この内訳の`<details>`は1個だけ・要素自体を作り直さないため不要）
   - 母数が0件（＝そのユニバース／グループがまだ1作品も公開されていない）のブロックは表示しない（`u.total === 0`/`g.total === 0`をスキップ）。「0/0（0%）」という無意味な行を並べるよりは省略する方針とした
+- 2026-08-11、ヘッダーの公開予定カウントダウンを、ハードコードされた特定作品の固定表示から「次に公開されるMCU映画」への動的表示に変更。ユーザーからの追加機能要望4件のうち3番目。設計方針:
+  - 変更前は`logic.js`の定数`DOOMSDAY_ID = "avengers-doomsday"`を直接参照する固定実装で、その作品の公開が過ぎると（次の対象へ自動で移らず）カウントダウンが消えて終わる設計だった。`logic.js`の`findNextMcuMovieCountdown(movies, now)`（純粋関数、`test/logic.test.mjs`でテスト済み）に置き換え、`DOOMSDAY_ID`定数は削除した
+  - **対象は`universe: "mcu"` かつ `type: "movie"` の作品のみ**（ユーザーからの明示的な要望：「TVシリーズやマーベル・スタジオ作品以外はカウントダウン対象にしない」）。Disney+ドラマシリーズ（`type: "series"`）や他ユニバース（ソニー/フォックス/その他）の作品は、たとえ対象より先に公開される日付を持っていてもカウントダウン対象にならない
+  - 公開日当日（`daysUntil() === 0`）はそのまま対象に留まり「本日公開！」を表示し、**公開日を過ぎた翌日から自動的に次の未公開MCU映画へロールオーバーする**（`daysUntil(m.releaseDate, now) >= 0`を満たす候補の中から最速のものを選ぶ設計のため、過ぎた作品は自然に候補から外れる）。カタログに未公開のMCU映画が1件も無い場合は`null`を返し、`renderCountdown()`側はヘッダーのカウントダウン文言を空にする
+  - `tentative: true`（未確定日）の作品もカウントダウン対象から除外しない。カード側の「公開予定（未定含む）」バッジで既に不確実性を示しているため、ヘッダーのカウントダウンでも「現時点で判明している最速の予定」をそのまま表示する方針とした（延期時の表示ズレそのものへの対策は今回のスコープ外）
 
 ## テスト
 
@@ -92,7 +97,7 @@
 
 - **フレームワーク**: Node標準テストランナー（`node --test`）。Vitest等の追加依存は無い
 - **テストファイル**: `test/logic.test.mjs`
-- **対象**: `logic.js` の `parseLocalDate`, `isReleased`, `daysUntil`, `formatMonth`, `computeProgress`, `computeProgressBreakdown`, `filterByUniverse`, `filterUnwatched`, `filterByRating`, `groupMovies`, `validateImportedState`, `buildSharePayload`/`parseSharePayload`, `buildShareUrl`/`extractShareParam`, `upsertFriend`/`removeFriend`/`listFriends`, `buildFullBackup`/`validateFullBackup`, `computePrerequisites`, `computeRecommendedNext`
+- **対象**: `logic.js` の `parseLocalDate`, `isReleased`, `daysUntil`, `formatMonth`, `findNextMcuMovieCountdown`, `computeProgress`, `computeProgressBreakdown`, `filterByUniverse`, `filterUnwatched`, `filterByRating`, `groupMovies`, `validateImportedState`, `buildSharePayload`/`parseSharePayload`, `buildShareUrl`/`extractShareParam`, `upsertFriend`/`removeFriend`/`listFriends`, `buildFullBackup`/`validateFullBackup`, `computePrerequisites`, `computeRecommendedNext`
 - **前提**: `app.js`（DOM操作）は対象外。UI側の回帰確認はPlaywrightでの手動スモークテストで代替する（E2Eスイートは本アプリには未整備）
 
 ### 手動確認（E2E未整備のため）

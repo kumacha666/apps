@@ -3,10 +3,10 @@ import {
   UNRATED_FILTER,
   RATING_FILTER_OPTIONS,
   UNIVERSE_LABELS,
-  DOOMSDAY_ID,
   isReleased,
   daysUntil,
   formatMonth,
+  findNextMcuMovieCountdown,
   getEntry,
   computeProgress,
   computeProgressBreakdown,
@@ -170,20 +170,22 @@ function getOwnShareId() {
   return id;
 }
 
+// Counts down to whichever MCU movie (type: "movie", universe: "mcu") is
+// releasing next — see findNextMcuMovieCountdown()'s doc comment for why TV
+// series and non-MCU-studio works never qualify, and how the target rolls
+// over automatically once one release day has passed.
 function renderCountdown() {
-  const doomsday = movies.find((m) => m.id === DOOMSDAY_ID);
+  const target = findNextMcuMovieCountdown(movies);
   const el = document.getElementById("countdown");
-  if (!doomsday) {
+  if (!target) {
     el.textContent = "";
     return;
   }
-  const diffDays = daysUntil(doomsday.releaseDate);
+  const diffDays = daysUntil(target.releaseDate);
   if (diffDays > 0) {
-    el.innerHTML = `『${doomsday.title}』公開まで <strong>あと${diffDays}日</strong>`;
-  } else if (diffDays === 0) {
-    el.innerHTML = `『${doomsday.title}』本日公開！`;
+    el.innerHTML = `『${target.title}』公開まで <strong>あと${diffDays}日</strong>`;
   } else {
-    el.textContent = "";
+    el.innerHTML = `『${target.title}』本日公開！`;
   }
 }
 

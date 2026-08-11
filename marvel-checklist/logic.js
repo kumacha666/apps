@@ -5,7 +5,6 @@ export const RATINGS = ["◎", "〇", "△", "✕"];
 export const UNRATED_FILTER = "unrated";
 export const RATING_FILTER_OPTIONS = [...RATINGS, UNRATED_FILTER];
 export const UNIVERSE_LABELS = { mcu: "MCU", sony: "ソニー", fox: "フォックス", other: "その他" };
-export const DOOMSDAY_ID = "avengers-doomsday";
 
 const VALID_RATINGS = new Set(RATINGS);
 
@@ -31,6 +30,23 @@ export function daysUntil(dateStr, now = new Date()) {
 export function formatMonth(dateStr) {
   const d = parseLocalDate(dateStr);
   return `${d.getFullYear()}年${d.getMonth() + 1}月`;
+}
+
+// The next MCU movie to release (or releasing today), for the header
+// countdown. Only `universe: "mcu"` AND `type: "movie"` count — Disney+
+// series and non-MCU-studio works (sony/fox/other) are never countdown
+// targets, even though they can appear in the same catalog. A work stays
+// the target through its own release day (daysUntil === 0, for the "本日
+// 公開！" message) and rolls over to whichever MCU movie is next as soon as
+// that day has passed. Returns null if there's no upcoming MCU movie in the
+// catalog at all. Tentative (`tentative: true`) dates are still eligible —
+// this reflects the best currently-known plan, same as the "公開予定（未定
+// 含む）" badge already shown on the card itself.
+export function findNextMcuMovieCountdown(movies, now = new Date()) {
+  const candidates = movies
+    .filter((m) => m.universe === "mcu" && m.type === "movie" && daysUntil(m.releaseDate, now) >= 0)
+    .sort((a, b) => parseLocalDate(a.releaseDate) - parseLocalDate(b.releaseDate));
+  return candidates[0] ?? null;
 }
 
 export function getEntry(state, id) {
