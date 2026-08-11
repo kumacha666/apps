@@ -1,6 +1,6 @@
 import type { Piece, SpecialType, ComboType, Mission, MissionType, SpecialInfo, FallEntry, GameState, GameDom, StageConfig, ScreenName, StarGate } from "./types";
 import { G, PIECE_COLORS, ANIM, ITEM_COSTS, STAR_GATES, PIECE_NAMES_JA, SCORE_PER_PIECE, writeSave } from "./state";
-import { findAllMatches, findSpecialCreations, activateSpecial, applyGravityData, swapPieces, getComboType, createBoard, countAvailableMoves, damageAdjacentIce, tickCountdowns, startHintTimer, clearHint, isHole, isRock, randomPiece, inBounds, initCellState, TAP_ACTIVATE_SPECIALS } from "./board";
+import { findAllMatches, findSpecialCreations, activateSpecial, applyGravityData, swapPieces, getComboType, createBoard, countAvailableMoves, damageAdjacentIce, tickCountdowns, startHintTimer, clearHint, isHole, isRock, randomPiece, inBounds, initCellState, TAP_ACTIVATE_SPECIALS, isSwapLegalForCurrentStage, isActivatingSwap } from "./board";
 import { animateSwap, animateClear, animateDrop, sleep } from "./animations";
 import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, addFloatingText, hasActiveVFX, updateVFX } from "./vfx";
 import { drawBoard, buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startResultBgAnim, stopResultBgAnim, startChainLabel, flashInvalid } from "./rendering";
@@ -208,6 +208,14 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
   try {
     const p1 = G.board[r1][c1];
     const p2 = G.board[r2][c2];
+
+    // 第1章「軌道系」の方向拘束(Stage 501〜、Stage 1〜500はorbits=[]のため常に無関係)。
+    // 実際に起動が発生するスワップ(特殊ピース同士のコンボ・レインボー起動)は対象外
+    if (!isActivatingSwap(p1, p2) && !isSwapLegalForCurrentStage(r1, c1, r2, c2)) {
+      SFX.invalidSwap();
+      await flashInvalid(r1, c1, r2, c2);
+      return;
+    }
 
     G.lastSwapTarget = { r: r2, c: c2 };
 

@@ -5,7 +5,9 @@ import {
   damageIce, damageAdjacentIce,
   findAllMatches, getComboType, tickCountdowns, applyGravityData,
   inBounds, isAdjacent, TAP_ACTIVATE_SPECIALS,
+  findHint, isSwapLegalForCurrentStage, isActivatingSwap,
 } from "./board";
+import type { OrbitCell } from "./types";
 
 function setupBoard(rows: number, cols: number): void {
   G.rows = rows;
@@ -13,7 +15,7 @@ function setupBoard(rows: number, cols: number): void {
   G.board = [];
   G.cellState = [];
   G.currentStage = 0;
-  G.STAGES = [{ features: { diagonalLine: true }, moves: 20, colors: 5 } as any];
+  G.STAGES = [{ features: { diagonalLine: true }, moves: 20, colors: 5, orbits: [] } as any];
   G.lastSwapTarget = null;
   for (let r = 0; r < rows; r++) {
     G.board[r] = [];
@@ -393,5 +395,107 @@ describe("ユーティリティ", () => {
     expect(isAdjacent(0, 0, 1, 1)).toBe(true);
     expect(isAdjacent(0, 0, 0, 0)).toBe(false);
     expect(isAdjacent(0, 0, 2, 0)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isActivatingSwap
+// ---------------------------------------------------------------------------
+describe("isActivatingSwap", () => {
+  it("特殊ピース同士のスワップは起動扱い", () => {
+    expect(isActivatingSwap({ color: 0, special: "bomb" }, { color: 0, special: "line_h" })).toBe(true);
+  });
+
+  it("レインボーと通常ピースのスワップは起動扱い", () => {
+    expect(isActivatingSwap({ color: 0, special: "rainbow" }, { color: 0, special: null })).toBe(true);
+    expect(isActivatingSwap({ color: 0, special: null }, { color: 0, special: "rainbow" })).toBe(true);
+  });
+
+  it("特殊ピース1個と通常ピースのスワップ(非起動)は起動扱いにしない", () => {
+    expect(isActivatingSwap({ color: 0, special: "bomb" }, { color: 0, special: null })).toBe(false);
+  });
+
+  it("通常ピース同士のスワップは起動扱いにしない", () => {
+    expect(isActivatingSwap({ color: 0, special: null }, { color: 0, special: null })).toBe(false);
+  });
+
+  it("nullを含むスワップでも例外を投げない", () => {
+    expect(isActivatingSwap(null, { color: 0, special: "rainbow" })).toBe(true);
+    expect(isActivatingSwap(null, null)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isSwapLegalForCurrentStage
+// ---------------------------------------------------------------------------
+describe("isSwapLegalForCurrentStage", () => {
+  beforeEach(() => setupBoard(7, 7));
+
+  it("オービットが無いステージ(Stage 1〜500)では常に合法", () => {
+    G.STAGES![0].orbits = [];
+    expect(isSwapLegalForCurrentStage(0, 0, 0, 1)).toBe(true);
+  });
+
+  it("進入方向が重力方向と一致すれば合法", () => {
+    const orbit: OrbitCell = { r: 3, c: 3, dir: [1, 0] };
+    G.STAGES![0].orbits = [orbit];
+    expect(isSwapLegalForCurrentStage(1, 3, 2, 3)).toBe(true); // 外側(1,3)→内側(2,3)、南方向
+  });
+
+  it("進入方向が重力方向と不一致なら不可", () => {
+    const orbit: OrbitCell = { r: 3, c: 3, dir: [-1, 0] };
+    G.STAGES![0].orbits = [orbit];
+    expect(isSwapLegalForCurrentStage(1, 3, 2, 3)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findHint（オービットの進入判定を経由すること）
+// ---------------------------------------------------------------------------
+describe("findHint とオービット", () => {
+  beforeEach(() => {
+    setupBoard(7, 7);
+    // 盤面全体を偶発マッチが起きないパターンで埋めてから、対象スワップだけを設定する
+    // (setupBoardは全マスcolor:0で埋めるため、そのままだと盤面全体が巨大な偶発マッチになってしまう)
+    for (let r = 0; r < G.rows; r++)
+      for (let c = 0; c < G.cols; c++)
+        G.board[r][c] = { color: (r * G.cols + c) % 5, special: null };
+    // (0,1)<->(1,1)のスワップでのみマッチが成立する盤面(色は周辺の埋め草パターンと
+    // 衝突しない10番台を使い、Node上でこのスワップだけが該当することを事前検証済み)
+    G.board[0][0] = { color: 10, special: null };
+    G.board[0][1] = { color: 11, special: null };
+    G.board[0][2] = { color: 10, special: null };
+    G.board[1][0] = { color: 12, special: null };
+    G.board[1][1] = { color: 10, special: null };
+    G.board[1][2] = { color: 13, special: null };
+  });
+
+  it("オービットが無ければ通常通りヒントを返す", () => {
+    const hint = findHint();
+    expect(hint).not.toBeNull();
+  });
+
+  it("唯一のマッチ成立スワップがオービットで禁止されている場合はヒントが無くなる", () => {
+    // (2,1)を中心とするオービット: (1,1)は影響範囲内・(0,1)は範囲外、
+    // 進入方向は南(1,0)。北(-1,0)しか許可しないため、このスワップは不可
+    G.STAGES![0].orbits = [{ r: 2, c: 1, dir: [-1, 0] }];
+    const hint = findHint();
+    expect(hint).toBeNull();
+  });
+
+  it("進入方向が一致すれば引き続きヒントとして提示される", () => {
+    G.STAGES![0].orbits = [{ r: 2, c: 1, dir: [1, 0] }];
+    const hint = findHint();
+    expect(hint).not.toBeNull();
+  });
+
+  it("特殊ピース起動を伴うスワップ(レインボー)は、オービットの進入方向と不一致でもヒント対象から除外されない", () => {
+    // line_h/bomb等の非レインボー特殊ピースはisMatchable()がfalseを返しマッチに参加できないため、
+    // 起動かつマッチ成立を両立できるのはレインボー(isMatchable=true)を使うケースのみ
+    G.board[0][1] = { color: 0, special: "rainbow" };
+    G.board[1][1] = { color: 10, special: null }; // スワップ後(0,1)が色10になり、行0が10,10,10でマッチ成立
+    G.STAGES![0].orbits = [{ r: 2, c: 1, dir: [-1, 0] }]; // 実際の進入方向(南)とは不一致、通常なら不可
+    const hint = findHint();
+    expect(hint).not.toBeNull();
   });
 });

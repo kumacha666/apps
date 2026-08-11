@@ -63,6 +63,9 @@ export interface StageConfig {
   rockCells: number;
   holePattern: [number, number][] | null;
   countdownBombs: number;
+  // 第1章「軌道系」（Stage 501〜、7metch/CLAUDE.mdの「第1章『軌道系』」節参照）。
+  // Stage 1〜500は常に空配列（オービット無し、既存の挙動に一切影響しない）
+  orbits: OrbitCell[];
 }
 
 export interface StarGate {

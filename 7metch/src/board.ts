@@ -3,9 +3,19 @@ import { G, PIECE_COLORS, MATCH_MIN } from "./state";
 import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, addFloatingText } from "./vfx";
 import { drawBoard } from "./rendering";
 import { SFX } from "./audio";
+import { isSwapLegal } from "./orbit";
 
 const HINT_DELAY_MS = 4000;
 export const TAP_ACTIVATE_SPECIALS: Set<string> = new Set(["line_h", "line_v", "line_d", "bomb"]);
+
+// 第1章「軌道系」の方向拘束の対象外になるスワップ（実際に起動が発生するケースのみ、
+// GIMMICK_REDESIGN.mdの「特殊ピースとの関係」参照）。doMove()の起動判定分岐
+// （p1.special && p2.special のコンボ起動、rainbow+他ピースの起動）と一致させること
+export function isActivatingSwap(p1: Piece | null, p2: Piece | null): boolean {
+  if (p1?.special && p2?.special) return true; // 特殊ピース同士のスワップ(コンボ起動)
+  if (p1?.special === "rainbow" || p2?.special === "rainbow") return true; // レインボー×他ピース
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Board helpers
@@ -205,6 +215,12 @@ export function isAdjacent(r1: number, c1: number, r2: number, c2: number): bool
   const dr = Math.abs(r1 - r2);
   const dc = Math.abs(c1 - c2);
   return dr <= 1 && dc <= 1 && (dr + dc > 0);
+}
+
+// 第1章「軌道系」（Stage 501〜）のオービット進入判定。現在のステージにオービットが無ければ
+// (Stage 1〜500は常にこの状態) 常にtrueを返し、既存の挙動に一切影響しない
+export function isSwapLegalForCurrentStage(r1: number, c1: number, r2: number, c2: number): boolean {
+  return isSwapLegal(r1, c1, r2, c2, G.STAGES![G.currentStage].orbits);
 }
 
 // ---------------------------------------------------------------------------
@@ -420,6 +436,7 @@ export function findHint(): HintData | null {
       for (const [nr, nc] of neighbors) {
         if (!inBounds(nr, nc) || !G.board[nr][nc] || !isPlayable(nr, nc)) continue;
         if (nr < r || (nr === r && nc < c)) continue;
+        if (!isActivatingSwap(G.board[r][c], G.board[nr][nc]) && !isSwapLegalForCurrentStage(r, c, nr, nc)) continue;
 
         swapPieces(r, c, nr, nc);
         const matches = findAllMatches();
