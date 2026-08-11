@@ -537,8 +537,9 @@ body {
 
 .qr-code-container svg {
   display: block;
-  width: 220px;
+  width: 220px; /* fallback; app.js sets an explicit inline size based on the QR's module count */
   height: 220px;
+  shape-rendering: crispEdges; /* snap module edges to the pixel grid instead of anti-aliasing them, for scan reliability */
 }
 
 .qr-modal-url {
