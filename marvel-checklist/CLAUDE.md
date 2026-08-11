@@ -80,6 +80,11 @@
   - 表示専用フィルター（`unwatchedOnly`・`activeRatingFilters`）はこのセクションには適用しない。このセクションの対象は定義上すべて未視聴のため`unwatchedOnly`は無関係であり、優先度フィルターも「今見られる作品」という趣旨とは別軸のため意図的に無視する
   - **`characters.json`読み込み完了前は非表示にする（2026-08-11、PR #344 Codexレビュー指摘で修正）**：`characters`はモジュール初期化時点で空配列のため、`loadCharactersInBackground()`（`characters.json`を`init()`後にバックグラウンド取得）が完了するまでの間に一度でも`renderList()`が走ると、`computePrerequisites()`は全作品を「前提0件」と誤判定し、本来33件程度のところ97件（カタログ全件）が一時的に推薦されてしまっていた。`app.js`にモジュールレベルの`charactersLoaded`フラグ（初期値`false`）を追加し、`renderRecommendedNext()`は`charactersLoaded`が`true`になるまでセクションを`hidden`のまま返す設計に変更。**フェッチ失敗時（`catch`分岐）も`charactersLoaded`は`false`のまま維持する**——「前提0件と判明した」ことと「前提を確認できなかった」ことは区別する必要があり、後者を前者として扱うと続編が無期限に誤推薦され続けるため。フェッチ成功時は`characters`の件数に関わらず（0件でも）`charactersLoaded = true`にして再描画する
   - **同じカードがセクションと通常一覧に二重表示されるため、操作後のフォーカス復元は操作元を区別する（2026-08-11、PR #344 Codexレビュー指摘で修正）**：`renderMovieCard(movie, context)`が`context`（`"recommended"`または`"main"`）を受け取り、チェック/評価ボタンのクリックハンドラが`pendingFocus`に`context`も記録するようにした。`restoreFocus()`は`context`に対応するコンテナ（`#recommended-next-list`または`#movie-list`）内を優先してフォーカス対象を探し、見つからない場合のみ（操作元のセクションからカード自体が消えた場合）もう片方のコピー→他の要素、の順にフォールバックする。修正前は常に`document.querySelector()`でDOM順に最初に見つかった要素（推薦セクション側が先にDOMに現れるため、常にそちら）にフォーカスしていたため、通常一覧側のカードを操作してもフォーカスが一覧最上部に飛ぶ不具合があった
+- 2026-08-11、「フェイズ／ユニバース単位の進捗内訳」を追加。ユーザーからの追加機能要望4件のうち2番目。設計方針:
+  - ロジックは`logic.js`の`computeProgressBreakdown(movies, state, now)`（純粋関数、`test/logic.test.mjs`でテスト済み）。`movies`をユニバース→グループ（MCUなら実質フェイズ、他ユニバースはサブシリーズ）の2階層でバケット化し、各階層で`computeProgress()`をそのまま再利用して`{ total, watched, pct }`を算出する。**公開済み作品のみを母集団に数える**点は`computeProgress()`と同じ（未公開作品を「0%視聴」として数えない）。ユニバース・グループの並び順はどちらも`movies`配列内の初出順（`groupMovies()`と同じ「カタログ順」の流儀で、五十音順や進捗順ではない）
+  - **常に全カタログ（`movies`）に対して計算し、`currentUniverse`タブによる絞り込みの影響を受けない**（「次に見るべき作品」の前提判定と同じ設計原則）。この内訳機能の目的自体が「ユニバース／フェイズ同士を比較できること」であるため、特定のタブを選んでいる間だけ他のユニバースの内訳が消えると本来の目的を果たせない
+  - UIは`app.js`の`renderProgressBreakdown()`。`progress-section`内に常設の`<details class="progress-breakdown">`（`index.html`側に静的に配置、初期状態は折りたたみ）を置き、**`app.js`側は内部の`#progress-breakdown-content`だけを`innerHTML`で再構築し、`<details>`要素自体には触れない**——これにより、他の再描画（視聴済みチェック等）が走っても開閉状態が自動的に保持される（前提作品の`<details>`のように`openPrereqMovieIds`で明示的に開閉状態を追跡する必要が無い、より単純な設計にできた。理由：前提作品の`<details>`はカードごとに毎回作り直されるため状態追跡が要るが、この内訳の`<details>`は1個だけ・要素自体を作り直さないため不要）
+  - 母数が0件（＝そのユニバース／グループがまだ1作品も公開されていない）のブロックは表示しない（`u.total === 0`/`g.total === 0`をスキップ）。「0/0（0%）」という無意味な行を並べるよりは省略する方針とした
 
 ## テスト
 
@@ -87,7 +92,7 @@
 
 - **フレームワーク**: Node標準テストランナー（`node --test`）。Vitest等の追加依存は無い
 - **テストファイル**: `test/logic.test.mjs`
-- **対象**: `logic.js` の `parseLocalDate`, `isReleased`, `daysUntil`, `formatMonth`, `computeProgress`, `filterByUniverse`, `filterUnwatched`, `filterByRating`, `groupMovies`, `validateImportedState`, `buildSharePayload`/`parseSharePayload`, `buildShareUrl`/`extractShareParam`, `upsertFriend`/`removeFriend`/`listFriends`, `buildFullBackup`/`validateFullBackup`, `computePrerequisites`
+- **対象**: `logic.js` の `parseLocalDate`, `isReleased`, `daysUntil`, `formatMonth`, `computeProgress`, `computeProgressBreakdown`, `filterByUniverse`, `filterUnwatched`, `filterByRating`, `groupMovies`, `validateImportedState`, `buildSharePayload`/`parseSharePayload`, `buildShareUrl`/`extractShareParam`, `upsertFriend`/`removeFriend`/`listFriends`, `buildFullBackup`/`validateFullBackup`, `computePrerequisites`, `computeRecommendedNext`
 - **前提**: `app.js`（DOM操作）は対象外。UI側の回帰確認はPlaywrightでの手動スモークテストで代替する（E2Eスイートは本アプリには未整備）
 
 ### 手動確認（E2E未整備のため）
@@ -107,3 +112,4 @@ CSS/DOM構造に関わる変更をした場合は、Playwrightで以下を最低
 - バージョンを上げる際は `CACHE_NAME` の末尾（`v1` など）をインクリメントする
 - オフライン時のフォールバックで`caches.match(e.request)`がヒットしない場合、ナビゲーションリクエスト（`e.request.mode === "navigate"`）に限り`caches.match("index.html")`にフォールバックする（2026-08-09、Codexレビュー指摘で追加）。共有リンク（`?share=...`）はクエリ文字列付きの完全なURLなので、事前キャッシュ済みの`index.html`（クエリ無し）とは別リクエストとして扱われ、素の`caches.match(e.request)`だけではオフライン初回アクセス時にアプリ自体が起動できなかった。アプリは`location.search`をクライアント側で読むだけなので、この用途では文書自体のキャッシュを返せば十分
 - **`share`クエリパラメータを含むリクエストはキャッシュに書き込まない**（`fetch`イベントハンドラで`new URL(e.request.url).searchParams.has("share")`を見て書き込みをスキップ）。共有リンクはURLに友達の視聴履歴スナップショットをまるごと埋め込むため、そのまま`c.put()`すると`history.replaceState()`（アドレスバー表示のみ変更）や友達の削除操作をすり抜けてCacheStorageに残り続け、再共有のたびにエントリが増え続けてしまう（2026-08-09、Codexレビュー指摘で修正）
+- **既知の未対応リスク：`app.js`/`logic.js`間のファイル単位バージョンスキュー（2026-08-11、PR #346 Codexレビュー指摘、対応は見送り・記録のみ）**：本SWは「リクエストごとにネットワーク優先→失敗時のみそのリクエスト単体をキャッシュにフォールバック」という設計のため、不安定な回線で`app.js`のフェッチだけ成功し`logic.js`のフェッチだけ失敗してキャッシュの旧版にフォールバックする、という**ファイル単位のバージョンスキュー**が理論上起こりうる。`app.js`は`logic.js`から`import { name } from "./logic.js"`という名前付きインポートで多数の関数を読み込んでいるため、旧`logic.js`にその名前のexportが1つでも無ければESモジュールのリンク段階で`SyntaxError`となり、`app.js`は（`renderProgressBreakdown()`のような個別関数のnullガードが効く余地もなく）まったく実行されない＝アプリが真っ白になる。**このリスクは今回のPR固有ではなく、`logic.js`に新しいexportを追加した過去のあらゆる回（前提作品機能・次に見るべき作品機能・進捗内訳機能など）に等しく存在していた構造的なもの**であり、実際の発生報告も無いため、今回は対応を見送り記録のみとした。根本対応（ファイル単位のバージョン固定・依存ファイルのアトミックなキャッシュ更新など）が必要になった場合は、`sw.js`のキャッシュ戦略そのものを見直す独立したタスクとして扱うこと（`app.js`/`logic.js`個別の場当たり的な修正では部分的な緩和にしかならないため）

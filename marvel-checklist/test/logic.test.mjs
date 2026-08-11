@@ -6,6 +6,7 @@ import {
   daysUntil,
   formatMonth,
   computeProgress,
+  computeProgressBreakdown,
   filterByUniverse,
   filterUnwatched,
   filterByRating,
@@ -82,6 +83,51 @@ test("computeProgress on an unwatched-only subset still reports the true watched
   const progress = computeProgress(universeFiltered, state, now);
   assert.equal(progress.watched, 1);
   assert.equal(progress.total, 2);
+});
+
+const breakdownMovies = [
+  { id: "m1", universe: "mcu", group: "フェイズ1", releaseDate: "2020-01-01" },
+  { id: "m2", universe: "mcu", group: "フェイズ1", releaseDate: "2020-02-01" },
+  { id: "m3", universe: "mcu", group: "フェイズ2", releaseDate: "2020-03-01" },
+  { id: "m4", universe: "mcu", group: "フェイズ2", releaseDate: "2099-01-01" },
+  { id: "s1", universe: "sony", group: "サム・ライミ版", releaseDate: "2020-01-15" },
+];
+const breakdownNow = new Date(2021, 0, 1);
+
+test("computeProgressBreakdown groups by universe then by group, counting only released works", () => {
+  const result = computeProgressBreakdown(breakdownMovies, {}, breakdownNow);
+  assert.deepEqual(
+    result.map((u) => u.universe),
+    ["mcu", "sony"]
+  );
+
+  const mcu = result.find((u) => u.universe === "mcu");
+  assert.deepEqual({ total: mcu.total, watched: mcu.watched, pct: mcu.pct }, { total: 3, watched: 0, pct: 0 });
+  assert.deepEqual(
+    mcu.groups.map((g) => g.group),
+    ["フェイズ1", "フェイズ2"]
+  );
+  const phase1 = mcu.groups.find((g) => g.group === "フェイズ1");
+  const phase2 = mcu.groups.find((g) => g.group === "フェイズ2");
+  assert.deepEqual({ total: phase1.total, watched: phase1.watched }, { total: 2, watched: 0 });
+  // m4 (2099) is unreleased, so フェイズ2's total is 1 (m3 only), not 2.
+  assert.deepEqual({ total: phase2.total, watched: phase2.watched }, { total: 1, watched: 0 });
+
+  const sony = result.find((u) => u.universe === "sony");
+  assert.deepEqual({ total: sony.total, watched: sony.watched }, { total: 1, watched: 0 });
+});
+
+test("computeProgressBreakdown computes watched counts and percentages independently per group", () => {
+  const state = { m1: { watched: true, rating: null }, m3: { watched: true, rating: null } };
+  const result = computeProgressBreakdown(breakdownMovies, state, breakdownNow);
+  const mcu = result.find((u) => u.universe === "mcu");
+  assert.deepEqual({ total: mcu.total, watched: mcu.watched, pct: mcu.pct }, { total: 3, watched: 2, pct: 67 });
+
+  const phase1 = mcu.groups.find((g) => g.group === "フェイズ1");
+  assert.deepEqual({ total: phase1.total, watched: phase1.watched, pct: phase1.pct }, { total: 2, watched: 1, pct: 50 });
+
+  const phase2 = mcu.groups.find((g) => g.group === "フェイズ2");
+  assert.deepEqual({ total: phase2.total, watched: phase2.watched, pct: phase2.pct }, { total: 1, watched: 1, pct: 100 });
 });
 
 test("filterByUniverse", () => {
