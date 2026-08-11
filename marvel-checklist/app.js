@@ -770,6 +770,16 @@ function setupShareButton() {
         // handler would abort silently — no copy, no fallback prompt, no
         // error message at all.
         alert("共有リンクの作成に失敗しました（保存容量が不足している可能性があります）。");
+        // Disabling this button above (synchronously, before this catch)
+        // blurred it to <body> if it was the focused element — restore
+        // focus now that we're bailing out without ever reaching
+        // showQrModal() (which would otherwise have handled this). Must
+        // re-enable the button FIRST: .focus() on a still-disabled element
+        // is a silent no-op (disabled elements can't receive focus), and
+        // the outer `finally` below only re-enables it AFTER this `return`
+        // — too late for a .focus() call made here to have any effect.
+        shareBtn.disabled = false;
+        returnFocusEl.focus();
         return;
       }
       // Read the latest persisted own state rather than this tab's possibly-
@@ -786,6 +796,8 @@ function setupShareButton() {
         // Left unguarded, this async handler would abort with no copy, no
         // fallback prompt, and no error message at all.
         alert("共有リンクの作成に失敗しました（このブラウザでは利用できない機能が含まれている可能性があります）。");
+        shareBtn.disabled = false; // must precede .focus() — see the getOwnShareId() catch above
+        returnFocusEl.focus();
         return;
       }
       await showQrModal(url, returnFocusEl);
@@ -796,9 +808,10 @@ function setupShareButton() {
 }
 
 // Pre-QR-modal fallback: copy to clipboard if possible, otherwise fall back
-// to prompt() so the link is still visible/selectable. Used both when the
-// clipboard API is unavailable (see setupQrModal()'s copy handler) and when
-// the modal's own DOM elements are missing entirely (see showQrModal()).
+// to prompt() so the link is still visible/selectable. Used when the
+// modal's own DOM elements are missing entirely (see showQrModal()) — the
+// modal itself has its own separate, textarea-based clipboard-failure path
+// once it's open (see setupQrModal()'s copy handler).
 async function shareUrlFallback(url) {
   try {
     await navigator.clipboard.writeText(url);
@@ -828,6 +841,9 @@ async function showQrModal(url, returnFocusEl) {
   const container = document.getElementById("qr-code-container");
   const urlField = document.getElementById("qr-modal-url");
   const closeBtn = document.getElementById("qr-modal-close");
+  // Looked up here (rather than only later, in the success path) so the
+  // fallback branch below can also reach it — see its comment.
+  const shareBtn = document.getElementById("btn-share");
 
   // The service worker is network-first per request, so a flaky connection
   // can serve a stale cached index.html (predating this modal) alongside a
@@ -835,7 +851,16 @@ async function showQrModal(url, returnFocusEl) {
   // progress-breakdown section. Fall back to the pre-QR-modal share flow
   // instead of throwing on a null element.
   if (!modal || !container || !urlField || !closeBtn) {
-    shareUrlFallback(url);
+    await shareUrlFallback(url);
+    // Same reasoning as the catch blocks in setupShareButton(): this exits
+    // without ever showing the modal (whose own close-button focus / later
+    // hideQrModal() restore would otherwise handle this), so it must
+    // restore focus itself. Must re-enable the button FIRST — .focus() on a
+    // still-disabled element (the caller disabled it before calling this
+    // function) is a silent no-op, and the caller's own re-enable only
+    // happens in its `finally`, after this function's promise resolves.
+    if (shareBtn) shareBtn.disabled = false;
+    returnFocusEl.focus();
     return;
   }
 
@@ -874,7 +899,6 @@ async function showQrModal(url, returnFocusEl) {
   // still-disabled button is a silent no-op, and nothing re-attempts it
   // once the button re-enables later — keyboard focus would be stranded on
   // <body> even after the share flow fully settles.
-  const shareBtn = document.getElementById("btn-share");
   if (shareBtn) shareBtn.disabled = false;
 
   try {
@@ -889,13 +913,23 @@ async function showQrModal(url, returnFocusEl) {
     qr.addData(url);
     qr.make();
     const moduleCount = qr.getModuleCount();
-    // Pick an integer CSS-pixel size per QR module so cell edges land on
-    // whole device pixels rather than being interpolated/blurred by
-    // non-integer SVG scaling — with a fixed small display size, a long
-    // share URL (e.g. the full catalog watched+rated is ~1300 chars, which
-    // needs 137 modules) would squeeze each module under 2px and make the
-    // code unreliable to scan with another device's camera.
-    //
+    // The vendored library's quiet zone (the blank border required around
+    // any QR code for scanners to lock onto it) defaults to `margin:
+    // cellSize * 4` — i.e. 4 module-widths on each side, 8 module-widths
+    // total. An earlier version of this code rendered with `createSvgTag({
+    // scalable: true })` (an unsized SVG, viewBox = (moduleCount*2+16)
+    // units) and then CSS-scaled the whole thing to `moduleCount * cellPx`
+    // px via inline style — but that ignores the quiet zone's own share of
+    // the viewBox, so the actual per-module size ends up LESS than cellPx
+    // and non-integer (e.g. 137 modules at a nominal cellPx=1 rendered at
+    // ~0.945px/module, not 1px), undoing the whole point of this
+    // calculation. Including the quiet zone in the unit count here, and
+    // passing that same cellPx as both `cellSize` and (scaled) `margin` to
+    // createSvgTag, makes the library emit an SVG with explicit `width`/
+    // `height` attributes that are already an exact integer multiple of
+    // cellPx — no separate CSS/inline-style scaling step needed at all.
+    const quietZoneUnits = 8;
+    const totalUnits = moduleCount + quietZoneUnits;
     // The budget is measured from the container's OWN actual rendered width
     // (`clientWidth`, meaningful now that `.qr-code-container` has
     // `width: 100%` — see that rule's comment) rather than a hardcoded
@@ -907,23 +941,18 @@ async function showQrModal(url, returnFocusEl) {
     // subtracted back out to get the space actually available to the SVG.
     const availableWidth = container.clientWidth - 24;
     // Fitting inside `availableWidth` is the hard constraint the upper
-    // Math.min bound serves, capped at 8px/module so short-history codes
+    // Math.min bound serves, capped at 8px/unit so short-history codes
     // don't render needlessly huge when there's plenty of room. The lower
     // Math.max bound is only 1 (never 0 or negative) — NOT a "readable
     // minimum" of 2, which would override the fit constraint and overflow
-    // the container on a dense code in a narrow viewport (e.g. 137 modules
-    // in ~214px only fits at 1px/module, not 2).
-    const cellPx = Math.max(1, Math.min(8, Math.floor(availableWidth / moduleCount)));
-    // `scalable: true` omits the fixed pixel width/height attributes so the
-    // inline style set below (not a fixed CSS rule) is what actually
-    // determines the rendered size, via the SVG's viewBox alone.
-    container.innerHTML = qr.createSvgTag({ scalable: true });
-    const svgEl = container.querySelector("svg");
-    if (svgEl) {
-      const sizePx = `${moduleCount * cellPx}px`;
-      svgEl.style.width = sizePx;
-      svgEl.style.height = sizePx;
-    }
+    // the container on a dense code in a narrow viewport.
+    const cellPx = Math.max(1, Math.min(8, Math.floor(availableWidth / totalUnits)));
+    // No `scalable: true` here and no CSS/inline width or height override —
+    // `.qr-code-container svg` intentionally has no fixed size in CSS (see
+    // that rule) so this element's own `width`/`height` attributes, set
+    // below to an exact integer multiple of cellPx, are what the browser
+    // actually renders at.
+    container.innerHTML = qr.createSvgTag({ cellSize: cellPx, margin: cellPx * (quietZoneUnits / 2) });
   } catch (e) {
     // Either the dynamic import failed (see above) or a share payload from
     // a very large watch history exceeded the QR format's maximum data

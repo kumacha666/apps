@@ -543,9 +543,12 @@ body {
 }
 
 .qr-code-container svg {
+  /* No fixed width/height here on purpose: app.js's createSvgTag() call
+     sets the SVG's own width/height attributes to an exact integer
+     multiple of its per-module pixel size (including the quiet zone), and
+     a CSS rule here would override that intentional attribute value with a
+     fixed size, reintroducing non-integer per-module scaling. */
   display: block;
-  width: 220px; /* fallback; app.js sets an explicit inline size based on the QR's module count */
-  height: 220px;
   shape-rendering: crispEdges; /* snap module edges to the pixel grid instead of anti-aliasing them, for scan reliability */
 }
 
