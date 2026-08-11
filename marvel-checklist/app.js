@@ -22,6 +22,7 @@ import {
   buildFullBackup,
   validateFullBackup,
   computePrerequisites,
+  computeRecommendedNext,
 } from "./logic.js";
 
 const OWN_STATE_KEY = "marvel-checklist-state-v1";
@@ -186,10 +187,33 @@ function renderProgress(universeFiltered) {
     total > 0 ? `視聴済み ${watched} / ${total} 作品（${pct}%）` : "対象の作品がありません";
 }
 
+// Prerequisites are computed against the FULL catalog (not `universeFiltered`)
+// so a recommendation is never falsely "unblocked" just because a
+// cross-universe prerequisite happens to be outside the current tab — this
+// keeps it consistent with each card's own "前提作品" section, which also
+// always considers every universe. The active universe tab is applied only
+// as a final display filter, after the correctness-critical computation.
+function renderRecommendedNext(universeFiltered) {
+  const activeState = getActiveStateStore();
+  const universeFilteredIds = new Set(universeFiltered.map((m) => m.id));
+  const recommended = computeRecommendedNext(movies, characters, activeState).filter((m) =>
+    universeFilteredIds.has(m.id)
+  );
+
+  const section = document.getElementById("recommended-next-section");
+  const listEl = document.getElementById("recommended-next-list");
+  listEl.innerHTML = "";
+  section.hidden = recommended.length === 0;
+  for (const movie of recommended) {
+    listEl.appendChild(renderMovieCard(movie));
+  }
+}
+
 function renderList() {
   const activeState = getActiveStateStore();
   const universeFiltered = filterByUniverse(movies, currentUniverse);
   renderProgress(universeFiltered);
+  renderRecommendedNext(universeFiltered);
 
   let displayList = unwatchedOnly ? filterUnwatched(universeFiltered, activeState) : universeFiltered;
   displayList = filterByRating(displayList, activeState, activeRatingFilters);

@@ -25,6 +25,7 @@ import {
   validateFullBackup,
   BACKUP_VERSION,
   computePrerequisites,
+  computeRecommendedNext,
 } from "../logic.js";
 
 const movies = [
@@ -531,4 +532,39 @@ test("computePrerequisites sorts results chronologically and returns full movie 
 
 test("computePrerequisites returns an empty array for an unknown movie id", () => {
   assert.deepEqual(computePrerequisites("does-not-exist", prereqMovies, prereqCharacters), []);
+});
+
+// --- computeRecommendedNext -------------------------------------------
+
+const recommendNow = new Date(2025, 0, 1); // well after all prereqMovies release dates
+
+test("computeRecommendedNext includes zero-prerequisite works but excludes works with unmet prerequisites", () => {
+  const result = computeRecommendedNext(prereqMovies, prereqCharacters, {}, recommendNow);
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["origin", "unrelated", "solo-cameo-only"] // sorted chronologically; team-up-1/2 excluded (unmet prereqs)
+  );
+});
+
+test("computeRecommendedNext unlocks a work once its prerequisites become watched", () => {
+  const state = { origin: { watched: true, rating: null } };
+  const result = computeRecommendedNext(prereqMovies, prereqCharacters, state, recommendNow);
+  assert.ok(result.some((m) => m.id === "team-up-1"), "team-up-1's only prerequisite (origin) is now watched");
+  assert.ok(!result.some((m) => m.id === "team-up-2"), "team-up-2 still needs team-up-1 watched too");
+  assert.ok(!result.some((m) => m.id === "origin"), "already-watched works are never recommended");
+});
+
+test("computeRecommendedNext requires ALL prerequisites to be watched, not just one", () => {
+  const state = {
+    origin: { watched: true, rating: null },
+    "team-up-1": { watched: true, rating: null },
+  };
+  const result = computeRecommendedNext(prereqMovies, prereqCharacters, state, recommendNow);
+  assert.ok(result.some((m) => m.id === "team-up-2"), "both of team-up-2's prerequisites are now watched");
+});
+
+test("computeRecommendedNext never recommends an unreleased work, even with satisfied prerequisites", () => {
+  const upcoming = [...prereqMovies, { id: "not-out-yet", title: "Not Out Yet", releaseDate: "2099-01-01", universe: "mcu", group: "g" }];
+  const result = computeRecommendedNext(upcoming, prereqCharacters, {}, recommendNow);
+  assert.ok(!result.some((m) => m.id === "not-out-yet"));
 });

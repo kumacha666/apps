@@ -182,6 +182,27 @@ body {
   font-weight: bold;
 }
 
+.recommended-next-section {
+  margin-bottom: 20px;
+  padding: 12px 14px;
+  background: #1d1512;
+  border: 1px solid #4a2a1a;
+  border-radius: 12px;
+}
+
+.recommended-next-title {
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #ffb020;
+  margin-bottom: 10px;
+}
+
+.recommended-next-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .movie-list {
   display: flex;
   flex-direction: column;
