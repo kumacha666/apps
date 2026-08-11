@@ -203,10 +203,20 @@ function renderProgress(universeFiltered) {
 // here, so its open/closed state survives re-renders for free (unlike the
 // per-card "前提作品" <details>, which need explicit open-state tracking
 // because they're recreated from scratch on every render).
+//
+// `container` can legitimately be null: the service worker is network-first
+// with a cache fallback, so on a flaky connection it's possible for the
+// *navigation* to fall back to a stale cached index.html (predating this
+// element) while the separately-fetched app.js still resolves to the latest
+// version. Skipping silently here — rather than letting `.innerHTML = ""`
+// throw on null — keeps the rest of renderList() (the actual movie list)
+// from being aborted by an element that simply hasn't caught up yet.
 function renderProgressBreakdown() {
+  const container = document.getElementById("progress-breakdown-content");
+  if (!container) return;
+
   const activeState = getActiveStateStore();
   const breakdown = computeProgressBreakdown(movies, activeState);
-  const container = document.getElementById("progress-breakdown-content");
   container.innerHTML = "";
 
   for (const u of breakdown) {
