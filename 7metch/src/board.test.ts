@@ -6,6 +6,7 @@ import {
   findAllMatches, getComboType, tickCountdowns, applyGravityData,
   inBounds, isAdjacent, TAP_ACTIVATE_SPECIALS,
   findHint, isSwapLegalForCurrentStage, isActivatingSwap,
+  isRainbowPiece, isComboSpecialSwap, isSwapBlockedByOrbit,
 } from "./board";
 import type { OrbitCell } from "./types";
 
@@ -422,6 +423,64 @@ describe("isActivatingSwap", () => {
   it("nullを含むスワップでも例外を投げない", () => {
     expect(isActivatingSwap(null, { color: 0, special: "rainbow" })).toBe(true);
     expect(isActivatingSwap(null, null)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isRainbowPiece / isComboSpecialSwap（doMove()の起動判定分岐と共有する構成要素）
+// ---------------------------------------------------------------------------
+describe("isRainbowPiece", () => {
+  it("レインボーはtrue", () => {
+    expect(isRainbowPiece({ color: 0, special: "rainbow" })).toBe(true);
+  });
+  it("レインボー以外・null・空はfalse", () => {
+    expect(isRainbowPiece({ color: 0, special: "bomb" })).toBe(false);
+    expect(isRainbowPiece({ color: 0, special: null })).toBe(false);
+    expect(isRainbowPiece(null)).toBe(false);
+  });
+});
+
+describe("isComboSpecialSwap", () => {
+  it("両方が特殊ピースならtrue(カウントダウン絡みも含む)", () => {
+    expect(isComboSpecialSwap({ color: 0, special: "bomb" }, { color: 0, special: "line_h" })).toBe(true);
+    expect(isComboSpecialSwap({ color: 0, special: "countdown", countdown: 5 }, { color: 0, special: "bomb" })).toBe(true);
+  });
+  it("片方だけ特殊、または両方通常ならfalse", () => {
+    expect(isComboSpecialSwap({ color: 0, special: "bomb" }, { color: 0, special: null })).toBe(false);
+    expect(isComboSpecialSwap({ color: 0, special: null }, { color: 0, special: null })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isSwapBlockedByOrbit（doMove()/findHint()が共有するオービット拒否判定）
+// ---------------------------------------------------------------------------
+describe("isSwapBlockedByOrbit", () => {
+  beforeEach(() => setupBoard(7, 7));
+
+  it("オービットが無ければ常にfalse(遮断しない)", () => {
+    G.STAGES![0].orbits = [];
+    const p1 = { color: 0, special: null };
+    const p2 = { color: 0, special: null };
+    expect(isSwapBlockedByOrbit(p1, p2, 0, 0, 0, 1)).toBe(false);
+  });
+
+  it("進入方向が不一致で非起動スワップなら遮断する", () => {
+    // orbit(3,3)方向は南(1,0)。(2,3)は影響範囲内・(1,3)は範囲外で、
+    // 実際の進入方向(1,3)→(2,3)は南(1,0)ではなく逆(南から見て不一致)になるよう
+    // 重力方向を北(-1,0)に設定し、不一致を作る(Node上で事前検証済み)
+    const orbit: OrbitCell = { r: 3, c: 3, dir: [-1, 0] };
+    G.STAGES![0].orbits = [orbit];
+    const p1 = { color: 0, special: null };
+    const p2 = { color: 0, special: null };
+    expect(isSwapBlockedByOrbit(p1, p2, 2, 3, 1, 3)).toBe(true);
+  });
+
+  it("進入方向が不一致でも起動スワップなら遮断しない", () => {
+    const orbit: OrbitCell = { r: 3, c: 3, dir: [-1, 0] };
+    G.STAGES![0].orbits = [orbit];
+    const p1 = { color: 0, special: "rainbow" as const };
+    const p2 = { color: 0, special: null };
+    expect(isSwapBlockedByOrbit(p1, p2, 2, 3, 1, 3)).toBe(false);
   });
 });
 

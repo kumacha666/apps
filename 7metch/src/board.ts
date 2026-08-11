@@ -8,12 +8,21 @@ import { isSwapLegal } from "./orbit";
 const HINT_DELAY_MS = 4000;
 export const TAP_ACTIVATE_SPECIALS: Set<string> = new Set(["line_h", "line_v", "line_d", "bomb"]);
 
-// 第1章「軌道系」の方向拘束の対象外になるスワップ（実際に起動が発生するケースのみ、
-// GIMMICK_REDESIGN.mdの「特殊ピースとの関係」参照）。doMove()の起動判定分岐
-// （p1.special && p2.special のコンボ起動、rainbow+他ピースの起動）と一致させること
+// 第1章「軌道系」の方向拘束の対象外になるスワップ判定の構成要素（実際に起動が発生する
+// ケースのみ、GIMMICK_REDESIGN.mdの「特殊ピースとの関係」参照）。doMove()の起動判定分岐
+// （コンボ起動・カウントダウン連動起動・レインボー起動）はコメントでの同期ではなく、
+// これらの関数を直接呼び出すことで判定を一致させる（SpecialType追加時の食い違いを防ぐ）
+export function isRainbowPiece(p: Piece | null): boolean {
+  return p?.special === "rainbow";
+}
+
+export function isComboSpecialSwap(p1: Piece | null, p2: Piece | null): boolean {
+  return !!(p1?.special && p2?.special);
+}
+
 export function isActivatingSwap(p1: Piece | null, p2: Piece | null): boolean {
-  if (p1?.special && p2?.special) return true; // 特殊ピース同士のスワップ(コンボ起動)
-  if (p1?.special === "rainbow" || p2?.special === "rainbow") return true; // レインボー×他ピース
+  if (isComboSpecialSwap(p1, p2)) return true; // 特殊ピース同士のスワップ(コンボ起動・カウントダウン連動含む)
+  if (isRainbowPiece(p1) || isRainbowPiece(p2)) return true; // レインボー×他ピース
   return false;
 }
 
@@ -221,6 +230,14 @@ export function isAdjacent(r1: number, c1: number, r2: number, c2: number): bool
 // (Stage 1〜500は常にこの状態) 常にtrueを返し、既存の挙動に一切影響しない
 export function isSwapLegalForCurrentStage(r1: number, c1: number, r2: number, c2: number): boolean {
   return isSwapLegal(r1, c1, r2, c2, G.STAGES![G.currentStage].orbits);
+}
+
+// 入力受付(doMove)・ヒント(findHint)で共有するオービットの拒否判定。
+// 実際に起動が発生するスワップは対象外、それ以外は進入方向が重力方向と一致しない限り拒否する
+export function isSwapBlockedByOrbit(
+  p1: Piece | null, p2: Piece | null, r1: number, c1: number, r2: number, c2: number,
+): boolean {
+  return !isActivatingSwap(p1, p2) && !isSwapLegalForCurrentStage(r1, c1, r2, c2);
 }
 
 // ---------------------------------------------------------------------------
@@ -436,7 +453,7 @@ export function findHint(): HintData | null {
       for (const [nr, nc] of neighbors) {
         if (!inBounds(nr, nc) || !G.board[nr][nc] || !isPlayable(nr, nc)) continue;
         if (nr < r || (nr === r && nc < c)) continue;
-        if (!isActivatingSwap(G.board[r][c], G.board[nr][nc]) && !isSwapLegalForCurrentStage(r, c, nr, nc)) continue;
+        if (isSwapBlockedByOrbit(G.board[r][c], G.board[nr][nc], r, c, nr, nc)) continue;
 
         swapPieces(r, c, nr, nc);
         const matches = findAllMatches();
