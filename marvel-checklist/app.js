@@ -827,6 +827,19 @@ async function shareUrlFallback(url) {
 // on <body> when it closes.
 let qrModalReturnFocusEl = null;
 
+// Invalidates a showQrModal() call's in-flight QR generation (the dynamic
+// import + qr.make()) once it's no longer the current one. The share
+// button re-enables as soon as the modal opens (see showQrModal()), so a
+// user can close this modal and open a new one (a different share, e.g.
+// after checking off more movies) before the first call's QR work
+// finishes — without this token, the stale call's `container.innerHTML`
+// write would land on whatever modal happens to be open when it resolves,
+// possibly overwriting a newer, already-displayed QR code with the wrong
+// one. Bumped both when a new modal opens (invalidating the previous
+// request) and when a modal closes (invalidating its own, in case it never
+// gets superseded by a new open).
+let qrRequestToken = 0;
+
 // `returnFocusEl` is captured by the caller (setupShareButton()) BEFORE it
 // disables the share button — not read from document.activeElement in here.
 // Two reasons it can't be captured locally at the top of this function
@@ -901,6 +914,15 @@ async function showQrModal(url, returnFocusEl) {
   // <body> even after the share flow fully settles.
   if (shareBtn) shareBtn.disabled = false;
 
+  // Claims this call as the current QR request. Since the share button is
+  // already re-enabled above, the user can close this modal and open a new
+  // one (e.g. after checking off another movie) before the import/generation
+  // below finishes — the two writes to container.innerHTML further down are
+  // each gated on this token still matching qrRequestToken, so a stale call
+  // from a modal that's since been closed or superseded can't overwrite a
+  // newer one's QR code.
+  const myQrToken = ++qrRequestToken;
+
   try {
     // Dynamically imported (rather than a static top-level import) so that
     // a failed fetch of this file — e.g. an old service-worker cache that
@@ -952,8 +974,11 @@ async function showQrModal(url, returnFocusEl) {
     // that rule) so this element's own `width`/`height` attributes, set
     // below to an exact integer multiple of cellPx, are what the browser
     // actually renders at.
-    container.innerHTML = qr.createSvgTag({ cellSize: cellPx, margin: cellPx * (quietZoneUnits / 2) });
+    const svgMarkup = qr.createSvgTag({ cellSize: cellPx, margin: cellPx * (quietZoneUnits / 2) });
+    if (myQrToken !== qrRequestToken) return; // superseded by a newer/closed modal — see qrRequestToken's comment
+    container.innerHTML = svgMarkup;
   } catch (e) {
+    if (myQrToken !== qrRequestToken) return; // same reasoning as above
     // Either the dynamic import failed (see above) or a share payload from
     // a very large watch history exceeded the QR format's maximum data
     // capacity (even at the lowest error-correction level, a QR code tops
@@ -968,6 +993,13 @@ function hideQrModal() {
   document.getElementById("qr-modal").hidden = true;
   const appEl = document.getElementById("app");
   if (appEl) appEl.inert = false;
+  // Invalidates this modal's own in-flight QR request (if any) — see
+  // qrRequestToken's comment. Not strictly needed when the user immediately
+  // opens a new modal afterward (that call bumps the token itself), but
+  // matters if they just close and don't reopen: without this, a
+  // still-pending request from this now-closed modal could write into the
+  // (hidden but still-live) #qr-code-container whenever it finally resolves.
+  qrRequestToken++;
   if (qrModalReturnFocusEl) {
     qrModalReturnFocusEl.focus();
     qrModalReturnFocusEl = null;
