@@ -877,6 +877,13 @@ async function shareUrlFallback(url) {
 // on <body> when it closes.
 let qrModalReturnFocusEl = null;
 
+// The currently displayed modal's successfully-generated QR data — set by
+// showQrModal() once qr.make() resolves, read by renderQrForCurrentWidth()
+// (see that function) so a resize/orientation change can re-render at a new
+// pixel size without redoing the QR encoding itself. null whenever no QR is
+// currently showing (modal closed, still loading, or generation failed).
+let currentQrRender = null;
+
 // `returnFocusEl` and `myFlowToken` are captured by the caller
 // (setupShareButton()) BEFORE it disables the share button — not read from
 // document.activeElement/the guard fresh in here. For returnFocusEl,
@@ -978,48 +985,14 @@ async function showQrModal(url, returnFocusEl, myFlowToken) {
     qr.addData(url);
     qr.make();
     const moduleCount = qr.getModuleCount();
-    // The vendored library's quiet zone (the blank border required around
-    // any QR code for scanners to lock onto it) defaults to `margin:
-    // cellSize * 4` — i.e. 4 module-widths on each side, 8 module-widths
-    // total. An earlier version of this code rendered with `createSvgTag({
-    // scalable: true })` (an unsized SVG, viewBox = (moduleCount*2+16)
-    // units) and then CSS-scaled the whole thing to `moduleCount * cellPx`
-    // px via inline style — but that ignores the quiet zone's own share of
-    // the viewBox, so the actual per-module size ends up LESS than cellPx
-    // and non-integer (e.g. 137 modules at a nominal cellPx=1 rendered at
-    // ~0.945px/module, not 1px), undoing the whole point of this
-    // calculation. Including the quiet zone in the unit count here, and
-    // passing that same cellPx as both `cellSize` and (scaled) `margin` to
-    // createSvgTag, makes the library emit an SVG with explicit `width`/
-    // `height` attributes that are already an exact integer multiple of
-    // cellPx — no separate CSS/inline-style scaling step needed at all.
-    const quietZoneUnits = 8;
-    const totalUnits = moduleCount + quietZoneUnits;
-    // The budget is measured from the container's OWN actual rendered width
-    // (`clientWidth`, meaningful now that `.qr-code-container` has
-    // `width: 100%` — see that rule's comment) rather than a hardcoded
-    // constant, so it adapts to genuinely narrow phones (e.g. 320px wide)
-    // where `.qr-modal`/`.qr-modal-content`'s own padding leaves much less
-    // room than a desktop-oriented constant would assume.
-    // container.clientWidth already includes this container's own 12px
-    // padding on each side (box-sizing: border-box, global reset), so that's
-    // subtracted back out to get the space actually available to the SVG.
-    const availableWidth = container.clientWidth - 24;
-    // Fitting inside `availableWidth` is the hard constraint the upper
-    // Math.min bound serves, capped at 8px/unit so short-history codes
-    // don't render needlessly huge when there's plenty of room. The lower
-    // Math.max bound is only 1 (never 0 or negative) — NOT a "readable
-    // minimum" of 2, which would override the fit constraint and overflow
-    // the container on a dense code in a narrow viewport.
-    const cellPx = Math.max(1, Math.min(8, Math.floor(availableWidth / totalUnits)));
-    // No `scalable: true` here and no CSS/inline width or height override —
-    // `.qr-code-container svg` intentionally has no fixed size in CSS (see
-    // that rule) so this element's own `width`/`height` attributes, set
-    // below to an exact integer multiple of cellPx, are what the browser
-    // actually renders at.
-    const svgMarkup = qr.createSvgTag({ cellSize: cellPx, margin: cellPx * (quietZoneUnits / 2) });
     if (!shareFlow.isCurrent(myFlowToken)) return; // superseded by a newer/closed modal — see shareFlow's comment
-    container.innerHTML = svgMarkup;
+    // Stored (not just rendered once) so a later resize/orientation change
+    // can re-run renderQrForCurrentWidth() against the SAME already-built
+    // `qr` object — qr.make() itself isn't cheap to redo on every resize
+    // event, and doesn't need to be: only the pixel sizing below depends on
+    // viewport width, not the QR's own module data.
+    currentQrRender = { qr, moduleCount, myFlowToken };
+    renderQrForCurrentWidth();
   } catch (e) {
     if (!shareFlow.isCurrent(myFlowToken)) return; // same reasoning as above
     // Either the dynamic import failed (see above) or a share payload from
@@ -1030,6 +1003,66 @@ async function showQrModal(url, returnFocusEl, myFlowToken) {
     // which is already open with the link showing by this point.
     container.textContent = "QRコードを生成できませんでした（リンクが長すぎる可能性があります）。下のリンクをコピーしてください。";
   }
+}
+
+// Recomputes the QR's per-module pixel size from the container's CURRENT
+// clientWidth and re-renders its SVG — shared by showQrModal()'s initial
+// render and the resize/orientationchange listener in setupQrModal(), so a
+// user who rotates their phone or resizes a split-screen browser while the
+// modal is open gets a QR that still fits (rather than one sized once at
+// open time and never revisited). Reads `currentQrRender` (set by
+// showQrModal() only once qr.make() has actually succeeded) rather than
+// taking parameters, since the resize listener below has no flow-local
+// state of its own to pass in.
+function renderQrForCurrentWidth() {
+  if (!currentQrRender) return; // no successful QR currently displayed (closed, still loading, or failed)
+  const { qr, moduleCount, myFlowToken } = currentQrRender;
+  if (!shareFlow.isCurrent(myFlowToken)) return; // this render belongs to a superseded flow — see shareFlow's comment
+  const modal = document.getElementById("qr-modal");
+  const container = document.getElementById("qr-code-container");
+  if (!modal || modal.hidden || !container) return;
+  // The vendored library's quiet zone (the blank border required around
+  // any QR code for scanners to lock onto it) defaults to `margin:
+  // cellSize * 4` — i.e. 4 module-widths on each side, 8 module-widths
+  // total. An earlier version of this code rendered with `createSvgTag({
+  // scalable: true })` (an unsized SVG, viewBox = (moduleCount*2+16)
+  // units) and then CSS-scaled the whole thing to `moduleCount * cellPx`
+  // px via inline style — but that ignores the quiet zone's own share of
+  // the viewBox, so the actual per-module size ends up LESS than cellPx
+  // and non-integer (e.g. 137 modules at a nominal cellPx=1 rendered at
+  // ~0.945px/module, not 1px), undoing the whole point of this
+  // calculation. Including the quiet zone in the unit count here, and
+  // passing that same cellPx as both `cellSize` and (scaled) `margin` to
+  // createSvgTag, makes the library emit an SVG with explicit `width`/
+  // `height` attributes that are already an exact integer multiple of
+  // cellPx — no separate CSS/inline-style scaling step needed at all.
+  const quietZoneUnits = 8;
+  const totalUnits = moduleCount + quietZoneUnits;
+  // The budget is measured from the container's OWN actual rendered width
+  // (`clientWidth`, meaningful now that `.qr-code-container` has
+  // `width: 100%` — see that rule's comment) rather than a hardcoded
+  // constant, so it adapts to genuinely narrow phones (e.g. 320px wide)
+  // where `.qr-modal`/`.qr-modal-content`'s own padding leaves much less
+  // room than a desktop-oriented constant would assume — and, since this
+  // function re-reads clientWidth fresh on every call, to a phone rotated
+  // or a browser resized after the modal was already open.
+  // container.clientWidth already includes this container's own 12px
+  // padding on each side (box-sizing: border-box, global reset), so that's
+  // subtracted back out to get the space actually available to the SVG.
+  const availableWidth = container.clientWidth - 24;
+  // Fitting inside `availableWidth` is the hard constraint the upper
+  // Math.min bound serves, capped at 8px/unit so short-history codes
+  // don't render needlessly huge when there's plenty of room. The lower
+  // Math.max bound is only 1 (never 0 or negative) — NOT a "readable
+  // minimum" of 2, which would override the fit constraint and overflow
+  // the container on a dense code in a narrow viewport.
+  const cellPx = Math.max(1, Math.min(8, Math.floor(availableWidth / totalUnits)));
+  // No `scalable: true` here and no CSS/inline width or height override —
+  // `.qr-code-container svg` intentionally has no fixed size in CSS (see
+  // that rule) so this element's own `width`/`height` attributes, set
+  // below to an exact integer multiple of cellPx, are what the browser
+  // actually renders at.
+  container.innerHTML = qr.createSvgTag({ cellSize: cellPx, margin: cellPx * (quietZoneUnits / 2) });
 }
 
 function hideQrModal() {
@@ -1044,6 +1077,7 @@ function hideQrModal() {
   // into the (hidden but still-live) #qr-code-container, or release a lock
   // it doesn't own, whenever it finally resolves.
   shareFlow.next();
+  currentQrRender = null; // release the reference; a stale resize event would no-op anyway (isCurrent check), but nothing left to hold onto
   if (qrModalReturnFocusEl) {
     qrModalReturnFocusEl.focus();
     qrModalReturnFocusEl = null;
@@ -1103,6 +1137,24 @@ function setupQrModal() {
       urlField.focus();
     }
   });
+
+  // Rotating a phone or resizing a split-screen browser while the modal is
+  // open changes `#qr-code-container`'s clientWidth, but the QR was only
+  // sized once, at generation time — without this, it can end up larger
+  // than the new available width and overflow the modal. Debounced (rather
+  // than re-rendering on every resize event) since drag-resizing/rotation
+  // can fire this rapidly; renderQrForCurrentWidth() itself already no-ops
+  // instantly whenever there's nothing to redraw (no successful QR
+  // currently shown, or the modal isn't open), so listening unconditionally
+  // at the window level — rather than only while a modal happens to be open
+  // — costs nothing in the common case.
+  let qrResizeDebounceTimer = null;
+  const scheduleQrResize = () => {
+    clearTimeout(qrResizeDebounceTimer);
+    qrResizeDebounceTimer = setTimeout(renderQrForCurrentWidth, 150);
+  };
+  window.addEventListener("resize", scheduleQrResize);
+  window.addEventListener("orientationchange", scheduleQrResize);
 }
 
 function setupFriendRemoval() {
