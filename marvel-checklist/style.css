@@ -526,6 +526,13 @@ body {
 }
 
 .qr-code-container {
+  /* `.qr-modal-content` is a column flex container with `align-items: center`,
+     which would otherwise shrink this to its content's width (the QR SVG or
+     the "生成しています…" placeholder text) instead of the modal's actual
+     available width — making `container.clientWidth` in app.js meaningless
+     as an "available space" measurement. `width: 100%` makes it fill that
+     available width regardless of what's currently inside it. */
+  width: 100%;
   background: #ffffff;
   border-radius: 8px;
   padding: 12px;

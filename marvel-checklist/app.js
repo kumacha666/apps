@@ -864,6 +864,19 @@ async function showQrModal(url, returnFocusEl) {
   modal.hidden = false;
   closeBtn.focus();
 
+  // Re-enable the share button as soon as the modal is actually open, rather
+  // than waiting for the QR fetch/generation below to finish — it's already
+  // inert (a descendant of #app) at this point, so re-enabling it can't
+  // reopen the double-click race the disabled state was guarding against.
+  // Leaving it disabled until this whole function resolves would instead
+  // break hideQrModal()'s focus restore: if the user closes the modal
+  // (Escape/close button) while the QR is still loading, .focus() on a
+  // still-disabled button is a silent no-op, and nothing re-attempts it
+  // once the button re-enables later — keyboard focus would be stranded on
+  // <body> even after the share flow fully settles.
+  const shareBtn = document.getElementById("btn-share");
+  if (shareBtn) shareBtn.disabled = false;
+
   try {
     // Dynamically imported (rather than a static top-level import) so that
     // a failed fetch of this file — e.g. an old service-worker cache that
@@ -881,12 +894,26 @@ async function showQrModal(url, returnFocusEl) {
     // non-integer SVG scaling — with a fixed small display size, a long
     // share URL (e.g. the full catalog watched+rated is ~1300 chars, which
     // needs 137 modules) would squeeze each module under 2px and make the
-    // code unreliable to scan with another device's camera. Clamped to
-    // [2, 8]px/module: 2 is the practical floor for scan reliability, 8
-    // keeps short-history QR codes from rendering needlessly huge. The 260
-    // numerator is sized to fit the modal's available width (~276px after
-    // its own padding) with a small margin.
-    const cellPx = Math.min(8, Math.max(2, Math.floor(260 / moduleCount)));
+    // code unreliable to scan with another device's camera.
+    //
+    // The budget is measured from the container's OWN actual rendered width
+    // (`clientWidth`, meaningful now that `.qr-code-container` has
+    // `width: 100%` — see that rule's comment) rather than a hardcoded
+    // constant, so it adapts to genuinely narrow phones (e.g. 320px wide)
+    // where `.qr-modal`/`.qr-modal-content`'s own padding leaves much less
+    // room than a desktop-oriented constant would assume.
+    // container.clientWidth already includes this container's own 12px
+    // padding on each side (box-sizing: border-box, global reset), so that's
+    // subtracted back out to get the space actually available to the SVG.
+    const availableWidth = container.clientWidth - 24;
+    // Fitting inside `availableWidth` is the hard constraint the upper
+    // Math.min bound serves, capped at 8px/module so short-history codes
+    // don't render needlessly huge when there's plenty of room. The lower
+    // Math.max bound is only 1 (never 0 or negative) — NOT a "readable
+    // minimum" of 2, which would override the fit constraint and overflow
+    // the container on a dense code in a narrow viewport (e.g. 137 modules
+    // in ~214px only fits at 1px/module, not 2).
+    const cellPx = Math.max(1, Math.min(8, Math.floor(availableWidth / moduleCount)));
     // `scalable: true` omits the fixed pixel width/height attributes so the
     // inline style set below (not a fixed CSS rule) is what actually
     // determines the rendered size, via the SVG's viewBox alone.
