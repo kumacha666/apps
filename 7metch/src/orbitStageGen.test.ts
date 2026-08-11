@@ -3,7 +3,7 @@ import {
   mulberry32, generateOrbitLayout, getFallbackOrbitLayout,
   orbitCountForStage, patternShapeForStage,
 } from "./orbitStageGen";
-import { hasEntrySource, orbitsHaveRequiredGap } from "./orbit";
+import { hasEntrySource, orbitsHaveRequiredGap, DIRECTIONS8 } from "./orbit";
 import type { OrbitCell } from "./types";
 
 const PILOT_ROWS = 8, PILOT_COLS = 7; // パイロットの盤面サイズ(7x8)固定
@@ -59,6 +59,22 @@ describe("generateOrbitLayout", () => {
     const a = generateOrbitLayout(2, PILOT_ROWS, PILOT_COLS, 42);
     const b = generateOrbitLayout(2, PILOT_ROWS, PILOT_COLS, 42);
     expect(a).toEqual(b);
+  });
+
+  it("通常生成された方向タプルを呼び出し側が書き換えても、共有元のDIRECTIONS8定数は汚染されない", () => {
+    const before = DIRECTIONS8.map((d) => [d[0], d[1]]);
+    const result = generateOrbitLayout(3, PILOT_ROWS, PILOT_COLS, 7);
+    for (const orbit of result.orbits) {
+      orbit.dir[0] = 999 as never;
+      orbit.dir[1] = 999 as never;
+    }
+    const after = DIRECTIONS8.map((d) => [d[0], d[1]]);
+    expect(after).toEqual(before);
+    // 汚染されていなければ、同じseedでの再生成は書き換え前と同じ結果になる
+    const again = generateOrbitLayout(3, PILOT_ROWS, PILOT_COLS, 7);
+    for (const orbit of again.orbits) {
+      expect(orbit.dir[0]).not.toBe(999);
+    }
   });
 
   it("count=1〜3・パイロット盤面(8x7)で、seed 0〜299の全てで有効なレイアウトが生成され、フォールバックに陥らない", () => {

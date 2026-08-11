@@ -52,7 +52,9 @@ function tryGenerateLayout(
     const validDirs = DIRECTIONS8.filter((dir) => hasEntrySource(pos.r, pos.c, dir, rows, cols));
     if (validDirs.length === 0) return null;
     const dir = validDirs[Math.floor(rng() * validDirs.length)];
-    orbits.push({ r: pos.r, c: pos.c, dir });
+    // dirタプルを複製する(DIRECTIONS8由来の参照をそのまま返すと、呼び出し側の書き換えで
+    // モジュール共有のDIRECTIONS8定数が恒久的に汚染されてしまう)
+    orbits.push({ r: pos.r, c: pos.c, dir: [dir[0], dir[1]] as OrbitCell["dir"] });
   }
   return orbits;
 }
