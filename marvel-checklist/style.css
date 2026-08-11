@@ -488,3 +488,63 @@ body {
   border: 1px solid #6a2a2a;
   color: #ff9a9a;
 }
+
+.qr-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 4, 5, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+}
+
+.qr-modal[hidden] {
+  display: none;
+}
+
+.qr-modal-content {
+  background: #1a0f11;
+  border: 1px solid #3a2224;
+  border-radius: 14px;
+  padding: 20px;
+  max-width: 340px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.qr-modal-title {
+  font-size: 0.95rem;
+  font-weight: bold;
+  color: #ffb020;
+}
+
+.qr-code-container {
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 12px;
+  line-height: 0;
+}
+
+.qr-code-container svg {
+  display: block;
+  width: 220px;
+  height: 220px;
+}
+
+.qr-modal-url {
+  font-size: 0.72rem;
+  color: #a07070;
+  word-break: break-all;
+  text-align: center;
+}
+
+.qr-modal-buttons {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}

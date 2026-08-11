@@ -25,6 +25,7 @@ import {
   computePrerequisites,
   computeRecommendedNext,
 } from "./logic.js";
+import qrcode from "./vendor/qrcode.js";
 
 const OWN_STATE_KEY = "marvel-checklist-state-v1";
 const FRIENDS_KEY = "marvel-checklist-friends-v1";
@@ -771,11 +772,70 @@ function setupShareButton() {
       alert("共有リンクの作成に失敗しました（このブラウザでは利用できない機能が含まれている可能性があります）。");
       return;
     }
+    showQrModal(url);
+  });
+}
+
+// Restores focus to whatever had it before the modal opened (the "共有リン
+// クを作成" button), same reasoning as restoreFocus() elsewhere in this
+// file — a modal opened via keyboard/screen-reader shouldn't strand focus
+// on <body> when it closes.
+let qrModalReturnFocusEl = null;
+
+function showQrModal(url) {
+  const modal = document.getElementById("qr-modal");
+  const container = document.getElementById("qr-code-container");
+
+  container.innerHTML = "";
+  try {
+    const qr = qrcode(0, "M"); // typeNumber 0 = auto-select the smallest size that fits
+    qr.addData(url);
+    qr.make();
+    // `scalable: true` omits the fixed pixel width/height attributes so the
+    // CSS-controlled container size (see .qr-code-container svg) is what
+    // actually determines the rendered size, via the SVG's viewBox alone.
+    container.innerHTML = qr.createSvgTag({ scalable: true });
+  } catch (e) {
+    // A share payload from a very large watch history can exceed the QR
+    // format's maximum data capacity (even at the lowest error-correction
+    // level, a QR code tops out around ~2.9KB). The link itself is still
+    // valid and copyable below, so degrade to "no QR code" rather than
+    // blocking the whole modal.
+    container.textContent = "QRコードを生成できませんでした（リンクが長すぎる可能性があります）。下のリンクをコピーしてください。";
+  }
+
+  document.getElementById("qr-modal-url").textContent = url;
+  qrModalReturnFocusEl = document.activeElement;
+  modal.hidden = false;
+  document.getElementById("qr-modal-close").focus();
+}
+
+function hideQrModal() {
+  document.getElementById("qr-modal").hidden = true;
+  if (qrModalReturnFocusEl) {
+    qrModalReturnFocusEl.focus();
+    qrModalReturnFocusEl = null;
+  }
+}
+
+function setupQrModal() {
+  const modal = document.getElementById("qr-modal");
+  document.getElementById("qr-modal-close").addEventListener("click", hideQrModal);
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) hideQrModal(); // click on the backdrop, not the dialog content
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.hidden) hideQrModal();
+  });
+  document.getElementById("qr-modal-copy").addEventListener("click", async () => {
+    const url = document.getElementById("qr-modal-url").textContent;
     try {
       await navigator.clipboard.writeText(url);
-      alert("共有リンクをコピーしました。友達に送ってください。");
+      alert("リンクをコピーしました。");
     } catch (e) {
-      prompt("このリンクをコピーして友達に送ってください。", url);
+      // Clipboard API unavailable/blocked — the link text is already
+      // visible and selectable in the modal as a manual-copy fallback.
+      alert("コピーに失敗しました。表示されているリンクを長押しするなどして手動でコピーしてください。");
     }
   });
 }
@@ -905,6 +965,7 @@ async function init() {
   setupBackup();
   setupProfileSwitcher();
   setupShareButton();
+  setupQrModal();
   setupFriendRemoval();
   renderProfileSwitcher();
   renderCountdown();

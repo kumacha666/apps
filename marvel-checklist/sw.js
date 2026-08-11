@@ -2,7 +2,7 @@ const CACHE_PREFIX = "marvel-checklist-";
 const CACHE_NAME = CACHE_PREFIX + "v1";
 const ASSETS = [
   ".", "index.html", "style.css", "app.js", "logic.js", "manifest.json", "icon.svg",
-  "data/movies.json", "data/characters.json"
+  "data/movies.json", "data/characters.json", "vendor/qrcode.js"
 ];
 
 self.addEventListener("install", (e) => {

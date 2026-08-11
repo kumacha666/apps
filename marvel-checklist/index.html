@@ -63,7 +63,7 @@
           <div class="guide-item"><span class="guide-icon">⭐</span><span>◎〇△✕ ボタンで「見るべき度合い」を設定（もう一度押すと解除）</span></div>
           <div class="guide-item"><span class="guide-icon">🔍</span><span>「見るべき優先度で絞り込み」で複数選択可（例：◎と〇だけ表示）。未評価の作品だけ絞り込むこともできます</span></div>
           <div class="guide-item"><span class="guide-icon">🔗</span><span>登場キャラクターの都合で先に見ておきたい作品がある場合、カードに「前提作品」が表示されます（未公開作品は現時点で判明している登場人物のみ反映）</span></div>
-          <div class="guide-item"><span class="guide-icon">👥</span><span>「共有リンクを作成」で自分のリストのリンクを発行し、友達に送れます。友達がそのリンクを開くとリンク先ではなく開いた側の端末に、名前付きでリストが保存されます（以後の自動同期はされません）</span></div>
+          <div class="guide-item"><span class="guide-icon">👥</span><span>「共有リンクを作成」で自分のリストのリンクを発行し、友達に送れます（QRコードを見せて読み取ってもらうこともできます）。友達がそのリンクを開くとリンク先ではなく開いた側の端末に、名前付きでリストが保存されます（以後の自動同期はされません）</span></div>
           <div class="guide-item"><span class="guide-icon">🔀</span><span>ヘッダーの「表示中のリスト」で自分／保存した友達のリストを切り替えられます。友達のリストを表示中に視聴済み・評価を編集すると、その友達のデータとして保存されます（自分のデータは変わりません）</span></div>
           <div class="guide-item"><span class="guide-icon">💾</span><span>データはこの端末のブラウザ内（localStorage）にのみ保存されます</span></div>
           <div class="guide-item"><span class="guide-icon">📱</span><span>ホーム画面に追加するとオフラインでも使えます</span></div>
@@ -79,6 +79,18 @@
         </div>
       </details>
     </section>
+  </div>
+
+  <div id="qr-modal" class="qr-modal" hidden>
+    <div class="qr-modal-content" role="dialog" aria-modal="true" aria-labelledby="qr-modal-title">
+      <p id="qr-modal-title" class="qr-modal-title">共有リンクのQRコード</p>
+      <div id="qr-code-container" class="qr-code-container"></div>
+      <p id="qr-modal-url" class="qr-modal-url"></p>
+      <div class="qr-modal-buttons">
+        <button id="qr-modal-copy" class="btn btn-secondary">リンクをコピー</button>
+        <button id="qr-modal-close" class="btn btn-secondary">閉じる</button>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="app.js"></script>
