@@ -2,9 +2,14 @@ export type SpecialType = "line_h" | "line_v" | "line_d" | "bomb" | "rainbow" | 
 
 export type CellStateType = "hole" | "rock" | "ice1" | "ice2" | null;
 
-// 第1章「軌道系」（Stage 501〜、ai-workspace/projects/7metch/GIMMICK_REDESIGN.md参照）
-// 重力方向: 8方向いずれかの単位ベクトル [dr, dc]
-export type OrbitDirection = [number, number];
+// 第1章「軌道系」（Stage 501〜、7metch/CLAUDE.mdの「軌道系（オービット）」節・
+// ai-workspace/projects/7metch/GIMMICK_REDESIGN.md参照）
+// 重力方向: 8方向の単位ベクトル[dr,dc]のみを許可するunion(exhaustive)。
+// [number,number]のような緩い型にすると[0,0]や[2,0]のような無効値も型チェックを通過し、
+// isSwapLegalの進入判定が常に不一致になる(境界スワップが全滅する)バグを型で防げなくなる
+export type OrbitDirection =
+  | [-1, 0] | [-1, 1] | [0, 1] | [1, 1]
+  | [1, 0] | [1, -1] | [0, -1] | [-1, -1];
 
 export interface OrbitCell {
   r: number;
