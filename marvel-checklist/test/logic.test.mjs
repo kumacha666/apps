@@ -5,6 +5,7 @@ import {
   isReleased,
   daysUntil,
   formatMonth,
+  findNextMcuMovieCountdown,
   computeProgress,
   computeProgressBreakdown,
   filterByUniverse,
@@ -59,6 +60,35 @@ test("daysUntil counts whole calendar days, ignoring time-of-day", () => {
 
 test("formatMonth renders the year/month in Japanese without UTC drift", () => {
   assert.equal(formatMonth("2026-01-01"), "2026年1月");
+});
+
+const countdownMovies = [
+  { id: "mcu-past", title: "Past MCU Movie", releaseDate: "2026-01-01", universe: "mcu", type: "movie" },
+  { id: "mcu-series-soon", title: "Soon MCU Series", releaseDate: "2026-08-15", universe: "mcu", type: "series" },
+  { id: "sony-soon", title: "Soon Sony Movie", releaseDate: "2026-08-20", universe: "sony", type: "movie" },
+  { id: "mcu-next", title: "Next MCU Movie", releaseDate: "2026-09-01", universe: "mcu", type: "movie" },
+  { id: "mcu-later", title: "Later MCU Movie", releaseDate: "2026-12-18", universe: "mcu", type: "movie" },
+];
+const countdownNow = new Date(2026, 7, 10); // 2026-08-10
+
+test("findNextMcuMovieCountdown only considers universe:mcu AND type:movie, ignoring series and other universes", () => {
+  const target = findNextMcuMovieCountdown(countdownMovies, countdownNow);
+  // mcu-series-soon (a series) and sony-soon (not MCU) both release sooner
+  // than mcu-next, but neither qualifies — only "mcu-next" does.
+  assert.equal(target.id, "mcu-next");
+});
+
+test("findNextMcuMovieCountdown stays on the target through its own release day, then rolls over", () => {
+  const releaseDay = new Date(2026, 8, 1); // mcu-next's own release date
+  assert.equal(findNextMcuMovieCountdown(countdownMovies, releaseDay).id, "mcu-next");
+
+  const dayAfter = new Date(2026, 8, 2);
+  assert.equal(findNextMcuMovieCountdown(countdownMovies, dayAfter).id, "mcu-later");
+});
+
+test("findNextMcuMovieCountdown returns null when there is no upcoming MCU movie in the catalog", () => {
+  const noUpcoming = countdownMovies.filter((m) => m.id !== "mcu-next" && m.id !== "mcu-later");
+  assert.equal(findNextMcuMovieCountdown(noUpcoming, countdownNow), null);
 });
 
 test("computeProgress counts only released movies and ignores unrelated list narrowing", () => {
