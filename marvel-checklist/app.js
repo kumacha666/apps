@@ -24,6 +24,9 @@ import {
   validateFullBackup,
   computePrerequisites,
   computeRecommendedNext,
+  createFlowGuard,
+  computeQrCellPx,
+  QR_QUIET_ZONE_MODULES_PER_SIDE,
 } from "./logic.js";
 
 const OWN_STATE_KEY = "marvel-checklist-state-v1";
@@ -741,43 +744,437 @@ function setupProfileSwitcher() {
   });
 }
 
+// Generation-token guard for the whole share flow (button click →
+// getOwnShareId → buildShareUrl → showQrModal → QR image generation). A new
+// flow claims the next token when the share button is clicked; every step of
+// a flow checks its own captured token against the guard before touching UI
+// state (the button's disabled flag, the modal, qrModalReturnFocusEl, the QR
+// container) and bails out silently if it's been superseded. `createFlowGuard`
+// itself (in logic.js) is unit-tested for the exact interleavings this flow
+// relies on — see "share flow guard" in test/logic.test.mjs.
+//
+// This exists because showQrModal() re-enables the share button as soon as
+// its modal opens — well before that modal's own QR image (a dynamic
+// import + generation) finishes — specifically so a slow/first-use QR
+// fetch never blocks the user from using an already-ready share link (see
+// that fix's own comment). That design choice means a second click CAN
+// start a brand new flow while an earlier one is still technically running
+// in the background. Without this guard, whichever flow's async work
+// happens to resolve last would win regardless of which one the user is
+// actually looking at — the QR image, the button's enabled state, and even
+// whether the modal was supposed to still be open at all could all
+// silently revert to a stale, already-closed flow's outcome.
+const shareFlow = createFlowGuard();
+
 function setupShareButton() {
-  document.getElementById("btn-share").addEventListener("click", async () => {
-    let shareId;
+  const shareBtn = document.getElementById("btn-share");
+  shareBtn.addEventListener("click", async () => {
+    // Guards against a rapid double-click starting two overlapping share
+    // flows: getOwnShareId()/buildShareUrl()/showQrModal() all await, so a
+    // second click before the first finishes would otherwise run a second,
+    // concurrent copy of this whole sequence — each rebuilding the QR
+    // modal's contents independently and racing to set qrModalReturnFocusEl
+    // (see showQrModal()), corrupting which element focus returns to when
+    // the modal closes.
+    if (shareBtn.disabled) return;
+    // Claims ownership of the *entire* flow (not just the QR-generation
+    // tail — see shareFlow's own comment for why that distinction
+    // matters). showQrModal() re-enables this button as soon as its modal
+    // opens (well before its own QR image finishes loading), so a second
+    // click CAN start a new flow while this one is still technically
+    // running in the background — myFlowToken is how every later step in
+    // *this* flow recognizes it's been superseded and stops touching
+    // shared UI state (the button, the modal, qrModalReturnFocusEl).
+    const myFlowToken = shareFlow.next();
+    shareBtn.disabled = true;
     try {
-      shareId = getOwnShareId();
-    } catch (e) {
-      // getItem()/setItem() inside getOwnShareId() can throw (SecurityError
-      // when storage is blocked, QuotaExceededError when persisting a
-      // freshly-generated id for the first time). Left uncaught, this async
-      // handler would abort silently — no copy, no fallback prompt, no
-      // error message at all.
-      alert("共有リンクの作成に失敗しました（保存容量が不足している可能性があります）。");
-      return;
-    }
-    // Read the latest persisted own state rather than this tab's possibly-
-    // stale in-memory ownState, so edits made in another tab since this
-    // tab's own load aren't missing from the generated link.
-    const latestOwnState = loadJSON(OWN_STATE_KEY, {});
-    const payload = { id: shareId, exportedAt: new Date().toISOString(), state: latestOwnState };
-    let url;
-    try {
-      url = await buildShareUrl(location.origin + location.pathname, payload);
-    } catch (e) {
-      // buildShareUrl() uses CompressionStream, which some older browsers/
-      // WebViews don't implement — that constructor throws synchronously.
-      // Left unguarded, this async handler would abort with no copy, no
-      // fallback prompt, and no error message at all.
-      alert("共有リンクの作成に失敗しました（このブラウザでは利用できない機能が含まれている可能性があります）。");
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(url);
-      alert("共有リンクをコピーしました。友達に送ってください。");
-    } catch (e) {
-      prompt("このリンクをコピーして友達に送ってください。", url);
+      let shareId;
+      try {
+        shareId = getOwnShareId();
+      } catch (e) {
+        // getItem()/setItem() inside getOwnShareId() can throw (SecurityError
+        // when storage is blocked, QuotaExceededError when persisting a
+        // freshly-generated id for the first time). Left uncaught, this async
+        // handler would abort silently — no copy, no fallback prompt, no
+        // error message at all.
+        alert("共有リンクの作成に失敗しました（保存容量が不足している可能性があります）。");
+        // No token check needed here: this catch runs synchronously right
+        // after claiming myFlowToken above, with no `await` in between, so
+        // the guard cannot have advanced — this flow is unconditionally
+        // still the current one. Restore focus to the share button now that
+        // we're bailing out without ever reaching showQrModal() (which
+        // would otherwise have handled this). Must re-enable the button
+        // FIRST: .focus() on a still-disabled element is a silent no-op
+        // (disabled elements can't receive focus), and the outer `finally`
+        // below only re-enables it AFTER this `return` — too late for a
+        // restoreFocusIfPossible() call made here to have any effect.
+        shareBtn.disabled = false;
+        restoreFocusIfPossible(shareBtn);
+        return;
+      }
+      // Read the latest persisted own state rather than this tab's possibly-
+      // stale in-memory ownState, so edits made in another tab since this
+      // tab's own load aren't missing from the generated link.
+      const latestOwnState = loadJSON(OWN_STATE_KEY, {});
+      const payload = { id: shareId, exportedAt: new Date().toISOString(), state: latestOwnState };
+      let url;
+      try {
+        url = await buildShareUrl(location.origin + location.pathname, payload);
+      } catch (e) {
+        // buildShareUrl() uses CompressionStream, which some older browsers/
+        // WebViews don't implement — that constructor throws synchronously.
+        // Left unguarded, this async handler would abort with no copy, no
+        // fallback prompt, and no error message at all.
+        alert("共有リンクの作成に失敗しました（このブラウザでは利用できない機能が含まれている可能性があります）。");
+        // Unlike the getOwnShareId() catch above, an `await` (buildShareUrl)
+        // sits between claiming myFlowToken and here, so — in principle,
+        // though not reachable in practice today since the button stays
+        // disabled through this whole stretch — a newer flow could have
+        // since taken over. Only touch the button/focus if this is still
+        // that flow; otherwise leave the newer flow's own state alone.
+        if (shareFlow.isCurrent(myFlowToken)) {
+          shareBtn.disabled = false; // must precede restoreFocusIfPossible() — see the getOwnShareId() catch above
+          restoreFocusIfPossible(shareBtn);
+        }
+        return;
+      }
+      await showQrModal(url, shareBtn, myFlowToken);
+    } finally {
+      // Only release the lock if this flow still owns it. If a newer flow
+      // has since claimed the guard (see showQrModal()'s early-return guard
+      // and shareFlow's own comment), it's already managing shareBtn.disabled
+      // itself — this stale flow finishing up must not clear a lock it no
+      // longer holds, which would otherwise let a THIRD click start yet
+      // another concurrent flow while the second one is still in progress.
+      if (shareFlow.isCurrent(myFlowToken)) shareBtn.disabled = false;
     }
   });
+}
+
+// Pre-QR-modal fallback: copy to clipboard if possible, otherwise fall back
+// to prompt() so the link is still visible/selectable. Used when the
+// modal's own DOM elements are missing entirely (see showQrModal()) — the
+// modal itself has its own separate, textarea-based clipboard-failure path
+// once it's open (see setupQrModal()'s copy handler).
+async function shareUrlFallback(url) {
+  try {
+    await navigator.clipboard.writeText(url);
+    alert("共有リンクをコピーしました。友達に送ってください。");
+  } catch (e) {
+    prompt("このリンクをコピーして友達に送ってください。", url);
+  }
+}
+
+// Restores focus to `el` if it's still a sensible target — connected to the
+// document and neither hidden nor disabled. `.focus()` on a hidden or
+// disabled element is a silent no-op (same HTML-spec gotcha this file has
+// hit before for `disabled` — see the getOwnShareId() catch above), and
+// `el` (always the share button, in every call site below) can genuinely
+// become either mid-flow: `updateFriendViewIndicators()` hides `#btn-share`
+// when switching "表示中のリスト" to a friend, and the window between
+// clicking the share button and `#app` going `inert` (only set inside
+// showQrModal(), after buildShareUrl() resolves) is wide enough for that
+// switch to happen. Callers that need the button re-enabled first must do
+// so themselves before calling this — the disabled-check here only guards
+// against calling .focus() when it's still (or again) disabled, it doesn't
+// un-disable anything.
+function restoreFocusIfPossible(el) {
+  if (el && el.isConnected && !el.hidden && !el.disabled) el.focus();
+}
+
+// Restores focus to whatever had it before the modal opened (the "共有リン
+// クを作成" button — see showQrModal()'s `shareBtn` parameter), same
+// reasoning as restoreFocus() elsewhere in this file — a modal opened via
+// keyboard/screen-reader shouldn't strand focus on <body> when it closes.
+let qrModalReturnFocusEl = null;
+
+// The currently displayed modal's successfully-generated QR data — set by
+// showQrModal() once qr.make() resolves, read by renderQrForCurrentWidth()
+// (see that function) so a resize/orientation change can re-render at a new
+// pixel size without redoing the QR encoding itself. null whenever no QR is
+// currently showing (modal closed, still loading, or generation failed).
+let currentQrRender = null;
+
+// The five DOM nodes the QR modal feature needs, checked together as one
+// all-or-nothing group: showQrModal() needs `container` to draw into and
+// setupQrModal() needs `copyBtn` to wire up, but an earlier version of this
+// code had each function check only the subset IT happened to touch — so a
+// stale service-worker-cached HTML missing just `copyBtn` would pass
+// showQrModal()'s check (open the modal) while failing setupQrModal()'s
+// (never wire up the close button/backdrop/Escape listeners), leaving the
+// user with an open modal and no way to close it. Both functions must agree
+// on what "the modal is usable" requires.
+function getQrModalElements() {
+  const modal = document.getElementById("qr-modal");
+  const container = document.getElementById("qr-code-container");
+  const urlField = document.getElementById("qr-modal-url");
+  const closeBtn = document.getElementById("qr-modal-close");
+  const copyBtn = document.getElementById("qr-modal-copy");
+  if (!modal || !container || !urlField || !closeBtn || !copyBtn) return null;
+  return { modal, container, urlField, closeBtn, copyBtn };
+}
+
+// `shareBtn` doubles as both "the button to re-enable" and "the element
+// focus returns to when the modal closes" — captured once by the caller
+// (setupShareButton()) and threaded through as a parameter rather than
+// re-queried here or read from `document.activeElement` at click time.
+// activeElement specifically is NOT reliably the clicked button: WebKit/
+// Safari (with its default "Full Keyboard Access: Text boxes and lists
+// only" setting) doesn't move focus to a <button> on a mouse click, only on
+// keyboard activation, so capturing activeElement there could silently
+// restore focus to whatever was focused *before* the click instead of back
+// to this button once the modal closes. For myFlowToken, see shareFlow's
+// own comment — it's how this call recognizes a newer flow has since taken
+// over and stops short of touching any shared UI state.
+async function showQrModal(url, shareBtn, myFlowToken) {
+  // A newer flow may have already claimed the guard while this one was
+  // awaiting buildShareUrl() (the caller's own await, before this function
+  // was even called) — bail out entirely rather than opening/reopening a
+  // modal, overwriting its URL, or touching the share button on that newer
+  // flow's behalf.
+  if (!shareFlow.isCurrent(myFlowToken)) return;
+
+  const els = getQrModalElements();
+
+  // The service worker is network-first per request, so a flaky connection
+  // can serve a stale cached index.html (predating this modal) alongside a
+  // freshly-fetched app.js — same failure mode as PR #346's finding on the
+  // progress-breakdown section. Fall back to the pre-QR-modal share flow
+  // instead of throwing on a null element.
+  if (!els) {
+    await shareUrlFallback(url);
+    // Ends this flow the same way hideQrModal() does (advance the guard),
+    // even though nothing else can be running concurrently today (shareBtn
+    // stays disabled through this whole await) — matches the "every exit
+    // path manages the guard" invariant the rest of this flow relies on
+    // (see shareFlow's own comment), so a future async step added before
+    // this return can't leave stale in-flight work able to touch a later
+    // flow's state.
+    shareFlow.next();
+    // Same reasoning as the catch blocks in setupShareButton(): this exits
+    // without ever showing the modal (whose own close-button focus / later
+    // hideQrModal() restore would otherwise handle this), so it must
+    // restore focus itself. Must re-enable the button FIRST — .focus() on a
+    // still-disabled element is a silent no-op, and the caller's own
+    // re-enable only happens in its `finally`, after this function's
+    // promise resolves.
+    shareBtn.disabled = false;
+    restoreFocusIfPossible(shareBtn);
+    return;
+  }
+  const { modal, container, urlField, closeBtn } = els;
+
+  // The link itself is already fully generated by this point (the caller
+  // built it before calling showQrModal) and needs no QR library to be
+  // usable — show the modal and the copyable link immediately, rather than
+  // making them wait behind the QR library's fetch/generation below. On a
+  // slow connection (especially the QR library's first-ever, uncached
+  // fetch), gating the whole modal on that would leave an already-ready
+  // link inaccessible for no reason.
+  container.innerHTML = "QRコードを生成しています…";
+  urlField.value = url;
+  qrModalReturnFocusEl = shareBtn;
+  // `#qr-modal` itself lives outside `#app` in index.html specifically so
+  // that making `#app` inert here doesn't also inert the modal's own
+  // buttons. Without this, Tab/Shift+Tab could cycle keyboard focus straight
+  // through the modal into the checklist "behind" it, letting a keyboard
+  // user edit checkboxes/ratings that are visually hidden under the overlay.
+  // `#app` is a core structural element present since this app's very first
+  // version (unlike the qr-modal elements above, which are new in this PR
+  // and so need a stale-cache null-check) — guarded anyway for consistency
+  // and because a null here would otherwise throw after the QR/URL content
+  // is already committed but before the modal is actually shown.
+  const appEl = document.getElementById("app");
+  if (appEl) appEl.inert = true;
+  modal.hidden = false;
+  closeBtn.focus();
+
+  // Re-enable the share button as soon as the modal is actually open, rather
+  // than waiting for the QR fetch/generation below to finish — it's already
+  // inert (a descendant of #app) at this point, so re-enabling it can't
+  // reopen the double-click race the disabled state was guarding against.
+  // Leaving it disabled until this whole function resolves would instead
+  // break hideQrModal()'s focus restore: if the user closes the modal
+  // (Escape/close button) while the QR is still loading, .focus() on a
+  // still-disabled button is a silent no-op, and nothing re-attempts it
+  // once the button re-enables later — keyboard focus would be stranded on
+  // <body> even after the share flow fully settles.
+  shareBtn.disabled = false;
+
+  // From here on, the share button is re-enabled — meaning the user can
+  // close this modal and start a whole new flow (a newer guard token) before
+  // the import/generation below finishes. The two writes to
+  // container.innerHTML further down are each gated on myFlowToken still
+  // being current, so a stale call from a modal that's since been closed or
+  // superseded can't overwrite a newer one's QR code.
+  try {
+    // Dynamically imported (rather than a static top-level import) so that
+    // a failed fetch of this file — e.g. an old service-worker cache that
+    // predates it, on a connection too flaky to fetch it fresh — can't stop
+    // app.js's module graph from resolving at all. A static `import ... from
+    // "./vendor/qrcode.js"` failing would abort the ENTIRE module, taking
+    // down the whole checklist (not just the share/QR feature) with it.
+    const { default: qrcode } = await import("./vendor/qrcode.js");
+    const qr = qrcode(0, "M"); // typeNumber 0 = auto-select the smallest size that fits
+    qr.addData(url);
+    qr.make();
+    const moduleCount = qr.getModuleCount();
+    if (!shareFlow.isCurrent(myFlowToken)) return; // superseded by a newer/closed modal — see shareFlow's comment
+    // Stored (not just rendered once) so a later resize/orientation change
+    // can re-run renderQrForCurrentWidth() against the SAME already-built
+    // `qr` object — qr.make() itself isn't cheap to redo on every resize
+    // event, and doesn't need to be: only the pixel sizing below depends on
+    // viewport width, not the QR's own module data.
+    currentQrRender = { qr, moduleCount, myFlowToken };
+    renderQrForCurrentWidth();
+  } catch (e) {
+    if (!shareFlow.isCurrent(myFlowToken)) return; // same reasoning as above
+    // Either the dynamic import failed (see above) or a share payload from
+    // a very large watch history exceeded the QR format's maximum data
+    // capacity (even at the lowest error-correction level, a QR code tops
+    // out around ~2.9KB). The link itself is still valid and copyable
+    // below, so degrade to "no QR code" rather than blocking the modal —
+    // which is already open with the link showing by this point.
+    container.textContent = "QRコードを生成できませんでした（リンクが長すぎる可能性があります）。下のリンクをコピーしてください。";
+  }
+}
+
+// Recomputes the QR's per-module pixel size from the container's CURRENT
+// clientWidth and re-renders its SVG — shared by showQrModal()'s initial
+// render and the resize/orientationchange listener in setupQrModal(), so a
+// user who rotates their phone or resizes a split-screen browser while the
+// modal is open gets a QR that still fits (rather than one sized once at
+// open time and never revisited). Reads `currentQrRender` (set by
+// showQrModal() only once qr.make() has actually succeeded) rather than
+// taking parameters, since the resize listener below has no flow-local
+// state of its own to pass in.
+function renderQrForCurrentWidth() {
+  if (!currentQrRender) return; // no successful QR currently displayed (closed, still loading, or failed)
+  const { qr, moduleCount, myFlowToken } = currentQrRender;
+  if (!shareFlow.isCurrent(myFlowToken)) return; // this render belongs to a superseded flow — see shareFlow's comment
+  const modal = document.getElementById("qr-modal");
+  const container = document.getElementById("qr-code-container");
+  if (!modal || modal.hidden || !container) return;
+  // The budget is measured from the container's OWN actual rendered width
+  // (`clientWidth`, meaningful now that `.qr-code-container` has
+  // `width: 100%` — see that rule's comment) rather than a hardcoded
+  // constant, so it adapts to genuinely narrow phones (e.g. 320px wide)
+  // where `.qr-modal`/`.qr-modal-content`'s own padding leaves much less
+  // room than a desktop-oriented constant would assume — and, since this
+  // function re-reads clientWidth fresh on every call, to a phone rotated
+  // or a browser resized after the modal was already open.
+  // container.clientWidth already includes this container's own 12px
+  // padding on each side (box-sizing: border-box, global reset), so that's
+  // subtracted back out to get the space actually available to the SVG.
+  const availableWidth = container.clientWidth - 24;
+  // computeQrCellPx() (logic.js) is the tested, DOM-independent half of this
+  // calculation — see its own comment for the fit/clamp reasoning and
+  // marvel-checklist/CLAUDE.md's PR #350 log for the two sizing bugs it
+  // pins as regression tests.
+  const cellPx = computeQrCellPx(availableWidth, moduleCount);
+  // No `scalable: true` here and no CSS/inline width or height override —
+  // `.qr-code-container svg` intentionally has no fixed size in CSS (see
+  // that rule) so this element's own `width`/`height` attributes, set
+  // below to an exact integer multiple of cellPx, are what the browser
+  // actually renders at. `margin` uses the SAME QR_QUIET_ZONE_MODULES_PER_SIDE
+  // constant computeQrCellPx() used to budget the fit, so the library's own
+  // quiet zone matches what was actually accounted for.
+  container.innerHTML = qr.createSvgTag({ cellSize: cellPx, margin: cellPx * QR_QUIET_ZONE_MODULES_PER_SIDE });
+}
+
+function hideQrModal() {
+  // Guarded (rather than assumed present like #app) for the same
+  // stale-cached-HTML reason getQrModalElements() exists — hideQrModal() is
+  // only ever wired up inside setupQrModal()'s own already-guarded block
+  // today, so this is currently unreachable, but kept consistent with the
+  // "never assume a QR-modal element exists" discipline the rest of this
+  // feature follows.
+  const modal = document.getElementById("qr-modal");
+  if (modal) modal.hidden = true;
+  const appEl = document.getElementById("app");
+  if (appEl) appEl.inert = false;
+  // Invalidates this modal's own in-flight work (if any) — see shareFlow's
+  // comment. Not strictly needed when the user immediately starts a new
+  // share flow afterward (that flow's own click handler claims a new token
+  // itself), but matters if they just close and don't reopen: without this,
+  // a still-pending request from this now-closed modal's flow could write
+  // into the (hidden but still-live) #qr-code-container, or release a lock
+  // it doesn't own, whenever it finally resolves.
+  shareFlow.next();
+  currentQrRender = null; // release the reference; a stale resize event would no-op anyway (isCurrent check), but nothing left to hold onto
+  restoreFocusIfPossible(qrModalReturnFocusEl);
+  qrModalReturnFocusEl = null;
+}
+
+function setupQrModal() {
+  // Same stale-cached-HTML scenario as showQrModal()'s check: if any
+  // required element is missing, don't throw here — this is called from
+  // init() BEFORE renderList(), so an uncaught exception here would abort
+  // init() entirely and the movie list itself would never render, not just
+  // the QR/share feature. showQrModal() already falls back to
+  // shareUrlFallback() when these elements are missing, so there's simply
+  // nothing to wire up here in that case.
+  const els = getQrModalElements();
+  if (!els) return;
+  const { modal, urlField, closeBtn, copyBtn } = els;
+
+  closeBtn.addEventListener("click", hideQrModal);
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) hideQrModal(); // click on the backdrop, not the dialog content
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.hidden) hideQrModal();
+  });
+  // `#qr-modal-url` is a readonly <textarea> (not a <p>) specifically so
+  // keyboard-only users can Tab to it and copy manually — select its full
+  // text on focus, mirroring the old prompt()-based fallback's built-in
+  // pre-selected text.
+  urlField.addEventListener("focus", () => urlField.select());
+  copyBtn.addEventListener("click", async () => {
+    const url = urlField.value;
+    // Snapshots which share flow currently owns the modal at click time
+    // (via current(), not next() — this click doesn't start a new flow, it
+    // reads whichever one is already open). navigator.clipboard.writeText()
+    // can take a while (permission prompt, slow clipboard backend) and has
+    // no cancellation mechanism, so if the user closes this modal and opens
+    // a new share (a newer guard token) before it resolves, the write
+    // itself can't be stopped — but showing "リンクをコピーしました" (or the
+    // failure alert + refocusing this textarea) once it finally settles, on
+    // top of whatever's now displayed, would misleadingly suggest that
+    // *currently shown* link was just copied, when it was actually this
+    // stale one. Gating the notification (not the write) on the token still
+    // being current is enough to prevent that confusion.
+    const myFlowToken = shareFlow.current();
+    try {
+      await navigator.clipboard.writeText(url);
+      if (shareFlow.isCurrent(myFlowToken)) alert("共有リンクをコピーしました。友達に送ってください。");
+    } catch (e) {
+      if (!shareFlow.isCurrent(myFlowToken)) return;
+      // Clipboard API unavailable/blocked — select the link text so a
+      // keyboard user can immediately Ctrl+C it as a manual-copy fallback,
+      // without needing a mouse or long-press.
+      alert("コピーに失敗しました。表示されているリンクを選択してコピーしてください。");
+      urlField.focus();
+    }
+  });
+
+  // Rotating a phone or resizing a split-screen browser while the modal is
+  // open changes `#qr-code-container`'s clientWidth, but the QR was only
+  // sized once, at generation time — without this, it can end up larger
+  // than the new available width and overflow the modal. Debounced (rather
+  // than re-rendering on every resize event) since drag-resizing/rotation
+  // can fire this rapidly; renderQrForCurrentWidth() itself already no-ops
+  // instantly whenever there's nothing to redraw (no successful QR
+  // currently shown, or the modal isn't open), so listening unconditionally
+  // at the window level — rather than only while a modal happens to be open
+  // — costs nothing in the common case.
+  let qrResizeDebounceTimer = null;
+  const scheduleQrResize = () => {
+    clearTimeout(qrResizeDebounceTimer);
+    qrResizeDebounceTimer = setTimeout(renderQrForCurrentWidth, 150);
+  };
+  window.addEventListener("resize", scheduleQrResize);
+  window.addEventListener("orientationchange", scheduleQrResize);
 }
 
 function setupFriendRemoval() {
@@ -905,6 +1302,7 @@ async function init() {
   setupBackup();
   setupProfileSwitcher();
   setupShareButton();
+  setupQrModal();
   setupFriendRemoval();
   renderProfileSwitcher();
   renderCountdown();

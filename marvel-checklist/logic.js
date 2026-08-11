@@ -433,3 +433,60 @@ export function computeRecommendedNext(movies, characters, state, now = new Date
     .filter((m) => computePrerequisites(m.id, movies, characters).every((p) => getEntry(state, p.id).watched))
     .sort((a, b) => parseLocalDate(a.releaseDate) - parseLocalDate(b.releaseDate));
 }
+
+// Generation-token guard for a "flow" that can be re-entered (a new one
+// started) before an earlier one's own async work has settled — e.g. the
+// share/QR modal flow in app.js (button click → id generation → URL build →
+// modal display → QR image generation → clipboard copy), where the share
+// button is deliberately re-enabled before its own modal's QR fetch/generate
+// finishes, so a user can open a second flow while the first is still
+// technically running in the background.
+//
+// `next()` starts a new flow (or invalidates the current one without
+// starting a new one — same operation, callers just discard the return
+// value) and returns the token that owns it; `current()` reads the token of
+// whichever flow is presently active, for a caller that isn't starting a new
+// flow but still needs to snapshot "the one open right now" (e.g. a button
+// inside an already-open modal); `isCurrent(token)` tells any later async
+// continuation whether it's still that flow or has since been superseded, so
+// it can bail out before touching shared state (a lock flag, a shared DOM
+// container, a stored return-focus element, a notification).
+export function createFlowGuard() {
+  let generation = 0;
+  return {
+    next() {
+      generation += 1;
+      return generation;
+    },
+    current() {
+      return generation;
+    },
+    isCurrent(token) {
+      return token === generation;
+    },
+  };
+}
+
+// Per side (left/right or top/bottom), in module-widths — matches the
+// vendored qrcode-generator library's (vendor/qrcode.js) default quiet-zone
+// margin of `cellSize * 4`. The blank border a QR code's quiet zone provides
+// is required for scanners to lock onto the code. Exported so app.js can
+// pass the same value as `margin` to the library's own `createSvgTag()` —
+// both sides need to agree on how much space the quiet zone actually takes,
+// or the fit computed below would be wrong.
+export const QR_QUIET_ZONE_MODULES_PER_SIDE = 4;
+
+// Computes a QR code's per-module pixel size (`cellPx`) so the whole SVG —
+// module grid plus quiet zone — fits within `availableWidth` while staying
+// an exact integer multiple of a pixel (never partial-pixel/anti-aliased,
+// which blurs module edges and hurts scanner reliability — see
+// marvel-checklist/CLAUDE.md's PR #350 log for the sizing bugs this fixed).
+// `moduleCount` is the QR's own grid size (`qr.getModuleCount()`). Clamped
+// to [1, 8]: 1 is the hard floor — a dense code in a narrow viewport must
+// still fit inside `availableWidth`, even at the cost of readability, never
+// 0 or negative; 8 is a soft ceiling so a short share history's small QR
+// doesn't render needlessly huge when there's plenty of room.
+export function computeQrCellPx(availableWidth, moduleCount) {
+  const totalUnits = moduleCount + QR_QUIET_ZONE_MODULES_PER_SIDE * 2;
+  return Math.max(1, Math.min(8, Math.floor(availableWidth / totalUnits)));
+}

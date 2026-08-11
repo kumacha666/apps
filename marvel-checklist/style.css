@@ -488,3 +488,87 @@ body {
   border: 1px solid #6a2a2a;
   color: #ff9a9a;
 }
+
+.qr-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 4, 5, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+}
+
+.qr-modal[hidden] {
+  display: none;
+}
+
+.qr-modal-content {
+  background: #1a0f11;
+  border: 1px solid #3a2224;
+  border-radius: 14px;
+  padding: 20px;
+  max-width: 340px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.qr-modal-title {
+  font-size: 0.95rem;
+  font-weight: bold;
+  color: #ffb020;
+}
+
+.qr-code-container {
+  /* `.qr-modal-content` is a column flex container with `align-items: center`,
+     which would otherwise shrink this to its content's width (the QR SVG or
+     the "生成しています…" placeholder text) instead of the modal's actual
+     available width — making `container.clientWidth` in app.js meaningless
+     as an "available space" measurement. `width: 100%` makes it fill that
+     available width regardless of what's currently inside it. */
+  width: 100%;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 12px;
+  color: #3a2a2a;
+  line-height: 1.4;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.qr-code-container svg {
+  /* No fixed width/height here on purpose: app.js's createSvgTag() call
+     sets the SVG's own width/height attributes to an exact integer
+     multiple of its per-module pixel size (including the quiet zone), and
+     a CSS rule here would override that intentional attribute value with a
+     fixed size, reintroducing non-integer per-module scaling. */
+  display: block;
+  shape-rendering: crispEdges; /* snap module edges to the pixel grid instead of anti-aliasing them, for scan reliability */
+}
+
+.qr-modal-url {
+  width: 100%;
+  min-height: 4.2em;
+  resize: none;
+  background: #241416;
+  border: 1px solid #3a2224;
+  border-radius: 8px;
+  padding: 8px;
+  font-family: inherit;
+  font-size: 0.72rem;
+  color: #d0b0b0;
+  word-break: break-all;
+  text-align: left;
+}
+
+.qr-modal-buttons {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
