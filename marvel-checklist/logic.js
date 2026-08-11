@@ -362,3 +362,14 @@ export function computePrerequisites(movieId, movies, characters) {
 
   return [...prereqIds].map((id) => movieById.get(id)).sort((a, b) => parseLocalDate(a.releaseDate) - parseLocalDate(b.releaseDate));
 }
+
+// Returns released-but-unwatched works whose prerequisites (per
+// computePrerequisites) are all already watched — i.e. works with no
+// remaining "you should watch this first" blocker, sorted chronologically.
+// A work with zero prerequisites always qualifies (nothing to satisfy).
+export function computeRecommendedNext(movies, characters, state, now = new Date()) {
+  return movies
+    .filter((m) => isReleased(m, now) && !getEntry(state, m.id).watched)
+    .filter((m) => computePrerequisites(m.id, movies, characters).every((p) => getEntry(state, p.id).watched))
+    .sort((a, b) => parseLocalDate(a.releaseDate) - parseLocalDate(b.releaseDate));
+}

@@ -22,6 +22,7 @@ import {
   buildFullBackup,
   validateFullBackup,
   computePrerequisites,
+  computeRecommendedNext,
 } from "./logic.js";
 
 const OWN_STATE_KEY = "marvel-checklist-state-v1";
@@ -38,8 +39,14 @@ let activeProfileId = loadString(ACTIVE_PROFILE_KEY, SELF);
 let currentUniverse = "all";
 let unwatchedOnly = false;
 let activeRatingFilters = new Set(); // display-only filter, like unwatchedOnly — never affects progress or group order
-let pendingFocus = null; // { movieId, control } to restore focus after a re-render
+let pendingFocus = null; // { movieId, control, context } to restore focus after a re-render
 let openPrereqMovieIds = new Set(); // one-shot: which "前提作品" <details> to re-open after a render, then cleared
+// Becomes true only once characters.json has successfully loaded. Until then
+// (or if the fetch fails), computePrerequisites() has nothing to work with
+// and would report every unwatched work as prerequisite-free — the "次に見る
+// べき作品" section stays hidden rather than risk over-recommending sequels
+// whose real prerequisites just haven't loaded yet (see PR #344 Codex review).
+let charactersLoaded = false;
 
 function loadJSON(key, fallback) {
   try {
@@ -186,10 +193,40 @@ function renderProgress(universeFiltered) {
     total > 0 ? `視聴済み ${watched} / ${total} 作品（${pct}%）` : "対象の作品がありません";
 }
 
+// Prerequisites are computed against the FULL catalog (not `universeFiltered`)
+// so a recommendation is never falsely "unblocked" just because a
+// cross-universe prerequisite happens to be outside the current tab — this
+// keeps it consistent with each card's own "前提作品" section, which also
+// always considers every universe. The active universe tab is applied only
+// as a final display filter, after the correctness-critical computation.
+function renderRecommendedNext(universeFiltered) {
+  const section = document.getElementById("recommended-next-section");
+  const listEl = document.getElementById("recommended-next-list");
+
+  if (!charactersLoaded) {
+    listEl.innerHTML = "";
+    section.hidden = true;
+    return;
+  }
+
+  const activeState = getActiveStateStore();
+  const universeFilteredIds = new Set(universeFiltered.map((m) => m.id));
+  const recommended = computeRecommendedNext(movies, characters, activeState).filter((m) =>
+    universeFilteredIds.has(m.id)
+  );
+
+  listEl.innerHTML = "";
+  section.hidden = recommended.length === 0;
+  for (const movie of recommended) {
+    listEl.appendChild(renderMovieCard(movie, "recommended"));
+  }
+}
+
 function renderList() {
   const activeState = getActiveStateStore();
   const universeFiltered = filterByUniverse(movies, currentUniverse);
   renderProgress(universeFiltered);
+  renderRecommendedNext(universeFiltered);
 
   let displayList = unwatchedOnly ? filterUnwatched(universeFiltered, activeState) : universeFiltered;
   displayList = filterByRating(displayList, activeState, activeRatingFilters);
@@ -217,7 +254,7 @@ function renderList() {
     groupEl.appendChild(titleEl);
 
     for (const movie of group.items) {
-      groupEl.appendChild(renderMovieCard(movie));
+      groupEl.appendChild(renderMovieCard(movie, "main"));
     }
     listEl.appendChild(groupEl);
   }
@@ -230,25 +267,45 @@ function renderList() {
 // was just marked watched while "unwatched only" is active), focus falls
 // back to the next visible checkbox, or to the empty-state message if the
 // list is now empty, rather than being silently dropped to <body>.
+//
+// A movie can be rendered twice at once — once in the "次に見るべき作品"
+// section and once in the normal list — so `pendingFocus.context` records
+// which of the two the user actually clicked in. Without it, restoreFocus()
+// would always match the first `data-movie-id` in DOM order (the
+// recommended-section copy, which is rendered first), yanking focus there
+// even when the user interacted with the normal-list copy (see PR #344
+// Codex review).
 function restoreFocus(emptyStateEl) {
   if (!pendingFocus) return;
-  const { movieId, control } = pendingFocus;
+  const { movieId, control, context } = pendingFocus;
   pendingFocus = null;
 
   const selector =
     control === "check"
       ? `.movie-check[data-movie-id="${movieId}"]`
       : `.rating-btn[data-movie-id="${movieId}"][data-rating="${control}"]`;
-  const exact = document.querySelector(selector);
-  if (exact) {
-    exact.focus();
+
+  const originContainerId = context === "recommended" ? "recommended-next-list" : "movie-list";
+  const originContainer = document.getElementById(originContainerId);
+  const withinOrigin = originContainer && originContainer.querySelector(selector);
+  if (withinOrigin) {
+    withinOrigin.focus();
     return;
   }
 
-  // The exact control is gone; fall back to any other focusable control in
-  // the current view. A disabled checkbox (an unreleased movie) can't
-  // actually receive focus, so skip those and try a rating button next —
-  // rating buttons are never disabled.
+  // The card is gone from its origin context (e.g. checking it off removed
+  // it from that section/list on re-render) — its other copy, if any, is a
+  // reasonable next-best match before falling back further.
+  const anywhere = document.querySelector(selector);
+  if (anywhere) {
+    anywhere.focus();
+    return;
+  }
+
+  // No copy of this control survived at all; fall back to any other
+  // focusable control in the current view. A disabled checkbox (an
+  // unreleased movie) can't actually receive focus, so skip those and try a
+  // rating button next — rating buttons are never disabled.
   const fallback =
     document.querySelector(".movie-check:not(:disabled)") || document.querySelector(".rating-btn");
   if (fallback) {
@@ -259,7 +316,7 @@ function restoreFocus(emptyStateEl) {
   if (emptyStateEl) emptyStateEl.focus();
 }
 
-function renderMovieCard(movie) {
+function renderMovieCard(movie, context) {
   const entry = getEntry(getActiveStateStore(), movie.id);
   const released = isReleased(movie);
 
@@ -276,7 +333,7 @@ function renderMovieCard(movie) {
   checkbox.checked = entry.watched;
   checkbox.disabled = !released;
   checkbox.addEventListener("change", () => {
-    pendingFocus = { movieId: movie.id, control: "check" };
+    pendingFocus = { movieId: movie.id, control: "check", context };
     setWatched(movie.id, checkbox.checked);
     renderCountdown();
     renderList();
@@ -320,7 +377,7 @@ function renderMovieCard(movie) {
     btn.dataset.rating = symbol;
     btn.setAttribute("aria-pressed", String(selected));
     btn.addEventListener("click", () => {
-      pendingFocus = { movieId: movie.id, control: symbol };
+      pendingFocus = { movieId: movie.id, control: symbol, context };
       setRating(movie.id, symbol);
       renderList();
     });
@@ -791,21 +848,30 @@ async function init() {
 // slow or hanging request for it must never delay showing movies.json data
 // that's already in hand. Once it resolves, re-render to pick up any
 // prerequisite badges.
+//
+// `charactersLoaded` only flips to true on a *successful* fetch. A failed
+// fetch (network error, non-OK response) leaves it false and `characters`
+// empty, permanently hiding the "次に見るべき作品" section for this page
+// load instead of falling back to "no prerequisites found" — which would
+// look identical to "no prerequisites exist" but actually means "couldn't
+// check" (see PR #344 Codex review).
 function loadCharactersInBackground() {
   fetch("data/characters.json")
-    .then((res) => (res.ok ? res.json() : []))
+    .then((res) => {
+      if (!res.ok) throw new Error(`characters.json fetch failed: ${res.status}`);
+      return res.json();
+    })
     .then((data) => {
       characters = Array.isArray(data) ? data : [];
-      if (characters.length > 0) {
-        // This re-render happens on whatever schedule the network delivers
-        // characters.json, possibly while the user already has a checkbox/
-        // rating button focused or a "前提作品" <details> open. renderList()
-        // rebuilds every card's DOM, so without this, focus would drop to
-        // <body> and any open prereq panel would silently close.
-        captureInteractionStateForRerender();
-        renderList();
-        openPrereqMovieIds = new Set(); // one-shot — don't affect later, unrelated renders
-      }
+      charactersLoaded = true;
+      // This re-render happens on whatever schedule the network delivers
+      // characters.json, possibly while the user already has a checkbox/
+      // rating button focused or a "前提作品" <details> open. renderList()
+      // rebuilds every card's DOM, so without this, focus would drop to
+      // <body> and any open prereq panel would silently close.
+      captureInteractionStateForRerender();
+      renderList();
+      openPrereqMovieIds = new Set(); // one-shot — don't affect later, unrelated renders
     })
     .catch(() => {
       characters = [];
@@ -814,10 +880,11 @@ function loadCharactersInBackground() {
 
 function captureInteractionStateForRerender() {
   const active = document.activeElement;
+  const context = active && active.closest("#recommended-next-list") ? "recommended" : "main";
   if (active && active.classList.contains("movie-check")) {
-    pendingFocus = { movieId: active.dataset.movieId, control: "check" };
+    pendingFocus = { movieId: active.dataset.movieId, control: "check", context };
   } else if (active && active.classList.contains("rating-btn")) {
-    pendingFocus = { movieId: active.dataset.movieId, control: active.dataset.rating };
+    pendingFocus = { movieId: active.dataset.movieId, control: active.dataset.rating, context };
   }
   openPrereqMovieIds = new Set(
     [...document.querySelectorAll(".prereq-details[open]")].map((el) => el.dataset.movieId)
