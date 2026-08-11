@@ -742,36 +742,56 @@ function setupProfileSwitcher() {
 }
 
 function setupShareButton() {
-  document.getElementById("btn-share").addEventListener("click", async () => {
-    let shareId;
+  const shareBtn = document.getElementById("btn-share");
+  shareBtn.addEventListener("click", async () => {
+    // Guards against a rapid double-click starting two overlapping share
+    // flows: getOwnShareId()/buildShareUrl()/showQrModal() all await, so a
+    // second click before the first finishes would otherwise run a second,
+    // concurrent copy of this whole sequence — each rebuilding the QR
+    // modal's contents independently and racing to set qrModalReturnFocusEl
+    // (see showQrModal()), corrupting which element focus returns to when
+    // the modal closes.
+    if (shareBtn.disabled) return;
+    // Captured before disabling the button below: disabling the currently-
+    // focused element synchronously blurs it (moves document.activeElement
+    // to <body>), so capturing this any later would make showQrModal()'s
+    // "return focus to whatever had it" logic restore focus to <body>
+    // instead of back to this button.
+    const returnFocusEl = document.activeElement;
+    shareBtn.disabled = true;
     try {
-      shareId = getOwnShareId();
-    } catch (e) {
-      // getItem()/setItem() inside getOwnShareId() can throw (SecurityError
-      // when storage is blocked, QuotaExceededError when persisting a
-      // freshly-generated id for the first time). Left uncaught, this async
-      // handler would abort silently — no copy, no fallback prompt, no
-      // error message at all.
-      alert("共有リンクの作成に失敗しました（保存容量が不足している可能性があります）。");
-      return;
+      let shareId;
+      try {
+        shareId = getOwnShareId();
+      } catch (e) {
+        // getItem()/setItem() inside getOwnShareId() can throw (SecurityError
+        // when storage is blocked, QuotaExceededError when persisting a
+        // freshly-generated id for the first time). Left uncaught, this async
+        // handler would abort silently — no copy, no fallback prompt, no
+        // error message at all.
+        alert("共有リンクの作成に失敗しました（保存容量が不足している可能性があります）。");
+        return;
+      }
+      // Read the latest persisted own state rather than this tab's possibly-
+      // stale in-memory ownState, so edits made in another tab since this
+      // tab's own load aren't missing from the generated link.
+      const latestOwnState = loadJSON(OWN_STATE_KEY, {});
+      const payload = { id: shareId, exportedAt: new Date().toISOString(), state: latestOwnState };
+      let url;
+      try {
+        url = await buildShareUrl(location.origin + location.pathname, payload);
+      } catch (e) {
+        // buildShareUrl() uses CompressionStream, which some older browsers/
+        // WebViews don't implement — that constructor throws synchronously.
+        // Left unguarded, this async handler would abort with no copy, no
+        // fallback prompt, and no error message at all.
+        alert("共有リンクの作成に失敗しました（このブラウザでは利用できない機能が含まれている可能性があります）。");
+        return;
+      }
+      await showQrModal(url, returnFocusEl);
+    } finally {
+      shareBtn.disabled = false;
     }
-    // Read the latest persisted own state rather than this tab's possibly-
-    // stale in-memory ownState, so edits made in another tab since this
-    // tab's own load aren't missing from the generated link.
-    const latestOwnState = loadJSON(OWN_STATE_KEY, {});
-    const payload = { id: shareId, exportedAt: new Date().toISOString(), state: latestOwnState };
-    let url;
-    try {
-      url = await buildShareUrl(location.origin + location.pathname, payload);
-    } catch (e) {
-      // buildShareUrl() uses CompressionStream, which some older browsers/
-      // WebViews don't implement — that constructor throws synchronously.
-      // Left unguarded, this async handler would abort with no copy, no
-      // fallback prompt, and no error message at all.
-      alert("共有リンクの作成に失敗しました（このブラウザでは利用できない機能が含まれている可能性があります）。");
-      return;
-    }
-    showQrModal(url);
   });
 }
 
@@ -794,7 +814,16 @@ async function shareUrlFallback(url) {
 // on <body> when it closes.
 let qrModalReturnFocusEl = null;
 
-async function showQrModal(url) {
+// `returnFocusEl` is captured by the caller (setupShareButton()) BEFORE it
+// disables the share button — not read from document.activeElement in here.
+// Two reasons it can't be captured locally at the top of this function
+// instead: (1) disabling a focused button synchronously blurs it to <body>,
+// so by the time this function runs the button is no longer
+// document.activeElement; (2) this function itself awaits a dynamic import
+// that can take a while (first use, flaky connection), during which the
+// user could tab/click elsewhere, making a locally-captured value stale
+// regardless of point (1).
+async function showQrModal(url, returnFocusEl) {
   const modal = document.getElementById("qr-modal");
   const container = document.getElementById("qr-code-container");
   const urlField = document.getElementById("qr-modal-url");
@@ -836,20 +865,27 @@ async function showQrModal(url) {
   }
 
   urlField.value = url;
-  qrModalReturnFocusEl = document.activeElement;
+  qrModalReturnFocusEl = returnFocusEl;
   // `#qr-modal` itself lives outside `#app` in index.html specifically so
   // that making `#app` inert here doesn't also inert the modal's own
   // buttons. Without this, Tab/Shift+Tab could cycle keyboard focus straight
   // through the modal into the checklist "behind" it, letting a keyboard
   // user edit checkboxes/ratings that are visually hidden under the overlay.
-  document.getElementById("app").inert = true;
+  // `#app` is a core structural element present since this app's very first
+  // version (unlike the qr-modal elements above, which are new in this PR
+  // and so need a stale-cache null-check) — guarded anyway for consistency
+  // and because a null here would otherwise throw after the QR/URL content
+  // is already committed but before the modal is actually shown.
+  const appEl = document.getElementById("app");
+  if (appEl) appEl.inert = true;
   modal.hidden = false;
   closeBtn.focus();
 }
 
 function hideQrModal() {
   document.getElementById("qr-modal").hidden = true;
-  document.getElementById("app").inert = false;
+  const appEl = document.getElementById("app");
+  if (appEl) appEl.inert = false;
   if (qrModalReturnFocusEl) {
     qrModalReturnFocusEl.focus();
     qrModalReturnFocusEl = null;
