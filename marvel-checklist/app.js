@@ -806,12 +806,19 @@ function showQrModal(url) {
 
   document.getElementById("qr-modal-url").textContent = url;
   qrModalReturnFocusEl = document.activeElement;
+  // `#qr-modal` itself lives outside `#app` in index.html specifically so
+  // that making `#app` inert here doesn't also inert the modal's own
+  // buttons. Without this, Tab/Shift+Tab could cycle keyboard focus straight
+  // through the modal into the checklist "behind" it, letting a keyboard
+  // user edit checkboxes/ratings that are visually hidden under the overlay.
+  document.getElementById("app").inert = true;
   modal.hidden = false;
   document.getElementById("qr-modal-close").focus();
 }
 
 function hideQrModal() {
   document.getElementById("qr-modal").hidden = true;
+  document.getElementById("app").inert = false;
   if (qrModalReturnFocusEl) {
     qrModalReturnFocusEl.focus();
     qrModalReturnFocusEl = null;

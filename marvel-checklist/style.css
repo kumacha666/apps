@@ -511,6 +511,8 @@ body {
   padding: 20px;
   max-width: 340px;
   width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -527,7 +529,10 @@ body {
   background: #ffffff;
   border-radius: 8px;
   padding: 12px;
-  line-height: 0;
+  color: #3a2a2a;
+  line-height: 1.4;
+  font-size: 0.8rem;
+  text-align: center;
 }
 
 .qr-code-container svg {
