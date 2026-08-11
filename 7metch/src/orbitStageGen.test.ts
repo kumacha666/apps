@@ -96,11 +96,13 @@ describe("getFallbackOrbitLayout", () => {
     expect(() => getFallbackOrbitLayout(1, 99, 99)).toThrow(/フォールバックが未整備/);
   });
 
-  it("返り値を呼び出し側が変更しても、内部の固定データは汚染されない", () => {
+  it("返り値を呼び出し側が変更しても、内部の固定データは汚染されない（r/c、およびdirタプルの中身も含む）", () => {
     const layout = getFallbackOrbitLayout(1, PILOT_ROWS, PILOT_COLS);
     layout[0].r = 999;
+    layout[0].dir[0] = 999 as never; // dirタプルの要素を直接書き換える(シャロ―コピー漏れを検出する)
     const layoutAgain = getFallbackOrbitLayout(1, PILOT_ROWS, PILOT_COLS);
     expect(layoutAgain[0].r).not.toBe(999);
+    expect(layoutAgain[0].dir[0]).not.toBe(999);
   });
 });
 

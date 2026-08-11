@@ -89,7 +89,8 @@ export function getFallbackOrbitLayout(count: number, rows: number, cols: number
       `事前に検証済みの固定レイアウトをFALLBACK_LAYOUTSに追加するか、個数を人間が明示的に判断してください。`,
     );
   }
-  return layout.map((o) => ({ r: o.r, c: o.c, dir: o.dir }));
+  // dirタプルも複製する(浅いコピーだけだと呼び出し側の変更がFALLBACK_LAYOUTSを恒久的に汚染してしまう)
+  return layout.map((o) => ({ r: o.r, c: o.c, dir: [o.dir[0], o.dir[1]] as OrbitCell["dir"] }));
 }
 
 export function generateOrbitLayout(
