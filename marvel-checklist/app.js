@@ -25,7 +25,6 @@ import {
   computePrerequisites,
   computeRecommendedNext,
 } from "./logic.js";
-import qrcode from "./vendor/qrcode.js";
 
 const OWN_STATE_KEY = "marvel-checklist-state-v1";
 const FRIENDS_KEY = "marvel-checklist-friends-v1";
@@ -776,18 +775,50 @@ function setupShareButton() {
   });
 }
 
+// Pre-QR-modal fallback: copy to clipboard if possible, otherwise fall back
+// to prompt() so the link is still visible/selectable. Used both when the
+// clipboard API is unavailable (see setupQrModal()'s copy handler) and when
+// the modal's own DOM elements are missing entirely (see showQrModal()).
+async function shareUrlFallback(url) {
+  try {
+    await navigator.clipboard.writeText(url);
+    alert("共有リンクをコピーしました。友達に送ってください。");
+  } catch (e) {
+    prompt("このリンクをコピーして友達に送ってください。", url);
+  }
+}
+
 // Restores focus to whatever had it before the modal opened (the "共有リン
 // クを作成" button), same reasoning as restoreFocus() elsewhere in this
 // file — a modal opened via keyboard/screen-reader shouldn't strand focus
 // on <body> when it closes.
 let qrModalReturnFocusEl = null;
 
-function showQrModal(url) {
+async function showQrModal(url) {
   const modal = document.getElementById("qr-modal");
   const container = document.getElementById("qr-code-container");
+  const urlField = document.getElementById("qr-modal-url");
+  const closeBtn = document.getElementById("qr-modal-close");
+
+  // The service worker is network-first per request, so a flaky connection
+  // can serve a stale cached index.html (predating this modal) alongside a
+  // freshly-fetched app.js — same failure mode as PR #346's finding on the
+  // progress-breakdown section. Fall back to the pre-QR-modal share flow
+  // instead of throwing on a null element.
+  if (!modal || !container || !urlField || !closeBtn) {
+    shareUrlFallback(url);
+    return;
+  }
 
   container.innerHTML = "";
   try {
+    // Dynamically imported (rather than a static top-level import) so that
+    // a failed fetch of this file — e.g. an old service-worker cache that
+    // predates it, on a connection too flaky to fetch it fresh — can't stop
+    // app.js's module graph from resolving at all. A static `import ... from
+    // "./vendor/qrcode.js"` failing would abort the ENTIRE module, taking
+    // down the whole checklist (not just the share/QR feature) with it.
+    const { default: qrcode } = await import("./vendor/qrcode.js");
     const qr = qrcode(0, "M"); // typeNumber 0 = auto-select the smallest size that fits
     qr.addData(url);
     qr.make();
@@ -796,15 +827,15 @@ function showQrModal(url) {
     // actually determines the rendered size, via the SVG's viewBox alone.
     container.innerHTML = qr.createSvgTag({ scalable: true });
   } catch (e) {
-    // A share payload from a very large watch history can exceed the QR
-    // format's maximum data capacity (even at the lowest error-correction
-    // level, a QR code tops out around ~2.9KB). The link itself is still
-    // valid and copyable below, so degrade to "no QR code" rather than
-    // blocking the whole modal.
+    // Either the dynamic import failed (see above) or a share payload from
+    // a very large watch history exceeded the QR format's maximum data
+    // capacity (even at the lowest error-correction level, a QR code tops
+    // out around ~2.9KB). The link itself is still valid and copyable
+    // below, so degrade to "no QR code" rather than blocking the modal.
     container.textContent = "QRコードを生成できませんでした（リンクが長すぎる可能性があります）。下のリンクをコピーしてください。";
   }
 
-  document.getElementById("qr-modal-url").textContent = url;
+  urlField.value = url;
   qrModalReturnFocusEl = document.activeElement;
   // `#qr-modal` itself lives outside `#app` in index.html specifically so
   // that making `#app` inert here doesn't also inert the modal's own
@@ -813,7 +844,7 @@ function showQrModal(url) {
   // user edit checkboxes/ratings that are visually hidden under the overlay.
   document.getElementById("app").inert = true;
   modal.hidden = false;
-  document.getElementById("qr-modal-close").focus();
+  closeBtn.focus();
 }
 
 function hideQrModal() {
@@ -827,22 +858,41 @@ function hideQrModal() {
 
 function setupQrModal() {
   const modal = document.getElementById("qr-modal");
-  document.getElementById("qr-modal-close").addEventListener("click", hideQrModal);
+  const urlField = document.getElementById("qr-modal-url");
+  const closeBtn = document.getElementById("qr-modal-close");
+  const copyBtn = document.getElementById("qr-modal-copy");
+  // Same stale-cached-HTML scenario as showQrModal()'s null-check: if any of
+  // these elements are missing, don't throw here — this is called from
+  // init() BEFORE renderList(), so an uncaught exception here would abort
+  // init() entirely and the movie list itself would never render, not just
+  // the QR/share feature. showQrModal() already falls back to
+  // shareUrlFallback() when these elements are missing, so there's simply
+  // nothing to wire up here in that case.
+  if (!modal || !urlField || !closeBtn || !copyBtn) return;
+
+  closeBtn.addEventListener("click", hideQrModal);
   modal.addEventListener("click", (e) => {
     if (e.target === modal) hideQrModal(); // click on the backdrop, not the dialog content
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !modal.hidden) hideQrModal();
   });
-  document.getElementById("qr-modal-copy").addEventListener("click", async () => {
-    const url = document.getElementById("qr-modal-url").textContent;
+  // `#qr-modal-url` is a readonly <textarea> (not a <p>) specifically so
+  // keyboard-only users can Tab to it and copy manually — select its full
+  // text on focus, mirroring the old prompt()-based fallback's built-in
+  // pre-selected text.
+  urlField.addEventListener("focus", () => urlField.select());
+  copyBtn.addEventListener("click", async () => {
+    const url = urlField.value;
     try {
       await navigator.clipboard.writeText(url);
       alert("リンクをコピーしました。");
     } catch (e) {
-      // Clipboard API unavailable/blocked — the link text is already
-      // visible and selectable in the modal as a manual-copy fallback.
-      alert("コピーに失敗しました。表示されているリンクを長押しするなどして手動でコピーしてください。");
+      // Clipboard API unavailable/blocked — select the link text so a
+      // keyboard user can immediately Ctrl+C it as a manual-copy fallback,
+      // without needing a mouse or long-press.
+      alert("コピーに失敗しました。表示されているリンクを選択してコピーしてください。");
+      urlField.focus();
     }
   });
 }

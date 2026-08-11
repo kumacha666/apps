@@ -542,10 +542,18 @@ body {
 }
 
 .qr-modal-url {
+  width: 100%;
+  min-height: 4.2em;
+  resize: none;
+  background: #241416;
+  border: 1px solid #3a2224;
+  border-radius: 8px;
+  padding: 8px;
+  font-family: inherit;
   font-size: 0.72rem;
-  color: #a07070;
+  color: #d0b0b0;
   word-break: break-all;
-  text-align: center;
+  text-align: left;
 }
 
 .qr-modal-buttons {
