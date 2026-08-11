@@ -104,6 +104,63 @@ body {
   margin-top: 8px;
 }
 
+.progress-breakdown {
+  margin-top: 10px;
+  font-size: 0.8rem;
+}
+
+.progress-breakdown summary {
+  cursor: pointer;
+  color: #d0b0b0;
+  text-align: center;
+}
+
+.progress-breakdown-content {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.breakdown-universe-title {
+  font-size: 0.82rem;
+  font-weight: bold;
+  color: #ffb020;
+  margin-bottom: 4px;
+}
+
+.breakdown-bar {
+  height: 6px;
+  background: #2a1416;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.breakdown-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ff3b3b, #ffb020);
+  border-radius: 3px;
+}
+
+.breakdown-groups {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 4px;
+}
+
+.breakdown-group-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #c09090;
+}
+
+.breakdown-group-label {
+  color: #d0b0b0;
+}
+
 .controls {
   margin-bottom: 16px;
 }

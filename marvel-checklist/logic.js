@@ -45,6 +45,50 @@ export function computeProgress(movies, state, now = new Date()) {
   return { total, watched: watchedCount, pct };
 }
 
+// Progress broken down by universe, then by group (phase for MCU, sub-
+// franchise for the others) within each universe. Only released works count
+// toward totals, same as computeProgress — an unreleased work isn't "0%
+// watched", it just isn't in scope yet.
+//
+// Always computed over the FULL catalog, never a tab/filter-scoped subset —
+// the whole point of this breakdown is to compare universes/groups against
+// each other, so it stays a stable, complete dashboard regardless of which
+// universe tab or display filter happens to be active (same rationale as
+// computeRecommendedNext's full-catalog design).
+//
+// Universe and group order both follow first-appearance order in `movies`
+// (the catalog's own ordering), matching groupMovies' insertion-order
+// convention rather than sorting alphabetically or by progress.
+export function computeProgressBreakdown(movies, state, now = new Date()) {
+  const universeOrder = [];
+  const byUniverse = new Map();
+  for (const m of movies) {
+    if (!byUniverse.has(m.universe)) {
+      byUniverse.set(m.universe, []);
+      universeOrder.push(m.universe);
+    }
+    byUniverse.get(m.universe).push(m);
+  }
+
+  return universeOrder.map((universe) => {
+    const universeMovies = byUniverse.get(universe);
+    const { total, watched, pct } = computeProgress(universeMovies, state, now);
+
+    const groupOrder = [];
+    const byGroup = new Map();
+    for (const m of universeMovies) {
+      if (!byGroup.has(m.group)) {
+        byGroup.set(m.group, []);
+        groupOrder.push(m.group);
+      }
+      byGroup.get(m.group).push(m);
+    }
+    const groups = groupOrder.map((group) => ({ group, ...computeProgress(byGroup.get(group), state, now) }));
+
+    return { universe, total, watched, pct, groups };
+  });
+}
+
 export function filterByUniverse(movies, universe) {
   if (universe === "all") return movies;
   return movies.filter((m) => m.universe === universe);

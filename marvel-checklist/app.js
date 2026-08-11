@@ -9,6 +9,7 @@ import {
   formatMonth,
   getEntry,
   computeProgress,
+  computeProgressBreakdown,
   filterByUniverse,
   filterUnwatched,
   filterByRating,
@@ -193,6 +194,62 @@ function renderProgress(universeFiltered) {
     total > 0 ? `視聴済み ${watched} / ${total} 作品（${pct}%）` : "対象の作品がありません";
 }
 
+// Renders the collapsible "フェイズ／ユニバース別の内訳" — always over the
+// FULL catalog (not `universeFiltered`/tab-scoped), since the whole point is
+// to compare universes/phases against each other regardless of which tab is
+// active (same rationale as renderRecommendedNext's full-catalog computation
+// just above). Only the inner content div is rebuilt on each render; the
+// outer <details> element itself lives in index.html and is never touched
+// here, so its open/closed state survives re-renders for free (unlike the
+// per-card "前提作品" <details>, which need explicit open-state tracking
+// because they're recreated from scratch on every render).
+function renderProgressBreakdown() {
+  const activeState = getActiveStateStore();
+  const breakdown = computeProgressBreakdown(movies, activeState);
+  const container = document.getElementById("progress-breakdown-content");
+  container.innerHTML = "";
+
+  for (const u of breakdown) {
+    if (u.total === 0) continue; // no released works in this universe yet
+
+    const universeEl = document.createElement("div");
+    universeEl.className = "breakdown-universe";
+
+    const titleEl = document.createElement("p");
+    titleEl.className = "breakdown-universe-title";
+    titleEl.textContent = `${UNIVERSE_LABELS[u.universe]}　${u.watched} / ${u.total}（${u.pct}%）`;
+    universeEl.appendChild(titleEl);
+
+    const barEl = document.createElement("div");
+    barEl.className = "breakdown-bar";
+    const fillEl = document.createElement("div");
+    fillEl.className = "breakdown-bar-fill";
+    fillEl.style.width = `${u.pct}%`;
+    barEl.appendChild(fillEl);
+    universeEl.appendChild(barEl);
+
+    const groupsEl = document.createElement("div");
+    groupsEl.className = "breakdown-groups";
+    for (const g of u.groups) {
+      if (g.total === 0) continue; // this phase/franchise hasn't started releasing yet
+      const rowEl = document.createElement("div");
+      rowEl.className = "breakdown-group-row";
+      const labelEl = document.createElement("span");
+      labelEl.className = "breakdown-group-label";
+      labelEl.textContent = g.group;
+      const valueEl = document.createElement("span");
+      valueEl.className = "breakdown-group-value";
+      valueEl.textContent = `${g.watched} / ${g.total}（${g.pct}%）`;
+      rowEl.appendChild(labelEl);
+      rowEl.appendChild(valueEl);
+      groupsEl.appendChild(rowEl);
+    }
+    universeEl.appendChild(groupsEl);
+
+    container.appendChild(universeEl);
+  }
+}
+
 // Prerequisites are computed against the FULL catalog (not `universeFiltered`)
 // so a recommendation is never falsely "unblocked" just because a
 // cross-universe prerequisite happens to be outside the current tab — this
@@ -226,6 +283,7 @@ function renderList() {
   const activeState = getActiveStateStore();
   const universeFiltered = filterByUniverse(movies, currentUniverse);
   renderProgress(universeFiltered);
+  renderProgressBreakdown();
   renderRecommendedNext(universeFiltered);
 
   let displayList = unwatchedOnly ? filterUnwatched(universeFiltered, activeState) : universeFiltered;
