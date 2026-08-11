@@ -154,6 +154,7 @@ export function buildStages(): StageConfig[] {
       rockCells,
       holePattern,
       countdownBombs,
+      orbits: [], // Stage 1〜500はオービット無し(第1章「軌道系」はStage 501〜、未着手)
     });
   }
   return stages;

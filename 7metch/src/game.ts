@@ -1,6 +1,6 @@
 import type { Piece, SpecialType, ComboType, Mission, MissionType, SpecialInfo, FallEntry, GameState, GameDom, StageConfig, ScreenName, StarGate } from "./types";
 import { G, PIECE_COLORS, ANIM, ITEM_COSTS, STAR_GATES, PIECE_NAMES_JA, SCORE_PER_PIECE, writeSave } from "./state";
-import { findAllMatches, findSpecialCreations, activateSpecial, applyGravityData, swapPieces, getComboType, createBoard, countAvailableMoves, damageAdjacentIce, tickCountdowns, startHintTimer, clearHint, isHole, isRock, randomPiece, inBounds, initCellState, TAP_ACTIVATE_SPECIALS } from "./board";
+import { findAllMatches, findSpecialCreations, activateSpecial, applyGravityData, swapPieces, getComboType, createBoard, countAvailableMoves, damageAdjacentIce, tickCountdowns, startHintTimer, clearHint, isHole, isRock, randomPiece, inBounds, initCellState, TAP_ACTIVATE_SPECIALS, isSwapBlockedByOrbit, isComboSpecialSwap, isRainbowPiece } from "./board";
 import { animateSwap, animateClear, animateDrop, sleep } from "./animations";
 import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, addFloatingText, hasActiveVFX, updateVFX } from "./vfx";
 import { drawBoard, buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startResultBgAnim, stopResultBgAnim, startChainLabel, flashInvalid } from "./rendering";
@@ -209,6 +209,14 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
     const p1 = G.board[r1][c1];
     const p2 = G.board[r2][c2];
 
+    // 第1章「軌道系」の方向拘束(Stage 501〜、Stage 1〜500はorbits=[]のため常に無関係)。
+    // 実際に起動が発生するスワップ(特殊ピース同士のコンボ・レインボー起動)は対象外
+    if (isSwapBlockedByOrbit(p1, p2, r1, c1, r2, c2)) {
+      SFX.invalidSwap();
+      await flashInvalid(r1, c1, r2, c2);
+      return;
+    }
+
     G.lastSwapTarget = { r: r2, c: c2 };
 
     SFX.swap();
@@ -216,7 +224,7 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
     swapPieces(r1, c1, r2, c2);
 
     // Special swap combo
-    if (p1 && p2 && p1.special && p2.special) {
+    if (p1 && p2 && isComboSpecialSwap(p1, p2)) {
       const comboType = getComboType(p1.special, p2.special);
       if (comboType) {
         SFX.combo(comboType);
@@ -316,8 +324,8 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
     }
 
     // Rainbow + normal piece swap
-    const rb1 = p1 && p1.special === "rainbow";
-    const rb2 = p2 && p2.special === "rainbow";
+    const rb1 = isRainbowPiece(p1);
+    const rb2 = isRainbowPiece(p2);
     if ((rb1 || rb2) && !(rb1 && rb2)) {
       const rainbow = rb1 ? p1! : p2!;
       const other = rb1 ? p2! : p1!;

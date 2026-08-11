@@ -29,7 +29,7 @@ function makeStage(overrides?: Partial<StageConfig>): StageConfig {
     mission: { type: "clear", count: 10 },
     star2moves: 12, star3moves: 8,
     features: { diagonalLine: true },
-    iceCells: 0, rockCells: 0, holePattern: null, countdownBombs: 0,
+    iceCells: 0, rockCells: 0, holePattern: null, countdownBombs: 0, orbits: [],
     ...overrides,
   };
 }
@@ -114,6 +114,55 @@ describe("doMove", () => {
     await doMove(0, 0, 0, 1);
     expect(G.movesLeft).toBe(movesBefore);
     expect(G.animating).toBe(true);
+  });
+
+  describe("第1章「軌道系」オービットの方向拘束", () => {
+    beforeEach(() => {
+      // (0,1)<->(1,1)のマッチ成立スワップを用意。orbitを(2,1)に置くと、
+      // (1,1)は影響範囲内(距離1)・(0,1)は影響範囲外(距離2)になり、
+      // 進入方向は(0,1)→(1,1)の変位=南(1,0)のスワップとして判定される
+      G.board[0][0] = { color: 1, special: null };
+      G.board[0][1] = { color: 2, special: null };
+      G.board[0][2] = { color: 1, special: null };
+      G.board[1][0] = { color: 3, special: null };
+      G.board[1][1] = { color: 1, special: null };
+      G.board[1][2] = { color: 4, special: null };
+    });
+
+    it("進入方向と一致しないオービットがある場合、マッチ成立スワップでも手数が減らない", async () => {
+      G.STAGES = [makeStage({ orbits: [{ r: 2, c: 1, dir: [-1, 0] }] })]; // 北方向のみ許可(実際は南方向のスワップ)
+      const movesBefore = G.movesLeft;
+      const colorBefore = G.board[0][1]!.color;
+      await doMove(0, 1, 1, 1);
+      expect(G.movesLeft).toBe(movesBefore);
+      expect(G.board[0][1]!.color).toBe(colorBefore); // ピースも入れ替わっていない
+      expect(G.animating).toBe(false);
+    });
+
+    it("進入方向と一致するオービットがある場合は通常通りマッチが成立する", async () => {
+      G.STAGES = [makeStage({ orbits: [{ r: 2, c: 1, dir: [1, 0] }] })]; // 南方向を許可(実際のスワップ方向と一致)
+      const movesBefore = G.movesLeft;
+      await doMove(0, 1, 1, 1);
+      expect(G.movesLeft).toBeLessThan(movesBefore);
+      expect(G.animating).toBe(false);
+    });
+
+    it("特殊ピース起動を伴うスワップ(レインボー)は、オービットの進入方向と不一致でも制約を受けない", async () => {
+      G.board[0][1] = { color: 0, special: "rainbow" };
+      G.board[1][1] = { color: 2, special: null };
+      G.STAGES = [makeStage({ orbits: [{ r: 2, c: 1, dir: [-1, 0] }] })]; // 実際のスワップ方向(南)とは不一致
+      const movesBefore = G.movesLeft;
+      await doMove(0, 1, 1, 1);
+      expect(G.movesLeft).toBeLessThan(movesBefore); // レインボー起動として消費される
+      expect(G.animating).toBe(false);
+    });
+
+    it("オービットが無いステージ(Stage 1〜500)では従来通り制約が一切かからない", async () => {
+      G.STAGES = [makeStage({ orbits: [] })];
+      const movesBefore = G.movesLeft;
+      await doMove(0, 1, 1, 1);
+      expect(G.movesLeft).toBeLessThan(movesBefore);
+    });
   });
 
   it("doMove完了後にG.animatingがfalseになる", async () => {
