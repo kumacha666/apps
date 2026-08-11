@@ -28,6 +28,7 @@ import {
   BACKUP_VERSION,
   computePrerequisites,
   computeRecommendedNext,
+  createFlowGuard,
 } from "../logic.js";
 
 const movies = [
@@ -643,4 +644,80 @@ test("computeRecommendedNext never recommends an unreleased work, even with sati
   const upcoming = [...prereqMovies, { id: "not-out-yet", title: "Not Out Yet", releaseDate: "2099-01-01", universe: "mcu", group: "g" }];
   const result = computeRecommendedNext(upcoming, prereqCharacters, {}, recommendNow);
   assert.ok(!result.some((m) => m.id === "not-out-yet"));
+});
+
+// --- createFlowGuard -----------------------------------------------------
+// Backs app.js's share/QR modal flow (button click → id generation → URL
+// build → modal display → QR image generation → clipboard copy), where the
+// share button is re-enabled before its own modal's QR fetch/generate
+// finishes, so a user can open a second flow while the first is still
+// technically running in the background. These tests reproduce the exact
+// async interleavings that motivated it (see marvel-checklist/CLAUDE.md and
+// PR #350's review history), independent of any DOM/clipboard mocking.
+
+test("createFlowGuard: only the most recently started flow is current", () => {
+  const guard = createFlowGuard();
+  const tokenA = guard.next();
+  assert.equal(guard.isCurrent(tokenA), true);
+  const tokenB = guard.next();
+  assert.equal(guard.isCurrent(tokenA), false, "A is superseded once B starts");
+  assert.equal(guard.isCurrent(tokenB), true);
+});
+
+test("createFlowGuard: current() reads the active flow's token without starting a new one", () => {
+  const guard = createFlowGuard();
+  const tokenA = guard.next();
+  assert.equal(guard.current(), tokenA);
+  assert.equal(guard.current(), tokenA, "reading current() again does not itself advance the generation");
+  assert.equal(guard.isCurrent(tokenA), true);
+});
+
+test("createFlowGuard: closing A then starting B invalidates A's later-arriving completion (close→reopen race)", () => {
+  // Mirrors: modal A is open, gets closed (before its own async QR
+  // generation resolves), then modal B is opened — A's stale work must not
+  // be able to touch state that now belongs to B when it finally completes.
+  const guard = createFlowGuard();
+  const tokenA = guard.next(); // A's flow starts (share button clicked)
+  assert.equal(guard.isCurrent(tokenA), true, "A's own in-flight work is current while A is open");
+
+  guard.next(); // A is closed (hideQrModal() invalidates the current flow)
+  const tokenB = guard.next(); // B's flow starts (share button clicked again)
+
+  // A's delayed QR generation resolves now, well after B has taken over.
+  assert.equal(guard.isCurrent(tokenA), false, "A's stale completion must not be treated as current");
+  assert.equal(guard.isCurrent(tokenB), true, "B remains the owner of shared state");
+});
+
+test("createFlowGuard: a copy started under A is snapshotted, then invalidated by closing A and opening B before it resolves", () => {
+  // Mirrors: the QR modal's "リンクをコピー" button snapshots the guard's
+  // current token via current() (it doesn't start a new flow itself), then
+  // the user closes that modal and opens a new share before the clipboard
+  // write resolves — the stale copy's success/failure notification must be
+  // suppressed once it does resolve, without affecting B at all.
+  const guard = createFlowGuard();
+  guard.next(); // A's flow starts (share button clicked, modal A opens)
+  const copySnapshot = guard.current(); // copy button clicked while A is open
+
+  guard.next(); // A is closed
+  const tokenB = guard.next(); // B's flow starts
+
+  // A's clipboard write (no cancellation mechanism) resolves now.
+  assert.equal(guard.isCurrent(copySnapshot), false, "A's stale copy notification must be suppressed");
+  // B's own state is untouched by A's late resolution.
+  assert.equal(guard.isCurrent(tokenB), true);
+});
+
+test("createFlowGuard: a stale flow's cleanup cannot release a newer flow's lock", () => {
+  // Mirrors the button-lock race: A's own `finally` must not re-enable a
+  // lock that B has since claimed for itself.
+  const guard = createFlowGuard();
+  const tokenA = guard.next();
+  const tokenB = guard.next(); // B starts before A's own async work settles
+
+  // Simulate each flow's cleanup running in completion order (A resolves
+  // after B, since A's work was the slower one).
+  const bReleasesOwnLock = guard.isCurrent(tokenB);
+  const aReleasesLock = guard.isCurrent(tokenA);
+  assert.equal(bReleasesOwnLock, true, "B is allowed to release/manage its own lock");
+  assert.equal(aReleasesLock, false, "A's stale cleanup must not touch B's lock");
 });

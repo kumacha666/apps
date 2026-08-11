@@ -24,6 +24,7 @@ import {
   validateFullBackup,
   computePrerequisites,
   computeRecommendedNext,
+  createFlowGuard,
 } from "./logic.js";
 
 const OWN_STATE_KEY = "marvel-checklist-state-v1";
@@ -741,12 +742,14 @@ function setupProfileSwitcher() {
   });
 }
 
-// Generation counter for the whole share flow (button click → getOwnShareId
-// → buildShareUrl → showQrModal → QR image generation). A new flow claims
-// the next number when the share button is clicked; every step of a flow
-// checks its own captured number against this shared one before touching
-// UI state (the button's disabled flag, the modal, qrModalReturnFocusEl,
-// the QR container) and bails out silently if it's been superseded.
+// Generation-token guard for the whole share flow (button click →
+// getOwnShareId → buildShareUrl → showQrModal → QR image generation). A new
+// flow claims the next token when the share button is clicked; every step of
+// a flow checks its own captured token against the guard before touching UI
+// state (the button's disabled flag, the modal, qrModalReturnFocusEl, the QR
+// container) and bails out silently if it's been superseded. `createFlowGuard`
+// itself (in logic.js) is unit-tested for the exact interleavings this flow
+// relies on — see "share flow guard" in test/logic.test.mjs.
 //
 // This exists because showQrModal() re-enables the share button as soon as
 // its modal opens — well before that modal's own QR image (a dynamic
@@ -754,12 +757,12 @@ function setupProfileSwitcher() {
 // fetch never blocks the user from using an already-ready share link (see
 // that fix's own comment). That design choice means a second click CAN
 // start a brand new flow while an earlier one is still technically running
-// in the background. Without this token, whichever flow's async work
+// in the background. Without this guard, whichever flow's async work
 // happens to resolve last would win regardless of which one the user is
 // actually looking at — the QR image, the button's enabled state, and even
 // whether the modal was supposed to still be open at all could all
 // silently revert to a stale, already-closed flow's outcome.
-let shareFlowToken = 0;
+const shareFlow = createFlowGuard();
 
 function setupShareButton() {
   const shareBtn = document.getElementById("btn-share");
@@ -779,14 +782,14 @@ function setupShareButton() {
     // instead of back to this button.
     const returnFocusEl = document.activeElement;
     // Claims ownership of the *entire* flow (not just the QR-generation
-    // tail — see shareFlowToken's own comment for why that distinction
+    // tail — see shareFlow's own comment for why that distinction
     // matters). showQrModal() re-enables this button as soon as its modal
     // opens (well before its own QR image finishes loading), so a second
     // click CAN start a new flow while this one is still technically
     // running in the background — myFlowToken is how every later step in
     // *this* flow recognizes it's been superseded and stops touching
     // shared UI state (the button, the modal, qrModalReturnFocusEl).
-    const myFlowToken = ++shareFlowToken;
+    const myFlowToken = shareFlow.next();
     shareBtn.disabled = true;
     try {
       let shareId;
@@ -801,7 +804,7 @@ function setupShareButton() {
         alert("共有リンクの作成に失敗しました（保存容量が不足している可能性があります）。");
         // No token check needed here: this catch runs synchronously right
         // after claiming myFlowToken above, with no `await` in between, so
-        // shareFlowToken cannot have changed — this flow is unconditionally
+        // the guard cannot have advanced — this flow is unconditionally
         // still the current one. Disabling the button above (synchronously,
         // before this catch) blurred it to <body> if it was the focused
         // element — restore focus now that we're bailing out without ever
@@ -835,7 +838,7 @@ function setupShareButton() {
         // disabled through this whole stretch — a newer flow could have
         // since taken over. Only touch the button/focus if this is still
         // that flow; otherwise leave the newer flow's own state alone.
-        if (myFlowToken === shareFlowToken) {
+        if (shareFlow.isCurrent(myFlowToken)) {
           shareBtn.disabled = false; // must precede .focus() — see the getOwnShareId() catch above
           returnFocusEl.focus();
         }
@@ -844,13 +847,12 @@ function setupShareButton() {
       await showQrModal(url, returnFocusEl, myFlowToken);
     } finally {
       // Only release the lock if this flow still owns it. If a newer flow
-      // has since claimed shareFlowToken (see showQrModal()'s early-return
-      // guard and shareFlowToken's comment), it's already managing
-      // shareBtn.disabled itself — this stale flow finishing up must not
-      // clear a lock it no longer holds, which would otherwise let a THIRD
-      // click start yet another concurrent flow while the second one is
-      // still in progress.
-      if (myFlowToken === shareFlowToken) shareBtn.disabled = false;
+      // has since claimed the guard (see showQrModal()'s early-return guard
+      // and shareFlow's own comment), it's already managing shareBtn.disabled
+      // itself — this stale flow finishing up must not clear a lock it no
+      // longer holds, which would otherwise let a THIRD click start yet
+      // another concurrent flow while the second one is still in progress.
+      if (shareFlow.isCurrent(myFlowToken)) shareBtn.disabled = false;
     }
   });
 }
@@ -877,22 +879,22 @@ let qrModalReturnFocusEl = null;
 
 // `returnFocusEl` and `myFlowToken` are captured by the caller
 // (setupShareButton()) BEFORE it disables the share button — not read from
-// document.activeElement/shareFlowToken fresh in here. For returnFocusEl,
+// document.activeElement/the guard fresh in here. For returnFocusEl,
 // two reasons: (1) disabling a focused button synchronously blurs it to
 // <body>, so by the time this function runs the button is no longer
 // document.activeElement; (2) this function itself awaits a dynamic import
 // that can take a while (first use, flaky connection), during which the
 // user could tab/click elsewhere, making a locally-captured value stale
-// regardless of point (1). For myFlowToken, see shareFlowToken's own
-// comment — it's how this call recognizes a newer flow has since taken
-// over and stops short of touching any shared UI state.
+// regardless of point (1). For myFlowToken, see shareFlow's own comment —
+// it's how this call recognizes a newer flow has since taken over and stops
+// short of touching any shared UI state.
 async function showQrModal(url, returnFocusEl, myFlowToken) {
-  // A newer flow may have already claimed shareFlowToken while this one was
+  // A newer flow may have already claimed the guard while this one was
   // awaiting buildShareUrl() (the caller's own await, before this function
   // was even called) — bail out entirely rather than opening/reopening a
   // modal, overwriting its URL, or touching the share button on that newer
   // flow's behalf.
-  if (myFlowToken !== shareFlowToken) return;
+  if (!shareFlow.isCurrent(myFlowToken)) return;
 
   const modal = document.getElementById("qr-modal");
   const container = document.getElementById("qr-code-container");
@@ -959,11 +961,11 @@ async function showQrModal(url, returnFocusEl, myFlowToken) {
   if (shareBtn) shareBtn.disabled = false;
 
   // From here on, the share button is re-enabled — meaning the user can
-  // close this modal and start a whole new flow (a newer shareFlowToken)
-  // before the import/generation below finishes. The two writes to
+  // close this modal and start a whole new flow (a newer guard token) before
+  // the import/generation below finishes. The two writes to
   // container.innerHTML further down are each gated on myFlowToken still
-  // matching shareFlowToken, so a stale call from a modal that's since been
-  // closed or superseded can't overwrite a newer one's QR code.
+  // being current, so a stale call from a modal that's since been closed or
+  // superseded can't overwrite a newer one's QR code.
   try {
     // Dynamically imported (rather than a static top-level import) so that
     // a failed fetch of this file — e.g. an old service-worker cache that
@@ -1016,10 +1018,10 @@ async function showQrModal(url, returnFocusEl, myFlowToken) {
     // below to an exact integer multiple of cellPx, are what the browser
     // actually renders at.
     const svgMarkup = qr.createSvgTag({ cellSize: cellPx, margin: cellPx * (quietZoneUnits / 2) });
-    if (myFlowToken !== shareFlowToken) return; // superseded by a newer/closed modal — see shareFlowToken's comment
+    if (!shareFlow.isCurrent(myFlowToken)) return; // superseded by a newer/closed modal — see shareFlow's comment
     container.innerHTML = svgMarkup;
   } catch (e) {
-    if (myFlowToken !== shareFlowToken) return; // same reasoning as above
+    if (!shareFlow.isCurrent(myFlowToken)) return; // same reasoning as above
     // Either the dynamic import failed (see above) or a share payload from
     // a very large watch history exceeded the QR format's maximum data
     // capacity (even at the lowest error-correction level, a QR code tops
@@ -1034,14 +1036,14 @@ function hideQrModal() {
   document.getElementById("qr-modal").hidden = true;
   const appEl = document.getElementById("app");
   if (appEl) appEl.inert = false;
-  // Invalidates this modal's own in-flight work (if any) — see
-  // shareFlowToken's comment. Not strictly needed when the user immediately
-  // starts a new share flow afterward (that flow's own click handler bumps
-  // the token itself), but matters if they just close and don't reopen:
-  // without this, a still-pending request from this now-closed modal's flow
-  // could write into the (hidden but still-live) #qr-code-container, or
-  // release a lock it doesn't own, whenever it finally resolves.
-  shareFlowToken++;
+  // Invalidates this modal's own in-flight work (if any) — see shareFlow's
+  // comment. Not strictly needed when the user immediately starts a new
+  // share flow afterward (that flow's own click handler claims a new token
+  // itself), but matters if they just close and don't reopen: without this,
+  // a still-pending request from this now-closed modal's flow could write
+  // into the (hidden but still-live) #qr-code-container, or release a lock
+  // it doesn't own, whenever it finally resolves.
+  shareFlow.next();
   if (qrModalReturnFocusEl) {
     qrModalReturnFocusEl.focus();
     qrModalReturnFocusEl = null;
@@ -1076,23 +1078,24 @@ function setupQrModal() {
   urlField.addEventListener("focus", () => urlField.select());
   copyBtn.addEventListener("click", async () => {
     const url = urlField.value;
-    // Snapshots which share flow currently owns the modal at click time.
-    // navigator.clipboard.writeText() can take a while (permission prompt,
-    // slow clipboard backend) and has no cancellation mechanism, so if the
-    // user closes this modal and opens a new share (a newer shareFlowToken)
-    // before it resolves, the write itself can't be stopped — but showing
-    // "リンクをコピーしました" (or the failure alert + refocusing this
-    // textarea) once it finally settles, on top of whatever's now
-    // displayed, would misleadingly suggest that *currently shown* link was
-    // just copied, when it was actually this stale one. Gating the
-    // notification (not the write) on the token still matching is enough
-    // to prevent that confusion.
-    const myFlowToken = shareFlowToken;
+    // Snapshots which share flow currently owns the modal at click time
+    // (via current(), not next() — this click doesn't start a new flow, it
+    // reads whichever one is already open). navigator.clipboard.writeText()
+    // can take a while (permission prompt, slow clipboard backend) and has
+    // no cancellation mechanism, so if the user closes this modal and opens
+    // a new share (a newer guard token) before it resolves, the write
+    // itself can't be stopped — but showing "リンクをコピーしました" (or the
+    // failure alert + refocusing this textarea) once it finally settles, on
+    // top of whatever's now displayed, would misleadingly suggest that
+    // *currently shown* link was just copied, when it was actually this
+    // stale one. Gating the notification (not the write) on the token still
+    // being current is enough to prevent that confusion.
+    const myFlowToken = shareFlow.current();
     try {
       await navigator.clipboard.writeText(url);
-      if (myFlowToken === shareFlowToken) alert("リンクをコピーしました。");
+      if (shareFlow.isCurrent(myFlowToken)) alert("リンクをコピーしました。");
     } catch (e) {
-      if (myFlowToken !== shareFlowToken) return;
+      if (!shareFlow.isCurrent(myFlowToken)) return;
       // Clipboard API unavailable/blocked — select the link text so a
       // keyboard user can immediately Ctrl+C it as a manual-copy fallback,
       // without needing a mouse or long-press.

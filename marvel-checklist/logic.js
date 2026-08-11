@@ -433,3 +433,36 @@ export function computeRecommendedNext(movies, characters, state, now = new Date
     .filter((m) => computePrerequisites(m.id, movies, characters).every((p) => getEntry(state, p.id).watched))
     .sort((a, b) => parseLocalDate(a.releaseDate) - parseLocalDate(b.releaseDate));
 }
+
+// Generation-token guard for a "flow" that can be re-entered (a new one
+// started) before an earlier one's own async work has settled — e.g. the
+// share/QR modal flow in app.js (button click → id generation → URL build →
+// modal display → QR image generation → clipboard copy), where the share
+// button is deliberately re-enabled before its own modal's QR fetch/generate
+// finishes, so a user can open a second flow while the first is still
+// technically running in the background.
+//
+// `next()` starts a new flow (or invalidates the current one without
+// starting a new one — same operation, callers just discard the return
+// value) and returns the token that owns it; `current()` reads the token of
+// whichever flow is presently active, for a caller that isn't starting a new
+// flow but still needs to snapshot "the one open right now" (e.g. a button
+// inside an already-open modal); `isCurrent(token)` tells any later async
+// continuation whether it's still that flow or has since been superseded, so
+// it can bail out before touching shared state (a lock flag, a shared DOM
+// container, a stored return-focus element, a notification).
+export function createFlowGuard() {
+  let generation = 0;
+  return {
+    next() {
+      generation += 1;
+      return generation;
+    },
+    current() {
+      return generation;
+    },
+    isCurrent(token) {
+      return token === generation;
+    },
+  };
+}
