@@ -10,7 +10,7 @@ import {
   findTapActivatableSpecialCell, findActivatingSwapPair, hasAnyLegalMove,
   shuffleWithQualityGate, regenerateBoardForDeadlock, cloneBoard,
   SHUFFLE_QUALITY_MAX_ATTEMPTS, BOARD_REGEN_MAX_ATTEMPTS,
-  countAvailableMoves, createBoard, hasSquare,
+  countAvailableMoves, createBoard, hasSquare, placeCountdownBombs,
 } from "./board";
 import type { OrbitCell } from "./types";
 
@@ -838,5 +838,109 @@ describe("createBoard", () => {
     createBoard(5);
     expect(findAllMatches().length).toBe(0);
     expect(hasSquare()).toBe(false);
+  });
+
+  it("countdownBombsが設定されていれば、指定数のカウントダウンボムが盤面に配置される(/code-review指摘、PR #356で品質チェックのループ内に移動)", () => {
+    setupBoard(7, 7);
+    G.STAGES = [{ ...G.STAGES![0], countdownBombs: 2 } as any];
+    createBoard(5);
+    let bombCount = 0;
+    for (let r = 0; r < G.rows; r++)
+      for (let c = 0; c < G.cols; c++)
+        if (G.board[r][c]!.special === "countdown") bombCount++;
+    expect(bombCount).toBe(2);
+    expect(findAllMatches().length).toBe(0);
+    expect(hasSquare()).toBe(false);
+  });
+
+  it("1回目の試行がボム配置後に品質基準を割り込んだ場合、その盤面をそのまま採用せずに次の試行へ進む(/code-review指摘、PR #356)", () => {
+    // 1x8の1行盤面。左半分[0,1,0,0]と右半分[2,3,2,2]はそれぞれ独立した
+    // 「唯一マッチを成立させるスワップ」を1つずつ持つ(pair(0,1)とpair(4,5))ため、
+    // ボム設置前の合法手数は2(minMoves=2をちょうど満たす)。countdownBombs=1を
+    // 位置0に強制配置すると、pair(0,1)側のマッチだけが失われ、実際の盤面の
+    // 合法手数は1に落ちる(pair(4,5)側は影響を受けない)。
+    // 品質チェックがボム設置前のまま(旧実装)なら1回目の試行(合法手2)を即座に
+    // 採用してしまい、実際の最終盤面はminMoves=2を満たさない状態になる。
+    // 品質チェックがボム設置後(新実装)なら1回目の試行を棄却して次の試行に進む
+    // ため、Math.random()の消費回数が「1回目の試行分ちょうど」を超える
+    setupBoard(1, 8);
+    G.STAGES = [{ ...G.STAGES![0], countdownBombs: 1 } as any];
+
+    const fillValues = [0, 1, 0, 0, 2, 3, 2, 2].map(v => (v + 0.5) / 4); // numColors=4
+    const bombValues = [0.5, 0.05, 0.5]; // row(常に0, 1行のため無関係) / col=0 / countdown初期値(任意)
+    const controlled = [...fillValues, ...bombValues];
+    let callCount = 0;
+    const realRandom = Math.random.bind(Math);
+    const randomSpy = vi.spyOn(Math, "random").mockImplementation(() => {
+      const v = callCount < controlled.length ? controlled[callCount] : realRandom();
+      callCount++;
+      return v;
+    });
+    try {
+      createBoard(4);
+    } finally {
+      randomSpy.mockRestore();
+    }
+
+    // 1回目の試行(盤面生成8回+ボム配置3回=11回、placeCountdownBombsは行/列/
+    // カウントダウン初期値の3回Math.random()を呼ぶ)だけで完了していれば、
+    // 旧実装同様「ボム設置前に品質基準を満たした盤面をそのまま採用した」ことになり、
+    // 実際の合法手数(1)がminMoves(2)を割り込んだ状態を見逃す
+    expect(callCount).toBeGreaterThan(controlled.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// placeCountdownBombs（第1章「軌道系」Phase 4d関連の/code-review指摘、PR #356）
+// isMatchable()はspecial:"countdown"のセルをマッチ対象から除外するため、ボムを
+// 置いたセルはその後どのマッチにも参加できなくなる。createBoard()の品質チェック
+// (countAvailableMoves())より後にボムを置くと、判定時に数えられていた合法手を
+// ボムが塞いでしまい、最終盤面が実際にはminMoves/maxMoves範囲を満たさなくなり
+// うる。この現象自体をここで直接示す(countdownBombsを持つStage 300〜500に元々
+// 存在していた欠落で、オービット固有の問題ではない)
+// ---------------------------------------------------------------------------
+describe("placeCountdownBombs", () => {
+  it("唯一の合法手を作っているセルにボムが置かれると、そのセルは以後マッチに参加できず合法手数が0になる", () => {
+    setupBoard(3, 3);
+    // countAvailableMovesのオービットテストと同じ、(0,1)<->(1,1)だけが唯一
+    // マッチを成立させる配置((0,1)と(1,1)をスワップすると行0が[1,1,1]になる)
+    const colors = [
+      [1, 2, 1],
+      [3, 1, 4],
+      [5, 6, 7],
+    ];
+    for (let r = 0; r < 3; r++)
+      for (let c = 0; c < 3; c++)
+        G.board[r][c] = { color: colors[r][c], special: null };
+    expect(countAvailableMoves()).toBe(1); // 前提: ボム設置前は合法手1件
+
+    // (1,1)を狙う: スワップ後にマッチ判定の対象となる行0のマス(0,1)へ実際に
+    // 移動するのは(1,1)側の中身なので、ボムを置くべきなのは(1,1)。(0,1)側に
+    // 置いても、スワップでボムは(1,1)へ移動するだけで行0のマッチには影響しない
+    // (placeCountdownBombsはMath.random()を(行, 列)の順に2回呼ぶ。0.5は
+    // [1/3, 2/3)の範囲に安全に収まるよう、浮動小数点誤差で境界値ぴったりに
+    // ならない値を選んでいる)
+    const randomSpy = vi.spyOn(Math, "random")
+      .mockReturnValueOnce(0.5) // 行 = floor(0.5*3) = 1
+      .mockReturnValueOnce(0.5); // 列 = floor(0.5*3) = 1
+    try {
+      placeCountdownBombs({ countdownBombs: 1 } as any);
+    } finally {
+      randomSpy.mockRestore();
+    }
+
+    expect(G.board[1][1]!.special).toBe("countdown"); // 狙った通りのセルに配置された
+    expect(countAvailableMoves()).toBe(0); // ボムにより唯一の合法手が失われた
+  });
+
+  it("countdownBombsが0以下なら何も配置しない", () => {
+    setupBoard(3, 3);
+    for (let r = 0; r < 3; r++)
+      for (let c = 0; c < 3; c++)
+        G.board[r][c] = { color: 0, special: null };
+    placeCountdownBombs({ countdownBombs: 0 } as any);
+    for (let r = 0; r < 3; r++)
+      for (let c = 0; c < 3; c++)
+        expect(G.board[r][c]!.special).toBeNull();
   });
 });

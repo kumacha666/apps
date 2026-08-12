@@ -63,6 +63,29 @@ function fillBoardUntilStable(numColors: number): void {
   }
 }
 
+// カウントダウンボムは isMatchable() が special: "countdown" を非マッチ対象として
+// 除外するため、置いたセルはその後どのマッチにも参加できなくなる。品質チェック
+// (countAvailableMoves()での合法手数判定)より後に置くと、判定時には数えられていた
+// 合法手をボムが塞いでしまい、最終盤面が実際にはminMoves/maxMoves範囲を満たさなく
+// なりうる（/code-review指摘、PR #356。countdownBombsを持つStage 300〜500に元々
+// 存在していた欠落で、オービット固有の問題ではない）。品質チェックの対象になる
+// 盤面には常にボム配置済みの状態を渡すことで、判定と実際の最終盤面を一致させる
+export function placeCountdownBombs(stg: StageConfig): void {
+  if (stg.countdownBombs <= 0) return;
+  let placed = 0, attempts = 0;
+  while (placed < stg.countdownBombs && attempts < 200) {
+    const br = Math.floor(Math.random() * G.rows);
+    const bc = Math.floor(Math.random() * G.cols);
+    const cell = G.board[br][bc];
+    if (cell && !cell.special) {
+      cell.special = "countdown";
+      cell.countdown = 8 + Math.floor(Math.random() * 5);
+      placed++;
+    }
+    attempts++;
+  }
+}
+
 // minMoves/maxMoves判定はcountAvailableMoves()に委譲しているため、第1章「軌道系」
 // (Stage 501〜)のオービット制約はcountAvailableMoves()側の対応だけで自動的に反映される
 // (このループ自体には変更不要。パイロットの固定7x8盤面ではmaxMoves=10になり、
@@ -71,11 +94,13 @@ export function createBoard(numColors: number): void {
   const maxMoves = Math.max(10, Math.floor(G.rows * G.cols * 0.15));
   const minMoves = 2;
   const target = Math.floor((minMoves + maxMoves) / 2);
+  const stg = G.STAGES![G.currentStage];
   let bestBoard: (Piece | null)[][] | null = null;
   let bestDiff = Infinity;
 
   for (let attempt = 0; attempt < 20; attempt++) {
     fillBoardUntilStable(numColors);
+    placeCountdownBombs(stg);
 
     const moves = countAvailableMoves();
     if (moves >= minMoves && moves <= maxMoves) {
@@ -90,22 +115,6 @@ export function createBoard(numColors: number): void {
   }
 
   if (bestBoard) G.board = bestBoard;
-
-  const stg = G.STAGES![G.currentStage];
-  if (stg.countdownBombs > 0) {
-    let placed = 0, attempts = 0;
-    while (placed < stg.countdownBombs && attempts < 200) {
-      const br = Math.floor(Math.random() * G.rows);
-      const bc = Math.floor(Math.random() * G.cols);
-      const cell = G.board[br][bc];
-      if (cell && !cell.special) {
-        cell.special = "countdown";
-        cell.countdown = 8 + Math.floor(Math.random() * 5);
-        placed++;
-      }
-      attempts++;
-    }
-  }
 }
 
 export function randomPiece(numColors: number): Piece {
