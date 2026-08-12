@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { G, PIECE_COLORS, PIECE_NAMES_JA } from "./state";
-import { getMissionText, buildStages, buildOrbitPilotStages, boardSizeForStage, isStageUnlocked, getTotalStars, lastClearedRealStageIdx } from "./stages";
+import { getMissionText, buildStages, buildOrbitPilotStages, boardSizeForStage, isStageUnlocked, getTotalStars, lastClearedRealStageIdx, nextStageBoundary } from "./stages";
 import { hasEntrySource, orbitsHaveRequiredGap } from "./orbit";
 import type { Mission, StageConfig } from "./types";
 
@@ -431,5 +431,34 @@ describe("lastClearedRealStageIdx", () => {
     G.saveData.cleared[500] = true;
     G.saveData.cleared[510] = true;
     expect(lastClearedRealStageIdx()).toBe(-1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nextStageBoundary — 本編プレイ中はbaseStageCountで最終ステージ判定を守りつつ、
+// デバッグジャンプ後のプレビュー範囲内ではNextボタンでの連続確認を維持できることの検証
+// (Codexレビュー指摘: baseStageCountへの一律置き換えでパイロットステージ内のNext進行が死んでいた)
+// ---------------------------------------------------------------------------
+describe("nextStageBoundary", () => {
+  beforeEach(() => {
+    G.baseStageCount = 500;
+  });
+
+  it("本編プレイ中(currentStage < baseStageCount)はbaseStageCountを返す", () => {
+    G.STAGES = new Array(524).fill(null); // デバッグジャンプでプレビュー分が追記された想定
+    G.currentStage = 10;
+    expect(nextStageBoundary()).toBe(500);
+  });
+
+  it("本編最終ステージ(currentStage === baseStageCount-1)でもbaseStageCountを返す(全ステージ制覇を汚染しない)", () => {
+    G.STAGES = new Array(524).fill(null);
+    G.currentStage = 499;
+    expect(nextStageBoundary()).toBe(500);
+  });
+
+  it("プレビュー範囲内(currentStage >= baseStageCount)ではG.STAGES.lengthを返す(Nextでの連続確認用)", () => {
+    G.STAGES = new Array(524).fill(null);
+    G.currentStage = 500; // Stage 501(デバッグジャンプ後)
+    expect(nextStageBoundary()).toBe(524);
   });
 });

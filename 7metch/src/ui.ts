@@ -4,7 +4,7 @@ import { initAudio, switchBgm, stopAllBgm, applyAudioOptions, SFX } from "./audi
 import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim, stopTitleBgAnim, startResultBgAnim, stopResultBgAnim, startSplashBgAnim, stopSplashBgAnim, drawBoard } from "./rendering";
 import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker, finishTurn } from "./game";
 import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
-import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText, lastClearedRealStageIdx } from "./stages";
+import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText, lastClearedRealStageIdx, nextStageBoundary } from "./stages";
 import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
 import { initInput, renderHelpPieceIcons } from "./input";
 
@@ -479,7 +479,7 @@ export function initUI(): void {
 
   document.getElementById("btn-next")!.addEventListener("click", () => {
     const next = G.currentStage + 1;
-    if (next >= G.baseStageCount) {
+    if (next >= nextStageBoundary()) {
       buildStageSelect();
       showScreen("stageSelect");
       return;

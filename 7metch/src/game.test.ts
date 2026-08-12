@@ -540,6 +540,26 @@ describe("showResult", () => {
     expect(G.dom!.resultDetails.innerHTML).not.toContain("制覇");
     expect(G.dom!.btnNext.style.display).toBe("");
   });
+
+  // デバッグジャンプでプレビュー面(baseStageCount以上)に入っている間は、Nextボタンで
+  // プレビュー面同士を連続確認できることの回帰テスト(Codexレビュー指摘: baseStageCountへの
+  // 一律置き換えでプレビュー面内のNext進行が意図せず死んでいた)
+  it("プレビュー面(currentStage >= baseStageCount)のクリアでは、まだ後続のプレビュー面があればnextボタンを表示する", () => {
+    G.STAGES = [makeStage(), makeStage(), makeStage(), makeStage()]; // baseStageCount=2、index2,3がプレビュー面
+    G.baseStageCount = 2;
+    G.currentStage = 2; // プレビュー面(index 2)、まだ後続(index 3)がある
+    showResult(true, 3);
+    expect(G.dom!.resultTitle.textContent).toBe("クリア！");
+    expect(G.dom!.btnNext.style.display).toBe("");
+  });
+
+  it("プレビュー面の最後のステージをクリアした場合はnextボタンを表示しない", () => {
+    G.STAGES = [makeStage(), makeStage(), makeStage()]; // length=3
+    G.baseStageCount = 2;
+    G.currentStage = 2; // プレビュー面の最後(index 2 === G.STAGES.length-1)
+    showResult(true, 3);
+    expect(G.dom!.btnNext.style.display).toBe("none");
+  });
 });
 
 // ---------------------------------------------------------------------------

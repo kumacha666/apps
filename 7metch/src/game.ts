@@ -8,7 +8,7 @@ import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, 
 import { drawBoard, buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startResultBgAnim, stopResultBgAnim, startChainLabel, flashInvalid } from "./rendering";
 import { SFX } from "./audio";
 import { track } from "./tracking";
-import { getMissionText } from "./stages";
+import { getMissionText, nextStageBoundary } from "./stages";
 import { showScreen } from "./ui";
 
 // ============================================================
@@ -992,7 +992,7 @@ export function showResult(win: boolean, stars: number, failedMission?: Mission)
     details += `<br><span style="color:#4ecdc4">${getFailureProgress(failedMission)}</span>`;
   }
   d.resultDetails.innerHTML = details;
-  d.btnNext.style.display = win && G.currentStage < G.baseStageCount - 1 ? "" : "none";
+  d.btnNext.style.display = win && G.currentStage < nextStageBoundary() - 1 ? "" : "none";
 
   if (!win && (G.debugMode || (G.saveData.coins || 0) >= ITEM_COSTS.addmoves)) {
     d.btnRescue.style.display = "";

@@ -1,7 +1,7 @@
 import type { Piece, SpecialType, ChainLabel, BgStar, ShootingStar, OrbitCell } from "./types";
 import { G, PIECE_COLORS, PIECE_SHAPES, PIECE_SYMBOLS, ANIM } from "./state";
-import { drawVFX, updateVFX, hasActiveVFX, addScreenShake } from "./vfx";
-import { isHole, isRock, isIce, TAP_ACTIVATE_SPECIALS } from "./board";
+import { drawVFX, updateVFX, hasActiveVFX, addScreenShake, cellCenter } from "./vfx";
+import { isHole, isRock, isIce, isPlayable, inBounds, TAP_ACTIVATE_SPECIALS } from "./board";
 import { inInfluenceArea } from "./orbit";
 import { getPatternCells, cellKey } from "./patternClear";
 
@@ -169,8 +169,7 @@ export function drawIceOverlay(r: number, c: number): void {
 // チェビシェフ距離のみで判定し盤サイズを考慮しないため、盤端のオービットでは
 // 盤外座標が名目上「範囲内」と判定され境界線が欠けてしまう(Codexレビュー指摘)
 function neighborInInfluenceArea(orbit: OrbitCell, r: number, c: number): boolean {
-  if (r < 0 || r >= G.rows || c < 0 || c >= G.cols) return false;
-  return inInfluenceArea(orbit, r, c);
+  return inBounds(r, c) && inInfluenceArea(orbit, r, c);
 }
 
 // 影響範囲(オービットセルを中心とした3x3、盤端で欠ける)の境界線。
@@ -183,7 +182,7 @@ export function drawOrbitInfluenceZone(ctx: CanvasRenderingContext2D, orbit: Orb
   ctx.beginPath();
   for (let r = orbit.r - 1; r <= orbit.r + 1; r++) {
     for (let c = orbit.c - 1; c <= orbit.c + 1; c++) {
-      if (r < 0 || r >= G.rows || c < 0 || c >= G.cols) continue;
+      if (!inBounds(r, c)) continue;
       const x = c * G.cellSize, y = r * G.cellSize;
       if (!neighborInInfluenceArea(orbit, r - 1, c)) { ctx.moveTo(x, y); ctx.lineTo(x + G.cellSize, y); }
       if (!neighborInInfluenceArea(orbit, r + 1, c)) { ctx.moveTo(x, y + G.cellSize); ctx.lineTo(x + G.cellSize, y + G.cellSize); }
@@ -198,8 +197,7 @@ export function drawOrbitInfluenceZone(ctx: CanvasRenderingContext2D, orbit: Orb
 // 重力方向を示す矢印。オービットセル自体(常に何らかのピースが乗っている)の上に
 // 半透明で重ねて描く。ピースを完全に隠さないよう小さめ・半透明にしている
 export function drawOrbitArrow(ctx: CanvasRenderingContext2D, orbit: OrbitCell): void {
-  const cx = orbit.c * G.cellSize + G.cellSize / 2;
-  const cy = orbit.r * G.cellSize + G.cellSize / 2;
+  const { x: cx, y: cy } = cellCenter(orbit.r, orbit.c);
   const [dr, dc] = orbit.dir;
   const len = G.cellSize * 0.32;
   const angle = Math.atan2(dr, dc);
@@ -263,7 +261,7 @@ export function drawPatternCellOverlays(ctx: CanvasRenderingContext2D): void {
   const stg = G.STAGES?.[G.currentStage];
   if (!stg || stg.mission.type !== "pattern") return;
   for (const { r, c } of getPatternCells(stg.mission.patternShape, G.rows, G.cols)) {
-    if (isHole(r, c) || isRock(r, c)) continue;
+    if (!isPlayable(r, c)) continue;
     drawPatternCellOverlay(ctx, r, c, G.patternProgress.has(cellKey(r, c)));
   }
 }
@@ -275,7 +273,7 @@ export function drawSelectionOutline(ctx: CanvasRenderingContext2D): void {
   if (!G.selected) return;
   const { r, c } = G.selected;
   const piece = G.board[r][c];
-  if (!piece || isHole(r, c) || isRock(r, c)) return;
+  if (!piece || !isPlayable(r, c)) return;
 
   ctx.save();
   const isActivatable = piece.special && TAP_ACTIVATE_SPECIALS.has(piece.special);

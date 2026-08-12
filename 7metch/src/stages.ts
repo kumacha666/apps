@@ -13,14 +13,19 @@ const PATTERN_SHAPE_JA: Record<PatternShape, string> = {
 };
 
 // デバッグジャンプ(本番ビルドでも7タップで開ける)でStage 501〜524(プレビュー)を
-// クリアするとG.saveData.bestStarsにbaseStageCount以上のキーが永続保存されるため、
-// lastClearedRealStageIdx()と同じ理由でここも本編範囲に絞る。絞らないとプレビュー
-// 24面分(最大72個)の星がスターゲート判定・合計表示に混入し、本編のゲートを
-// 本来より早く解除できてしまう(Codexレビュー指摘)
+// クリアするとG.saveData.cleared/bestStarsにbaseStageCount以上のキーが永続保存
+// されるため、本編の集計（スターゲート判定・ステージ選択・つづきから）はどれも
+// これらのキーを除外する必要がある(Codexレビュー指摘)。getTotalStars()と
+// lastClearedRealStageIdx()で同じ「baseStageCount未満に絞る」処理が重複していたため
+// 共通ヘルパーに一本化した
+function realStageEntries<T>(record: Record<number, T>): [number, T][] {
+  return Object.entries(record)
+    .map(([k, v]) => [Number(k), v] as [number, T])
+    .filter(([i]) => i < G.baseStageCount);
+}
+
 export function getTotalStars(): number {
-  return Object.entries(G.saveData.bestStars)
-    .filter(([i]) => Number(i) < G.baseStageCount)
-    .reduce((sum, [, s]) => sum + s, 0);
+  return realStageEntries(G.saveData.bestStars).reduce((sum, [, s]) => sum + s, 0);
 }
 
 export function isStageUnlocked(i: number): boolean {
@@ -36,15 +41,20 @@ export function getGateFor(i: number): StarGate | null {
 }
 
 // 本編（Stage 1〜baseStageCount）でクリア済みの最大インデックス(-1=未クリア)。
-// デバッグジャンプ(ui.tsのbtn-debug-jumpハンドラ)でStage 501〜524プレビューを
-// クリアするとG.saveData.clearedにbaseStageCount以上のキーが永続保存されるため、
-// ステージ選択の表示範囲・「つづきから」の遷移先計算はどちらもこれを経由し、
-// プレビュー面のクリア履歴を本編の進捗計算から除外する(Codexレビュー指摘)
+// ステージ選択の表示範囲・「つづきから」の遷移先計算はどちらもこれを経由する
 export function lastClearedRealStageIdx(): number {
-  return Object.keys(G.saveData.cleared)
-    .map(Number)
-    .filter((n) => n < G.baseStageCount)
-    .reduce((max, n) => Math.max(max, n), -1);
+  return realStageEntries(G.saveData.cleared).reduce((max, [i]) => Math.max(max, i), -1);
+}
+
+// 「次のステージ」の境界値。本編プレイ中(currentStage < baseStageCount)は
+// baseStageCountを使い、本編の最終ステージ判定を汚染しない。一方、デバッグジャンプ後の
+// プレビュー範囲内(currentStage >= baseStageCount)ではG.STAGES!.lengthを使うことで、
+// Stage 501〜524のデバッグプレビューをNextボタンで連続確認できるようにする
+// (Codexレビュー指摘: G.baseStageCountへの一律置き換えで、パイロットステージ内の
+// Next進行が意図せず死んでいた。本編プレイヤー向けの境界を守りつつ、デバッグ専用の
+// 動作は元通りにする)
+export function nextStageBoundary(): number {
+  return G.currentStage >= G.baseStageCount ? (G.STAGES?.length ?? G.baseStageCount) : G.baseStageCount;
 }
 
 // 350面以降、special/chainミッションのcount。4以上にするとhole配置

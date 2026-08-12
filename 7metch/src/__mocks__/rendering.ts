@@ -7,3 +7,6 @@ export function startResultBgAnim(): void {}
 export function stopResultBgAnim(): void {}
 export function startChainLabel(): void {}
 export async function flashInvalid(): Promise<void> {}
+export function drawOrbitInfluenceZones(): void {}
+export function drawOrbitArrows(): void {}
+export function drawPatternCellOverlays(): void {}
