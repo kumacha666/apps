@@ -1,6 +1,7 @@
 import type { StageConfig, Mission, StageFeatures, StarGate, CellStateType } from "./types";
 import type { PatternShape } from "./patternClear";
 import { G, STAR_GATES, PIECE_COLORS, PIECE_NAMES_JA } from "./state";
+import { generateOrbitLayout, orbitCountForStage, patternShapeForStage } from "./orbitStageGen";
 
 // "pattern"ミッションの表示用ラベル。第1章「軌道系」Stage 501〜専用
 // (buildStages()自体はStage 1〜500のみを生成するため、現時点ではまだ到達しない)
@@ -39,6 +40,13 @@ export function boardSizeForStage(i: number): { cols: number; rows: number } {
   if (i < 10) return { cols: 6, rows: 7 };
   if (i < 100) return { cols: 7, rows: 8 };
   if (i < 250) return { cols: 8, rows: 9 };
+  if (i < 500) return { cols: 9, rows: 10 };
+  // 第1章「軌道系」パイロット(Stage 501〜524、内部インデックス500〜523)は
+  // Stage 1〜500のサイズ拡大傾向を引き継がず、固定7x8で作り直す(2026-08-12、
+  // 人間との相談により決定。オービットPhase 3のレイアウト生成・フォールバック
+  // データもこの8x7=[rows,cols]専用に作り込まれている、orbitStageGen.test.ts参照)
+  if (i < 524) return { cols: 7, rows: 8 };
+  // Stage 525以降の盤面サイズは別途人間が判断（オービットPhase 4e時点では未定）
   return { cols: 9, rows: 10 };
 }
 
@@ -82,24 +90,35 @@ export function generateHolePattern(c: number, r: number, variant: number): [num
   return holes;
 }
 
+// moves/colors導出。buildStages()(Stage 1〜500)とbuildOrbitPilotStages()
+// (Stage 501〜524)で共有する(重複実装による定義のズレを防ぐ)
+function movesAndColorsForStage(i: number, cols: number): { moves: number; colors: number } {
+  const tier = Math.floor(i / 10);
+  const baseMoves = Math.max(14, 22 - tier);
+  let moves: number;
+  if (i < 10) moves = 20;
+  else if (cols >= 9) moves = Math.max(16, baseMoves);
+  else if (cols >= 8) moves = Math.max(14, baseMoves);
+  else moves = baseMoves;
+  if (i >= 100) moves += 2;
+  if (i >= 295) moves += 1;
+  const baseColors = Math.min(7, 5 + Math.floor(i / 10));
+  const colors = (i >= 200) ? 8 : baseColors;
+  return { moves, colors };
+}
+
+function starMovesForStage(i: number, moves: number): { star2moves: number; star3moves: number } {
+  const star2rate = i < 10 ? 0.65 : 0.6;
+  const star3rate = i < 10 ? 0.45 : 0.35;
+  return { star2moves: Math.floor(moves * star2rate), star3moves: Math.floor(moves * star3rate) };
+}
+
 export function buildStages(): StageConfig[] {
   const stages: StageConfig[] = [];
   for (let i = 0; i < 500; i++) {
     const size = boardSizeForStage(i);
-    const tier = Math.floor(i / 10);
-    const baseMoves = Math.max(14, 22 - tier);
-    let moves: number;
-    if (i < 10) moves = 20;
-    else if (size.cols >= 9) moves = Math.max(16, baseMoves);
-    else if (size.cols >= 8) moves = Math.max(14, baseMoves);
-    else moves = baseMoves;
-    if (i >= 100) moves += 2;
-    if (i >= 295) moves += 1;
-    const baseColors = Math.min(7, 5 + Math.floor(i / 10));
-    const colors = (i >= 200) ? 8 : baseColors;
-
-    const star2rate = i < 10 ? 0.65 : 0.6;
-    const star3rate = i < 10 ? 0.45 : 0.35;
+    const { moves, colors } = movesAndColorsForStage(i, size.cols);
+    const { star2moves, star3moves } = starMovesForStage(i, moves);
 
     const features: StageFeatures = {};
     features.diagonalLine = true;
@@ -157,14 +176,56 @@ export function buildStages(): StageConfig[] {
       boardCols: size.cols,
       boardRows: size.rows,
       mission,
-      star2moves: Math.floor(moves * star2rate),
-      star3moves: Math.floor(moves * star3rate),
+      star2moves,
+      star3moves,
       features,
       iceCells,
       rockCells,
       holePattern,
       countdownBombs,
       orbits: [], // Stage 1〜500はオービット無し(第1章「軌道系」はStage 501〜、未着手)
+    });
+  }
+  return stages;
+}
+
+// 第1章「軌道系」パイロット(Stage 501〜524、章内相対インデックス0〜23)のステージ定義を
+// 生成する(オービットPhase 4e)。moves/colorsはStage 1〜500と同じ計算式を継続するが、
+// 盤面サイズは固定7x8で作り直し(boardSizeForStage()参照)、氷・岩・カウントダウンボムは
+// 意図的に付けない(人間との相談により決定、2026-08-12。オービット×パターン消しという
+// 新ギミック単体の完成度を先に固める狙いで、既存ギミックとの組み合わせ検証は別課題として
+// 切り出した)。**この関数はまだbuildStages()から呼ばれていない**（Phase 5の描画・Phase 6の
+// チュートリアルが揃うまでStage 501は未公開のまま。7metch/CLAUDE.mdの「第1章『軌道系』」
+// 節、Stage 501〜524の実公開タイミングの決定事項を参照）
+export function buildOrbitPilotStages(): StageConfig[] {
+  const stages: StageConfig[] = [];
+  for (let chapterIndex = 0; chapterIndex < 24; chapterIndex++) {
+    const i = 500 + chapterIndex;
+    const size = boardSizeForStage(i);
+    const { moves, colors } = movesAndColorsForStage(i, size.cols);
+    const { star2moves, star3moves } = starMovesForStage(i, moves);
+
+    // オービットPhase 3のレイアウト生成テスト(orbitStageGen.test.ts)がseed 0〜299・
+    // count1〜3の全組み合わせでフォールバックに陥らないことを検証済みのため、
+    // 章内相対インデックス(0〜23)をそのままseedに使う(検証済みの範囲に収まる)
+    const { orbits } = generateOrbitLayout(orbitCountForStage(chapterIndex), size.rows, size.cols, chapterIndex);
+    const mission: Mission = { type: "pattern", patternShape: patternShapeForStage(chapterIndex) };
+
+    stages.push({
+      name: `${i + 1}`,
+      moves,
+      colors,
+      boardCols: size.cols,
+      boardRows: size.rows,
+      mission,
+      star2moves,
+      star3moves,
+      features: { diagonalLine: true },
+      iceCells: 0,
+      rockCells: 0,
+      holePattern: null,
+      countdownBombs: 0,
+      orbits,
     });
   }
   return stages;
