@@ -434,6 +434,65 @@ export function findSpecialCreations(matches: [number, number][]): SpecialCreati
 }
 
 // ---------------------------------------------------------------------------
+// 「有効な1手」の共有列挙（通常スワップ・タップ起動・スワップ起動系特殊ピース）
+// findHint()・（将来のPhaseで配線する）合法手0件判定・手動シャッフルの品質基準・
+// シミュレーターが同じ定義を共有すること（GIMMICK_REDESIGN.md「適用範囲」参照）
+// ---------------------------------------------------------------------------
+
+// タップ起動可能な特殊ピース（ダブルタップで起動する、スワップを伴わない手）を1つ探す
+export function findTapActivatableSpecialCell(): CellPos | null {
+  for (let r = 0; r < G.rows; r++) {
+    for (let c = 0; c < G.cols; c++) {
+      const p = G.board[r][c];
+      if (p && p.special && TAP_ACTIVATE_SPECIALS.has(p.special) && isPlayable(r, c)) {
+        return { r, c };
+      }
+    }
+  }
+  return null;
+}
+
+// スワップ起動系特殊ピース（レインボー・特殊ピース同士のコンボ、方向拘束の対象外）による
+// 有効な1手を1組探す
+export function findActivatingSwapPair(): { a: CellPos; b: CellPos } | null {
+  for (let r = 0; r < G.rows; r++) {
+    for (let c = 0; c < G.cols; c++) {
+      if (!G.board[r][c] || !isPlayable(r, c)) continue;
+      const fwd: [number, number][] = [[r, c + 1], [r + 1, c - 1], [r + 1, c], [r + 1, c + 1]];
+      for (const [nr, nc] of fwd) {
+        if (!inBounds(nr, nc) || !G.board[nr][nc] || !isPlayable(nr, nc)) continue;
+        if (isActivatingSwap(G.board[r][c], G.board[nr][nc])) {
+          return { a: { r, c }, b: { r: nr, c: nc } };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// 通常スワップ（オービット制約適用後）・タップ起動・スワップ起動系特殊ピースのいずれかが
+// 1つでも存在すれば true。存在チェックのみで数え上げないため countAvailableMoves() より軽い
+export function hasAnyLegalMove(): boolean {
+  for (let r = 0; r < G.rows; r++) {
+    for (let c = 0; c < G.cols; c++) {
+      if (!G.board[r][c] || !isPlayable(r, c)) continue;
+      const fwd: [number, number][] = [[r, c + 1], [r + 1, c - 1], [r + 1, c], [r + 1, c + 1]];
+      for (const [nr, nc] of fwd) {
+        if (!inBounds(nr, nc) || !G.board[nr][nc] || !isPlayable(nr, nc)) continue;
+        if (isSwapBlockedByOrbit(G.board[r][c], G.board[nr][nc], r, c, nr, nc)) continue;
+        swapPieces(r, c, nr, nc);
+        const hasMatch = findAllMatches().length > 0;
+        swapPieces(r, c, nr, nc);
+        if (hasMatch) return true;
+      }
+    }
+  }
+  if (findTapActivatableSpecialCell()) return true;
+  if (findActivatingSwapPair()) return true;
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Hint system
 // ---------------------------------------------------------------------------
 
@@ -507,6 +566,14 @@ export function findHint(): HintData | null {
 
   if (bestList.length > 0) return bestList[Math.floor(Math.random() * bestList.length)];
   if (normalList.length > 0) return normalList[Math.floor(Math.random() * normalList.length)];
+
+  // 通常マッチ成立スワップの候補が無くても、タップ起動・スワップ起動系特殊ピースが
+  // 有効な1手として残っていればそれをヒントにする（4aでは通常スワップのみだった欠落を解消）
+  const tapCell = findTapActivatableSpecialCell();
+  if (tapCell) return { mover: tapCell, pattern: [] };
+  const swapPair = findActivatingSwapPair();
+  if (swapPair) return { mover: swapPair.a, pattern: [swapPair.b] };
+
   return null;
 }
 
