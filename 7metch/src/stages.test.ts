@@ -46,6 +46,14 @@ describe("getMissionText", () => {
       expect(getMissionText(m)).toBe(`${PIECE_NAMES_JA[i]}を5個けそう`);
     }
   });
+
+  // pattern ミッション（第1章「軌道系」Stage 501〜専用、Phase 4c: patternProgressの配線）
+  it("pattern ミッション: 形状ごとに異なる表示文言を返す", () => {
+    expect(getMissionText({ type: "pattern", patternShape: "perimeter" })).toBe("外周のマスを全部けそう");
+    expect(getMissionText({ type: "pattern", patternShape: "cross" })).toBe("十字のマスを全部けそう");
+    expect(getMissionText({ type: "pattern", patternShape: "diagonal" })).toBe("対角線のマスを全部けそう");
+    expect(getMissionText({ type: "pattern", patternShape: "corners" })).toBe("四隅のマスを全部けそう");
+  });
 });
 
 // ---------------------------------------------------------------------------

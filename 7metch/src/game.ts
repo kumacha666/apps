@@ -1,6 +1,8 @@
 import type { Piece, SpecialType, ComboType, Mission, MissionType, SpecialInfo, FallEntry, GameState, GameDom, StageConfig, ScreenName, StarGate } from "./types";
 import { G, PIECE_COLORS, ANIM, ITEM_COSTS, STAR_GATES, PIECE_NAMES_JA, SCORE_PER_PIECE, writeSave } from "./state";
 import { findAllMatches, findSpecialCreations, activateSpecial, applyGravityData, swapPieces, getComboType, createBoard, countAvailableMoves, damageAdjacentIce, tickCountdowns, startHintTimer, clearHint, isHole, isRock, randomPiece, inBounds, initCellState, TAP_ACTIVATE_SPECIALS, isSwapBlockedByOrbit, isComboSpecialSwap, isRainbowPiece, hasAnyLegalMove, shuffleWithQualityGate, regenerateBoardForDeadlock, cloneBoard, SHUFFLE_QUALITY_MAX_ATTEMPTS, BOARD_REGEN_MAX_ATTEMPTS } from "./board";
+import type { ClearCause, ExcludedClearCause } from "./patternClear";
+import { getPatternCells, targetCellSet, recordClear, getProgressCount, isPatternComplete } from "./patternClear";
 import { animateSwap, animateClear, animateDrop, sleep } from "./animations";
 import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, addFloatingText, hasActiveVFX, updateVFX } from "./vfx";
 import { drawBoard, buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startResultBgAnim, stopResultBgAnim, startChainLabel, flashInvalid } from "./rendering";
@@ -17,7 +19,16 @@ function isPlayable(r: number, c: number): boolean {
   return !isHole(r, c) && !isRock(r, c);
 }
 
-function trackClears(clearList: [number, number][]): void {
+// "pattern"ミッションの対象セル集合。パターン形状はステージのmissionに紐づくため、
+// ステージ・ミッション種が変わるたびに導出し直す(盤面サイズは最大でも9x10程度のため
+// 都度計算しても軽い。キャッシュはしない)
+function patternTargetCells(): ReadonlySet<string> | null {
+  const m = G.STAGES![G.currentStage].mission;
+  if (m.type !== "pattern" || !m.patternShape) return null;
+  return targetCellSet(getPatternCells(m.patternShape, G.rows, G.cols));
+}
+
+function trackClears(clearList: [number, number][], cause: ClearCause | ExcludedClearCause): void {
   clearList.forEach(([r, c]) => {
     if (G.board[r][c]) {
       const ci = G.board[r][c]!.color;
@@ -25,6 +36,10 @@ function trackClears(clearList: [number, number][]): void {
       G.totalCleared++;
     }
   });
+  const targets = patternTargetCells();
+  if (targets) {
+    recordClear(G.patternProgress, clearList.map(([r, c]) => ({ r, c })), targets, cause);
+  }
 }
 
 
@@ -47,7 +62,7 @@ async function handleCountdownExplosions(exploded: [number, number][]): Promise<
     }
   }
   const clearList: [number, number][] = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
-  trackClears(clearList);
+  trackClears(clearList, "special_activate");
   G.score += clearList.length * SCORE_PER_PIECE;
   await animateClear(clearList, []);
   clearList.forEach(([r, c]) => { G.board[r][c] = null; });
@@ -99,7 +114,7 @@ export async function activateByTap(r: number, c: number): Promise<void> {
       }
     }
 
-    trackClears(clearList);
+    trackClears(clearList, "special_activate");
     G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
 
     await animateClear(clearList, [{ r, c, type: piece.special, color: piece.color }]);
@@ -251,7 +266,7 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
         });
 
         const clearList: [number, number][] = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
-        trackClears(clearList);
+        trackClears(clearList, "special_activate");
         G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
 
         const comboInfo: SpecialInfo[] = [];
@@ -302,7 +317,7 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
         });
 
         const clearList: [number, number][] = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
-        trackClears(clearList);
+        trackClears(clearList, "special_activate");
         G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
 
         await animateClear(clearList, [{ r: r2, c: c2, type: "big_bomb", color: (p2 || p1).color }]);
@@ -360,7 +375,7 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
           }
         });
 
-        trackClears(clearList);
+        trackClears(clearList, "special_activate");
         G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
 
         await animateClear(clearList, [{ r: rainbowR, c: rainbowC, type: "rainbow", color: targetColor }]);
@@ -406,7 +421,11 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
 //  resolveMatches / resolveBoard
 // ============================================================
 
-export async function resolveMatches(): Promise<void> {
+// cause: このresolveMatches()呼び出しで発生する消去のパターン進捗計上区分。
+// 通常は"match"(プレイヤーのスワップ・アイテム使用に伴うマッチ連鎖)。
+// recoverFromDeadlock()の詰み回復由来の呼び出しだけ"recovery_shuffle"を渡し、
+// 回復で偶然発生したマッチをパターン進捗に計上しないようにする
+export async function resolveMatches(cause: ClearCause | ExcludedClearCause = "match"): Promise<void> {
   let matches: [number, number][] = findAllMatches();
   while (matches.length > 0) {
     G.chainCount++;
@@ -444,7 +463,7 @@ export async function resolveMatches(): Promise<void> {
 
     const clearList: [number, number][] = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
 
-    trackClears(clearList);
+    trackClears(clearList, cause);
     G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
 
     if (!hasSpecialActivation) SFX.clear(G.chainCount);
@@ -516,8 +535,10 @@ async function recoverFromDeadlock(): Promise<void> {
   // 試行が失敗した場合、直前の並べ替え結果に未解決のマッチが残っている可能性がある。
   // resolveBoard()ではなくresolveMatches()を使うことで、tickCountdowns()をこのターン
   // 内で二重に進めてしまう副作用を避けつつ、未解決のマッチが画面に残る事態を防ぐ
-  // （/code-review指摘、2026-08-12。PR #353）
-  await resolveMatches();
+  // （/code-review指摘、2026-08-12。PR #353）。詰み回復由来の未解決マッチはプレイヤーの
+  // 行動によるものではないため、パターン進捗には計上しない（"recovery_shuffle"、
+  // regenerateBoardForDeadlock経由でもどちらも計上対象外なので区別は不要）
+  await resolveMatches("recovery_shuffle");
   SFX.swap();
   drawBoard();
   await sleep(300);
@@ -596,7 +617,7 @@ export async function usePinpoint(r: number, c: number): Promise<void> {
     }
 
     const clearList: [number, number][] = [...cleared].map(v => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
-    trackClears(clearList);
+    trackClears(clearList, "item");
     G.score += clearList.length * SCORE_PER_PIECE;
 
     if (!G.board[r][c]!.special) SFX.bomb();
@@ -698,7 +719,7 @@ async function useColorBomb(colorIndex: number): Promise<void> {
     }
 
     const clearList: [number, number][] = [...cleared].map(v => [Math.floor(v / G.cols), v % G.cols] as [number, number]);
-    trackClears(clearList);
+    trackClears(clearList, "item");
     G.score += clearList.length * SCORE_PER_PIECE;
 
     SFX.rainbow();
@@ -788,6 +809,17 @@ export function updateHUD(): void {
       target = m.count!;
       d.hudMissionProgress.textContent = `${current} / ${target} チェイン`;
       break;
+    case "pattern": {
+      const targets = patternTargetCells();
+      current = targets ? getProgressCount(G.patternProgress, targets) : 0;
+      target = targets ? targets.size : 0;
+      d.hudMissionProgress.textContent = `${current} / ${target} マス`;
+      break;
+    }
+    default: {
+      const _exhaustive: never = m.type;
+      return _exhaustive;
+    }
   }
 
   if (current >= target) {
@@ -848,6 +880,15 @@ export function checkWinLose(): boolean {
     case "chain":
       cleared = G.maxChain >= m.count!;
       break;
+    case "pattern": {
+      const targets = patternTargetCells();
+      cleared = targets ? isPatternComplete(G.patternProgress, targets) : false;
+      break;
+    }
+    default: {
+      const _exhaustive: never = m.type;
+      return _exhaustive;
+    }
   }
 
   if (cleared) {

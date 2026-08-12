@@ -1,5 +1,7 @@
 export type SpecialType = "line_h" | "line_v" | "line_d" | "bomb" | "rainbow" | "countdown";
 
+import type { PatternShape } from "./patternClear";
+
 export type CellStateType = "hole" | "rock" | "ice1" | "ice2" | null;
 
 // 第1章「軌道系」（Stage 501〜、7metch/CLAUDE.mdの「軌道系（オービット）」節・
@@ -26,7 +28,7 @@ export type ComboType =
   | "rainbow_bomb"
   | "board_clear";
 
-export type MissionType = "score" | "clear" | "color" | "special" | "chain";
+export type MissionType = "score" | "clear" | "color" | "special" | "chain" | "pattern";
 
 export interface Piece {
   color: number;
@@ -39,6 +41,8 @@ export interface Mission {
   target?: number;
   count?: number;
   colorIndex?: number;
+  // "pattern"ミッション専用。patternClear.tsのgetPatternCells()に渡す形状
+  patternShape?: PatternShape;
 }
 
 export interface StageFeatures {
@@ -244,6 +248,9 @@ export interface GameState {
   movesLeft: number;
   mission: Mission;
   missionProgress: Record<string, number>;
+  // "pattern"ミッションの累積進捗。セルキー("r,c"、patternClear.tsのcellKey()参照)の集合。
+  // ステージ開始時にリセットする(ui.tsのstartStage()参照)
+  patternProgress: Set<string>;
   saveData: SaveData;
   itemMode: ItemType | null;
   coinsEarned: number;
