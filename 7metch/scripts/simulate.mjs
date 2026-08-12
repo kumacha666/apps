@@ -48,7 +48,7 @@ import {
   damageAdjacentIce, tickCountdowns, isPlayable, inBounds, isIce,
   randomPiece, isHole, isRock, isMatchable,
   isSwapBlockedByOrbit, isActivatingSwap, isComboSpecialSwap, isRainbowPiece,
-  getComboType, TAP_ACTIVATE_SPECIALS,
+  getComboType, TAP_ACTIVATE_SPECIALS, hasAnyLegalMove,
   shuffleWithQualityGate, regenerateBoardForDeadlock,
   SHUFFLE_QUALITY_MAX_ATTEMPTS, BOARD_REGEN_MAX_ATTEMPTS,
 } from "../src/board.ts";
@@ -493,8 +493,15 @@ export function playGame() {
     const moves = findValidMoves();
     if (moves.length === 0) {
       if (G.STAGES[G.currentStage].orbits.length > 0) {
-        if (!recoverFromDeadlockSync()) { deadlockOccurred = true; break; }
+        // recoverFromDeadlockSync()の戻り値(品質基準を満たす並べ替え/盤面作り直しが
+        // 見つかったか)だけで判断しない。全試行が基準を満たせなかった場合でも、
+        // 内部の最後のresolveMatchesSync()が未解決マッチを消去してミッションを
+        // 達成させたり合法手を生んだりする可能性があるため、戻り値に関わらず
+        // 常に実際の状態(ミッション達成・合法手の有無)を再判定してから次を決める
+        // (/code-review指摘、PR #354。game.tsのfinishTurn()と同じ「常に再判定」方針)
+        recoverFromDeadlockSync();
         if (checkMissionComplete()) break;
+        if (!hasAnyLegalMove()) { deadlockOccurred = true; break; }
         continue;
       }
       deadlockOccurred = true;
