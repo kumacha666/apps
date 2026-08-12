@@ -105,20 +105,32 @@ export function randomPiece(numColors: number): Piece {
   return { color: Math.floor(Math.random() * numColors), special: null };
 }
 
-export function countAvailableMoves(): number {
-  let count = 0;
+// 盤面上の「隣接する操作可能セルのペア」を重複なく1回ずつ列挙する共有イテレータ。
+// countAvailableMoves()・findHint()・findActivatingSwapPair()・hasAnyLegalMove()が
+// 同じペア集合を独立に再実装すると定義がずれるため、列挙そのものをここに一本化する。
+// コールバックがtrueを返すとその時点で走査を打ち切る（早期終了したい呼び出し側向け）
+function forEachAdjacentPlayablePair(
+  cb: (r: number, c: number, nr: number, nc: number) => boolean | void
+): void {
   for (let r = 0; r < G.rows; r++) {
     for (let c = 0; c < G.cols; c++) {
       if (!G.board[r][c] || !isPlayable(r, c)) continue;
       const fwd: [number, number][] = [[r, c+1], [r+1, c-1], [r+1, c], [r+1, c+1]];
       for (const [nr, nc] of fwd) {
         if (!inBounds(nr, nc) || !G.board[nr][nc] || !isPlayable(nr, nc)) continue;
-        swapPieces(r, c, nr, nc);
-        if (findAllMatches().length > 0) count++;
-        swapPieces(r, c, nr, nc);
+        if (cb(r, c, nr, nc) === true) return;
       }
     }
   }
+}
+
+export function countAvailableMoves(): number {
+  let count = 0;
+  forEachAdjacentPlayablePair((r, c, nr, nc) => {
+    swapPieces(r, c, nr, nc);
+    if (findAllMatches().length > 0) count++;
+    swapPieces(r, c, nr, nc);
+  });
   return count;
 }
 
@@ -434,6 +446,55 @@ export function findSpecialCreations(matches: [number, number][]): SpecialCreati
 }
 
 // ---------------------------------------------------------------------------
+// 「有効な1手」の共有列挙（通常スワップ・タップ起動・スワップ起動系特殊ピース）
+// findHint()・（将来のPhaseで配線する）合法手0件判定・手動シャッフルの品質基準・
+// シミュレーターが同じ定義を共有すること（GIMMICK_REDESIGN.md「適用範囲」参照）
+// ---------------------------------------------------------------------------
+
+// タップ起動可能な特殊ピース（ダブルタップで起動する、スワップを伴わない手）を1つ探す
+export function findTapActivatableSpecialCell(): CellPos | null {
+  for (let r = 0; r < G.rows; r++) {
+    for (let c = 0; c < G.cols; c++) {
+      const p = G.board[r][c];
+      if (p && p.special && TAP_ACTIVATE_SPECIALS.has(p.special) && isPlayable(r, c)) {
+        return { r, c };
+      }
+    }
+  }
+  return null;
+}
+
+// スワップ起動系特殊ピース（レインボー・特殊ピース同士のコンボ、方向拘束の対象外）による
+// 有効な1手を1組探す
+export function findActivatingSwapPair(): { a: CellPos; b: CellPos } | null {
+  let result: { a: CellPos; b: CellPos } | null = null;
+  forEachAdjacentPlayablePair((r, c, nr, nc) => {
+    if (isActivatingSwap(G.board[r][c], G.board[nr][nc])) {
+      result = { a: { r, c }, b: { r: nr, c: nc } };
+      return true;
+    }
+  });
+  return result;
+}
+
+// 通常スワップ（オービット制約適用後）・タップ起動・スワップ起動系特殊ピースのいずれかが
+// 1つでも存在すれば true。タップ起動・スワップ起動系は判定コストが軽いため先に調べ、
+// 最後にコストの高い通常スワップの当たり判定（スワップ→マッチ判定→スワップ復元）を行う
+export function hasAnyLegalMove(): boolean {
+  if (findTapActivatableSpecialCell()) return true;
+  if (findActivatingSwapPair()) return true;
+  let found = false;
+  forEachAdjacentPlayablePair((r, c, nr, nc) => {
+    if (isSwapBlockedByOrbit(G.board[r][c], G.board[nr][nc], r, c, nr, nc)) return;
+    swapPieces(r, c, nr, nc);
+    const hasMatch = findAllMatches().length > 0;
+    swapPieces(r, c, nr, nc);
+    if (hasMatch) { found = true; return true; }
+  });
+  return found;
+}
+
+// ---------------------------------------------------------------------------
 // Hint system
 // ---------------------------------------------------------------------------
 
@@ -443,70 +504,67 @@ export function findHint(): HintData | null {
   let bestPriority = 0;
   const normalList: HintData[] = [];
 
-  for (let r = 0; r < G.rows; r++) {
-    for (let c = 0; c < G.cols; c++) {
-      if (!G.board[r][c] || !isPlayable(r, c)) continue;
-      const neighbors: [number, number][] = [
-        [r-1,c-1],[r-1,c],[r-1,c+1],
-        [r,c+1],[r+1,c+1],[r+1,c],[r+1,c-1],[r,c-1]
-      ];
-      for (const [nr, nc] of neighbors) {
-        if (!inBounds(nr, nc) || !G.board[nr][nc] || !isPlayable(nr, nc)) continue;
-        if (nr < r || (nr === r && nc < c)) continue;
-        if (isSwapBlockedByOrbit(G.board[r][c], G.board[nr][nc], r, c, nr, nc)) continue;
+  forEachAdjacentPlayablePair((r, c, nr, nc) => {
+    if (isSwapBlockedByOrbit(G.board[r][c], G.board[nr][nc], r, c, nr, nc)) return;
 
-        swapPieces(r, c, nr, nc);
-        const matches = findAllMatches();
-        if (matches.length > 0) {
-          const specials = findSpecialCreations(matches);
-          let hasSpecial = false;
-          for (const sp of specials) {
-            const p = PRIORITY[sp.type] || 0;
-            if (p > 0) {
-              hasSpecial = true;
-              const colorMatches = matches.filter(([mr, mc]) =>
-                G.board[mr][mc] && G.board[mr][mc]!.color === sp.color);
-              const colorSet = new Set(colorMatches.map(([mr, mc]) => mr * G.cols + mc));
-              const pos1in = colorSet.has(r * G.cols + c);
-              const mover: CellPos = pos1in ? { r: nr, c: nc } : { r, c };
-              const swapDest: CellPos = pos1in ? { r, c } : { r: nr, c: nc };
-              const pattern: CellPos[] = colorMatches
-                .filter(([mr, mc]) => !(mr === swapDest.r && mc === swapDest.c))
-                .map(([mr, mc]) => ({ r: mr, c: mc }));
-              if (p > bestPriority) {
-                bestPriority = p;
-                bestList = [{ mover, pattern }];
-              } else if (p === bestPriority) {
-                bestList.push({ mover, pattern });
-              }
-            }
-          }
-          if (!hasSpecial) {
-            const matchSet = new Set(matches.map(([mr, mc]) => mr * G.cols + mc));
-            let targetColor = -1;
-            if (matchSet.has(nr * G.cols + nc) && G.board[nr][nc]) targetColor = G.board[nr][nc]!.color;
-            else if (matchSet.has(r * G.cols + c) && G.board[r][c]) targetColor = G.board[r][c]!.color;
-            if (targetColor >= 0) {
-              const colorMatches = matches.filter(([mr, mc]) =>
-                G.board[mr][mc] && G.board[mr][mc]!.color === targetColor);
-              const colorSet = new Set(colorMatches.map(([mr, mc]) => mr * G.cols + mc));
-              const pos1in = colorSet.has(r * G.cols + c);
-              const mover: CellPos = pos1in ? { r: nr, c: nc } : { r, c };
-              const swapDest: CellPos = pos1in ? { r, c } : { r: nr, c: nc };
-              const pattern: CellPos[] = colorMatches
-                .filter(([mr, mc]) => !(mr === swapDest.r && mc === swapDest.c))
-                .map(([mr, mc]) => ({ r: mr, c: mc }));
-              normalList.push({ mover, pattern });
-            }
+    swapPieces(r, c, nr, nc);
+    const matches = findAllMatches();
+    if (matches.length > 0) {
+      const specials = findSpecialCreations(matches);
+      let hasSpecial = false;
+      for (const sp of specials) {
+        const p = PRIORITY[sp.type] || 0;
+        if (p > 0) {
+          hasSpecial = true;
+          const colorMatches = matches.filter(([mr, mc]) =>
+            G.board[mr][mc] && G.board[mr][mc]!.color === sp.color);
+          const colorSet = new Set(colorMatches.map(([mr, mc]) => mr * G.cols + mc));
+          const pos1in = colorSet.has(r * G.cols + c);
+          const mover: CellPos = pos1in ? { r: nr, c: nc } : { r, c };
+          const swapDest: CellPos = pos1in ? { r, c } : { r: nr, c: nc };
+          const pattern: CellPos[] = colorMatches
+            .filter(([mr, mc]) => !(mr === swapDest.r && mc === swapDest.c))
+            .map(([mr, mc]) => ({ r: mr, c: mc }));
+          if (p > bestPriority) {
+            bestPriority = p;
+            bestList = [{ mover, pattern }];
+          } else if (p === bestPriority) {
+            bestList.push({ mover, pattern });
           }
         }
-        swapPieces(r, c, nr, nc);
+      }
+      if (!hasSpecial) {
+        const matchSet = new Set(matches.map(([mr, mc]) => mr * G.cols + mc));
+        let targetColor = -1;
+        if (matchSet.has(nr * G.cols + nc) && G.board[nr][nc]) targetColor = G.board[nr][nc]!.color;
+        else if (matchSet.has(r * G.cols + c) && G.board[r][c]) targetColor = G.board[r][c]!.color;
+        if (targetColor >= 0) {
+          const colorMatches = matches.filter(([mr, mc]) =>
+            G.board[mr][mc] && G.board[mr][mc]!.color === targetColor);
+          const colorSet = new Set(colorMatches.map(([mr, mc]) => mr * G.cols + mc));
+          const pos1in = colorSet.has(r * G.cols + c);
+          const mover: CellPos = pos1in ? { r: nr, c: nc } : { r, c };
+          const swapDest: CellPos = pos1in ? { r, c } : { r: nr, c: nc };
+          const pattern: CellPos[] = colorMatches
+            .filter(([mr, mc]) => !(mr === swapDest.r && mc === swapDest.c))
+            .map(([mr, mc]) => ({ r: mr, c: mc }));
+          normalList.push({ mover, pattern });
+        }
       }
     }
-  }
+    swapPieces(r, c, nr, nc);
+  });
 
   if (bestList.length > 0) return bestList[Math.floor(Math.random() * bestList.length)];
   if (normalList.length > 0) return normalList[Math.floor(Math.random() * normalList.length)];
+
+  // 通常マッチ成立スワップの候補が無くても、タップ起動・スワップ起動系特殊ピースが
+  // 有効な1手として残っていればそれをヒントにする（4aでは通常スワップのみだった欠落を解消）
+  const tapCell = findTapActivatableSpecialCell();
+  if (tapCell) return { mover: tapCell, pattern: [] };
+  const swapPair = findActivatingSwapPair();
+  if (swapPair) return { mover: swapPair.a, pattern: [swapPair.b] };
+
   return null;
 }
 

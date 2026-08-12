@@ -7,6 +7,7 @@ import {
   inBounds, isAdjacent, TAP_ACTIVATE_SPECIALS,
   findHint, isSwapLegalForCurrentStage, isActivatingSwap,
   isRainbowPiece, isComboSpecialSwap, isSwapBlockedByOrbit,
+  findTapActivatableSpecialCell, findActivatingSwapPair, hasAnyLegalMove,
 } from "./board";
 import type { OrbitCell } from "./types";
 
@@ -556,5 +557,140 @@ describe("findHint とオービット", () => {
     G.STAGES![0].orbits = [{ r: 2, c: 1, dir: [-1, 0] }]; // 実際の進入方向(南)とは不一致、通常なら不可
     const hint = findHint();
     expect(hint).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findTapActivatableSpecialCell / findActivatingSwapPair / hasAnyLegalMove
+// (「有効な1手」の共有列挙)
+// ---------------------------------------------------------------------------
+function fillSafe(): void {
+  // 偶発マッチが起きない埋め草パターン(既存テストで実績のあるmod5パターン)
+  for (let r = 0; r < G.rows; r++)
+    for (let c = 0; c < G.cols; c++)
+      G.board[r][c] = { color: (r * G.cols + c) % 5, special: null };
+}
+
+describe("findTapActivatableSpecialCell", () => {
+  beforeEach(() => setupBoard(7, 7));
+
+  it("タップ起動可能な特殊ピースが無ければnull", () => {
+    fillSafe();
+    expect(findTapActivatableSpecialCell()).toBeNull();
+  });
+
+  it("タップ起動可能な特殊ピース(bomb)があればそのセルを返す", () => {
+    fillSafe();
+    G.board[3][3] = { color: 0, special: "bomb" };
+    expect(findTapActivatableSpecialCell()).toEqual({ r: 3, c: 3 });
+  });
+
+  it("レインボーはタップ起動対象ではないため検出しない", () => {
+    fillSafe();
+    G.board[3][3]!.special = "rainbow"; // 色を変えずspecialだけ変更(fillSafeの偶発マッチ回避を維持)
+    expect(findTapActivatableSpecialCell()).toBeNull();
+  });
+
+  it("穴・岩セル上の特殊ピースは検出しない", () => {
+    fillSafe();
+    G.board[3][3] = { color: 0, special: "bomb" };
+    G.cellState[3][3] = "hole";
+    expect(findTapActivatableSpecialCell()).toBeNull();
+  });
+});
+
+describe("findActivatingSwapPair", () => {
+  beforeEach(() => setupBoard(7, 7));
+
+  it("起動スワップの組がなければnull", () => {
+    fillSafe();
+    expect(findActivatingSwapPair()).toBeNull();
+  });
+
+  it("隣接する特殊ピース同士があればその組を返す", () => {
+    fillSafe();
+    G.board[3][3] = { color: 0, special: "bomb" };
+    G.board[3][4] = { color: 0, special: "line_h" };
+    const pair = findActivatingSwapPair();
+    expect(pair).toEqual({ a: { r: 3, c: 3 }, b: { r: 3, c: 4 } });
+  });
+
+  it("隣接するレインボー×通常ピースがあればその組を返す", () => {
+    fillSafe();
+    G.board[3][3]!.special = "rainbow";
+    const pair = findActivatingSwapPair();
+    expect(pair).not.toBeNull();
+    expect([pair!.a, pair!.b]).toContainEqual({ r: 3, c: 3 });
+  });
+});
+
+describe("hasAnyLegalMove", () => {
+  it("通常マッチ成立スワップがあればtrue", () => {
+    setupBoard(7, 7);
+    fillSafe();
+    G.board[0][0] = { color: 10, special: null };
+    G.board[0][1] = { color: 11, special: null };
+    G.board[0][2] = { color: 10, special: null };
+    G.board[1][1] = { color: 10, special: null };
+    expect(hasAnyLegalMove()).toBe(true);
+  });
+
+  it("通常マッチ成立スワップが1つも無くても、タップ起動可能な特殊ピースがあればtrue", () => {
+    setupBoard(7, 7);
+    fillSafe(); // mod5パターンはどの隣接スワップもマッチを作らないことをNode上で事前検証済み
+    G.board[3][3] = { color: 0, special: "bomb" };
+    expect(hasAnyLegalMove()).toBe(true);
+  });
+
+  it("通常マッチ成立スワップが1つも無くても、スワップ起動系特殊ピース(レインボー)があればtrue", () => {
+    setupBoard(7, 7);
+    fillSafe();
+    G.board[3][3]!.special = "rainbow";
+    expect(hasAnyLegalMove()).toBe(true);
+  });
+
+  it("マッチ成立スワップ・特殊ピースいずれも無ければfalse", () => {
+    setupBoard(7, 7);
+    fillSafe();
+    expect(hasAnyLegalMove()).toBe(false);
+  });
+
+  it("有効な1手が何も無ければfalse", () => {
+    setupBoard(2, 2);
+    G.cellState[0][0] = "hole";
+    G.cellState[0][1] = "hole";
+    G.cellState[1][0] = "hole";
+    // (1,1)だけplayableだが隣接するplayableセルが無いためスワップ不可、特殊ピースも無い
+    expect(hasAnyLegalMove()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findHint の完全性（通常マッチ候補が無い場合のタップ/スワップ起動系フォールバック）
+// ---------------------------------------------------------------------------
+describe("findHint（タップ/スワップ起動系フォールバック）", () => {
+  beforeEach(() => setupBoard(7, 7));
+
+  it("通常マッチ成立スワップが無くても、タップ起動可能な特殊ピースがあればそれをヒントにする", () => {
+    fillSafe();
+    G.board[3][3] = { color: 0, special: "bomb" };
+    const hint = findHint();
+    expect(hint).toEqual({ mover: { r: 3, c: 3 }, pattern: [] });
+  });
+
+  it("通常マッチ成立スワップが無くても、スワップ起動系特殊ピース(レインボー)があればそれをヒントにする", () => {
+    fillSafe();
+    G.board[3][3]!.special = "rainbow";
+    const hint = findHint();
+    expect(hint).not.toBeNull();
+    // 走査順によりmover/patternのどちらがレインボー側になるかは変わりうるため、
+    // レインボーのセル(3,3)がどちらかに含まれていることだけを確認する
+    const cells = [hint!.mover, ...hint!.pattern];
+    expect(cells).toContainEqual({ r: 3, c: 3 });
+  });
+
+  it("通常マッチ・タップ起動・スワップ起動系のいずれも無ければnull", () => {
+    fillSafe();
+    expect(findHint()).toBeNull();
   });
 });
