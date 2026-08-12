@@ -63,6 +63,10 @@ function fillBoardUntilStable(numColors: number): void {
   }
 }
 
+// minMoves/maxMoves判定はcountAvailableMoves()に委譲しているため、第1章「軌道系」
+// (Stage 501〜)のオービット制約はcountAvailableMoves()側の対応だけで自動的に反映される
+// (このループ自体には変更不要。パイロットの固定7x8盤面ではmaxMoves=10になり、
+// GIMMICK_REDESIGN.mdの「オービット制約適用後の合法手数が2〜10の範囲」と一致する)
 export function createBoard(numColors: number): void {
   const maxMoves = Math.max(10, Math.floor(G.rows * G.cols * 0.15));
   const minMoves = 2;
@@ -128,9 +132,15 @@ export function forEachAdjacentPlayablePair(
   }
 }
 
+// 初期盤面生成(createBoard())の品質チェックで使う「合法手数」。第1章「軌道系」
+// (Stage 501〜)のオービット制約を通常スワップの拒否判定として反映する(Stage 1〜500は
+// orbits: []のためisSwapBlockedByOrbitが常にfalseを返し、挙動は一切変わらない)。
+// createBoard()生成直後の盤面には特殊ピースが存在しないため、isSwapBlockedByOrbitの
+// 起動系除外分岐は実質的に無関係で、常にisSwapLegalForCurrentStage相当の判定になる
 export function countAvailableMoves(): number {
   let count = 0;
   forEachAdjacentPlayablePair((r, c, nr, nc) => {
+    if (isSwapBlockedByOrbit(G.board[r][c], G.board[nr][nc], r, c, nr, nc)) return;
     swapPieces(r, c, nr, nc);
     if (findAllMatches().length > 0) count++;
     swapPieces(r, c, nr, nc);

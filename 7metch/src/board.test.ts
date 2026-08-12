@@ -10,6 +10,7 @@ import {
   findTapActivatableSpecialCell, findActivatingSwapPair, hasAnyLegalMove,
   shuffleWithQualityGate, regenerateBoardForDeadlock, cloneBoard,
   SHUFFLE_QUALITY_MAX_ATTEMPTS, BOARD_REGEN_MAX_ATTEMPTS,
+  countAvailableMoves, createBoard, hasSquare,
 } from "./board";
 import type { OrbitCell } from "./types";
 
@@ -771,5 +772,71 @@ describe("regenerateBoardForDeadlock", () => {
   it("操作可能セルが1つしか無い盤面では、何度作り直しても合法手が生まれないためfalseを返す", () => {
     setupBoard(1, 1);
     expect(regenerateBoardForDeadlock(5, 5)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// countAvailableMoves / createBoard（第1章「軌道系」Phase 4d: 盤面品質チェック統合）
+// createBoard()自身はminMoves/maxMovesの判定をcountAvailableMoves()に委譲しているだけ
+// なので、オービット対応はcountAvailableMoves()側だけで完結する(createBoard()に変更は無い)
+// ---------------------------------------------------------------------------
+describe("countAvailableMoves", () => {
+  // 3x3盤面で、(0,1)<->(1,1)のスワップだけが唯一マッチを成立させる配置
+  // (doMoveのオービット拒否テスト・src/game.test.tsと同じ座標関係を再利用)
+  function setupSingleMatchBoard(): void {
+    setupBoard(3, 3);
+    const colors = [
+      [1, 2, 1],
+      [3, 1, 4],
+      [5, 6, 7],
+    ];
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        G.board[r][c] = { color: colors[r][c], special: null };
+      }
+    }
+  }
+
+  it("オービットが無ければ、盤面上のマッチ成立スワップ数をそのまま返す(Stage1〜500は挙動不変)", () => {
+    setupSingleMatchBoard();
+    expect(countAvailableMoves()).toBe(1);
+  });
+
+  it("進入方向と不一致のオービットで唯一の合法手が塞がれると0を返す", () => {
+    setupSingleMatchBoard();
+    G.STAGES = [{ ...G.STAGES![0], orbits: [{ r: 2, c: 1, dir: [-1, 0] }] as OrbitCell[] } as any];
+    expect(countAvailableMoves()).toBe(0);
+  });
+
+  it("進入方向と一致するオービットなら、引き続きカウントされる", () => {
+    setupSingleMatchBoard();
+    G.STAGES = [{ ...G.STAGES![0], orbits: [{ r: 2, c: 1, dir: [1, 0] }] as OrbitCell[] } as any];
+    expect(countAvailableMoves()).toBe(1);
+  });
+
+  it("判定のための一時スワップは必ず元に戻る(オービットで塞がれた手も含めて盤面を変化させない)", () => {
+    setupSingleMatchBoard();
+    G.STAGES = [{ ...G.STAGES![0], orbits: [{ r: 2, c: 1, dir: [-1, 0] }] as OrbitCell[] } as any];
+    const before = G.board.map(row => row.map(p => p!.color));
+    countAvailableMoves();
+    const after = G.board.map(row => row.map(p => p!.color));
+    expect(after).toEqual(before);
+  });
+});
+
+describe("createBoard", () => {
+  it("オービットが無ければ、生成直後に即座マッチ・2x2スクエアの無い盤面になる(Stage1〜500は挙動不変)", () => {
+    setupBoard(7, 7);
+    createBoard(5);
+    expect(findAllMatches().length).toBe(0);
+    expect(hasSquare()).toBe(false);
+  });
+
+  it("オービットがあっても、生成直後に即座マッチ・2x2スクエアの無い盤面になる(品質チェックはcountAvailableMoves()経由でオービット制約を自動的に反映する)", () => {
+    setupBoard(7, 8); // パイロット(Stage 501〜524)の固定盤面サイズ
+    G.STAGES = [{ ...G.STAGES![0], orbits: [{ r: 3, c: 3, dir: [1, 0] }] as OrbitCell[] } as any];
+    createBoard(5);
+    expect(findAllMatches().length).toBe(0);
+    expect(hasSquare()).toBe(false);
   });
 });
