@@ -1,7 +1,9 @@
-import type { Piece, SpecialType, ChainLabel, BgStar, ShootingStar } from "./types";
+import type { Piece, SpecialType, ChainLabel, BgStar, ShootingStar, OrbitCell } from "./types";
 import { G, PIECE_COLORS, PIECE_SHAPES, PIECE_SYMBOLS, ANIM } from "./state";
 import { drawVFX, updateVFX, hasActiveVFX, addScreenShake } from "./vfx";
 import { isHole, isRock, isIce, TAP_ACTIVATE_SPECIALS } from "./board";
+import { inInfluenceArea } from "./orbit";
+import { getPatternCells, cellKey } from "./patternClear";
 
 // --- Chain Label System ---
 
@@ -157,8 +159,87 @@ export function drawIceOverlay(r: number, c: number): void {
   G.ctx!.restore();
 }
 
+// ---------------------------------------------------------------------------
+// 第1章「軌道系」(Stage 501〜) の描画（オービットPhase 5）。Stage 1〜500は
+// orbits: []・mission.type !== "pattern"のため、これらの関数は一切呼ばれず
+// 既存の見た目に影響しない
+// ---------------------------------------------------------------------------
+
+// 影響範囲(オービットセルを中心とした3x3、盤端で欠ける)の境界線。
+// セルを1つずつ見て、隣が影響範囲外(盤外含む)の辺だけを描くことで、
+// 3x3全体の外周だけが縁取られるようにする(内部のマス目線は引かない)
+export function drawOrbitInfluenceZone(ctx: CanvasRenderingContext2D, orbit: OrbitCell): void {
+  ctx.save();
+  ctx.strokeStyle = "rgba(140, 200, 255, 0.55)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let r = orbit.r - 1; r <= orbit.r + 1; r++) {
+    for (let c = orbit.c - 1; c <= orbit.c + 1; c++) {
+      if (r < 0 || r >= G.rows || c < 0 || c >= G.cols) continue;
+      const x = c * G.cellSize, y = r * G.cellSize;
+      if (!inInfluenceArea(orbit, r - 1, c)) { ctx.moveTo(x, y); ctx.lineTo(x + G.cellSize, y); }
+      if (!inInfluenceArea(orbit, r + 1, c)) { ctx.moveTo(x, y + G.cellSize); ctx.lineTo(x + G.cellSize, y + G.cellSize); }
+      if (!inInfluenceArea(orbit, r, c - 1)) { ctx.moveTo(x, y); ctx.lineTo(x, y + G.cellSize); }
+      if (!inInfluenceArea(orbit, r, c + 1)) { ctx.moveTo(x + G.cellSize, y); ctx.lineTo(x + G.cellSize, y + G.cellSize); }
+    }
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+// 重力方向を示す矢印。オービットセル自体(常に何らかのピースが乗っている)の上に
+// 半透明で重ねて描く。ピースを完全に隠さないよう小さめ・半透明にしている
+export function drawOrbitArrow(ctx: CanvasRenderingContext2D, orbit: OrbitCell): void {
+  const cx = orbit.c * G.cellSize + G.cellSize / 2;
+  const cy = orbit.r * G.cellSize + G.cellSize / 2;
+  const [dr, dc] = orbit.dir;
+  const len = G.cellSize * 0.32;
+  const angle = Math.atan2(dr, dc);
+  ctx.save();
+  ctx.globalAlpha = 0.85;
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  ctx.fillStyle = "#7fd4ff";
+  ctx.strokeStyle = "#0a2a40";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(len, 0);
+  ctx.lineTo(-len * 0.5, len * 0.45);
+  ctx.lineTo(-len * 0.2, 0);
+  ctx.lineTo(-len * 0.5, -len * 0.45);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+// パターン消しの対象セルの達成状態オーバーレイ(未達成/達成済み)。常時表示する
+export function drawPatternCellOverlay(ctx: CanvasRenderingContext2D, r: number, c: number, achieved: boolean): void {
+  const x = c * G.cellSize, y = r * G.cellSize;
+  ctx.save();
+  if (achieved) {
+    ctx.strokeStyle = "rgba(120, 255, 180, 0.85)";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x + 2, y + 2, G.cellSize - 4, G.cellSize - 4);
+  } else {
+    ctx.strokeStyle = "rgba(255, 215, 0, 0.55)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(x + 2, y + 2, G.cellSize - 4, G.cellSize - 4);
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
 export function drawBoard(overlay?: (ctx: CanvasRenderingContext2D) => void): void {
   drawBoardBase();
+
+  const stg = G.STAGES?.[G.currentStage];
+  if (stg && stg.orbits.length > 0) {
+    for (const orbit of stg.orbits) {
+      drawOrbitInfluenceZone(G.ctx!, orbit);
+    }
+  }
 
   for (let r = 0; r < G.rows; r++) {
     for (let c = 0; c < G.cols; c++) {
@@ -194,6 +275,19 @@ export function drawBoard(overlay?: (ctx: CanvasRenderingContext2D) => void): vo
         }
         G.ctx!.restore();
       }
+    }
+  }
+
+  if (stg && stg.orbits.length > 0) {
+    for (const orbit of stg.orbits) {
+      drawOrbitArrow(G.ctx!, orbit);
+    }
+  }
+
+  if (stg && stg.mission.type === "pattern") {
+    for (const { r, c } of getPatternCells(stg.mission.patternShape, G.rows, G.cols)) {
+      if (isHole(r, c) || isRock(r, c)) continue;
+      drawPatternCellOverlay(G.ctx!, r, c, G.patternProgress.has(cellKey(r, c)));
     }
   }
 

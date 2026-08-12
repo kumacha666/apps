@@ -4,7 +4,7 @@ import { initAudio, switchBgm, stopAllBgm, applyAudioOptions, SFX } from "./audi
 import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim, stopTitleBgAnim, startResultBgAnim, stopResultBgAnim, startSplashBgAnim, stopSplashBgAnim, drawBoard } from "./rendering";
 import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker, finishTurn } from "./game";
 import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
-import { buildStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText } from "./stages";
+import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText } from "./stages";
 import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
 import { initInput, renderHelpPieceIcons } from "./input";
 
@@ -536,6 +536,13 @@ export function initUI(): void {
 
   document.getElementById("btn-debug-jump")!.addEventListener("click", () => {
     const num = parseInt((document.getElementById("debug-stage-num") as HTMLInputElement).value, 10);
+    // 第1章「軌道系」パイロット(Stage 501〜524)のデバッグプレビュー。buildStages()
+    // (Stage 1〜500)にはまだ追加されていないため、デバッグジャンプでのみ遅延生成して
+    // G.STAGESへ追記する(初回のみ。追記後はnum<=G.STAGES!.lengthとなり再実行されない)。
+    // Stage 501〜524が正式にbuildStages()へ追加されたらこの分岐は自然に使われなくなる
+    if (num > G.STAGES!.length && num <= 524) {
+      G.STAGES!.push(...buildOrbitPilotStages());
+    }
     if (num >= 1 && num <= G.STAGES!.length) {
       G.currentStage = num - 1;
       document.getElementById("debug-panel")!.classList.add("hidden");
