@@ -855,7 +855,7 @@ export function updateHUD(): void {
 // ============================================================
 
 function isFinalStageClear(): boolean {
-  return G.currentStage === G.STAGES!.length - 1;
+  return G.currentStage === G.baseStageCount - 1;
 }
 
 // 戻り値: ステージがクリア/失敗して終了した場合true、まだ継続する場合false
@@ -986,13 +986,13 @@ export function showResult(win: boolean, stars: number, failedMission?: Mission)
     details += `<br><span class="coin-icon"></span> +${G.coinsEarned} コイン（所持: ${G.saveData.coins || 0}）`;
   }
   if (isFinalStage) {
-    details += `<br><span style="color:#ffd700">全${G.STAGES!.length}ステージ制覇、おめでとうございます！</span>`;
+    details += `<br><span style="color:#ffd700">全${G.baseStageCount}ステージ制覇、おめでとうございます！</span>`;
   }
   if (!win && failedMission) {
     details += `<br><span style="color:#4ecdc4">${getFailureProgress(failedMission)}</span>`;
   }
   d.resultDetails.innerHTML = details;
-  d.btnNext.style.display = win && G.currentStage < G.STAGES!.length - 1 ? "" : "none";
+  d.btnNext.style.display = win && G.currentStage < G.baseStageCount - 1 ? "" : "none";
 
   if (!win && (G.debugMode || (G.saveData.coins || 0) >= ITEM_COSTS.addmoves)) {
     d.btnRescue.style.display = "";

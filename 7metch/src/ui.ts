@@ -106,7 +106,9 @@ export function buildStageSelect(): void {
 
   let stopped = false;
 
-  for (let i = 0; i < G.STAGES!.length; i++) {
+  // デバッグジャンプでG.STAGESにStage 501〜524プレビューが追記されていても、
+  // 通常のステージ選択には表示しない(baseStageCountで本編分だけに固定)
+  for (let i = 0; i < G.baseStageCount; i++) {
     if (stopped) break;
 
     const gate = getGateFor(i);
@@ -294,7 +296,7 @@ export function initUI(): void {
     const lastCleared = Object.keys(G.saveData.cleared)
       .map(Number)
       .sort((a: number, b: number) => a - b);
-    let next = lastCleared.length > 0 ? Math.min(lastCleared[lastCleared.length - 1] + 1, G.STAGES!.length - 1) : 0;
+    let next = lastCleared.length > 0 ? Math.min(lastCleared[lastCleared.length - 1] + 1, G.baseStageCount - 1) : 0;
     const gate = getGateFor(next);
     if (gate && getTotalStars() < gate.stars) {
       showGateBlockMessage(gate);
@@ -482,7 +484,7 @@ export function initUI(): void {
 
   document.getElementById("btn-next")!.addEventListener("click", () => {
     const next = G.currentStage + 1;
-    if (next >= G.STAGES!.length) {
+    if (next >= G.baseStageCount) {
       buildStageSelect();
       showScreen("stageSelect");
       return;

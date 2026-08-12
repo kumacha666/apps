@@ -59,6 +59,7 @@ function setupGame(rows = 7, cols = 7): void {
   G.activeChainLabel = null;
   G.debugMode = false;
   G.STAGES = [makeStage()];
+  G.baseStageCount = G.STAGES.length;
   G.dom = makeDom();
   G.saveData = { cleared: {}, bestStars: {}, coins: 100 };
   G.boardPixelW = 336;
@@ -491,6 +492,7 @@ describe("showResult", () => {
 
   it("最終ステージ以外のクリアでは通常のタイトルを表示", () => {
     G.STAGES = [makeStage(), makeStage()];
+    G.baseStageCount = G.STAGES.length;
     G.currentStage = 0;
     showResult(true, 3);
     expect(G.dom!.resultTitle.textContent).toBe("クリア！");
@@ -499,6 +501,7 @@ describe("showResult", () => {
 
   it("最終ステージのクリアでは全ステージ制覇メッセージを表示", () => {
     G.STAGES = [makeStage(), makeStage()];
+    G.baseStageCount = G.STAGES.length;
     G.currentStage = 1;
     showResult(true, 3);
     expect(G.dom!.resultTitle.textContent).toBe("🎉 全ステージ制覇！ 🎉");
@@ -508,10 +511,34 @@ describe("showResult", () => {
 
   it("最終ステージでも敗北時は制覇メッセージを表示しない", () => {
     G.STAGES = [makeStage(), makeStage()];
+    G.baseStageCount = G.STAGES.length;
     G.currentStage = 1;
     showResult(false, 0, { type: "clear", count: 10 });
     expect(G.dom!.resultTitle.textContent).toBe("あと少し…");
     expect(G.dom!.resultDetails.innerHTML).not.toContain("制覇");
+  });
+
+  // デバッグジャンプ(ui.tsのbtn-debug-jumpハンドラ)がオービットパイロットプレビュー用に
+  // G.STAGESを追記した後も残りセッション中ずっと本編クリア判定が壊れないことの回帰テスト
+  // (/code-review指摘、G.baseStageCountを本編の最終ステージ判定の基準にする修正)
+  it("G.STAGESがbaseStageCountより長くなっていても、本編最終ステージのクリアは全ステージ制覇として扱う", () => {
+    G.STAGES = [makeStage(), makeStage(), makeStage()]; // デバッグジャンプでパイロット分が追記された想定
+    G.baseStageCount = 2; // 本編の実ステージ数
+    G.currentStage = 1; // 本編の最終ステージ(index 1)
+    showResult(true, 3);
+    expect(G.dom!.resultTitle.textContent).toBe("🎉 全ステージ制覇！ 🎉");
+    expect(G.dom!.resultDetails.innerHTML).toContain("制覇");
+    expect(G.dom!.btnNext.style.display).toBe("none");
+  });
+
+  it("G.STAGESがbaseStageCountより長くなっていても、本編最終ステージより手前のクリアではnextボタンを表示する", () => {
+    G.STAGES = [makeStage(), makeStage(), makeStage()];
+    G.baseStageCount = 2;
+    G.currentStage = 0; // 本編の最初のステージ(まだ最終ではない)
+    showResult(true, 3);
+    expect(G.dom!.resultTitle.textContent).toBe("クリア！");
+    expect(G.dom!.resultDetails.innerHTML).not.toContain("制覇");
+    expect(G.dom!.btnNext.style.display).toBe("");
   });
 });
 

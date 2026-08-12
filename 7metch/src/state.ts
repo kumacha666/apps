@@ -153,6 +153,7 @@ export const G: GameState = {
   shakeY: 0,
   shakeIntensity: 0,
   STAGES: null,
+  baseStageCount: 0,
   screens: null,
   dom: null,
 };
