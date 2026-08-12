@@ -192,6 +192,7 @@ export function startStage(index: number): void {
   G.chainCount = 0;
   G.specialsCreated = 0;
   G.maxChain = 0;
+  G.patternProgress = new Set();
   G.selected = null;
   G.animating = false;
   G.vfxParticles = []; G.vfxShockwaves = []; G.vfxFlashes = []; G.vfxComets = []; G.vfxTexts = []; G.shakeX = G.shakeY = G.shakeIntensity = 0;

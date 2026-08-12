@@ -95,6 +95,7 @@ export const G: GameState = {
   movesLeft: 0,
   mission: {} as GameState["mission"],
   missionProgress: {},
+  patternProgress: new Set(),
   saveData: loadSave(),
   itemMode: null,
   coinsEarned: 0,

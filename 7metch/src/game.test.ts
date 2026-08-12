@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Piece, StageConfig, Mission, GameDom, OrbitCell } from "./types";
 import { G, SCORE_PER_PIECE, ITEM_COSTS } from "./state";
-import { doMove, activateByTap, activateCombo, checkWinLose, updateHUD, resolveMatches, showResult, useShuffle, finishTurn } from "./game";
+import { doMove, activateByTap, activateCombo, checkWinLose, updateHUD, resolveMatches, showResult, useShuffle, finishTurn, usePinpoint, getFailureProgress } from "./game";
 import { hasAnyLegalMove, findAllMatches } from "./board";
+import { getPatternCells, targetCellSet } from "./patternClear";
 
 const storage: Record<string, string> = {};
 vi.stubGlobal("localStorage", {
@@ -48,6 +49,7 @@ function setupGame(rows = 7, cols = 7): void {
   G.chainCount = 0;
   G.specialsCreated = 0;
   G.maxChain = 0;
+  G.patternProgress = new Set();
   G.lastSwapTarget = null;
   G.currentStage = 0;
   G.coinsEarned = 0;
@@ -449,6 +451,24 @@ describe("checkWinLose", () => {
     G.movesLeft = 5;
     expect(checkWinLose()).toBe(false);
   });
+
+  // pattern ミッション（第1章「軌道系」Stage 501〜専用、Phase 4c: patternProgressの配線）
+  it("patternミッション: 対象セルが全て消去済みならクリア", () => {
+    G.STAGES = [makeStage({ mission: { type: "pattern", patternShape: "corners" } })];
+    const targets = targetCellSet(getPatternCells("corners", G.rows, G.cols));
+    G.patternProgress = new Set(targets);
+    G.movesLeft = 5;
+    checkWinLose();
+    expect(G.saveData.cleared[0]).toBe(true);
+  });
+
+  it("patternミッション: 対象セルが一部でも未消去ならクリアしない", () => {
+    G.STAGES = [makeStage({ mission: { type: "pattern", patternShape: "corners" } })];
+    const targets = [...targetCellSet(getPatternCells("corners", G.rows, G.cols))];
+    G.patternProgress = new Set(targets.slice(0, targets.length - 1)); // 1マスだけ未消去
+    G.movesLeft = 5;
+    expect(checkWinLose()).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -519,6 +539,57 @@ describe("updateHUD", () => {
     G.movesLeft = 12;
     updateHUD();
     expect(G.dom!.hudMoves.textContent).toBe("のこり 12 手");
+  });
+
+  it("patternミッションの進捗を表示", () => {
+    G.STAGES = [makeStage({ mission: { type: "pattern", patternShape: "corners" } })];
+    const targets = [...targetCellSet(getPatternCells("corners", G.rows, G.cols))];
+    G.patternProgress = new Set(targets.slice(0, 5));
+    updateHUD();
+    expect(G.dom!.hudMissionProgress.textContent).toBe(`5 / ${targets.length} マス`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getFailureProgress（手数切れ失敗時の結果画面に表示する残り進捗文言）
+// 元々どのミッション種のテストも存在していなかった上、"pattern"のcaseが丸ごと
+// 抜けており、パターンミッションで手数切れになると空文字を返していた
+// （/code-review指摘、PR #355）
+// ---------------------------------------------------------------------------
+describe("getFailureProgress", () => {
+  beforeEach(() => setupGame());
+
+  it("scoreミッション: 残りスコアを表示", () => {
+    G.score = 60;
+    expect(getFailureProgress({ type: "score", target: 100 })).toBe("スコア 60 / 100（あと40）");
+  });
+
+  it("clearミッション: 残り消去数を表示", () => {
+    G.totalCleared = 4;
+    expect(getFailureProgress({ type: "clear", count: 10 })).toBe("消去 4 / 10（あと6個）");
+  });
+
+  it("colorミッション: 指定色の残り消去数を表示", () => {
+    G.colorCleared[2] = 3;
+    expect(getFailureProgress({ type: "color", colorIndex: 2, count: 8 })).toContain("3 / 8（あと5個）");
+  });
+
+  it("specialミッション: 残り特殊ピース作成数を表示", () => {
+    G.specialsCreated = 1;
+    expect(getFailureProgress({ type: "special", count: 4 })).toBe("特殊ピース 1 / 4（あと3個）");
+  });
+
+  it("chainミッション: 最大チェイン数を表示", () => {
+    G.maxChain = 2;
+    expect(getFailureProgress({ type: "chain", count: 5 })).toBe("最大チェイン 2 / 5");
+  });
+
+  it("patternミッション: 残りマス数を表示(以前は空文字を返していた欠落分)", () => {
+    G.STAGES = [makeStage({ mission: { type: "pattern", patternShape: "corners" } })];
+    const targets = [...targetCellSet(getPatternCells("corners", G.rows, G.cols))];
+    G.patternProgress = new Set(targets.slice(0, 5));
+    const result = getFailureProgress({ type: "pattern", patternShape: "corners" });
+    expect(result).toBe(`パターン 5 / ${targets.length}マス（あと${targets.length - 5}マス）`);
   });
 });
 
@@ -631,5 +702,83 @@ describe("useShuffle", () => {
     expect(G.saveData.coins).toBe(coinsBefore); // コスト不消費
     expect(G.board[0][0]!.color).toBe(colorBefore); // 盤面も変更されない
     expect(G.animating).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// パターン進捗の計上（第1章「軌道系」Phase 4c: patternProgressの配線）
+// trackClears()/resolveMatches()が消去の発生原因(cause)を正しくpatternClear.tsの
+// recordClear()へ渡していることを、実際のゲーム操作経由で検証する。cause自体の
+// 計上/除外ロジックの正しさはpatternClear.test.tsで既に検証済みのため、ここでは
+// 「game.ts側の各呼び出し箇所が正しいcauseを渡しているか」の配線のみを対象にする
+// ---------------------------------------------------------------------------
+describe("パターン進捗の計上 (patternProgress)", () => {
+  beforeEach(() => {
+    setupGame();
+    vi.stubGlobal("document", { querySelectorAll: () => [] });
+  });
+
+  afterEach(() => {
+    vi.stubGlobal("document", undefined);
+  });
+
+  it("doMove()での通常マッチはパターン進捗に計上される(cause: match)", async () => {
+    G.STAGES = [makeStage({ mission: { type: "pattern", patternShape: "perimeter" } })];
+    // 「有効なマッチでスコアが増加し」テストと同じ盤面。(0,1)<->(1,1)スワップで
+    // 行0([0,0][0,1][0,2])が横3マッチになり、これらは全て外周(perimeter)の対象セル
+    G.board[0][0] = { color: 1, special: null };
+    G.board[0][1] = { color: 2, special: null };
+    G.board[0][2] = { color: 1, special: null };
+    G.board[1][0] = { color: 3, special: null };
+    G.board[1][1] = { color: 1, special: null };
+    G.board[1][2] = { color: 4, special: null };
+
+    await doMove(0, 1, 1, 1);
+
+    expect(G.patternProgress.has("0,0")).toBe(true);
+    expect(G.patternProgress.has("0,1")).toBe(true);
+    expect(G.patternProgress.has("0,2")).toBe(true);
+  });
+
+  it("activateByTap()でのタップ起動はパターン進捗に計上される(cause: special_activate)", async () => {
+    G.STAGES = [makeStage({ mission: { type: "pattern", patternShape: "perimeter" } })];
+    G.board[0][0] = { color: 0, special: "bomb" }; // (0,0)は外周(perimeter)の対象セル
+    await activateByTap(0, 0);
+    expect(G.patternProgress.has("0,0")).toBe(true);
+  });
+
+  it("usePinpoint()による消去はパターン進捗に計上される(cause: item)", async () => {
+    G.STAGES = [makeStage({ mission: { type: "pattern", patternShape: "perimeter" } })];
+    const coinsBefore = G.saveData.coins;
+    await usePinpoint(0, 0); // (0,0)は外周(perimeter)の対象セル
+    expect(G.saveData.coins).toBeLessThan(coinsBefore); // 前提: アイテムが実際に消費された
+    expect(G.patternProgress.has("0,0")).toBe(true);
+  });
+
+  it("resolveMatches()はデフォルトでcause: matchとして計上する", async () => {
+    G.STAGES = [makeStage({ mission: { type: "pattern", patternShape: "perimeter" } })];
+    G.board[0][0] = { color: 1, special: null };
+    G.board[0][1] = { color: 1, special: null };
+    G.board[0][2] = { color: 1, special: null };
+    expect(findAllMatches().length).toBeGreaterThan(0); // 前提: 呼び出し前から既にマッチ済み
+
+    await resolveMatches();
+
+    expect(G.patternProgress.has("0,0")).toBe(true);
+    expect(G.patternProgress.has("0,1")).toBe(true);
+    expect(G.patternProgress.has("0,2")).toBe(true);
+  });
+
+  it("resolveMatches(\"recovery_shuffle\")は詰み回復由来のため、マッチは解決してもパターン進捗には計上しない(recoverFromDeadlock()が実際に使う呼び出し方)", async () => {
+    G.STAGES = [makeStage({ mission: { type: "pattern", patternShape: "perimeter" } })];
+    G.board[0][0] = { color: 1, special: null };
+    G.board[0][1] = { color: 1, special: null };
+    G.board[0][2] = { color: 1, special: null };
+    expect(findAllMatches().length).toBeGreaterThan(0); // 前提: 呼び出し前から既にマッチ済み
+
+    await resolveMatches("recovery_shuffle");
+
+    expect(findAllMatches().length).toBe(0); // マッチ自体は通常通り解決される
+    expect(G.patternProgress.size).toBe(0); // が、パターン進捗には計上されない
   });
 });

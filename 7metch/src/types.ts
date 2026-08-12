@@ -1,5 +1,7 @@
 export type SpecialType = "line_h" | "line_v" | "line_d" | "bomb" | "rainbow" | "countdown";
 
+import type { PatternShape } from "./patternClear";
+
 export type CellStateType = "hole" | "rock" | "ice1" | "ice2" | null;
 
 // 第1章「軌道系」（Stage 501〜、7metch/CLAUDE.mdの「軌道系（オービット）」節・
@@ -26,20 +28,26 @@ export type ComboType =
   | "rainbow_bomb"
   | "board_clear";
 
-export type MissionType = "score" | "clear" | "color" | "special" | "chain";
-
 export interface Piece {
   color: number;
   special: SpecialType | null;
   countdown?: number;
 }
 
-export interface Mission {
-  type: MissionType;
-  target?: number;
-  count?: number;
-  colorIndex?: number;
-}
+// 判別可能なunion(discriminated union)。typeごとに必須フィールドが異なるため、
+// 各バリアントの必須プロパティを型で強制する(例: "pattern"はpatternShapeが無いと
+// コンパイルエラーになる。旧: 全フィールドが任意のフラットな1つのinterfaceだった
+// ため、patternShapeを設定し忘れてもコンパイルが通ってしまっていた。/code-review指摘、
+// PR #355)
+export type Mission =
+  | { type: "score"; target: number }
+  | { type: "clear"; count: number }
+  | { type: "color"; colorIndex: number; count: number }
+  | { type: "special"; count: number }
+  | { type: "chain"; count: number }
+  | { type: "pattern"; patternShape: PatternShape };
+
+export type MissionType = Mission["type"];
 
 export interface StageFeatures {
   diagonalLine?: boolean;
@@ -244,6 +252,9 @@ export interface GameState {
   movesLeft: number;
   mission: Mission;
   missionProgress: Record<string, number>;
+  // "pattern"ミッションの累積進捗。セルキー("r,c"、patternClear.tsのcellKey()参照)の集合。
+  // ステージ開始時にリセットする(ui.tsのstartStage()参照)
+  patternProgress: Set<string>;
   saveData: SaveData;
   itemMode: ItemType | null;
   coinsEarned: number;

@@ -1,5 +1,15 @@
 import type { StageConfig, Mission, StageFeatures, StarGate, CellStateType } from "./types";
+import type { PatternShape } from "./patternClear";
 import { G, STAR_GATES, PIECE_COLORS, PIECE_NAMES_JA } from "./state";
+
+// "pattern"ミッションの表示用ラベル。第1章「軌道系」Stage 501〜専用
+// (buildStages()自体はStage 1〜500のみを生成するため、現時点ではまだ到達しない)
+const PATTERN_SHAPE_JA: Record<PatternShape, string> = {
+  perimeter: "外周",
+  cross: "十字",
+  diagonal: "対角線",
+  corners: "四隅",
+};
 
 export function getTotalStars(): number {
   return Object.values(G.saveData.bestStars).reduce((sum, s) => sum + s, 0);
@@ -172,7 +182,11 @@ export function getMissionText(m: Mission, html?: boolean): string {
       return `${PIECE_NAMES_JA[m.colorIndex!]}を${m.count}個けそう`;
     case "special": return `特殊ピースを${m.count}個つくろう`;
     case "chain": return `${m.count}チェインしよう`;
-    default: return "";
+    case "pattern": return `${PATTERN_SHAPE_JA[m.patternShape]}のマスを全部けそう`;
+    default: {
+      const _exhaustive: never = m;
+      return _exhaustive;
+    }
   }
 }
 
