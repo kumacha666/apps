@@ -45,14 +45,18 @@ const { G, MATCH_MIN, SCORE_PER_PIECE } = await import("../src/state.ts");
 import {
   createBoard, initCellState, findAllMatches, findSpecialCreations,
   activateSpecial, applyGravityData, swapPieces, countAvailableMoves,
-  damageAdjacentIce, tickCountdowns, isPlayable, inBounds, isIce,
+  damageAdjacentIce, tickCountdowns, isPlayable, isIce,
   randomPiece, isHole, isRock, isMatchable,
   isSwapBlockedByOrbit, isActivatingSwap, isComboSpecialSwap, isRainbowPiece,
   getComboType, TAP_ACTIVATE_SPECIALS, hasAnyLegalMove,
   shuffleWithQualityGate, regenerateBoardForDeadlock,
   SHUFFLE_QUALITY_MAX_ATTEMPTS, BOARD_REGEN_MAX_ATTEMPTS,
+  forEachAdjacentPlayablePair,
 } from "../src/board.ts";
 import { buildStages } from "../src/stages.ts";
+// game.tsのactivateCombo()は既にexport済み・純粋関数（DOM/SFX/awaitなし、G.boardのみ操作）
+// なので独自の同期移植を作らず直接importする（/code-review指摘、PR #354）
+import { activateCombo } from "../src/game.ts";
 
 // --- Game simulation ---
 export function initGameState(stageIndex) {
@@ -189,102 +193,36 @@ export function findValidMoves() {
     }
   }
 
-  for (let r = 0; r < G.rows; r++) {
-    for (let c = 0; c < G.cols; c++) {
-      if (!G.board[r][c] || !isPlayable(r, c)) continue;
-      const neighbors = [
-        [r-1,c-1],[r-1,c],[r-1,c+1],
-        [r,c+1],[r+1,c+1],[r+1,c],[r+1,c-1],[r,c-1]
-      ];
-      for (const [nr, nc] of neighbors) {
-        if (!inBounds(nr, nc) || !G.board[nr][nc] || !isPlayable(nr, nc)) continue;
-        if (nr < r || (nr === r && nc < c)) continue;
-        const p1 = G.board[r][c];
-        const p2 = G.board[nr][nc];
-        if (isActivatingSwap(p1, p2)) {
-          moves.push({ type: "swap", r1: r, c1: c, r2: nr, c2: nc });
-          continue;
-        }
-        if (isSwapBlockedByOrbit(p1, p2, r, c, nr, nc)) continue;
-        swapPieces(r, c, nr, nc);
-        const matches = findAllMatches();
-        swapPieces(r, c, nr, nc);
-        if (matches.length > 0) {
-          moves.push({ type: "swap", r1: r, c1: c, r2: nr, c2: nc });
-        }
-      }
+  // 隣接ペアの列挙はboard.tsのhasAnyLegalMove()と同じ共有イテレータを使う
+  // （独自の8方向ループを持つと定義がずれる、/code-review指摘・PR #354）
+  forEachAdjacentPlayablePair((r, c, nr, nc) => {
+    const p1 = G.board[r][c];
+    const p2 = G.board[nr][nc];
+    if (isActivatingSwap(p1, p2)) {
+      moves.push({ type: "swap", r1: r, c1: c, r2: nr, c2: nc });
+      return;
     }
-  }
+    if (isSwapBlockedByOrbit(p1, p2, r, c, nr, nc)) return;
+    swapPieces(r, c, nr, nc);
+    const matches = findAllMatches();
+    swapPieces(r, c, nr, nc);
+    if (matches.length > 0) {
+      moves.push({ type: "swap", r1: r, c1: c, r2: nr, c2: nc });
+    }
+  });
   return moves;
 }
 
-// game.tsのactivateCombo()の同期移植（アニメーション・SFX無し）。純粋にG.boardと
-// 隣接セル列挙だけに依存するロジックのため、実装は元と同一に保つ（挙動を分岐させない）
-function activateComboSync(comboType, r, c, p1, p2) {
-  const extra = [];
-
-  switch (comboType) {
-    case "cross":
-      for (let cc = 0; cc < G.cols; cc++) if (G.board[r][cc] && isPlayable(r, cc)) extra.push([r, cc]);
-      for (let rr = 0; rr < G.rows; rr++) if (G.board[rr][c] && isPlayable(rr, c)) extra.push([rr, c]);
-      break;
-    case "star_cross":
-      for (let cc = 0; cc < G.cols; cc++) if (G.board[r][cc] && isPlayable(r, cc)) extra.push([r, cc]);
-      for (let rr = 0; rr < G.rows; rr++) if (G.board[rr][c] && isPlayable(rr, c)) extra.push([rr, c]);
-      for (let d = -Math.max(G.rows, G.cols); d <= Math.max(G.rows, G.cols); d++) {
-        const r1 = r + d, c1 = c + d;
-        if (inBounds(r1, c1) && G.board[r1][c1] && isPlayable(r1, c1)) extra.push([r1, c1]);
-        const r2 = r + d, c2 = c - d;
-        if (inBounds(r2, c2) && G.board[r2][c2] && isPlayable(r2, c2)) extra.push([r2, c2]);
-      }
-      break;
-    case "triple_line": {
-      for (let d = -1; d <= 1; d++) {
-        for (let cc = 0; cc < G.cols; cc++) {
-          if (inBounds(r + d, cc) && G.board[r + d][cc] && isPlayable(r + d, cc)) extra.push([r + d, cc]);
-        }
-        for (let rr = 0; rr < G.rows; rr++) {
-          if (inBounds(rr, c + d) && G.board[rr][c + d] && isPlayable(rr, c + d)) extra.push([rr, c + d]);
-        }
-      }
-      break;
-    }
-    case "big_bomb":
-      for (let dr = -3; dr <= 3; dr++) {
-        for (let dc = -3; dc <= 3; dc++) {
-          if (inBounds(r + dr, c + dc) && G.board[r + dr][c + dc] && isPlayable(r + dr, c + dc)) {
-            extra.push([r + dr, c + dc]);
-          }
-        }
-      }
-      break;
-    case "rainbow_line":
-    case "rainbow_bomb": {
-      const other = p1.special === "rainbow" ? p2 : p1;
-      const targetColor = other.color;
-      const spType = comboType === "rainbow_line" ? "line_h" : "bomb";
-      for (let rr = 0; rr < G.rows; rr++) {
-        for (let cc = 0; cc < G.cols; cc++) {
-          if (G.board[rr][cc] && G.board[rr][cc].color === targetColor && isPlayable(rr, cc)) {
-            G.board[rr][cc].special = spType;
-            extra.push([rr, cc]);
-          }
-        }
-      }
-      break;
-    }
-    case "board_clear":
-      for (let rr = 0; rr < G.rows; rr++) {
-        for (let cc = 0; cc < G.cols; cc++) {
-          if (G.board[rr][cc] && isPlayable(rr, cc)) extra.push([rr, cc]);
-        }
-      }
-      break;
-  }
-
-  const unique = new Map();
-  extra.forEach(([er, ec]) => unique.set(er * G.cols + ec, [er, ec]));
-  return [...unique.values()];
+// クリア確定処理（消去数トラッキング・スコア加算・盤面からの除去・氷ダメージ・重力・
+// 連鎖解決）。tapActivateSyncとdoMoveSyncの3分岐（コンボ・カウントダウン・レインボー）
+// で共通のため1箇所にまとめる（/code-review指摘、PR #354）
+function finalizeClears(clearList) {
+  trackClears(clearList);
+  G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
+  clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
+  damageAdjacentIce(clearList);
+  applyGravityData();
+  resolveBoardSync();
 }
 
 // game.tsのactivateByTap()の同期移植（アニメーション・SFX・track無し）
@@ -311,15 +249,10 @@ export function tapActivateSync(r, c) {
     }
   }
 
-  trackClears(clearList);
-  G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
-  clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
-  damageAdjacentIce(clearList);
-  applyGravityData();
-  resolveBoardSync();
+  finalizeClears(clearList);
 }
 
-// game.tsのdoMove()の同期移植（アニメーション・SFX・track無し）。findValidMoves()が
+// game.tsのdoMove()の同期移植(アニメーション・SFX・track無し)。findValidMoves()が
 // 既に「有効な1手」であることを検証した上で呼ばれる前提だが、doMove()と同じ分岐構造
 // （特殊ピース同士のコンボ→カウントダウン連動→レインボー×通常→通常マッチ）を保つことで
 // 判定のズレを避ける
@@ -338,7 +271,7 @@ export function doMoveSync(r1, c1, r2, c2) {
       G.movesLeft--;
       G.chainCount = 1;
 
-      const comboCells = activateComboSync(comboType, r2, c2, p1, p2);
+      const comboCells = activateCombo(comboType, r2, c2, p1, p2);
       comboCells.push([r1, c1], [r2, c2]);
 
       const cleared = new Set(comboCells.map(([cr, cc]) => cr * G.cols + cc));
@@ -352,12 +285,7 @@ export function doMoveSync(r1, c1, r2, c2) {
       });
 
       const clearList = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols]);
-      trackClears(clearList);
-      G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
-      clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
-      damageAdjacentIce(clearList);
-      applyGravityData();
-      resolveBoardSync();
+      finalizeClears(clearList);
       return;
     }
 
@@ -382,12 +310,7 @@ export function doMoveSync(r1, c1, r2, c2) {
       });
 
       const clearList = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols]);
-      trackClears(clearList);
-      G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
-      clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
-      damageAdjacentIce(clearList);
-      applyGravityData();
-      resolveBoardSync();
+      finalizeClears(clearList);
       return;
     }
   }
@@ -422,12 +345,7 @@ export function doMoveSync(r1, c1, r2, c2) {
         }
       });
 
-      trackClears(clearList);
-      G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
-      clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
-      damageAdjacentIce(clearList);
-      applyGravityData();
-      resolveBoardSync();
+      finalizeClears(clearList);
       return;
     }
   }

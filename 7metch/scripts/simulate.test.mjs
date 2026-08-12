@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { G } from "../src/state.ts";
+import * as boardModule from "../src/board.ts";
 import { findAllMatches, hasAnyLegalMove } from "../src/board.ts";
 import {
   findValidMoves, tapActivateSync, doMoveSync, recoverFromDeadlockSync, playGame,
@@ -116,6 +117,33 @@ describe("doMoveSync", () => {
     doMoveSync(2, 2, 2, 3);
     expect(G.movesLeft).toBe(before - 1);
     expect(G.score).toBeGreaterThan(0);
+  });
+
+  it("カウントダウンボム+他の特殊ピースのスワップは独立起動(コンボ倍加なし)し、movesLeftを1減らしscoreを増やす", () => {
+    setupSim(5, 5);
+    G.board[2][2] = { color: 0, special: "countdown", countdown: 8 };
+    G.board[2][3] = { color: 1, special: "bomb" };
+    const before = G.movesLeft;
+    doMoveSync(2, 2, 2, 3);
+    expect(G.movesLeft).toBe(before - 1);
+    expect(G.score).toBeGreaterThan(0);
+  });
+
+  it("カウントダウンボム+他の特殊ピースのスワップは両方のセルでactivateSpecialを起動する(片方だけ起動する取り違えを検出)", () => {
+    // 重力による補充後のカスケードはMath.random依存で非決定的なため、totalCleared等の
+    // 集計値ではなく、activateSpecial()の呼び出し引数そのものを検証する
+    setupSim(7, 7);
+    G.board[3][1] = { color: 0, special: "countdown", countdown: 8 };
+    G.board[3][2] = { color: 1, special: "bomb" };
+    const spy = vi.spyOn(boardModule, "activateSpecial");
+    try {
+      doMoveSync(3, 1, 3, 2);
+      const calledCells = spy.mock.calls.map(([r, c]) => `${r},${c}`);
+      expect(calledCells).toContain("3,1");
+      expect(calledCells).toContain("3,2");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("レインボー×通常ピースのスワップでmovesLeftを1減らしscoreを増やす", () => {
