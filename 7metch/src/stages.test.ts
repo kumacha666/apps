@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { G, PIECE_COLORS, PIECE_NAMES_JA } from "./state";
-import { getMissionText, buildStages, boardSizeForStage, isStageUnlocked, getTotalStars } from "./stages";
+import { getMissionText, buildStages, buildOrbitPilotStages, boardSizeForStage, isStageUnlocked, getTotalStars } from "./stages";
+import { hasEntrySource, orbitsHaveRequiredGap } from "./orbit";
 import type { Mission, StageConfig } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -223,9 +224,122 @@ describe("boardSizeForStage", () => {
     expect(boardSizeForStage(249)).toEqual({ cols: 8, rows: 9 });
   });
 
-  it("ステージ250+: 9x10", () => {
+  it("ステージ250-499: 9x10", () => {
     expect(boardSizeForStage(250)).toEqual({ cols: 9, rows: 10 });
     expect(boardSizeForStage(499)).toEqual({ cols: 9, rows: 10 });
+  });
+
+  // 第1章「軌道系」パイロット(Stage 501〜524、内部インデックス500〜523)は
+  // Stage 1〜500のサイズ拡大傾向を引き継がず、固定7x8で作り直す
+  it("ステージ500-523(第1章パイロット): 固定7x8", () => {
+    for (let i = 500; i < 524; i++) {
+      expect(boardSizeForStage(i)).toEqual({ cols: 7, rows: 8 });
+    }
+  });
+
+  it("ステージ524+(Stage 525以降、未定): 暫定的に9x10を返す", () => {
+    expect(boardSizeForStage(524)).toEqual({ cols: 9, rows: 10 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildOrbitPilotStages — 第1章「軌道系」パイロット(Stage 501〜524)、オービットPhase 4e
+// この関数はまだbuildStages()から呼ばれていない(Phase 5・6完成後にまとめて有効化する
+// 計画、7metch/CLAUDE.md参照)ため、buildStages()の500ステージには影響しない
+// ---------------------------------------------------------------------------
+describe("buildOrbitPilotStages", () => {
+  let stages: StageConfig[];
+
+  beforeEach(() => {
+    stages = buildOrbitPilotStages();
+  });
+
+  it("24ステージ(Stage 501〜524)生成される", () => {
+    expect(stages.length).toBe(24);
+  });
+
+  it("ステージ名がStage 501〜524と一致する", () => {
+    stages.forEach((stg, idx) => {
+      expect(stg.name).toBe(`${501 + idx}`);
+    });
+  });
+
+  it("盤面サイズは全ステージ固定7x8", () => {
+    for (const stg of stages) {
+      expect(stg.boardCols).toBe(7);
+      expect(stg.boardRows).toBe(8);
+    }
+  });
+
+  it("氷・岩・カウントダウンボム・穴は一切出現しない(既存ギミックとの組み合わせ検証は別課題として意図的に除外)", () => {
+    for (const stg of stages) {
+      expect(stg.iceCells).toBe(0);
+      expect(stg.rockCells).toBe(0);
+      expect(stg.countdownBombs).toBe(0);
+      expect(stg.holePattern).toBeNull();
+      expect(stg.features.ice).toBeFalsy();
+      expect(stg.features.rock).toBeFalsy();
+      expect(stg.features.holes).toBeFalsy();
+      expect(stg.features.countdown).toBeFalsy();
+    }
+  });
+
+  it("全ステージがpatternミッションで、4形状を章内相対インデックス%4でローテーションする", () => {
+    const expectedShapes = ["perimeter", "cross", "diagonal", "corners"];
+    stages.forEach((stg, chapterIndex) => {
+      expect(stg.mission.type).toBe("pattern");
+      if (stg.mission.type === "pattern") {
+        expect(stg.mission.patternShape).toBe(expectedShapes[chapterIndex % 4]);
+      }
+    });
+  });
+
+  it("オービット個数は相対Stage1-8=1個・9-16=2個・17-24=3個", () => {
+    for (let i = 0; i < 8; i++) expect(stages[i].orbits.length).toBe(1);
+    for (let i = 8; i < 16; i++) expect(stages[i].orbits.length).toBe(2);
+    for (let i = 16; i < 24; i++) expect(stages[i].orbits.length).toBe(3);
+  });
+
+  it("全ステージのオービット配置が有効(進入元セルが実在し、互いに間隔条件を満たす)", () => {
+    for (const stg of stages) {
+      const orbits = stg.orbits;
+      for (const o of orbits) {
+        expect(o.r).toBeGreaterThanOrEqual(0);
+        expect(o.r).toBeLessThan(stg.boardRows);
+        expect(o.c).toBeGreaterThanOrEqual(0);
+        expect(o.c).toBeLessThan(stg.boardCols);
+        expect(hasEntrySource(o.r, o.c, o.dir, stg.boardRows, stg.boardCols)).toBe(true);
+      }
+      for (let i = 0; i < orbits.length; i++) {
+        for (let j = i + 1; j < orbits.length; j++) {
+          expect(orbitsHaveRequiredGap(orbits[i], orbits[j])).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("moves/colorsはStage 1〜500の計算式を継続する(500以降はtierが頭打ちのため全ステージ同一値)", () => {
+    for (const stg of stages) {
+      expect(stg.moves).toBe(17);
+      expect(stg.colors).toBe(8);
+    }
+  });
+
+  it("star2moves <= moves かつ star3moves <= star2moves", () => {
+    for (const stg of stages) {
+      expect(stg.star2moves).toBeLessThanOrEqual(stg.moves);
+      expect(stg.star3moves).toBeLessThanOrEqual(stg.star2moves);
+    }
+  });
+
+  it("章内相対インデックスをseedに使うため、呼び出すたびに同じレイアウトになる(決定的)", () => {
+    const again = buildOrbitPilotStages();
+    expect(again.map((s) => s.orbits)).toEqual(stages.map((s) => s.orbits));
+  });
+
+  it("buildStages()(Stage 1〜500)には影響しない", () => {
+    const normalStages = buildStages();
+    expect(normalStages.length).toBe(500);
   });
 });
 
