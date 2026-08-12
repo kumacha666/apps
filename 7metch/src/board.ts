@@ -109,10 +109,11 @@ export function randomPiece(numColors: number): Piece {
 }
 
 // 盤面上の「隣接する操作可能セルのペア」を重複なく1回ずつ列挙する共有イテレータ。
-// countAvailableMoves()・findHint()・findActivatingSwapPair()・hasAnyLegalMove()が
-// 同じペア集合を独立に再実装すると定義がずれるため、列挙そのものをここに一本化する。
+// countAvailableMoves()・findHint()・findActivatingSwapPair()・hasAnyLegalMove()・
+// scripts/simulate.mjsのfindValidMoves()が同じペア集合を独立に再実装すると定義が
+// ずれるため、列挙そのものをここに一本化する（/code-review指摘、PR #354）。
 // コールバックがtrueを返すとその時点で走査を打ち切る（早期終了したい呼び出し側向け）
-function forEachAdjacentPlayablePair(
+export function forEachAdjacentPlayablePair(
   cb: (r: number, c: number, nr: number, nc: number) => boolean | void
 ): void {
   for (let r = 0; r < G.rows; r++) {

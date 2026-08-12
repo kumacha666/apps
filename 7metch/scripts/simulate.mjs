@@ -45,13 +45,21 @@ const { G, MATCH_MIN, SCORE_PER_PIECE } = await import("../src/state.ts");
 import {
   createBoard, initCellState, findAllMatches, findSpecialCreations,
   activateSpecial, applyGravityData, swapPieces, countAvailableMoves,
-  damageAdjacentIce, tickCountdowns, isPlayable, inBounds, isIce,
+  damageAdjacentIce, tickCountdowns, isPlayable, isIce,
   randomPiece, isHole, isRock, isMatchable,
+  isSwapBlockedByOrbit, isActivatingSwap, isComboSpecialSwap, isRainbowPiece,
+  getComboType, TAP_ACTIVATE_SPECIALS, hasAnyLegalMove,
+  shuffleWithQualityGate, regenerateBoardForDeadlock,
+  SHUFFLE_QUALITY_MAX_ATTEMPTS, BOARD_REGEN_MAX_ATTEMPTS,
+  forEachAdjacentPlayablePair,
 } from "../src/board.ts";
 import { buildStages } from "../src/stages.ts";
+// game.tsのactivateCombo()は既にexport済み・純粋関数（DOM/SFX/awaitなし、G.boardのみ操作）
+// なので独自の同期移植を作らず直接importする（/code-review指摘、PR #354）
+import { activateCombo } from "../src/game.ts";
 
 // --- Game simulation ---
-function initGameState(stageIndex) {
+export function initGameState(stageIndex) {
   const stages = buildStages();
   G.STAGES = stages;
   G.currentStage = stageIndex;
@@ -76,7 +84,7 @@ function initGameState(stageIndex) {
   createBoard(stg.colors);
 }
 
-function trackClears(clearList) {
+export function trackClears(clearList) {
   clearList.forEach(([r, c]) => {
     if (G.board[r][c]) {
       const ci = G.board[r][c].color;
@@ -86,7 +94,7 @@ function trackClears(clearList) {
   });
 }
 
-function resolveMatchesSync() {
+export function resolveMatchesSync() {
   let matches = findAllMatches();
   while (matches.length > 0) {
     G.chainCount++;
@@ -160,7 +168,7 @@ function handleCountdownExplosionsSync(exploded) {
   applyGravityData();
 }
 
-function resolveBoardSync() {
+export function resolveBoardSync() {
   resolveMatchesSync();
   const exploded = tickCountdowns();
   if (exploded.length > 0) {
@@ -169,31 +177,208 @@ function resolveBoardSync() {
   }
 }
 
-function findValidMoves() {
+// 「有効な1手」の共有定義（board.tsのhasAnyLegalMove()と同じ3種）をシミュレーターにも適用する。
+// タップ起動可能な特殊ピース・スワップ起動系特殊ピース（レインボー・特殊ピース同士の
+// コンボ、方向拘束の対象外）・オービット制約適用後にマッチが成立する通常スワップ、を
+// すべて候補として集める（4b-2b、GIMMICK_REDESIGN.md「適用範囲」参照）
+export function findValidMoves() {
   const moves = [];
+
   for (let r = 0; r < G.rows; r++) {
     for (let c = 0; c < G.cols; c++) {
-      if (!G.board[r][c] || !isPlayable(r, c)) continue;
-      const neighbors = [
-        [r-1,c-1],[r-1,c],[r-1,c+1],
-        [r,c+1],[r+1,c+1],[r+1,c],[r+1,c-1],[r,c-1]
-      ];
-      for (const [nr, nc] of neighbors) {
-        if (!inBounds(nr, nc) || !G.board[nr][nc] || !isPlayable(nr, nc)) continue;
-        if (nr < r || (nr === r && nc < c)) continue;
-        swapPieces(r, c, nr, nc);
-        const matches = findAllMatches();
-        swapPieces(r, c, nr, nc);
-        if (matches.length > 0) {
-          moves.push({ r1: r, c1: c, r2: nr, c2: nc });
-        }
+      const p = G.board[r][c];
+      if (p && p.special && TAP_ACTIVATE_SPECIALS.has(p.special) && isPlayable(r, c)) {
+        moves.push({ type: "tap", r, c });
       }
     }
   }
+
+  // 隣接ペアの列挙はboard.tsのhasAnyLegalMove()と同じ共有イテレータを使う
+  // （独自の8方向ループを持つと定義がずれる、/code-review指摘・PR #354）
+  forEachAdjacentPlayablePair((r, c, nr, nc) => {
+    const p1 = G.board[r][c];
+    const p2 = G.board[nr][nc];
+    if (isActivatingSwap(p1, p2)) {
+      moves.push({ type: "swap", r1: r, c1: c, r2: nr, c2: nc });
+      return;
+    }
+    if (isSwapBlockedByOrbit(p1, p2, r, c, nr, nc)) return;
+    swapPieces(r, c, nr, nc);
+    const matches = findAllMatches();
+    swapPieces(r, c, nr, nc);
+    if (matches.length > 0) {
+      moves.push({ type: "swap", r1: r, c1: c, r2: nr, c2: nc });
+    }
+  });
   return moves;
 }
 
-function checkMissionComplete() {
+// クリア確定処理（消去数トラッキング・スコア加算・盤面からの除去・氷ダメージ・重力・
+// 連鎖解決）。tapActivateSyncとdoMoveSyncの3分岐（コンボ・カウントダウン・レインボー）
+// で共通のため1箇所にまとめる（/code-review指摘、PR #354）
+function finalizeClears(clearList) {
+  trackClears(clearList);
+  G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
+  clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
+  damageAdjacentIce(clearList);
+  applyGravityData();
+  resolveBoardSync();
+}
+
+// game.tsのactivateByTap()の同期移植（アニメーション・SFX・track無し）
+export function tapActivateSync(r, c) {
+  const piece = G.board[r][c];
+  if (!piece || !piece.special || !TAP_ACTIVATE_SPECIALS.has(piece.special)) return;
+  G.movesLeft--;
+  G.chainCount = 1;
+
+  const cleared = new Set([r * G.cols + c]);
+  const clearList = [[r, c]];
+  const extra = activateSpecial(r, c, cleared, null);
+  extra.forEach(([er, ec]) => {
+    if (!cleared.has(er * G.cols + ec)) { cleared.add(er * G.cols + ec); clearList.push([er, ec]); }
+  });
+
+  for (let i = 0; i < clearList.length; i++) {
+    const [cr, cc] = clearList[i];
+    if (G.board[cr][cc] && G.board[cr][cc].special && !(cr === r && cc === c)) {
+      const ex2 = activateSpecial(cr, cc, cleared, piece.special);
+      ex2.forEach(([er, ec]) => {
+        if (!cleared.has(er * G.cols + ec)) { cleared.add(er * G.cols + ec); clearList.push([er, ec]); }
+      });
+    }
+  }
+
+  finalizeClears(clearList);
+}
+
+// game.tsのdoMove()の同期移植(アニメーション・SFX・track無し)。findValidMoves()が
+// 既に「有効な1手」であることを検証した上で呼ばれる前提だが、doMove()と同じ分岐構造
+// （特殊ピース同士のコンボ→カウントダウン連動→レインボー×通常→通常マッチ）を保つことで
+// 判定のズレを避ける
+export function doMoveSync(r1, c1, r2, c2) {
+  const p1 = G.board[r1][c1];
+  const p2 = G.board[r2][c2];
+
+  if (isSwapBlockedByOrbit(p1, p2, r1, c1, r2, c2)) return;
+
+  G.lastSwapTarget = { r: r2, c: c2 };
+  swapPieces(r1, c1, r2, c2);
+
+  if (p1 && p2 && isComboSpecialSwap(p1, p2)) {
+    const comboType = getComboType(p1.special, p2.special);
+    if (comboType) {
+      G.movesLeft--;
+      G.chainCount = 1;
+
+      const comboCells = activateCombo(comboType, r2, c2, p1, p2);
+      comboCells.push([r1, c1], [r2, c2]);
+
+      const cleared = new Set(comboCells.map(([cr, cc]) => cr * G.cols + cc));
+      comboCells.forEach(([cr, cc]) => {
+        if (G.board[cr][cc] && G.board[cr][cc].special && !(cr === r1 && cc === c1) && !(cr === r2 && cc === c2)) {
+          const extra = activateSpecial(cr, cc, cleared, null);
+          extra.forEach(([er, ec]) => {
+            if (!cleared.has(er * G.cols + ec)) { cleared.add(er * G.cols + ec); comboCells.push([er, ec]); }
+          });
+        }
+      });
+
+      const clearList = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols]);
+      finalizeClears(clearList);
+      return;
+    }
+
+    if (p1.special === "countdown" || p2.special === "countdown") {
+      G.movesLeft--;
+      G.chainCount = 1;
+
+      const cleared = new Set([r1 * G.cols + c1, r2 * G.cols + c2]);
+      const extra1 = activateSpecial(r1, c1, cleared, null);
+      extra1.forEach(([cr, cc]) => cleared.add(cr * G.cols + cc));
+      const extra2 = activateSpecial(r2, c2, cleared, null);
+      extra2.forEach(([cr, cc]) => cleared.add(cr * G.cols + cc));
+
+      const allCells = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols]);
+      allCells.forEach(([cr, cc]) => {
+        if (G.board[cr][cc] && G.board[cr][cc].special && !(cr === r1 && cc === c1) && !(cr === r2 && cc === c2)) {
+          const extra = activateSpecial(cr, cc, cleared, null);
+          extra.forEach(([er, ec]) => {
+            if (!cleared.has(er * G.cols + ec)) { cleared.add(er * G.cols + ec); allCells.push([er, ec]); }
+          });
+        }
+      });
+
+      const clearList = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols]);
+      finalizeClears(clearList);
+      return;
+    }
+  }
+
+  const rb1 = isRainbowPiece(p1);
+  const rb2 = isRainbowPiece(p2);
+  if ((rb1 || rb2) && !(rb1 && rb2)) {
+    const other = rb1 ? p2 : p1;
+    const rainbowR = rb1 ? r2 : r1;
+    const rainbowC = rb1 ? c2 : c1;
+    if (!other.special) {
+      const targetColor = other.color;
+      G.movesLeft--;
+      G.chainCount = 1;
+
+      const clearList = [[rainbowR, rainbowC]];
+      const cleared = new Set([rainbowR * G.cols + rainbowC]);
+      for (let rr = 0; rr < G.rows; rr++) {
+        for (let cc = 0; cc < G.cols; cc++) {
+          if (G.board[rr][cc] && G.board[rr][cc].color === targetColor && !cleared.has(rr * G.cols + cc) && isPlayable(rr, cc)) {
+            cleared.add(rr * G.cols + cc);
+            clearList.push([rr, cc]);
+          }
+        }
+      }
+      clearList.forEach(([cr, cc]) => {
+        if (G.board[cr][cc] && G.board[cr][cc].special && !(cr === rainbowR && cc === rainbowC)) {
+          const extra = activateSpecial(cr, cc, cleared, null);
+          extra.forEach(([er, ec]) => {
+            if (!cleared.has(er * G.cols + ec)) { cleared.add(er * G.cols + ec); clearList.push([er, ec]); }
+          });
+        }
+      });
+
+      finalizeClears(clearList);
+      return;
+    }
+  }
+
+  const matches = findAllMatches();
+  if (matches.length === 0) {
+    // findValidMoves()が検証済みの手のみを渡す前提のため通常は到達しない防御的分岐
+    swapPieces(r1, c1, r2, c2);
+    return;
+  }
+
+  G.movesLeft--;
+  G.chainCount = 0;
+  resolveBoardSync();
+  G.lastSwapTarget = null;
+}
+
+// game.tsのrecoverFromDeadlock()の同期移植。品質基準付きシャッフル→ダメなら盤面再生成→
+// それでもダメならもう一度だけシャッフルを試す、という同じフォールバック順序を踏む
+// （手動シャッフルアイテムのような「コストを払って盤面変更をキャンセル」という概念が
+// シミュレーターには無いため、useShuffle()側のキャンセル分岐は移植しない）
+export function recoverFromDeadlockSync() {
+  const numColors = G.STAGES[G.currentStage].colors;
+  let recovered = shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS);
+  if (!recovered) {
+    const regenerated = regenerateBoardForDeadlock(numColors, BOARD_REGEN_MAX_ATTEMPTS);
+    recovered = regenerated || shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS);
+  }
+  resolveMatchesSync();
+  return recovered;
+}
+
+export function checkMissionComplete() {
   const m = G.mission;
   switch (m.type) {
     case "score": return G.score >= m.target;
@@ -213,29 +398,51 @@ function countIceCells() {
   return count;
 }
 
-function runOneGame(stageIndex) {
-  initGameState(stageIndex);
-  const initialIce = countIceCells();
-  let deadlocks = 0;
+// 1ステージ分のプレイループ本体。initGameState()でG初期化済みの状態から呼ぶ前提
+// （テストからはbuildStages()を経由せず直接Gを組み立てて呼び出せるよう分離した）。
+// 合法手0件でも、オービットのあるステージ（orbits.length > 0）では即座に詰み扱いにせず、
+// finishTurn()と同じ回復フロー（recoverFromDeadlockSync）を試す。回復できればそのまま
+// 続行し、回復し切れなかった場合のみ本当の詰みとして終了する
+export function playGame() {
   let turnsPlayed = 0;
+  let deadlockOccurred = false;
 
   while (G.movesLeft > 0) {
     const moves = findValidMoves();
     if (moves.length === 0) {
-      deadlocks++;
+      if (G.STAGES[G.currentStage].orbits.length > 0) {
+        // recoverFromDeadlockSync()の戻り値(品質基準を満たす並べ替え/盤面作り直しが
+        // 見つかったか)だけで判断しない。全試行が基準を満たせなかった場合でも、
+        // 内部の最後のresolveMatchesSync()が未解決マッチを消去してミッションを
+        // 達成させたり合法手を生んだりする可能性があるため、戻り値に関わらず
+        // 常に実際の状態(ミッション達成・合法手の有無)を再判定してから次を決める
+        // (/code-review指摘、PR #354。game.tsのfinishTurn()と同じ「常に再判定」方針)
+        recoverFromDeadlockSync();
+        if (checkMissionComplete()) break;
+        if (!hasAnyLegalMove()) { deadlockOccurred = true; break; }
+        continue;
+      }
+      deadlockOccurred = true;
       break;
     }
     const move = moves[Math.floor(Math.random() * moves.length)];
-    swapPieces(move.r1, move.c1, move.r2, move.c2);
-    G.lastSwapTarget = { r: move.r2, c: move.c2 };
-    G.movesLeft--;
-    G.chainCount = 0;
+    if (move.type === "tap") {
+      tapActivateSync(move.r, move.c);
+    } else {
+      doMoveSync(move.r1, move.c1, move.r2, move.c2);
+    }
     turnsPlayed++;
-    resolveBoardSync();
 
     if (checkMissionComplete()) break;
   }
 
+  return { turnsPlayed, deadlockOccurred };
+}
+
+function runOneGame(stageIndex) {
+  initGameState(stageIndex);
+  const initialIce = countIceCells();
+  const { turnsPlayed, deadlockOccurred } = playGame();
   const remainingIce = countIceCells();
   return {
     cleared: checkMissionComplete(),
@@ -244,7 +451,7 @@ function runOneGame(stageIndex) {
     totalCleared: G.totalCleared,
     specialsCreated: G.specialsCreated,
     maxChain: G.maxChain,
-    deadlock: G.movesLeft > 0 && !checkMissionComplete() && findValidMoves().length === 0,
+    deadlock: deadlockOccurred,
     turnsPlayed,
     iceCleared: initialIce > 0 ? initialIce - remainingIce : 0,
     iceTotal: initialIce,
@@ -357,4 +564,8 @@ function runSimulation() {
   console.log();
 }
 
-runSimulation();
+// テスト（scripts/simulate.test.mjs）からこのモジュールをimportした際にCLI実行が
+// 走らないようにするガード。vitestはprocess.env.VITESTを自動設定する
+if (!process.env.VITEST) {
+  runSimulation();
+}

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Piece, StageConfig, Mission, GameDom, OrbitCell } from "./types";
 import { G, SCORE_PER_PIECE, ITEM_COSTS } from "./state";
-import { doMove, activateByTap, checkWinLose, updateHUD, resolveMatches, showResult, useShuffle, finishTurn } from "./game";
+import { doMove, activateByTap, activateCombo, checkWinLose, updateHUD, resolveMatches, showResult, useShuffle, finishTurn } from "./game";
 import { hasAnyLegalMove, findAllMatches } from "./board";
 
 const storage: Record<string, string> = {};
@@ -206,6 +206,84 @@ describe("doMove", () => {
     await doMove(0, 0, 0, 1);
     expect(G.animating).toBe(false);
     expect(G.movesLeft).toBe(19);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// activateCombo
+// ---------------------------------------------------------------------------
+// doMove()のコンボ分岐からは"cross"(line+line)・"big_bomb"(bomb+bomb)・
+// "board_clear"(rainbow+rainbow)のみが間接的に触れられており、残り4種
+// (star_cross/triple_line/rainbow_line/rainbow_bomb)は未カバーだった。
+// activateComboは純粋関数なので直接呼び出して7種すべてを検証する
+// (/code-review指摘、PR #354)
+describe("activateCombo", () => {
+  beforeEach(() => setupGame());
+
+  it("cross: 中心の行と列全体を返す(重複無し)", () => {
+    const p1: Piece = { color: 0, special: "line_h" };
+    const p2: Piece = { color: 1, special: "line_v" };
+    const cells = activateCombo("cross", 3, 3, p1, p2);
+    expect(cells.length).toBe(7 + 7 - 1); // 行7 + 列7 - 中心の重複1
+    expect(cells).toContainEqual([3, 0]);
+    expect(cells).toContainEqual([0, 3]);
+    expect(cells).toContainEqual([3, 3]);
+  });
+
+  it("star_cross: 行・列に加えて両対角線を含む", () => {
+    const p1: Piece = { color: 0, special: "line_h" };
+    const p2: Piece = { color: 1, special: "line_d" };
+    const cells = activateCombo("star_cross", 3, 3, p1, p2);
+    expect(cells).toContainEqual([0, 0]); // 主対角線
+    expect(cells).toContainEqual([0, 6]); // 反対角線
+    expect(cells).toContainEqual([3, 0]); // 行
+    expect(cells).toContainEqual([0, 3]); // 列
+  });
+
+  it("triple_line: 中心の前後1マスずつ、計3行+3列のみを含む(範囲外は除外)", () => {
+    const p1: Piece = { color: 0, special: "bomb" };
+    const p2: Piece = { color: 1, special: "line_h" };
+    const cells = activateCombo("triple_line", 3, 3, p1, p2);
+    expect(cells).toContainEqual([2, 0]); // 行2(中心-1)は全域含む
+    expect(cells).toContainEqual([0, 4]); // 列4(中心+1)は全域含む
+    expect(cells).not.toContainEqual([0, 0]); // 行0・列0はどちらの帯にも入らない
+  });
+
+  it("big_bomb: 中心から半径3の範囲のみ(盤端でクリップされる)", () => {
+    const p1: Piece = { color: 0, special: "bomb" };
+    const p2: Piece = { color: 1, special: "bomb" };
+    const cells = activateCombo("big_bomb", 0, 0, p1, p2);
+    expect(cells.length).toBe(4 * 4); // r,c共に0..3の16マス(負側は盤外)
+    expect(cells).toContainEqual([3, 3]);
+    expect(cells).not.toContainEqual([4, 0]);
+  });
+
+  it("rainbow_line: 対象色の全ピースをline_hに変え、対象セルを返す", () => {
+    G.board[1][1] = { color: 2, special: null };
+    G.board[5][5] = { color: 2, special: null };
+    const p1: Piece = { color: 2, special: null };
+    const p2: Piece = { color: -1, special: "rainbow" };
+    const cells = activateCombo("rainbow_line", 3, 3, p1, p2);
+    expect(cells).toContainEqual([1, 1]);
+    expect(cells).toContainEqual([5, 5]);
+    expect(G.board[1][1]!.special).toBe("line_h");
+    expect(G.board[5][5]!.special).toBe("line_h");
+  });
+
+  it("rainbow_bomb: 対象色の全ピースをbombに変え、対象セルを返す", () => {
+    G.board[1][1] = { color: 4, special: null };
+    const p1: Piece = { color: -1, special: "rainbow" };
+    const p2: Piece = { color: 4, special: null };
+    const cells = activateCombo("rainbow_bomb", 3, 3, p1, p2);
+    expect(cells).toContainEqual([1, 1]);
+    expect(G.board[1][1]!.special).toBe("bomb");
+  });
+
+  it("board_clear: 盤面上の全操作可能セルを返す", () => {
+    const p1: Piece = { color: 0, special: "rainbow" };
+    const p2: Piece = { color: 1, special: "rainbow" };
+    const cells = activateCombo("board_clear", 3, 3, p1, p2);
+    expect(cells.length).toBe(7 * 7);
   });
 });
 
