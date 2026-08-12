@@ -908,8 +908,14 @@ export function checkWinLose(): boolean {
     }
     G.saveData.coins = (G.saveData.coins || 0) + G.coinsEarned;
 
-    if (stars > prev) G.saveData.bestStars[G.currentStage] = stars;
-    G.saveData.cleared[G.currentStage] = true;
+    // デバッグジャンプで開いたプレビュー面(Stage 501〜524、baseStageCount以上)は
+    // 進捗を永続保存しない。保存すると、将来buildStages()にこれらのステージが
+    // 正式追加されてbaseStageCountが伸びた時点で、過去のデバッグクリア履歴が
+    // 本編の正規クリア・星として突然認識されてしまう(Codexレビュー指摘)
+    if (G.currentStage < G.baseStageCount) {
+      if (stars > prev) G.saveData.bestStars[G.currentStage] = stars;
+      G.saveData.cleared[G.currentStage] = true;
+    }
     writeSave();
 
     SFX.stageClear();

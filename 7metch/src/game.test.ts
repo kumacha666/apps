@@ -406,6 +406,31 @@ describe("checkWinLose", () => {
     expect(G.saveData.cleared[0]).toBeUndefined();
   });
 
+  // デバッグジャンプで開いたプレビュー面(currentStage >= baseStageCount)の進捗は
+  // 永続保存しないことの回帰テスト(Codexレビュー指摘: 保存すると、将来これらのステージが
+  // 正式にbuildStages()へ追加された時点で過去のデバッグクリア履歴が本編の正規クリアとして
+  // 突然認識されてしまう)
+  it("プレビュー面(currentStage >= baseStageCount)のクリアはcleared/bestStarsに保存しない", () => {
+    G.STAGES = [makeStage(), makeStage({ mission: { type: "score", target: 100 } })];
+    G.baseStageCount = 1; // 本編はindex0のみ、index1はプレビュー面
+    G.currentStage = 1;
+    G.score = 100;
+    G.movesLeft = 5;
+    checkWinLose();
+    expect(G.saveData.cleared[1]).toBeUndefined();
+    expect(G.saveData.bestStars[1]).toBeUndefined();
+  });
+
+  it("本編ステージ(currentStage < baseStageCount)のクリアは従来通り保存する", () => {
+    G.STAGES = [makeStage({ mission: { type: "score", target: 100 } })];
+    G.baseStageCount = 1;
+    G.currentStage = 0;
+    G.score = 100;
+    G.movesLeft = 5;
+    checkWinLose();
+    expect(G.saveData.cleared[0]).toBe(true);
+  });
+
   it("★3評価: 少ない手数でクリアすると3つ星", () => {
     G.STAGES = [makeStage({ moves: 20, star3moves: 8, star2moves: 12, mission: { type: "score", target: 100 } })];
     G.score = 100;
