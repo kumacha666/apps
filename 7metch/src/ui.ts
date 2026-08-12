@@ -554,7 +554,10 @@ export function initUI(): void {
   });
 
   document.getElementById("btn-debug-unlock-all")!.addEventListener("click", () => {
-    for (let i = 0; i < G.STAGES!.length; i++) {
+    // プレビュー範囲(baseStageCount以上)は永続保存しない(checkWinLose()と同じ理由、
+    // Codexレビュー指摘)。デバッグジャンプ自体がisStageUnlocked()判定を経由せず
+    // 直接ステージへ飛ぶため、そもそも「全解放」がプレビュー面のアクセスに必要ない
+    for (let i = 0; i < G.baseStageCount; i++) {
       G.saveData.cleared[i] = true;
       if (!G.saveData.bestStars[i]) G.saveData.bestStars[i] = 1;
     }
