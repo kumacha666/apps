@@ -350,6 +350,7 @@ describe("isStageUnlocked", () => {
   beforeEach(() => {
     G.saveData = { cleared: {}, bestStars: {}, coins: 0 };
     G.STAGES = buildStages();
+    G.baseStageCount = G.STAGES.length;
   });
 
   it("ステージ0は常にアンロック", () => {
@@ -378,6 +379,22 @@ describe("isStageUnlocked", () => {
     }
     expect(getTotalStars()).toBeGreaterThanOrEqual(30);
     expect(isStageUnlocked(25)).toBe(true);
+  });
+
+  // デバッグジャンプでStage 501〜524(プレビュー)をクリアしても、本編のスターゲート判定・
+  // 合計表示に混入しないことの回帰テスト(Codexレビュー指摘)
+  it("プレビュー面(baseStageCount以上)のbestStarsは合計に含めない", () => {
+    G.saveData.bestStars[10] = 3;
+    G.saveData.bestStars[500] = 3; // Stage 501をデバッグジャンプでクリアした想定
+    G.saveData.bestStars[523] = 3; // Stage 524も同様
+    expect(getTotalStars()).toBe(3);
+  });
+
+  it("プレビュー面の星だけでは本編のスターゲートを解除できない", () => {
+    G.saveData.cleared[24] = true;
+    for (let i = 500; i < 524; i++) G.saveData.bestStars[i] = 3; // プレビュー24面満点
+    expect(getTotalStars()).toBe(0);
+    expect(isStageUnlocked(25)).toBe(false);
   });
 });
 

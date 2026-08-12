@@ -12,8 +12,15 @@ const PATTERN_SHAPE_JA: Record<PatternShape, string> = {
   corners: "四隅",
 };
 
+// デバッグジャンプ(本番ビルドでも7タップで開ける)でStage 501〜524(プレビュー)を
+// クリアするとG.saveData.bestStarsにbaseStageCount以上のキーが永続保存されるため、
+// lastClearedRealStageIdx()と同じ理由でここも本編範囲に絞る。絞らないとプレビュー
+// 24面分(最大72個)の星がスターゲート判定・合計表示に混入し、本編のゲートを
+// 本来より早く解除できてしまう(Codexレビュー指摘)
 export function getTotalStars(): number {
-  return Object.values(G.saveData.bestStars).reduce((sum, s) => sum + s, 0);
+  return Object.entries(G.saveData.bestStars)
+    .filter(([i]) => Number(i) < G.baseStageCount)
+    .reduce((sum, [, s]) => sum + s, 0);
 }
 
 export function isStageUnlocked(i: number): boolean {
