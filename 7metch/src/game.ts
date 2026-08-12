@@ -529,10 +529,15 @@ async function recoverFromDeadlock(): Promise<void> {
 // 「盤面確定後の毎ターン」漏れなく行われる（GIMMICK_REDESIGN.md参照）
 export async function finishTurn(): Promise<void> {
   updateHUD();
-  const ended = checkWinLose();
-  if (ended) return;
+  if (checkWinLose()) return;
   if (G.STAGES![G.currentStage].orbits.length > 0 && !hasAnyLegalMove()) {
     await recoverFromDeadlock();
+    // recoverFromDeadlock()の最終フォールバック(resolveMatches())がスコア・消去数・
+    // 特殊生成等を変化させ、ミッションを達成させる可能性がある。詰み回復後の状態で
+    // 勝敗を再判定しないと、結果画面へ遷移せずクリア済み扱いにならないまま残ってしまう
+    // （/code-review指摘、2026-08-12。PR #353）
+    updateHUD();
+    checkWinLose();
   }
 }
 
