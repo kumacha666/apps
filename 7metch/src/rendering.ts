@@ -165,6 +165,14 @@ export function drawIceOverlay(r: number, c: number): void {
 // 既存の見た目に影響しない
 // ---------------------------------------------------------------------------
 
+// 隣接座標が盤外なら無条件で「影響範囲外」扱いにする。inInfluenceArea()自体は
+// チェビシェフ距離のみで判定し盤サイズを考慮しないため、盤端のオービットでは
+// 盤外座標が名目上「範囲内」と判定され境界線が欠けてしまう(Codexレビュー指摘)
+function neighborInInfluenceArea(orbit: OrbitCell, r: number, c: number): boolean {
+  if (r < 0 || r >= G.rows || c < 0 || c >= G.cols) return false;
+  return inInfluenceArea(orbit, r, c);
+}
+
 // 影響範囲(オービットセルを中心とした3x3、盤端で欠ける)の境界線。
 // セルを1つずつ見て、隣が影響範囲外(盤外含む)の辺だけを描くことで、
 // 3x3全体の外周だけが縁取られるようにする(内部のマス目線は引かない)
@@ -177,10 +185,10 @@ export function drawOrbitInfluenceZone(ctx: CanvasRenderingContext2D, orbit: Orb
     for (let c = orbit.c - 1; c <= orbit.c + 1; c++) {
       if (r < 0 || r >= G.rows || c < 0 || c >= G.cols) continue;
       const x = c * G.cellSize, y = r * G.cellSize;
-      if (!inInfluenceArea(orbit, r - 1, c)) { ctx.moveTo(x, y); ctx.lineTo(x + G.cellSize, y); }
-      if (!inInfluenceArea(orbit, r + 1, c)) { ctx.moveTo(x, y + G.cellSize); ctx.lineTo(x + G.cellSize, y + G.cellSize); }
-      if (!inInfluenceArea(orbit, r, c - 1)) { ctx.moveTo(x, y); ctx.lineTo(x, y + G.cellSize); }
-      if (!inInfluenceArea(orbit, r, c + 1)) { ctx.moveTo(x + G.cellSize, y); ctx.lineTo(x + G.cellSize, y + G.cellSize); }
+      if (!neighborInInfluenceArea(orbit, r - 1, c)) { ctx.moveTo(x, y); ctx.lineTo(x + G.cellSize, y); }
+      if (!neighborInInfluenceArea(orbit, r + 1, c)) { ctx.moveTo(x, y + G.cellSize); ctx.lineTo(x + G.cellSize, y + G.cellSize); }
+      if (!neighborInInfluenceArea(orbit, r, c - 1)) { ctx.moveTo(x, y); ctx.lineTo(x, y + G.cellSize); }
+      if (!neighborInInfluenceArea(orbit, r, c + 1)) { ctx.moveTo(x + G.cellSize, y); ctx.lineTo(x + G.cellSize, y + G.cellSize); }
     }
   }
   ctx.stroke();
@@ -231,15 +239,43 @@ export function drawPatternCellOverlay(ctx: CanvasRenderingContext2D, r: number,
   ctx.restore();
 }
 
+// 常時表示レイヤーをまとめたヘルパー群。drawBoard()だけでなく、drawBoardBase()を
+// 直接呼んでピースを独自描画するanimateSwap()/animateDrop()からも呼ぶことで、
+// スワップ中・落下中にオービット境界/矢印/パターン枠が消えないようにする
+// (Codexレビュー指摘: 新レイヤーがdrawBoard()にしか無く、アニメ中は消えていた)
+export function drawOrbitInfluenceZones(ctx: CanvasRenderingContext2D): void {
+  const stg = G.STAGES?.[G.currentStage];
+  if (!stg || stg.orbits.length === 0) return;
+  for (const orbit of stg.orbits) {
+    drawOrbitInfluenceZone(ctx, orbit);
+  }
+}
+
+export function drawOrbitArrows(ctx: CanvasRenderingContext2D): void {
+  const stg = G.STAGES?.[G.currentStage];
+  if (!stg || stg.orbits.length === 0) return;
+  for (const orbit of stg.orbits) {
+    drawOrbitArrow(ctx, orbit);
+  }
+}
+
+export function drawPatternCellOverlays(ctx: CanvasRenderingContext2D): void {
+  const stg = G.STAGES?.[G.currentStage];
+  if (!stg || stg.mission.type !== "pattern") return;
+  for (const { r, c } of getPatternCells(stg.mission.patternShape, G.rows, G.cols)) {
+    if (isHole(r, c) || isRock(r, c)) continue;
+    drawPatternCellOverlay(ctx, r, c, G.patternProgress.has(cellKey(r, c)));
+  }
+}
+
 export function drawBoard(overlay?: (ctx: CanvasRenderingContext2D) => void): void {
   drawBoardBase();
 
-  const stg = G.STAGES?.[G.currentStage];
-  if (stg && stg.orbits.length > 0) {
-    for (const orbit of stg.orbits) {
-      drawOrbitInfluenceZone(G.ctx!, orbit);
-    }
-  }
+  drawOrbitInfluenceZones(G.ctx!);
+  // パターン枠は選択枠(下のピースループ内)より先に描く。達成済み枠と選択枠は
+  // 同じ矩形・線幅のため、後から描くと選択枠が完全に上書きされて見えなくなる
+  // (Codexレビュー指摘)
+  drawPatternCellOverlays(G.ctx!);
 
   for (let r = 0; r < G.rows; r++) {
     for (let c = 0; c < G.cols; c++) {
@@ -278,18 +314,7 @@ export function drawBoard(overlay?: (ctx: CanvasRenderingContext2D) => void): vo
     }
   }
 
-  if (stg && stg.orbits.length > 0) {
-    for (const orbit of stg.orbits) {
-      drawOrbitArrow(G.ctx!, orbit);
-    }
-  }
-
-  if (stg && stg.mission.type === "pattern") {
-    for (const { r, c } of getPatternCells(stg.mission.patternShape, G.rows, G.cols)) {
-      if (isHole(r, c) || isRock(r, c)) continue;
-      drawPatternCellOverlay(G.ctx!, r, c, G.patternProgress.has(cellKey(r, c)));
-    }
-  }
+  drawOrbitArrows(G.ctx!);
 
   if (overlay) overlay(G.ctx!);
   updateChainLabel();

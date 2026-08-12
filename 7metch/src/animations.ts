@@ -1,7 +1,7 @@
 import type { Piece, CellPos, FallEntry, SpecialInfo } from "./types";
 import { G, PIECE_COLORS, ANIM } from "./state";
 import { cellCenter, addBurstParticles, addShockwave, addFlash, addComet, addScreenShake, addParticle, addFloatingText, updateVFX, drawVFX } from "./vfx";
-import { drawBoard, drawPieceAt, drawBoardBase, drawIceOverlay } from "./rendering";
+import { drawBoard, drawPieceAt, drawBoardBase, drawIceOverlay, drawOrbitInfluenceZones, drawOrbitArrows, drawPatternCellOverlays } from "./rendering";
 import { SFX } from "./audio";
 import { isIce } from "./board";
 
@@ -19,6 +19,8 @@ export async function animateSwap(r1: number, c1: number, r2: number, c2: number
     const ease: number = t * t * (3 - 2 * t);
 
     drawBoardBase();
+    drawOrbitInfluenceZones(G.ctx!);
+    drawPatternCellOverlays(G.ctx!);
 
     for (let r = 0; r < G.rows; r++) {
       for (let c = 0; c < G.cols; c++) {
@@ -40,6 +42,8 @@ export async function animateSwap(r1: number, c1: number, r2: number, c2: number
       const y: number = (r2 + (r1 - r2) * ease) * G.cellSize + G.cellSize / 2;
       drawPieceAt(p2, x, y);
     }
+
+    drawOrbitArrows(G.ctx!);
 
     G.ctx!.restore();
     await sleep(ANIM.SWAP_FRAME_MS);
@@ -1076,6 +1080,8 @@ export async function animateDrop(fallMap: FallEntry[]): Promise<void> {
 
   for (let frame = 0; frame <= totalFrames; frame++) {
     drawBoardBase();
+    drawOrbitInfluenceZones(G.ctx!);
+    drawPatternCellOverlays(G.ctx!);
 
     for (let r = 0; r < G.rows; r++) {
       for (let c = 0; c < G.cols; c++) {
@@ -1108,6 +1114,8 @@ export async function animateDrop(fallMap: FallEntry[]): Promise<void> {
         drawPieceAt(fall.piece, x, y);
       }
     }
+
+    drawOrbitArrows(G.ctx!);
 
     G.ctx!.restore();
 
