@@ -63,15 +63,44 @@ function fillBoardUntilStable(numColors: number): void {
   }
 }
 
+// カウントダウンボムは isMatchable() が special: "countdown" を非マッチ対象として
+// 除外するため、置いたセルはその後どのマッチにも参加できなくなる。品質チェック
+// (countAvailableMoves()での合法手数判定)より後に置くと、判定時には数えられていた
+// 合法手をボムが塞いでしまい、最終盤面が実際にはminMoves/maxMoves範囲を満たさなく
+// なりうる（/code-review指摘、PR #356。countdownBombsを持つStage 300〜500に元々
+// 存在していた欠落で、オービット固有の問題ではない）。品質チェックの対象になる
+// 盤面には常にボム配置済みの状態を渡すことで、判定と実際の最終盤面を一致させる
+export function placeCountdownBombs(stg: StageConfig): void {
+  if (stg.countdownBombs <= 0) return;
+  let placed = 0, attempts = 0;
+  while (placed < stg.countdownBombs && attempts < 200) {
+    const br = Math.floor(Math.random() * G.rows);
+    const bc = Math.floor(Math.random() * G.cols);
+    const cell = G.board[br][bc];
+    if (cell && !cell.special) {
+      cell.special = "countdown";
+      cell.countdown = 8 + Math.floor(Math.random() * 5);
+      placed++;
+    }
+    attempts++;
+  }
+}
+
+// minMoves/maxMoves判定はcountAvailableMoves()に委譲しているため、第1章「軌道系」
+// (Stage 501〜)のオービット制約はcountAvailableMoves()側の対応だけで自動的に反映される
+// (このループ自体には変更不要。パイロットの固定7x8盤面ではmaxMoves=10になり、
+// GIMMICK_REDESIGN.mdの「オービット制約適用後の合法手数が2〜10の範囲」と一致する)
 export function createBoard(numColors: number): void {
   const maxMoves = Math.max(10, Math.floor(G.rows * G.cols * 0.15));
   const minMoves = 2;
   const target = Math.floor((minMoves + maxMoves) / 2);
+  const stg = G.STAGES![G.currentStage];
   let bestBoard: (Piece | null)[][] | null = null;
   let bestDiff = Infinity;
 
   for (let attempt = 0; attempt < 20; attempt++) {
     fillBoardUntilStable(numColors);
+    placeCountdownBombs(stg);
 
     const moves = countAvailableMoves();
     if (moves >= minMoves && moves <= maxMoves) {
@@ -86,22 +115,6 @@ export function createBoard(numColors: number): void {
   }
 
   if (bestBoard) G.board = bestBoard;
-
-  const stg = G.STAGES![G.currentStage];
-  if (stg.countdownBombs > 0) {
-    let placed = 0, attempts = 0;
-    while (placed < stg.countdownBombs && attempts < 200) {
-      const br = Math.floor(Math.random() * G.rows);
-      const bc = Math.floor(Math.random() * G.cols);
-      const cell = G.board[br][bc];
-      if (cell && !cell.special) {
-        cell.special = "countdown";
-        cell.countdown = 8 + Math.floor(Math.random() * 5);
-        placed++;
-      }
-      attempts++;
-    }
-  }
 }
 
 export function randomPiece(numColors: number): Piece {
@@ -128,9 +141,30 @@ export function forEachAdjacentPlayablePair(
   }
 }
 
+// 初期盤面生成(createBoard())の品質チェックで使う「合法手数」。第1章「軌道系」
+// (Stage 501〜)のオービット制約を通常スワップの拒否判定として反映する(Stage 1〜500は
+// orbits: []のためisSwapBlockedByOrbitが常にfalseを返し、挙動は一切変わらない)。
+// createBoard()生成直後の盤面には基本的に特殊ピースが存在しないが、countdownBombs
+// (Stage 300〜500)によって最大2個のカウントダウンボムが置かれうる。隣接する2個の
+// ボムはisActivatingSwap()により(マッチ成立を伴わずとも)hasAnyLegalMove()/doMove()の
+// 定義上「有効な1手」として扱われるため、findAllMatches()ベースの判定だけでは
+// 見逃してしまう。ボム同士の隣接ペアをplaceCountdownBombs()が品質チェックループの
+// 内側で作りうるようになった(/code-review指摘、PR #356)ため、その分もここで
+// カウントし、maxMoves上限の保証がボム込みの実際の合法手数とズレないようにする
 export function countAvailableMoves(): number {
   let count = 0;
   forEachAdjacentPlayablePair((r, c, nr, nc) => {
+    const p1 = G.board[r][c];
+    const p2 = G.board[nr][nc];
+    if (isActivatingSwap(p1, p2)) {
+      count++;
+      return;
+    }
+    // isActivatingSwapが既にfalseと分かっているため、isSwapBlockedByOrbit()
+    // (内部でisActivatingSwapを再評価する)ではなくisSwapLegalForCurrentStage()を
+    // 直接呼ぶ(/code-review指摘、PR #356。二重評価そのものはStage 1〜500の
+    // 挙動に影響しないため実害は無いが、判定の重複を避ける)
+    if (!isSwapLegalForCurrentStage(r, c, nr, nc)) return;
     swapPieces(r, c, nr, nc);
     if (findAllMatches().length > 0) count++;
     swapPieces(r, c, nr, nc);
