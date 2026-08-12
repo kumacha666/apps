@@ -1,6 +1,6 @@
 import type { Piece, SpecialType, ComboType, Mission, MissionType, SpecialInfo, FallEntry, GameState, GameDom, StageConfig, ScreenName, StarGate } from "./types";
 import { G, PIECE_COLORS, ANIM, ITEM_COSTS, STAR_GATES, PIECE_NAMES_JA, SCORE_PER_PIECE, writeSave } from "./state";
-import { findAllMatches, findSpecialCreations, activateSpecial, applyGravityData, swapPieces, getComboType, createBoard, countAvailableMoves, damageAdjacentIce, tickCountdowns, startHintTimer, clearHint, isHole, isRock, randomPiece, inBounds, initCellState, TAP_ACTIVATE_SPECIALS, isSwapBlockedByOrbit, isComboSpecialSwap, isRainbowPiece } from "./board";
+import { findAllMatches, findSpecialCreations, activateSpecial, applyGravityData, swapPieces, getComboType, createBoard, countAvailableMoves, damageAdjacentIce, tickCountdowns, startHintTimer, clearHint, isHole, isRock, randomPiece, inBounds, initCellState, TAP_ACTIVATE_SPECIALS, isSwapBlockedByOrbit, isComboSpecialSwap, isRainbowPiece, hasAnyLegalMove, shuffleWithQualityGate, regenerateBoardForDeadlock, cloneBoard, SHUFFLE_QUALITY_MAX_ATTEMPTS, BOARD_REGEN_MAX_ATTEMPTS } from "./board";
 import { animateSwap, animateClear, animateDrop, sleep } from "./animations";
 import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, addFloatingText, hasActiveVFX, updateVFX } from "./vfx";
 import { drawBoard, buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startResultBgAnim, stopResultBgAnim, startChainLabel, flashInvalid } from "./rendering";
@@ -112,8 +112,7 @@ export async function activateByTap(r: number, c: number): Promise<void> {
 
     await resolveBoard();
 
-    updateHUD();
-    checkWinLose();
+    await finishTurn();
   } finally {
     G.animating = false;
     startHintTimer();
@@ -272,8 +271,7 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
 
         await resolveBoard();
 
-        updateHUD();
-        checkWinLose();
+        await finishTurn();
         return;
       }
 
@@ -317,8 +315,7 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
 
         await resolveBoard();
 
-        updateHUD();
-        checkWinLose();
+        await finishTurn();
         return;
       }
     }
@@ -376,8 +373,7 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
 
         await resolveBoard();
 
-        updateHUD();
-        checkWinLose();
+        await finishTurn();
         return;
       }
     }
@@ -399,8 +395,7 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
     await resolveBoard();
     G.lastSwapTarget = null;
 
-    updateHUD();
-    checkWinLose();
+    await finishTurn();
   } finally {
     G.animating = false;
     startHintTimer();
@@ -497,6 +492,55 @@ export async function resolveBoard(): Promise<void> {
   }
 }
 
+// 自動デッドロック回復（第1章「軌道系」Phase 4b-2で新設）。現在の実装ではオービット
+// 制約下でのみ詰みが発生しうるため、`orbits.length > 0` のときのみ動作させる
+// （Stage 1〜500はこの関数自体が一切呼ばれず、挙動・シミュレーション統計に影響しない）。
+// まず品質基準（合法手1つ以上＋即座マッチなし）を満たす並べ替えを試み、
+// 上限回数以内に見つからなければ盤面を作り直す（既存の特殊ピースは失われるが、
+// プレイヤー操作を介さない自動処理のため許容する。手動シャッフルアイテムでは
+// このフォールバックを使わない — useShuffle()参照）
+async function recoverFromDeadlock(): Promise<void> {
+  const numColors = G.STAGES![G.currentStage].colors;
+  if (!shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS)) {
+    const regenerated = regenerateBoardForDeadlock(numColors, BOARD_REGEN_MAX_ATTEMPTS);
+    // 盤面を作り直しても合法手ありにできなかった場合、作り直し後の色分布で
+    // もう一度だけ並べ替えを試す（色数・オービット制約次第では理論上残りうる
+    // 最終手段のリスクを、既存のテスト済みプリミティブの再利用で少しでも減らす）。
+    // それでも解消しなければ「回復済み」と偽らず、分析用にイベントを記録して
+    // 呼び出し側に委ねる（/code-review指摘、2026-08-12。PR #353）
+    if (!regenerated && !shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS)) {
+      track("deadlock_recovery_failed", { stage: G.STAGES![G.currentStage].name });
+    }
+  }
+  // shuffleWithQualityGate()は成功時のみ「即座マッチなし」を保証するため、全ての
+  // 試行が失敗した場合、直前の並べ替え結果に未解決のマッチが残っている可能性がある。
+  // resolveBoard()ではなくresolveMatches()を使うことで、tickCountdowns()をこのターン
+  // 内で二重に進めてしまう副作用を避けつつ、未解決のマッチが画面に残る事態を防ぐ
+  // （/code-review指摘、2026-08-12。PR #353）
+  await resolveMatches();
+  SFX.swap();
+  drawBoard();
+  await sleep(300);
+}
+
+// プレイヤーの手・アイテム使用のたびに盤面が確定した後の共通の締めくくり処理。
+// HUD更新→勝敗判定→（ステージが継続する場合のみ）詰み検知・自動回復、の順に行う。
+// resolveBoard()の呼び出し箇所すべてがこれを経由することで、詰み検知が
+// 「盤面確定後の毎ターン」漏れなく行われる（GIMMICK_REDESIGN.md参照）
+export async function finishTurn(): Promise<void> {
+  updateHUD();
+  if (checkWinLose()) return;
+  if (G.STAGES![G.currentStage].orbits.length > 0 && !hasAnyLegalMove()) {
+    await recoverFromDeadlock();
+    // recoverFromDeadlock()の最終フォールバック(resolveMatches())がスコア・消去数・
+    // 特殊生成等を変化させ、ミッションを達成させる可能性がある。詰み回復後の状態で
+    // 勝敗を再判定しないと、結果画面へ遷移せずクリア済み扱いにならないまま残ってしまう
+    // （/code-review指摘、2026-08-12。PR #353）
+    updateHUD();
+    checkWinLose();
+  }
+}
+
 // ============================================================
 //  Item System
 // ============================================================
@@ -566,8 +610,7 @@ export async function usePinpoint(r: number, c: number): Promise<void> {
     await sleep(ANIM.CHAIN_PAUSE_MS);
     await resolveBoard();
 
-    updateHUD();
-    checkWinLose();
+    await finishTurn();
   } finally {
     G.animating = false;
     startHintTimer();
@@ -577,34 +620,48 @@ export async function usePinpoint(r: number, c: number): Promise<void> {
 export async function useShuffle(): Promise<void> {
   G.animating = true;
   try {
-    if (!G.debugMode) { G.saveData.coins -= ITEM_COSTS.shuffle; writeSave(); SFX.coinSpend(); }
-    updateItemBar();
-
-    const pieces: Piece[] = [];
-    const positions: [number, number][] = [];
-    for (let r = 0; r < G.rows; r++) {
-      for (let c = 0; c < G.cols; c++) {
-        if (G.board[r][c]) {
-          pieces.push(G.board[r][c]!);
-          positions.push([r, c]);
+    // Stage 1〜500（orbits: []）は既存の挙動を1ドットも変えないため、品質基準を
+    // 経由しない従来のシャッフルをそのまま残す。オービット下では固定方向制約のせいで
+    // ランダムな並べ替え1回では合法手が0件・即座マッチありになりうるため、品質基準
+    // （shuffleWithQualityGate、board.ts）を通す。基準を満たせなければ盤面を変更せず
+    // アイテム使用そのものをキャンセルする（コストも消費しない。GIMMICK_REDESIGN.md
+    // 「シャッフルアイテム」参照 — 既存の特殊ピースを黙って作り直すことはしない）
+    if (G.STAGES![G.currentStage].orbits.length > 0) {
+      const original = cloneBoard();
+      if (!shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS)) {
+        G.board = original;
+        SFX.invalidSwap();
+        return;
+      }
+    } else {
+      const pieces: Piece[] = [];
+      const positions: [number, number][] = [];
+      for (let r = 0; r < G.rows; r++) {
+        for (let c = 0; c < G.cols; c++) {
+          if (G.board[r][c]) {
+            pieces.push(G.board[r][c]!);
+            positions.push([r, c]);
+          }
         }
       }
+
+      for (let i = pieces.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pieces[i], pieces[j]] = [pieces[j], pieces[i]];
+      }
+
+      positions.forEach(([r, c], idx) => { G.board[r][c] = pieces[idx]; });
     }
 
-    for (let i = pieces.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [pieces[i], pieces[j]] = [pieces[j], pieces[i]];
-    }
-
-    positions.forEach(([r, c], idx) => { G.board[r][c] = pieces[idx]; });
+    if (!G.debugMode) { G.saveData.coins -= ITEM_COSTS.shuffle; writeSave(); SFX.coinSpend(); }
+    updateItemBar();
 
     SFX.swap();
     drawBoard();
     await sleep(300);
     await resolveBoard();
 
-    updateHUD();
-    checkWinLose();
+    await finishTurn();
   } finally {
     G.animating = false;
     startHintTimer();
@@ -654,8 +711,7 @@ async function useColorBomb(colorIndex: number): Promise<void> {
     await sleep(ANIM.CHAIN_PAUSE_MS);
     await resolveBoard();
 
-    updateHUD();
-    checkWinLose();
+    await finishTurn();
   } finally {
     G.animating = false;
     startHintTimer();
@@ -770,7 +826,9 @@ function isFinalStageClear(): boolean {
   return G.currentStage === G.STAGES!.length - 1;
 }
 
-export function checkWinLose(): void {
+// 戻り値: ステージがクリア/失敗して終了した場合true、まだ継続する場合false
+// （継続時のみ呼び出し側が詰み回復チェックを行う。finishTurn()参照）
+export function checkWinLose(): boolean {
   const m = G.STAGES![G.currentStage].mission;
   let cleared = false;
 
@@ -824,12 +882,15 @@ export function checkWinLose(): void {
     addShockwave(cx, cy, G.boardPixelW * 0.6, 20, "#ffd700");
     track("stage_clear", { stage: stg.name, stars, moves_used: usedMoves, moves_total: stg.moves, mission_type: stg.mission.type, coins_earned: G.coinsEarned, all_stages_cleared: isFinalStageClear() });
     setTimeout(() => showResult(true, stars), 800);
+    return true;
   } else if (G.movesLeft <= 0) {
     const stg = G.STAGES![G.currentStage];
     SFX.stageFail();
     track("stage_fail", { stage: stg.name, moves_total: stg.moves, mission_type: stg.mission.type });
     showResult(false, 0, m);
+    return true;
   }
+  return false;
 }
 
 export function getFailureProgress(mission: Mission): string {
