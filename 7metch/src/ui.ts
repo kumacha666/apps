@@ -605,7 +605,8 @@ export function initUI(): void {
     document.getElementById("color-picker-modal")!.classList.add("hidden");
   });
 
-  document.getElementById("btn-rescue")!.addEventListener("click", () => {
+  document.getElementById("btn-rescue")!.addEventListener("click", async () => {
+    if (G.animating) return;
     if (!G.debugMode && (G.saveData.coins || 0) < ITEM_COSTS.addmoves) return;
     if (!G.debugMode) { G.saveData.coins -= ITEM_COSTS.addmoves; writeSave(); SFX.coinSpend(); }
     G.movesLeft += 3;
@@ -615,8 +616,17 @@ export function initUI(): void {
     // 手数切れの失敗時はfinishTurn()の詰み回復チェックを経由せずに終了するため、
     // オービットステージで詰み盤面のままレスキュー(手数+3)された場合、そのままでは
     // 操作可能な手が無いまま復帰してしまう。finishTurn()を呼び直しHUD更新・勝敗再判定・
-    // 詰み回復を行う(/code-review指摘、2026-08-12。PR #353)
-    finishTurn();
+    // 詰み回復を行う(/code-review指摘、2026-08-12。PR #353)。
+    // finishTurn()は詰み回復時にawait sleep()を挟む非同期処理になりうるため、他の
+    // 呼び出し箇所(doMove/useShuffle等)と同様にG.animatingで待機中の多重操作を防ぐ
+    // （/code-review指摘、2026-08-12。PR #353フォローアップ）
+    G.animating = true;
+    try {
+      await finishTurn();
+    } finally {
+      G.animating = false;
+      startHintTimer();
+    }
   });
 
   // --- Special Piece Spawner (Debug) ---

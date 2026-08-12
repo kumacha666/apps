@@ -512,6 +512,12 @@ async function recoverFromDeadlock(): Promise<void> {
       track("deadlock_recovery_failed", { stage: G.STAGES![G.currentStage].name });
     }
   }
+  // shuffleWithQualityGate()は成功時のみ「即座マッチなし」を保証するため、全ての
+  // 試行が失敗した場合、直前の並べ替え結果に未解決のマッチが残っている可能性がある。
+  // resolveBoard()ではなくresolveMatches()を使うことで、tickCountdowns()をこのターン
+  // 内で二重に進めてしまう副作用を避けつつ、未解決のマッチが画面に残る事態を防ぐ
+  // （/code-review指摘、2026-08-12。PR #353）
+  await resolveMatches();
   SFX.swap();
   drawBoard();
   await sleep(300);

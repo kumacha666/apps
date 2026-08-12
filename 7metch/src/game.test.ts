@@ -496,6 +496,7 @@ describe("finishTurn", () => {
     G.movesLeft = 20;
     await expect(finishTurn()).resolves.toBeUndefined();
     expect(hasAnyLegalMove()).toBe(false); // 既知の残存リスク: 真に回復不能な盤面は詰みのまま
+    expect(findAllMatches().length).toBe(0); // 全ての回復試行が失敗しても未解決マッチを残さない
   });
 });
 
