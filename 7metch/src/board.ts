@@ -160,7 +160,11 @@ export function countAvailableMoves(): number {
       count++;
       return;
     }
-    if (isSwapBlockedByOrbit(p1, p2, r, c, nr, nc)) return;
+    // isActivatingSwapが既にfalseと分かっているため、isSwapBlockedByOrbit()
+    // (内部でisActivatingSwapを再評価する)ではなくisSwapLegalForCurrentStage()を
+    // 直接呼ぶ(/code-review指摘、PR #356。二重評価そのものはStage 1〜500の
+    // 挙動に影響しないため実害は無いが、判定の重複を避ける)
+    if (!isSwapLegalForCurrentStage(r, c, nr, nc)) return;
     swapPieces(r, c, nr, nc);
     if (findAllMatches().length > 0) count++;
     swapPieces(r, c, nr, nc);
