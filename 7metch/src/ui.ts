@@ -2,7 +2,7 @@ import type { ScreenName, StarGate, SaveData } from "./types";
 import { G, PIECE_COLORS, STAR_GATES, DEFAULT_OPTIONS, ITEM_COSTS, loadOptions, saveOptions, applyVisualOptions, loadSave, writeSave } from "./state";
 import { initAudio, switchBgm, stopAllBgm, applyAudioOptions, SFX } from "./audio";
 import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim, stopTitleBgAnim, startResultBgAnim, stopResultBgAnim, startSplashBgAnim, stopSplashBgAnim, drawBoard } from "./rendering";
-import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker } from "./game";
+import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker, finishTurn } from "./game";
 import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
 import { buildStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText } from "./stages";
 import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
@@ -609,10 +609,14 @@ export function initUI(): void {
     if (!G.debugMode && (G.saveData.coins || 0) < ITEM_COSTS.addmoves) return;
     if (!G.debugMode) { G.saveData.coins -= ITEM_COSTS.addmoves; writeSave(); SFX.coinSpend(); }
     G.movesLeft += 3;
-    updateHUD();
     updateItemBar();
     showScreen("game");
     track("item_rescue", { stage: G.STAGES![G.currentStage].name, coins_remaining: G.saveData.coins });
+    // 手数切れの失敗時はfinishTurn()の詰み回復チェックを経由せずに終了するため、
+    // オービットステージで詰み盤面のままレスキュー(手数+3)された場合、そのままでは
+    // 操作可能な手が無いまま復帰してしまう。finishTurn()を呼び直しHUD更新・勝敗再判定・
+    // 詰み回復を行う(/code-review指摘、2026-08-12。PR #353)
+    finishTurn();
   });
 
   // --- Special Piece Spawner (Debug) ---

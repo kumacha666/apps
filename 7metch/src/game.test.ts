@@ -485,6 +485,18 @@ describe("finishTurn", () => {
     expect(findAllMatches().length).toBe(0);
     expect(hasAnyLegalMove()).toBe(true);
   });
+
+  it("並べ替え・盤面作り直しのいずれでも合法手が作れない盤面でもクラッシュせずに完了する(/code-review指摘、PR #353)", async () => {
+    // 操作可能セルが1つしか無く、並べ替え・盤面作り直しのどちらを試しても
+    // 原理的に合法手が生まれ得ない(regenerateBoardForDeadlock()が上限回数内に
+    // 失敗する現実的なケースをシミュレート)。この場合でも「回復済み」と偽って
+    // 処理を続けるのではなく、クラッシュ・無限ループせずに完了することを確認する
+    setupGame(1, 1);
+    G.STAGES = [makeStage({ orbits: [{ r: 0, c: 0, dir: [1, 0] }] })];
+    G.movesLeft = 20;
+    await expect(finishTurn()).resolves.toBeUndefined();
+    expect(hasAnyLegalMove()).toBe(false); // 既知の残存リスク: 真に回復不能な盤面は詰みのまま
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -502,7 +502,15 @@ export async function resolveBoard(): Promise<void> {
 async function recoverFromDeadlock(): Promise<void> {
   const numColors = G.STAGES![G.currentStage].colors;
   if (!shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS)) {
-    regenerateBoardForDeadlock(numColors, BOARD_REGEN_MAX_ATTEMPTS);
+    const regenerated = regenerateBoardForDeadlock(numColors, BOARD_REGEN_MAX_ATTEMPTS);
+    // 盤面を作り直しても合法手ありにできなかった場合、作り直し後の色分布で
+    // もう一度だけ並べ替えを試す（色数・オービット制約次第では理論上残りうる
+    // 最終手段のリスクを、既存のテスト済みプリミティブの再利用で少しでも減らす）。
+    // それでも解消しなければ「回復済み」と偽らず、分析用にイベントを記録して
+    // 呼び出し側に委ねる（/code-review指摘、2026-08-12。PR #353）
+    if (!regenerated && !shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS)) {
+      track("deadlock_recovery_failed", { stage: G.STAGES![G.currentStage].name });
+    }
   }
   SFX.swap();
   drawBoard();
