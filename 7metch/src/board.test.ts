@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { G, MATCH_MIN } from "./state";
 import {
   isMatchable, isIce, isHole, isRock, isPlayable,
@@ -8,6 +8,8 @@ import {
   findHint, isSwapLegalForCurrentStage, isActivatingSwap,
   isRainbowPiece, isComboSpecialSwap, isSwapBlockedByOrbit,
   findTapActivatableSpecialCell, findActivatingSwapPair, hasAnyLegalMove,
+  shuffleWithQualityGate, regenerateBoardForDeadlock, cloneBoard,
+  SHUFFLE_QUALITY_MAX_ATTEMPTS, BOARD_REGEN_MAX_ATTEMPTS,
 } from "./board";
 import type { OrbitCell } from "./types";
 
@@ -692,5 +694,82 @@ describe("findHint（タップ/スワップ起動系フォールバック）", (
   it("通常マッチ・タップ起動・スワップ起動系のいずれも無ければnull", () => {
     fillSafe();
     expect(findHint()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cloneBoard / shuffleWithQualityGate / regenerateBoardForDeadlock
+// (詰み回復・品質基準付きシャッフル、第1章「軌道系」Phase 4b-2)
+// ---------------------------------------------------------------------------
+describe("cloneBoard", () => {
+  it("盤面のディープコピーを返す(クローン側の変更が元の盤面に影響しない)", () => {
+    setupBoard(2, 2);
+    G.board[0][0] = { color: 1, special: "bomb" };
+    const clone = cloneBoard();
+    clone[0][0]!.color = 9;
+    clone[0][0]!.special = null;
+    expect(G.board[0][0]).toEqual({ color: 1, special: "bomb" });
+  });
+});
+
+describe("shuffleWithQualityGate", () => {
+  it("どの並べ替えでも基準を満たす盤面では1回目の試行で成功する(色が全マス重複なし+タップ起動可能な特殊ピース1枚)", () => {
+    setupBoard(3, 3);
+    let color = 0;
+    for (let r = 0; r < 3; r++)
+      for (let c = 0; c < 3; c++)
+        G.board[r][c] = { color: color++, special: null };
+    G.board[1][1]!.special = "bomb"; // どこに移動してもタップ起動可能なため合法手は常に確保される
+    // 全マス色が重複しないため、どう並べ替えても3連結マッチは原理的に発生しない
+    expect(shuffleWithQualityGate(1)).toBe(true);
+    expect(findAllMatches().length).toBe(0);
+    expect(hasAnyLegalMove()).toBe(true);
+  });
+
+  it("基準を満たす並べ替えが存在しない盤面では、指定した上限回数だけ試行してfalseを返す", () => {
+    // 1x1(隣接する操作可能セルが無い)ため、色を何度並べ替えてもマッチもタップ起動も発生し得ない
+    setupBoard(1, 1);
+    G.board[0][0] = { color: 0, special: null };
+    expect(shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS)).toBe(false);
+  });
+
+  it("1回目の試行が基準を満たさなくても、上限回数内で基準を満たす並べ替えが見つかればtrueで成功する(Math.randomを固定して並べ替え結果を決定的に検証)", () => {
+    // Math.random()を常に0に固定すると、Fisher-Yatesの結果は「1つ左ローテーション」になる
+    // (n個の配列で iの降順ループ中、常にj=0との入れ替えになるため)。この性質を利用し、
+    // 1回目の試行(1回転)は即座マッチが残るため失敗・2回目の試行(2回転)は基準を満たす、
+    // という盤面をあらかじめ計算して用意する
+    setupBoard(1, 4);
+    const original = [1, 0, 0, 0];
+    const setColors = (colors: number[]) => {
+      colors.forEach((color, c) => { G.board[0][c] = { color, special: null }; });
+    };
+
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      // 上限1回: 1回転後は[0,0,0,1](即座マッチ成立)のため基準を満たせず失敗する
+      setColors(original);
+      expect(shuffleWithQualityGate(1)).toBe(false);
+
+      // 上限2回: 2回転後は[0,0,1,0]で即座マッチなし・(2,3)スワップで合法手ありとなり成功する
+      setColors(original);
+      expect(shuffleWithQualityGate(2)).toBe(true);
+      expect(G.board[0].map(p => p!.color)).toEqual([0, 0, 1, 0]);
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+});
+
+describe("regenerateBoardForDeadlock", () => {
+  it("十分な色数・マスがあれば盤面を作り直して合法手ありの状態にする(既存のcreateBoard()と同じ生成ロジックを再利用)", () => {
+    setupBoard(7, 7);
+    expect(regenerateBoardForDeadlock(5, BOARD_REGEN_MAX_ATTEMPTS)).toBe(true);
+    expect(findAllMatches().length).toBe(0);
+    expect(hasAnyLegalMove()).toBe(true);
+  });
+
+  it("操作可能セルが1つしか無い盤面では、何度作り直しても合法手が生まれないためfalseを返す", () => {
+    setupBoard(1, 1);
+    expect(regenerateBoardForDeadlock(5, 5)).toBe(false);
   });
 });

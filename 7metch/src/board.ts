@@ -42,6 +42,27 @@ export function hasSquare(): boolean {
   return false;
 }
 
+// 盤面全体をランダムなピースで埋め、即座マッチ・2x2の同色スクエアが1つも
+// 無くなるまで埋め直す。初期盤面生成（createBoard）と詰み時の盤面作り直し
+// フォールバック（regenerateBoardForDeadlock、Phase 4b-2）が同じロジックを共有する
+function fillBoardUntilStable(numColors: number): void {
+  G.board = [];
+  for (let r = 0; r < G.rows; r++) {
+    G.board[r] = [];
+    for (let c = 0; c < G.cols; c++) {
+      G.board[r][c] = (isHole(r, c) || isRock(r, c)) ? null : randomPiece(numColors);
+    }
+  }
+  while (findAllMatches().length > 0 || hasSquare()) {
+    for (let r = 0; r < G.rows; r++) {
+      for (let c = 0; c < G.cols; c++) {
+        if (isHole(r, c) || isRock(r, c)) continue;
+        G.board[r][c] = randomPiece(numColors);
+      }
+    }
+  }
+}
+
 export function createBoard(numColors: number): void {
   const maxMoves = Math.max(10, Math.floor(G.rows * G.cols * 0.15));
   const minMoves = 2;
@@ -50,25 +71,7 @@ export function createBoard(numColors: number): void {
   let bestDiff = Infinity;
 
   for (let attempt = 0; attempt < 20; attempt++) {
-    G.board = [];
-    for (let r = 0; r < G.rows; r++) {
-      G.board[r] = [];
-      for (let c = 0; c < G.cols; c++) {
-        if (isHole(r, c) || isRock(r, c)) {
-          G.board[r][c] = null;
-        } else {
-          G.board[r][c] = randomPiece(numColors);
-        }
-      }
-    }
-    while (findAllMatches().length > 0 || hasSquare()) {
-      for (let r = 0; r < G.rows; r++) {
-        for (let c = 0; c < G.cols; c++) {
-          if (isHole(r, c) || isRock(r, c)) continue;
-          G.board[r][c] = randomPiece(numColors);
-        }
-      }
-    }
+    fillBoardUntilStable(numColors);
 
     const moves = countAvailableMoves();
     if (moves >= minMoves && moves <= maxMoves) {
@@ -492,6 +495,65 @@ export function hasAnyLegalMove(): boolean {
     if (hasMatch) { found = true; return true; }
   });
   return found;
+}
+
+// ---------------------------------------------------------------------------
+// 詰み回復・品質基準付きシャッフル（第1章「軌道系」Phase 4b-2）
+// 品質基準は「合法手が1つ以上存在し、かつシャッフル直後の盤面自体に即座マッチが
+// 成立していないこと」。ステージ生成時の「2〜10の範囲」とは意図的に異なる基準
+// （回復・手動シャッフルは詰み解消だけが目的で、範囲まで要求すると成功率を
+// 不必要に下げてしまうため。GIMMICK_REDESIGN.md参照）
+// ---------------------------------------------------------------------------
+
+export const SHUFFLE_QUALITY_MAX_ATTEMPTS = 10;
+export const BOARD_REGEN_MAX_ATTEMPTS = 20;
+
+// 現在の盤面のピース（色・特殊とも）を保ったまま座標だけをランダムに並べ替える。
+// 結果が品質基準を満たすかどうかは呼び出し側（shuffleWithQualityGate）が判定する
+function shuffleBoardPiecesInPlace(): void {
+  const pieces: Piece[] = [];
+  const positions: [number, number][] = [];
+  for (let r = 0; r < G.rows; r++) {
+    for (let c = 0; c < G.cols; c++) {
+      if (G.board[r][c]) { pieces.push(G.board[r][c]!); positions.push([r, c]); }
+    }
+  }
+  for (let i = pieces.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pieces[i], pieces[j]] = [pieces[j], pieces[i]];
+  }
+  positions.forEach(([r, c], idx) => { G.board[r][c] = pieces[idx]; });
+}
+
+// 品質基準（合法手1つ以上＋即座マッチなし）を満たす並べ替えが見つかるまで
+// 上限回数以内で再試行する。見つかればtrueを返し、その並べ替えをG.boardに残す。
+// 見つからなければfalseを返す（このときG.boardは最後に試した失敗状態のまま残るため、
+// 元の盤面に戻す必要がある場合は呼び出し側が事前にcloneBoard()でスナップショットを
+// 取り、失敗時にG.boardへ差し戻すこと。自動デッドロック回復・手動シャッフルアイテム
+// 双方で共有する — GIMMICK_REDESIGN.md「シャッフルアイテム」参照）
+export function shuffleWithQualityGate(maxAttempts: number): boolean {
+  for (let i = 0; i < maxAttempts; i++) {
+    shuffleBoardPiecesInPlace();
+    if (findAllMatches().length === 0 && hasAnyLegalMove()) return true;
+  }
+  return false;
+}
+
+// 盤面を丸ごと作り直す詰み回復の最終フォールバック（初期盤面生成と同じ
+// fillBoardUntilStable()を再利用）。既存の特殊ピースは失われるため、プレイヤー
+// 操作を介さない自動デッドロック回復でのみ使用する（有料の手動シャッフルアイテム
+// では絶対に使わないこと。既存の特殊ピースが対価もなく消滅してしまうため）
+export function regenerateBoardForDeadlock(numColors: number, maxAttempts: number): boolean {
+  for (let i = 0; i < maxAttempts; i++) {
+    fillBoardUntilStable(numColors);
+    if (hasAnyLegalMove()) return true;
+  }
+  return false;
+}
+
+// 盤面のディープコピー（シャッフル失敗時に元の盤面へ差し戻すためのスナップショット）
+export function cloneBoard(): (Piece | null)[][] {
+  return G.board.map(row => row.map(cell => cell ? { ...cell } : null));
 }
 
 // ---------------------------------------------------------------------------

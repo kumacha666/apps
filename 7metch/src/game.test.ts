@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type { Piece, StageConfig, Mission, GameDom } from "./types";
-import { G, SCORE_PER_PIECE } from "./state";
-import { doMove, activateByTap, checkWinLose, updateHUD, resolveMatches, showResult } from "./game";
+import type { Piece, StageConfig, Mission, GameDom, OrbitCell } from "./types";
+import { G, SCORE_PER_PIECE, ITEM_COSTS } from "./state";
+import { doMove, activateByTap, checkWinLose, updateHUD, resolveMatches, showResult, useShuffle, finishTurn } from "./game";
+import { hasAnyLegalMove, findAllMatches } from "./board";
 
 const storage: Record<string, string> = {};
 vi.stubGlobal("localStorage", {
@@ -348,6 +349,28 @@ describe("checkWinLose", () => {
     checkWinLose();
     expect(G.saveData.coins).toBeGreaterThan(coinsBefore);
   });
+
+  // 戻り値（finishTurn()が詰み回復チェックの要否をこれで判断する。Phase 4b-2）
+  it("クリア達成時はtrueを返す", () => {
+    G.STAGES = [makeStage({ mission: { type: "score", target: 100 } })];
+    G.score = 100;
+    G.movesLeft = 5;
+    expect(checkWinLose()).toBe(true);
+  });
+
+  it("手数切れによる失敗時はtrueを返す", () => {
+    G.STAGES = [makeStage({ mission: { type: "score", target: 100 } })];
+    G.score = 0;
+    G.movesLeft = 0;
+    expect(checkWinLose()).toBe(true);
+  });
+
+  it("未達成かつ手数残ありではfalseを返す（ステージ継続）", () => {
+    G.STAGES = [makeStage({ mission: { type: "score", target: 100 } })];
+    G.score = 50;
+    G.movesLeft = 5;
+    expect(checkWinLose()).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -418,5 +441,104 @@ describe("updateHUD", () => {
     G.movesLeft = 12;
     updateHUD();
     expect(G.dom!.hudMoves.textContent).toBe("のこり 12 手");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// finishTurn（第1章「軌道系」Phase 4b-2: 自動デッドロック回復のゲーティング）
+// setupGame()の既定盤面（mod5パターン）はboard.test.tsのhasAnyLegalMove()テストで
+// 「どの隣接スワップもマッチを作らず、特殊ピースも無い＝合法手0件」と検証済みのため、
+// そのまま詰み盤面として利用できる
+// ---------------------------------------------------------------------------
+describe("finishTurn", () => {
+  beforeEach(() => setupGame());
+
+  function boardColors(): number[] {
+    const out: number[] = [];
+    for (let r = 0; r < G.rows; r++)
+      for (let c = 0; c < G.cols; c++)
+        out.push(G.board[r][c]!.color);
+    return out;
+  }
+
+  it("ステージが終了した場合(手数切れ)は詰み回復チェックを行わない", async () => {
+    G.STAGES = [makeStage({ orbits: [{ r: 3, c: 3, dir: [1, 0] }], mission: { type: "score", target: 9999 } })];
+    G.movesLeft = 0;
+    const before = boardColors();
+    await finishTurn();
+    expect(boardColors()).toEqual(before); // 合法手0件の盤面のはずだが、終了済みのため回復は動かない
+  });
+
+  it("オービットの無いステージ(orbits: [])では合法手0件でも詰み回復を行わない(Stage1〜500は挙動不変)", async () => {
+    G.STAGES = [makeStage({ orbits: [] })];
+    G.movesLeft = 20;
+    const before = boardColors();
+    await finishTurn();
+    expect(boardColors()).toEqual(before);
+  });
+
+  it("オービットのあるステージで合法手0件なら詰み回復が働き、盤面が合法手ありの状態になる", async () => {
+    G.STAGES = [makeStage({ orbits: [{ r: 3, c: 3, dir: [1, 0] }], colors: 5 })];
+    G.movesLeft = 20;
+    expect(hasAnyLegalMove()).toBe(false); // 前提: 回復前は詰み盤面
+    await finishTurn();
+    expect(findAllMatches().length).toBe(0);
+    expect(hasAnyLegalMove()).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// useShuffle（第1章「軌道系」Phase 4b-2: 品質基準付きシャッフル）
+// ---------------------------------------------------------------------------
+describe("useShuffle", () => {
+  beforeEach(() => {
+    setupGame();
+    // updateItemBar()がdocument.querySelectorAllを参照するため、item系関数を呼ぶテストでは
+    // documentをスタブする必要がある(showResult describe blockと同じ方式)
+    vi.stubGlobal("document", { querySelectorAll: () => [] });
+  });
+
+  afterEach(() => {
+    vi.stubGlobal("document", undefined);
+  });
+
+  it("オービットの無いステージ(orbits: [])では品質基準を経由せず常に成功し、コインを消費する(Stage1〜500は挙動不変)", async () => {
+    // mission targetを到達不能にしておく(シャッフルは即座マッチの有無を検証しないため、
+    // 偶然マッチが成立してステージクリア報酬コインが加算されるとアサーションが不安定になる)
+    G.STAGES = [makeStage({ orbits: [], mission: { type: "score", target: 999999 } })];
+    const coinsBefore = G.saveData.coins;
+    await useShuffle();
+    expect(G.saveData.coins).toBe(coinsBefore - ITEM_COSTS.shuffle);
+    expect(G.animating).toBe(false);
+  });
+
+  it("オービットのあるステージで品質基準を満たす並べ替えが見つかれば、通常通りコインを消費する", async () => {
+    // 全マス色が重複しない(=どう並べ替えても即座マッチが原理的に発生しない)+タップ起動可能な
+    // 特殊ピース1枚(=どこに移動しても合法手が確保される)にして、1回目の試行で必ず品質基準を
+    // 満たすようにする(乱数任せだと、通常のmod5盤面では上限10回の再試行内に基準を満たす
+    // 並べ替えが見つからずキャンセルされることが確率的にありうるため決定的に構成する)
+    setupGame(3, 3);
+    let color = 0;
+    for (let r = 0; r < 3; r++)
+      for (let c = 0; c < 3; c++)
+        G.board[r][c] = { color: color++, special: null };
+    G.board[1][1]!.special = "bomb";
+    G.STAGES = [makeStage({ orbits: [{ r: 1, c: 1, dir: [1, 0] }] })];
+    const coinsBefore = G.saveData.coins;
+    await useShuffle();
+    expect(G.saveData.coins).toBe(coinsBefore - ITEM_COSTS.shuffle);
+    expect(findAllMatches().length).toBe(0);
+    expect(hasAnyLegalMove()).toBe(true);
+  });
+
+  it("オービットのあるステージで品質基準を満たす並べ替えが無ければ、盤面を変更せずコストも消費せずキャンセルする", async () => {
+    setupGame(1, 1); // 操作可能セルが1つしか無く、どう並べ替えても合法手が生まれ得ない
+    G.STAGES = [makeStage({ orbits: [{ r: 0, c: 0, dir: [1, 0] }] })];
+    const coinsBefore = G.saveData.coins;
+    const colorBefore = G.board[0][0]!.color;
+    await useShuffle();
+    expect(G.saveData.coins).toBe(coinsBefore); // コスト不消費
+    expect(G.board[0][0]!.color).toBe(colorBefore); // 盤面も変更されない
+    expect(G.animating).toBe(false);
   });
 });
