@@ -822,6 +822,17 @@ describe("countAvailableMoves", () => {
     const after = G.board.map(row => row.map(p => p!.color));
     expect(after).toEqual(before);
   });
+
+  it("隣接する2個のカウントダウンボム同士は、マッチを伴わなくてもスワップ起動系の合法手として数える(/code-review指摘、PR #356。placeCountdownBombs()が品質チェックループの内側に移動したことで、countAvailableMoves()自身がこのペアを見る機会が生じた)", () => {
+    // 2x2盤面(MATCH_MIN=3のためどのスワップをしても通常マッチは原理的に成立しない)。
+    // 全マス異なる色にし、(0,0)と(0,1)だけを隣接するカウントダウンボムにする
+    setupBoard(2, 2);
+    G.board[0][0] = { color: 0, special: "countdown", countdown: 8 };
+    G.board[0][1] = { color: 1, special: "countdown", countdown: 8 };
+    G.board[1][0] = { color: 2, special: null };
+    G.board[1][1] = { color: 3, special: null };
+    expect(countAvailableMoves()).toBe(1); // ボム同士のペアだけが合法手として数えられる
+  });
 });
 
 describe("createBoard", () => {

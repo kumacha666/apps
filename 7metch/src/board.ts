@@ -144,12 +144,23 @@ export function forEachAdjacentPlayablePair(
 // 初期盤面生成(createBoard())の品質チェックで使う「合法手数」。第1章「軌道系」
 // (Stage 501〜)のオービット制約を通常スワップの拒否判定として反映する(Stage 1〜500は
 // orbits: []のためisSwapBlockedByOrbitが常にfalseを返し、挙動は一切変わらない)。
-// createBoard()生成直後の盤面には特殊ピースが存在しないため、isSwapBlockedByOrbitの
-// 起動系除外分岐は実質的に無関係で、常にisSwapLegalForCurrentStage相当の判定になる
+// createBoard()生成直後の盤面には基本的に特殊ピースが存在しないが、countdownBombs
+// (Stage 300〜500)によって最大2個のカウントダウンボムが置かれうる。隣接する2個の
+// ボムはisActivatingSwap()により(マッチ成立を伴わずとも)hasAnyLegalMove()/doMove()の
+// 定義上「有効な1手」として扱われるため、findAllMatches()ベースの判定だけでは
+// 見逃してしまう。ボム同士の隣接ペアをplaceCountdownBombs()が品質チェックループの
+// 内側で作りうるようになった(/code-review指摘、PR #356)ため、その分もここで
+// カウントし、maxMoves上限の保証がボム込みの実際の合法手数とズレないようにする
 export function countAvailableMoves(): number {
   let count = 0;
   forEachAdjacentPlayablePair((r, c, nr, nc) => {
-    if (isSwapBlockedByOrbit(G.board[r][c], G.board[nr][nc], r, c, nr, nc)) return;
+    const p1 = G.board[r][c];
+    const p2 = G.board[nr][nc];
+    if (isActivatingSwap(p1, p2)) {
+      count++;
+      return;
+    }
+    if (isSwapBlockedByOrbit(p1, p2, r, c, nr, nc)) return;
     swapPieces(r, c, nr, nc);
     if (findAllMatches().length > 0) count++;
     swapPieces(r, c, nr, nc);
