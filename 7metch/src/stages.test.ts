@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { G, PIECE_COLORS, PIECE_NAMES_JA } from "./state";
-import { getMissionText, buildStages, buildOrbitPilotStages, boardSizeForStage, isStageUnlocked, getTotalStars, lastClearedRealStageIdx, nextStageBoundary } from "./stages";
+import { getMissionText, buildStages, buildOrbitPilotStages, boardSizeForStage, isStageUnlocked, getTotalStars, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage } from "./stages";
 import { hasEntrySource, orbitsHaveRequiredGap } from "./orbit";
 import type { Mission, StageConfig } from "./types";
 
@@ -460,5 +460,27 @@ describe("nextStageBoundary", () => {
     G.STAGES = new Array(524).fill(null);
     G.currentStage = 500; // Stage 501(デバッグジャンプ後)
     expect(nextStageBoundary()).toBe(524);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isRealCampaignStage — プレビュー範囲(Stage 501〜524)ではゲート/アンロック判定を
+// スキップすべきかどうかの判定。プレビュー面のクリアはcleared/bestStarsへ永続保存
+// しないため、通常のisStageUnlocked()判定をそのまま適用すると常にfalseになり、
+// Nextでの連続進行が止まってしまう(Codexレビュー指摘)
+// ---------------------------------------------------------------------------
+describe("isRealCampaignStage", () => {
+  beforeEach(() => {
+    G.baseStageCount = 500;
+  });
+
+  it("本編範囲内(i < baseStageCount)はtrue", () => {
+    expect(isRealCampaignStage(0)).toBe(true);
+    expect(isRealCampaignStage(499)).toBe(true);
+  });
+
+  it("プレビュー範囲(i >= baseStageCount)はfalse", () => {
+    expect(isRealCampaignStage(500)).toBe(false);
+    expect(isRealCampaignStage(523)).toBe(false);
   });
 });

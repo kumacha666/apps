@@ -57,6 +57,17 @@ export function nextStageBoundary(): number {
   return G.currentStage >= G.baseStageCount ? (G.STAGES?.length ?? G.baseStageCount) : G.baseStageCount;
 }
 
+// ステージインデックスiが本編（Stage 1〜baseStageCount）の範囲内かどうか。
+// プレビュー範囲（デバッグジャンプ経由でのみ到達、Stage 501〜524）のクリアは
+// 永続保存しない設計にしたため、通常のスターゲート判定・isStageUnlocked()判定
+// （どちらも`cleared`の永続データを前提とする）をプレビュー範囲にそのまま適用すると
+// 常に「未クリア」扱いになり、Nextボタンでの連続進行が止まってしまう
+// (Codexレビュー指摘)。ui.tsのbtn-nextハンドラは、この関数がfalseを返す間は
+// ゲート/アンロック判定自体をスキップする
+export function isRealCampaignStage(i: number): boolean {
+  return i < G.baseStageCount;
+}
+
 // 350面以降、special/chainミッションのcount。4以上にするとhole配置
 // (i%5のバリアント)次第でクリア率が5%を割るステージが一定確率で発生する
 // ことをシミュレーションで確認済み(2026-07-24)。350面到達直後の最低値

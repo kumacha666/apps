@@ -4,7 +4,7 @@ import { initAudio, switchBgm, stopAllBgm, applyAudioOptions, SFX } from "./audi
 import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim, stopTitleBgAnim, startResultBgAnim, stopResultBgAnim, startSplashBgAnim, stopSplashBgAnim, drawBoard } from "./rendering";
 import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker, finishTurn } from "./game";
 import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
-import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText, lastClearedRealStageIdx, nextStageBoundary } from "./stages";
+import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage } from "./stages";
 import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
 import { initInput, renderHelpPieceIcons } from "./input";
 
@@ -484,15 +484,21 @@ export function initUI(): void {
       showScreen("stageSelect");
       return;
     }
-    const gate = getGateFor(next);
-    if (gate && getTotalStars() < gate.stars) {
-      showGateBlockMessage(gate);
-      return;
-    }
-    if (!isStageUnlocked(next)) {
-      buildStageSelect();
-      showScreen("stageSelect");
-      return;
+    // プレビュー範囲(next >= baseStageCount)ではゲート/アンロック判定を行わない。
+    // プレビュー面のクリアはcleared/bestStarsへ永続保存しないため(前回の修正)、
+    // isStageUnlocked()がclearedを前提とする通常判定をそのまま適用すると常にfalseに
+    // なり、Nextでの連続進行が止まってしまう(Codexレビュー指摘)
+    if (isRealCampaignStage(next)) {
+      const gate = getGateFor(next);
+      if (gate && getTotalStars() < gate.stars) {
+        showGateBlockMessage(gate);
+        return;
+      }
+      if (!isStageUnlocked(next)) {
+        buildStageSelect();
+        showScreen("stageSelect");
+        return;
+      }
     }
     G.currentStage = next;
     startStage(G.currentStage);
