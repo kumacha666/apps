@@ -182,9 +182,9 @@ export function getMissionText(m: Mission, html?: boolean): string {
       return `${PIECE_NAMES_JA[m.colorIndex!]}を${m.count}個けそう`;
     case "special": return `特殊ピースを${m.count}個つくろう`;
     case "chain": return `${m.count}チェインしよう`;
-    case "pattern": return `${PATTERN_SHAPE_JA[m.patternShape!]}のマスを全部けそう`;
+    case "pattern": return `${PATTERN_SHAPE_JA[m.patternShape]}のマスを全部けそう`;
     default: {
-      const _exhaustive: never = m.type;
+      const _exhaustive: never = m;
       return _exhaustive;
     }
   }

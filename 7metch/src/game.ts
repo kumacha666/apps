@@ -817,7 +817,7 @@ export function updateHUD(): void {
       break;
     }
     default: {
-      const _exhaustive: never = m.type;
+      const _exhaustive: never = m;
       return _exhaustive;
     }
   }
@@ -886,7 +886,7 @@ export function checkWinLose(): boolean {
       break;
     }
     default: {
-      const _exhaustive: never = m.type;
+      const _exhaustive: never = m;
       return _exhaustive;
     }
   }
@@ -936,16 +936,25 @@ export function checkWinLose(): boolean {
 
 export function getFailureProgress(mission: Mission): string {
   switch (mission.type) {
-    case "score": return `スコア ${G.score} / ${mission.target}（あと${mission.target! - G.score}）`;
-    case "clear": return `消去 ${G.totalCleared} / ${mission.count}（あと${mission.count! - G.totalCleared}個）`;
+    case "score": return `スコア ${G.score} / ${mission.target}（あと${mission.target - G.score}）`;
+    case "clear": return `消去 ${G.totalCleared} / ${mission.count}（あと${mission.count - G.totalCleared}個）`;
     case "color": {
-      const done = G.colorCleared[mission.colorIndex!] || 0;
-      return `${PIECE_NAMES_JA[mission.colorIndex!]} ${done} / ${mission.count}（あと${mission.count! - done}個）`;
+      const done = G.colorCleared[mission.colorIndex] || 0;
+      return `${PIECE_NAMES_JA[mission.colorIndex]} ${done} / ${mission.count}（あと${mission.count - done}個）`;
     }
-    case "special": return `特殊ピース ${G.specialsCreated} / ${mission.count}（あと${mission.count! - G.specialsCreated}個）`;
+    case "special": return `特殊ピース ${G.specialsCreated} / ${mission.count}（あと${mission.count - G.specialsCreated}個）`;
     case "chain": return `最大チェイン ${G.maxChain} / ${mission.count}`;
+    case "pattern": {
+      const targets = patternTargetCells();
+      const done = targets ? getProgressCount(G.patternProgress, targets) : 0;
+      const total = targets ? targets.size : 0;
+      return `パターン ${done} / ${total}マス（あと${total - done}マス）`;
+    }
+    default: {
+      const _exhaustive: never = mission;
+      return _exhaustive;
+    }
   }
-  return "";
 }
 
 export function showResult(win: boolean, stars: number, failedMission?: Mission): void {

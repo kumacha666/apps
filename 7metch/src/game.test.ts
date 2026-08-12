@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Piece, StageConfig, Mission, GameDom, OrbitCell } from "./types";
 import { G, SCORE_PER_PIECE, ITEM_COSTS } from "./state";
-import { doMove, activateByTap, activateCombo, checkWinLose, updateHUD, resolveMatches, showResult, useShuffle, finishTurn, usePinpoint } from "./game";
+import { doMove, activateByTap, activateCombo, checkWinLose, updateHUD, resolveMatches, showResult, useShuffle, finishTurn, usePinpoint, getFailureProgress } from "./game";
 import { hasAnyLegalMove, findAllMatches } from "./board";
 import { getPatternCells, targetCellSet } from "./patternClear";
 
@@ -547,6 +547,49 @@ describe("updateHUD", () => {
     G.patternProgress = new Set(targets.slice(0, 5));
     updateHUD();
     expect(G.dom!.hudMissionProgress.textContent).toBe(`5 / ${targets.length} マス`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getFailureProgress（手数切れ失敗時の結果画面に表示する残り進捗文言）
+// 元々どのミッション種のテストも存在していなかった上、"pattern"のcaseが丸ごと
+// 抜けており、パターンミッションで手数切れになると空文字を返していた
+// （/code-review指摘、PR #355）
+// ---------------------------------------------------------------------------
+describe("getFailureProgress", () => {
+  beforeEach(() => setupGame());
+
+  it("scoreミッション: 残りスコアを表示", () => {
+    G.score = 60;
+    expect(getFailureProgress({ type: "score", target: 100 })).toBe("スコア 60 / 100（あと40）");
+  });
+
+  it("clearミッション: 残り消去数を表示", () => {
+    G.totalCleared = 4;
+    expect(getFailureProgress({ type: "clear", count: 10 })).toBe("消去 4 / 10（あと6個）");
+  });
+
+  it("colorミッション: 指定色の残り消去数を表示", () => {
+    G.colorCleared[2] = 3;
+    expect(getFailureProgress({ type: "color", colorIndex: 2, count: 8 })).toContain("3 / 8（あと5個）");
+  });
+
+  it("specialミッション: 残り特殊ピース作成数を表示", () => {
+    G.specialsCreated = 1;
+    expect(getFailureProgress({ type: "special", count: 4 })).toBe("特殊ピース 1 / 4（あと3個）");
+  });
+
+  it("chainミッション: 最大チェイン数を表示", () => {
+    G.maxChain = 2;
+    expect(getFailureProgress({ type: "chain", count: 5 })).toBe("最大チェイン 2 / 5");
+  });
+
+  it("patternミッション: 残りマス数を表示(以前は空文字を返していた欠落分)", () => {
+    G.STAGES = [makeStage({ mission: { type: "pattern", patternShape: "corners" } })];
+    const targets = [...targetCellSet(getPatternCells("corners", G.rows, G.cols))];
+    G.patternProgress = new Set(targets.slice(0, 5));
+    const result = getFailureProgress({ type: "pattern", patternShape: "corners" });
+    expect(result).toBe(`パターン 5 / ${targets.length}マス（あと${targets.length - 5}マス）`);
   });
 });
 

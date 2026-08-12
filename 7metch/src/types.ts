@@ -28,22 +28,26 @@ export type ComboType =
   | "rainbow_bomb"
   | "board_clear";
 
-export type MissionType = "score" | "clear" | "color" | "special" | "chain" | "pattern";
-
 export interface Piece {
   color: number;
   special: SpecialType | null;
   countdown?: number;
 }
 
-export interface Mission {
-  type: MissionType;
-  target?: number;
-  count?: number;
-  colorIndex?: number;
-  // "pattern"ミッション専用。patternClear.tsのgetPatternCells()に渡す形状
-  patternShape?: PatternShape;
-}
+// 判別可能なunion(discriminated union)。typeごとに必須フィールドが異なるため、
+// 各バリアントの必須プロパティを型で強制する(例: "pattern"はpatternShapeが無いと
+// コンパイルエラーになる。旧: 全フィールドが任意のフラットな1つのinterfaceだった
+// ため、patternShapeを設定し忘れてもコンパイルが通ってしまっていた。/code-review指摘、
+// PR #355)
+export type Mission =
+  | { type: "score"; target: number }
+  | { type: "clear"; count: number }
+  | { type: "color"; colorIndex: number; count: number }
+  | { type: "special"; count: number }
+  | { type: "chain"; count: number }
+  | { type: "pattern"; patternShape: PatternShape };
+
+export type MissionType = Mission["type"];
 
 export interface StageFeatures {
   diagonalLine?: boolean;
