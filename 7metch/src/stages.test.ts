@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { G, PIECE_COLORS, PIECE_NAMES_JA } from "./state";
-import { getMissionText, buildStages, buildOrbitPilotStages, boardSizeForStage, isStageUnlocked, getTotalStars } from "./stages";
+import { getMissionText, buildStages, buildOrbitPilotStages, boardSizeForStage, isStageUnlocked, getTotalStars, lastClearedRealStageIdx } from "./stages";
 import { hasEntrySource, orbitsHaveRequiredGap } from "./orbit";
 import type { Mission, StageConfig } from "./types";
 
@@ -378,5 +378,41 @@ describe("isStageUnlocked", () => {
     }
     expect(getTotalStars()).toBeGreaterThanOrEqual(30);
     expect(isStageUnlocked(25)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// lastClearedRealStageIdx — デバッグジャンプでStage 501〜524(プレビュー)を
+// クリアしても、本編の進捗計算(ステージ選択・「つづきから」)を汚染しないことの検証
+// (Codexレビュー指摘)
+// ---------------------------------------------------------------------------
+describe("lastClearedRealStageIdx", () => {
+  beforeEach(() => {
+    G.saveData = { cleared: {}, bestStars: {}, coins: 0 };
+    G.baseStageCount = 500;
+  });
+
+  it("クリア済みステージが無ければ-1", () => {
+    expect(lastClearedRealStageIdx()).toBe(-1);
+  });
+
+  it("本編クリア済みステージの最大インデックスを返す", () => {
+    G.saveData.cleared[0] = true;
+    G.saveData.cleared[49] = true;
+    G.saveData.cleared[10] = true;
+    expect(lastClearedRealStageIdx()).toBe(49);
+  });
+
+  it("baseStageCount以上(デバッグジャンプのプレビュー面)のクリア履歴は無視する", () => {
+    G.saveData.cleared[49] = true;
+    G.saveData.cleared[500] = true; // Stage 501をデバッグジャンプでクリアした想定
+    G.saveData.cleared[523] = true; // Stage 524も同様
+    expect(lastClearedRealStageIdx()).toBe(49);
+  });
+
+  it("プレビュー面しかクリアしていなければ-1(本編は未クリア扱い)", () => {
+    G.saveData.cleared[500] = true;
+    G.saveData.cleared[510] = true;
+    expect(lastClearedRealStageIdx()).toBe(-1);
   });
 });

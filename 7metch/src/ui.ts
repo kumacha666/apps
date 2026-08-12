@@ -4,7 +4,7 @@ import { initAudio, switchBgm, stopAllBgm, applyAudioOptions, SFX } from "./audi
 import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim, stopTitleBgAnim, startResultBgAnim, stopResultBgAnim, startSplashBgAnim, stopSplashBgAnim, drawBoard } from "./rendering";
 import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker, finishTurn } from "./game";
 import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
-import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText } from "./stages";
+import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText, lastClearedRealStageIdx } from "./stages";
 import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
 import { initInput, renderHelpPieceIcons } from "./input";
 
@@ -99,9 +99,7 @@ export function buildStageSelect(): void {
 
   document.getElementById("total-stars-display")!.innerHTML = `★ ${total}　<span style="color:#4ecdc4"><span class="coin-icon"></span> ${G.saveData.coins || 0}</span>`;
 
-  const lastClearedIdx = Object.keys(G.saveData.cleared)
-    .map(Number)
-    .reduce((max: number, n: number) => Math.max(max, n), -1);
+  const lastClearedIdx = lastClearedRealStageIdx();
   const visibleUpTo = lastClearedIdx + 6;
 
   let stopped = false;
@@ -293,10 +291,7 @@ export function initUI(): void {
   // --- Start / Stage Select ---
   document.getElementById("btn-start")!.addEventListener("click", () => {
     initAudio();
-    const lastCleared = Object.keys(G.saveData.cleared)
-      .map(Number)
-      .sort((a: number, b: number) => a - b);
-    let next = lastCleared.length > 0 ? Math.min(lastCleared[lastCleared.length - 1] + 1, G.baseStageCount - 1) : 0;
+    const next = Math.min(lastClearedRealStageIdx() + 1, G.baseStageCount - 1);
     const gate = getGateFor(next);
     if (gate && getTotalStars() < gate.stars) {
       showGateBlockMessage(gate);

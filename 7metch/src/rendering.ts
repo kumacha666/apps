@@ -268,14 +268,35 @@ export function drawPatternCellOverlays(ctx: CanvasRenderingContext2D): void {
   }
 }
 
+// 選択中セルの選択枠(通常/タップ起動系パルス)を描く共通ヘルパー。ピース・盤面ガイドより
+// 後に描くことで、常に最前面に表示されるようにする(Codexレビュー指摘: パターン枠と同じ
+// 矩形・線幅のため、先に描くと達成済みセルで選択枠が完全に上書きされて見えなくなっていた)
+export function drawSelectionOutline(ctx: CanvasRenderingContext2D): void {
+  if (!G.selected) return;
+  const { r, c } = G.selected;
+  const piece = G.board[r][c];
+  if (!piece || isHole(r, c) || isRock(r, c)) return;
+
+  ctx.save();
+  const isActivatable = piece.special && TAP_ACTIVATE_SPECIALS.has(piece.special);
+  if (isActivatable) {
+    const pulse = 0.4 + Math.sin(performance.now() / 200) * 0.2;
+    ctx.strokeStyle = "#ffd700";
+    ctx.lineWidth = 3;
+    ctx.globalAlpha = pulse;
+    ctx.shadowColor = "#ffd700";
+    ctx.shadowBlur = 10;
+    ctx.strokeRect(c * G.cellSize + 1, r * G.cellSize + 1, G.cellSize - 2, G.cellSize - 2);
+  } else {
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(c * G.cellSize + 2, r * G.cellSize + 2, G.cellSize - 4, G.cellSize - 4);
+  }
+  ctx.restore();
+}
+
 export function drawBoard(overlay?: (ctx: CanvasRenderingContext2D) => void): void {
   drawBoardBase();
-
-  drawOrbitInfluenceZones(G.ctx!);
-  // パターン枠は選択枠(下のピースループ内)より先に描く。達成済み枠と選択枠は
-  // 同じ矩形・線幅のため、後から描くと選択枠が完全に上書きされて見えなくなる
-  // (Codexレビュー指摘)
-  drawPatternCellOverlays(G.ctx!);
 
   for (let r = 0; r < G.rows; r++) {
     for (let c = 0; c < G.cols; c++) {
@@ -284,36 +305,21 @@ export function drawBoard(overlay?: (ctx: CanvasRenderingContext2D) => void): vo
 
       const cx = c * G.cellSize + G.cellSize / 2;
       const cy = r * G.cellSize + G.cellSize / 2;
-      const x = c * G.cellSize;
-      const y = r * G.cellSize;
 
       drawPieceAt(piece, cx, cy);
 
       if (isIce(r, c)) {
         drawIceOverlay(r, c);
       }
-
-      if (G.selected && G.selected.r === r && G.selected.c === c) {
-        G.ctx!.save();
-        const isActivatable = piece.special && TAP_ACTIVATE_SPECIALS.has(piece.special);
-        if (isActivatable) {
-          const pulse = 0.4 + Math.sin(performance.now() / 200) * 0.2;
-          G.ctx!.strokeStyle = "#ffd700";
-          G.ctx!.lineWidth = 3;
-          G.ctx!.globalAlpha = pulse;
-          G.ctx!.shadowColor = "#ffd700";
-          G.ctx!.shadowBlur = 10;
-          G.ctx!.strokeRect(c * G.cellSize + 1, r * G.cellSize + 1, G.cellSize - 2, G.cellSize - 2);
-        } else {
-          G.ctx!.strokeStyle = "#fff";
-          G.ctx!.lineWidth = 3;
-          G.ctx!.strokeRect(c * G.cellSize + 2, r * G.cellSize + 2, G.cellSize - 4, G.cellSize - 4);
-        }
-        G.ctx!.restore();
-      }
     }
   }
 
+  // 盤面ガイド(影響範囲境界線・パターン枠)はピースより後に描く。土星のリングなど
+  // セル境界まで広がるピース描画がガイドを上書きしてしまうため(Codexレビュー指摘)
+  drawOrbitInfluenceZones(G.ctx!);
+  drawPatternCellOverlays(G.ctx!);
+
+  drawSelectionOutline(G.ctx!);
   drawOrbitArrows(G.ctx!);
 
   if (overlay) overlay(G.ctx!);

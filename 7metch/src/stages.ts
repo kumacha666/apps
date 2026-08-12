@@ -28,6 +28,18 @@ export function getGateFor(i: number): StarGate | null {
   return STAR_GATES.find((g) => g.stage === i) || null;
 }
 
+// 本編（Stage 1〜baseStageCount）でクリア済みの最大インデックス(-1=未クリア)。
+// デバッグジャンプ(ui.tsのbtn-debug-jumpハンドラ)でStage 501〜524プレビューを
+// クリアするとG.saveData.clearedにbaseStageCount以上のキーが永続保存されるため、
+// ステージ選択の表示範囲・「つづきから」の遷移先計算はどちらもこれを経由し、
+// プレビュー面のクリア履歴を本編の進捗計算から除外する(Codexレビュー指摘)
+export function lastClearedRealStageIdx(): number {
+  return Object.keys(G.saveData.cleared)
+    .map(Number)
+    .filter((n) => n < G.baseStageCount)
+    .reduce((max, n) => Math.max(max, n), -1);
+}
+
 // 350面以降、special/chainミッションのcount。4以上にするとhole配置
 // (i%5のバリアント)次第でクリア率が5%を割るステージが一定確率で発生する
 // ことをシミュレーションで確認済み(2026-07-24)。350面到達直後の最低値

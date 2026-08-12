@@ -19,8 +19,6 @@ export async function animateSwap(r1: number, c1: number, r2: number, c2: number
     const ease: number = t * t * (3 - 2 * t);
 
     drawBoardBase();
-    drawOrbitInfluenceZones(G.ctx!);
-    drawPatternCellOverlays(G.ctx!);
 
     for (let r = 0; r < G.rows; r++) {
       for (let c = 0; c < G.cols; c++) {
@@ -43,6 +41,10 @@ export async function animateSwap(r1: number, c1: number, r2: number, c2: number
       drawPieceAt(p2, x, y);
     }
 
+    // 盤面ガイドはピースより後(drawBoard()と同じ順序)。土星のリング等が
+    // セル境界まで広がる描画でガイドを上書きしないようにする(Codexレビュー指摘)
+    drawOrbitInfluenceZones(G.ctx!);
+    drawPatternCellOverlays(G.ctx!);
     drawOrbitArrows(G.ctx!);
 
     G.ctx!.restore();
@@ -1080,8 +1082,6 @@ export async function animateDrop(fallMap: FallEntry[]): Promise<void> {
 
   for (let frame = 0; frame <= totalFrames; frame++) {
     drawBoardBase();
-    drawOrbitInfluenceZones(G.ctx!);
-    drawPatternCellOverlays(G.ctx!);
 
     for (let r = 0; r < G.rows; r++) {
       for (let c = 0; c < G.cols; c++) {
@@ -1115,6 +1115,10 @@ export async function animateDrop(fallMap: FallEntry[]): Promise<void> {
       }
     }
 
+    // 盤面ガイドはピースより後(drawBoard()と同じ順序)。土星のリング等が
+    // セル境界まで広がる描画でガイドを上書きしないようにする(Codexレビュー指摘)
+    drawOrbitInfluenceZones(G.ctx!);
+    drawPatternCellOverlays(G.ctx!);
     drawOrbitArrows(G.ctx!);
 
     G.ctx!.restore();
