@@ -158,15 +158,18 @@ interface TutorialEntry {
   html: string;
 }
 
-const TUTORIALS: TutorialEntry[] = [
-  { icon: "👆", html: 'ピースをスワイプして<br>入れ替えよう！<br><strong>8方向</strong>に動かせるよ' },
-  { icon: "🎯", html: '上の<strong>ミッション欄</strong>をチェック！<br>手数以内に達成して<br>★を集めよう' },
-];
+// Stage 1・2向けは連番インデックス(0, 1)、第1章「軌道系」初出のStage 501は
+// 内部インデックス500。間の499個を埋める必要が無いよう配列ではなくRecordで持つ
+const TUTORIALS: Record<number, TutorialEntry> = {
+  0: { icon: "👆", html: 'ピースをスワイプして<br>入れ替えよう！<br><strong>8方向</strong>に動かせるよ' },
+  1: { icon: "🎯", html: '上の<strong>ミッション欄</strong>をチェック！<br>手数以内に達成して<br>★を集めよう' },
+  500: { icon: "🌀", html: '<strong>オービットセル</strong>が登場！<br>矢印の周囲3x3マスは<strong>矢印の向き</strong>からしか入れない<br>外周のマスを全部消して<strong>パターン消し</strong>を達成しよう' },
+};
 
 function showTutorial(stageIndex: number): void {
-  if (stageIndex >= TUTORIALS.length) return;
-  if (G.saveData.tutorialDone && G.saveData.tutorialDone[stageIndex]) return;
   const t = TUTORIALS[stageIndex];
+  if (!t) return;
+  if (G.saveData.tutorialDone && G.saveData.tutorialDone[stageIndex]) return;
   const overlay = document.getElementById("tutorial-overlay")!;
   document.getElementById("tutorial-icon")!.textContent = t.icon;
   document.getElementById("tutorial-text")!.innerHTML = t.html;
