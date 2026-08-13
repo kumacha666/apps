@@ -312,6 +312,7 @@ export interface GameState {
   shakeY: number;
   shakeIntensity: number;
   STAGES: StageConfig[] | null;
+  baseStageCount: number;
   screens: GameScreens | null;
   dom: GameDom | null;
 }

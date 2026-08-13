@@ -1,7 +1,9 @@
-import type { Piece, SpecialType, ChainLabel, BgStar, ShootingStar } from "./types";
+import type { Piece, SpecialType, ChainLabel, BgStar, ShootingStar, OrbitCell } from "./types";
 import { G, PIECE_COLORS, PIECE_SHAPES, PIECE_SYMBOLS, ANIM } from "./state";
-import { drawVFX, updateVFX, hasActiveVFX, addScreenShake } from "./vfx";
-import { isHole, isRock, isIce, TAP_ACTIVATE_SPECIALS } from "./board";
+import { drawVFX, updateVFX, hasActiveVFX, addScreenShake, cellCenter } from "./vfx";
+import { isHole, isRock, isIce, isPlayable, inBounds, TAP_ACTIVATE_SPECIALS } from "./board";
+import { inInfluenceArea } from "./orbit";
+import { getPatternCells, cellKey } from "./patternClear";
 
 // --- Chain Label System ---
 
@@ -157,6 +159,150 @@ export function drawIceOverlay(r: number, c: number): void {
   G.ctx!.restore();
 }
 
+// ---------------------------------------------------------------------------
+// 第1章「軌道系」(Stage 501〜) の描画（オービットPhase 5）。Stage 1〜500は
+// orbits: []・mission.type !== "pattern"のため、これらの関数は一切呼ばれず
+// 既存の見た目に影響しない
+// ---------------------------------------------------------------------------
+
+// 隣接座標が盤外なら無条件で「影響範囲外」扱いにする。inInfluenceArea()自体は
+// チェビシェフ距離のみで判定し盤サイズを考慮しないため、盤端のオービットでは
+// 盤外座標が名目上「範囲内」と判定され境界線が欠けてしまう(Codexレビュー指摘)
+function neighborInInfluenceArea(orbit: OrbitCell, r: number, c: number): boolean {
+  return inBounds(r, c) && inInfluenceArea(orbit, r, c);
+}
+
+// 影響範囲(オービットセルを中心とした3x3、盤端で欠ける)の境界線。
+// セルを1つずつ見て、隣が影響範囲外(盤外含む)の辺だけを描くことで、
+// 3x3全体の外周だけが縁取られるようにする(内部のマス目線は引かない)
+export function drawOrbitInfluenceZone(ctx: CanvasRenderingContext2D, orbit: OrbitCell): void {
+  ctx.save();
+  ctx.strokeStyle = "rgba(140, 200, 255, 0.55)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let r = orbit.r - 1; r <= orbit.r + 1; r++) {
+    for (let c = orbit.c - 1; c <= orbit.c + 1; c++) {
+      if (!inBounds(r, c)) continue;
+      const x = c * G.cellSize, y = r * G.cellSize;
+      if (!neighborInInfluenceArea(orbit, r - 1, c)) { ctx.moveTo(x, y); ctx.lineTo(x + G.cellSize, y); }
+      if (!neighborInInfluenceArea(orbit, r + 1, c)) { ctx.moveTo(x, y + G.cellSize); ctx.lineTo(x + G.cellSize, y + G.cellSize); }
+      if (!neighborInInfluenceArea(orbit, r, c - 1)) { ctx.moveTo(x, y); ctx.lineTo(x, y + G.cellSize); }
+      if (!neighborInInfluenceArea(orbit, r, c + 1)) { ctx.moveTo(x + G.cellSize, y); ctx.lineTo(x + G.cellSize, y + G.cellSize); }
+    }
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+// 重力方向を示す矢印。オービットセル自体(常に何らかのピースが乗っている)の上に
+// 半透明で重ねて描く。ピースを完全に隠さないよう小さめ・半透明にしている
+export function drawOrbitArrow(ctx: CanvasRenderingContext2D, orbit: OrbitCell): void {
+  const { x: cx, y: cy } = cellCenter(orbit.r, orbit.c);
+  const [dr, dc] = orbit.dir;
+  const len = G.cellSize * 0.32;
+  const angle = Math.atan2(dr, dc);
+  ctx.save();
+  ctx.globalAlpha = 0.85;
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  ctx.fillStyle = "#7fd4ff";
+  ctx.strokeStyle = "#0a2a40";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(len, 0);
+  ctx.lineTo(-len * 0.5, len * 0.45);
+  ctx.lineTo(-len * 0.2, 0);
+  ctx.lineTo(-len * 0.5, -len * 0.45);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+// パターン消しの対象セルの達成状態オーバーレイ(未達成/達成済み)。常時表示する
+export function drawPatternCellOverlay(ctx: CanvasRenderingContext2D, r: number, c: number, achieved: boolean): void {
+  const x = c * G.cellSize, y = r * G.cellSize;
+  ctx.save();
+  if (achieved) {
+    ctx.strokeStyle = "rgba(120, 255, 180, 0.85)";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x + 2, y + 2, G.cellSize - 4, G.cellSize - 4);
+  } else {
+    ctx.strokeStyle = "rgba(255, 215, 0, 0.55)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(x + 2, y + 2, G.cellSize - 4, G.cellSize - 4);
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
+// 常時表示レイヤーをまとめたヘルパー群。drawBoard()だけでなく、drawBoardBase()を
+// 直接呼んでピースを独自描画するanimateSwap()/animateDrop()からも呼ぶことで、
+// スワップ中・落下中にオービット境界/矢印/パターン枠が消えないようにする
+// (Codexレビュー指摘: 新レイヤーがdrawBoard()にしか無く、アニメ中は消えていた)
+export function drawOrbitInfluenceZones(ctx: CanvasRenderingContext2D): void {
+  const stg = G.STAGES?.[G.currentStage];
+  if (!stg || stg.orbits.length === 0) return;
+  for (const orbit of stg.orbits) {
+    drawOrbitInfluenceZone(ctx, orbit);
+  }
+}
+
+export function drawOrbitArrows(ctx: CanvasRenderingContext2D): void {
+  const stg = G.STAGES?.[G.currentStage];
+  if (!stg || stg.orbits.length === 0) return;
+  for (const orbit of stg.orbits) {
+    drawOrbitArrow(ctx, orbit);
+  }
+}
+
+export function drawPatternCellOverlays(ctx: CanvasRenderingContext2D): void {
+  const stg = G.STAGES?.[G.currentStage];
+  if (!stg || stg.mission.type !== "pattern") return;
+  for (const { r, c } of getPatternCells(stg.mission.patternShape, G.rows, G.cols)) {
+    if (!isPlayable(r, c)) continue;
+    drawPatternCellOverlay(ctx, r, c, G.patternProgress.has(cellKey(r, c)));
+  }
+}
+
+// 影響範囲境界線・パターン枠をまとめて描く共通ヘルパー。drawBoard()・animateSwap()・
+// animateDrop()の3箇所で全く同じ2行(この順序)が個別にコピーされていたため一本化した
+// (Codexレビュー指摘: この描画順序は過去に複数回のバグ〈ガイドがピースやアニメで
+// 上書きされる〉の原因になっており、3箇所で個別に順序を合わせ続けるのはドリフトの
+// リスクが高い)
+export function drawBoardGuides(ctx: CanvasRenderingContext2D): void {
+  drawOrbitInfluenceZones(ctx);
+  drawPatternCellOverlays(ctx);
+}
+
+// 選択中セルの選択枠(通常/タップ起動系パルス)を描く共通ヘルパー。ピース・盤面ガイドより
+// 後に描くことで、常に最前面に表示されるようにする(Codexレビュー指摘: パターン枠と同じ
+// 矩形・線幅のため、先に描くと達成済みセルで選択枠が完全に上書きされて見えなくなっていた)
+export function drawSelectionOutline(ctx: CanvasRenderingContext2D): void {
+  if (!G.selected) return;
+  const { r, c } = G.selected;
+  const piece = G.board[r][c];
+  if (!piece || !isPlayable(r, c)) return;
+
+  ctx.save();
+  const isActivatable = piece.special && TAP_ACTIVATE_SPECIALS.has(piece.special);
+  if (isActivatable) {
+    const pulse = 0.4 + Math.sin(performance.now() / 200) * 0.2;
+    ctx.strokeStyle = "#ffd700";
+    ctx.lineWidth = 3;
+    ctx.globalAlpha = pulse;
+    ctx.shadowColor = "#ffd700";
+    ctx.shadowBlur = 10;
+    ctx.strokeRect(c * G.cellSize + 1, r * G.cellSize + 1, G.cellSize - 2, G.cellSize - 2);
+  } else {
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(c * G.cellSize + 2, r * G.cellSize + 2, G.cellSize - 4, G.cellSize - 4);
+  }
+  ctx.restore();
+}
+
 export function drawBoard(overlay?: (ctx: CanvasRenderingContext2D) => void): void {
   drawBoardBase();
 
@@ -167,35 +313,21 @@ export function drawBoard(overlay?: (ctx: CanvasRenderingContext2D) => void): vo
 
       const cx = c * G.cellSize + G.cellSize / 2;
       const cy = r * G.cellSize + G.cellSize / 2;
-      const x = c * G.cellSize;
-      const y = r * G.cellSize;
 
       drawPieceAt(piece, cx, cy);
 
       if (isIce(r, c)) {
         drawIceOverlay(r, c);
       }
-
-      if (G.selected && G.selected.r === r && G.selected.c === c) {
-        G.ctx!.save();
-        const isActivatable = piece.special && TAP_ACTIVATE_SPECIALS.has(piece.special);
-        if (isActivatable) {
-          const pulse = 0.4 + Math.sin(performance.now() / 200) * 0.2;
-          G.ctx!.strokeStyle = "#ffd700";
-          G.ctx!.lineWidth = 3;
-          G.ctx!.globalAlpha = pulse;
-          G.ctx!.shadowColor = "#ffd700";
-          G.ctx!.shadowBlur = 10;
-          G.ctx!.strokeRect(c * G.cellSize + 1, r * G.cellSize + 1, G.cellSize - 2, G.cellSize - 2);
-        } else {
-          G.ctx!.strokeStyle = "#fff";
-          G.ctx!.lineWidth = 3;
-          G.ctx!.strokeRect(c * G.cellSize + 2, r * G.cellSize + 2, G.cellSize - 4, G.cellSize - 4);
-        }
-        G.ctx!.restore();
-      }
     }
   }
+
+  // 盤面ガイド(影響範囲境界線・パターン枠)はピースより後に描く。土星のリングなど
+  // セル境界まで広がるピース描画がガイドを上書きしてしまうため(Codexレビュー指摘)
+  drawBoardGuides(G.ctx!);
+
+  drawSelectionOutline(G.ctx!);
+  drawOrbitArrows(G.ctx!);
 
   if (overlay) overlay(G.ctx!);
   updateChainLabel();

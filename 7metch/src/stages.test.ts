@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { G, PIECE_COLORS, PIECE_NAMES_JA } from "./state";
-import { getMissionText, buildStages, buildOrbitPilotStages, boardSizeForStage, isStageUnlocked, getTotalStars } from "./stages";
+import { getMissionText, buildStages, buildOrbitPilotStages, boardSizeForStage, isStageUnlocked, getTotalStars, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage } from "./stages";
 import { hasEntrySource, orbitsHaveRequiredGap } from "./orbit";
 import type { Mission, StageConfig } from "./types";
 
@@ -350,6 +350,7 @@ describe("isStageUnlocked", () => {
   beforeEach(() => {
     G.saveData = { cleared: {}, bestStars: {}, coins: 0 };
     G.STAGES = buildStages();
+    G.baseStageCount = G.STAGES.length;
   });
 
   it("ステージ0は常にアンロック", () => {
@@ -378,5 +379,108 @@ describe("isStageUnlocked", () => {
     }
     expect(getTotalStars()).toBeGreaterThanOrEqual(30);
     expect(isStageUnlocked(25)).toBe(true);
+  });
+
+  // デバッグジャンプでStage 501〜524(プレビュー)をクリアしても、本編のスターゲート判定・
+  // 合計表示に混入しないことの回帰テスト(Codexレビュー指摘)
+  it("プレビュー面(baseStageCount以上)のbestStarsは合計に含めない", () => {
+    G.saveData.bestStars[10] = 3;
+    G.saveData.bestStars[500] = 3; // Stage 501をデバッグジャンプでクリアした想定
+    G.saveData.bestStars[523] = 3; // Stage 524も同様
+    expect(getTotalStars()).toBe(3);
+  });
+
+  it("プレビュー面の星だけでは本編のスターゲートを解除できない", () => {
+    G.saveData.cleared[24] = true;
+    for (let i = 500; i < 524; i++) G.saveData.bestStars[i] = 3; // プレビュー24面満点
+    expect(getTotalStars()).toBe(0);
+    expect(isStageUnlocked(25)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// lastClearedRealStageIdx — デバッグジャンプでStage 501〜524(プレビュー)を
+// クリアしても、本編の進捗計算(ステージ選択・「つづきから」)を汚染しないことの検証
+// (Codexレビュー指摘)
+// ---------------------------------------------------------------------------
+describe("lastClearedRealStageIdx", () => {
+  beforeEach(() => {
+    G.saveData = { cleared: {}, bestStars: {}, coins: 0 };
+    G.baseStageCount = 500;
+  });
+
+  it("クリア済みステージが無ければ-1", () => {
+    expect(lastClearedRealStageIdx()).toBe(-1);
+  });
+
+  it("本編クリア済みステージの最大インデックスを返す", () => {
+    G.saveData.cleared[0] = true;
+    G.saveData.cleared[49] = true;
+    G.saveData.cleared[10] = true;
+    expect(lastClearedRealStageIdx()).toBe(49);
+  });
+
+  it("baseStageCount以上(デバッグジャンプのプレビュー面)のクリア履歴は無視する", () => {
+    G.saveData.cleared[49] = true;
+    G.saveData.cleared[500] = true; // Stage 501をデバッグジャンプでクリアした想定
+    G.saveData.cleared[523] = true; // Stage 524も同様
+    expect(lastClearedRealStageIdx()).toBe(49);
+  });
+
+  it("プレビュー面しかクリアしていなければ-1(本編は未クリア扱い)", () => {
+    G.saveData.cleared[500] = true;
+    G.saveData.cleared[510] = true;
+    expect(lastClearedRealStageIdx()).toBe(-1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nextStageBoundary — 本編プレイ中はbaseStageCountで最終ステージ判定を守りつつ、
+// デバッグジャンプ後のプレビュー範囲内ではNextボタンでの連続確認を維持できることの検証
+// (Codexレビュー指摘: baseStageCountへの一律置き換えでパイロットステージ内のNext進行が死んでいた)
+// ---------------------------------------------------------------------------
+describe("nextStageBoundary", () => {
+  beforeEach(() => {
+    G.baseStageCount = 500;
+  });
+
+  it("本編プレイ中(currentStage < baseStageCount)はbaseStageCountを返す", () => {
+    G.STAGES = new Array(524).fill(null); // デバッグジャンプでプレビュー分が追記された想定
+    G.currentStage = 10;
+    expect(nextStageBoundary()).toBe(500);
+  });
+
+  it("本編最終ステージ(currentStage === baseStageCount-1)でもbaseStageCountを返す(全ステージ制覇を汚染しない)", () => {
+    G.STAGES = new Array(524).fill(null);
+    G.currentStage = 499;
+    expect(nextStageBoundary()).toBe(500);
+  });
+
+  it("プレビュー範囲内(currentStage >= baseStageCount)ではG.STAGES.lengthを返す(Nextでの連続確認用)", () => {
+    G.STAGES = new Array(524).fill(null);
+    G.currentStage = 500; // Stage 501(デバッグジャンプ後)
+    expect(nextStageBoundary()).toBe(524);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isRealCampaignStage — プレビュー範囲(Stage 501〜524)ではゲート/アンロック判定を
+// スキップすべきかどうかの判定。プレビュー面のクリアはcleared/bestStarsへ永続保存
+// しないため、通常のisStageUnlocked()判定をそのまま適用すると常にfalseになり、
+// Nextでの連続進行が止まってしまう(Codexレビュー指摘)
+// ---------------------------------------------------------------------------
+describe("isRealCampaignStage", () => {
+  beforeEach(() => {
+    G.baseStageCount = 500;
+  });
+
+  it("本編範囲内(i < baseStageCount)はtrue", () => {
+    expect(isRealCampaignStage(0)).toBe(true);
+    expect(isRealCampaignStage(499)).toBe(true);
+  });
+
+  it("プレビュー範囲(i >= baseStageCount)はfalse", () => {
+    expect(isRealCampaignStage(500)).toBe(false);
+    expect(isRealCampaignStage(523)).toBe(false);
   });
 });

@@ -8,7 +8,7 @@ import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, 
 import { drawBoard, buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startResultBgAnim, stopResultBgAnim, startChainLabel, flashInvalid } from "./rendering";
 import { SFX } from "./audio";
 import { track } from "./tracking";
-import { getMissionText } from "./stages";
+import { getMissionText, nextStageBoundary } from "./stages";
 import { showScreen } from "./ui";
 
 // ============================================================
@@ -855,7 +855,7 @@ export function updateHUD(): void {
 // ============================================================
 
 function isFinalStageClear(): boolean {
-  return G.currentStage === G.STAGES!.length - 1;
+  return G.currentStage === G.baseStageCount - 1;
 }
 
 // 戻り値: ステージがクリア/失敗して終了した場合true、まだ継続する場合false
@@ -908,8 +908,14 @@ export function checkWinLose(): boolean {
     }
     G.saveData.coins = (G.saveData.coins || 0) + G.coinsEarned;
 
-    if (stars > prev) G.saveData.bestStars[G.currentStage] = stars;
-    G.saveData.cleared[G.currentStage] = true;
+    // デバッグジャンプで開いたプレビュー面(Stage 501〜524、baseStageCount以上)は
+    // 進捗を永続保存しない。保存すると、将来buildStages()にこれらのステージが
+    // 正式追加されてbaseStageCountが伸びた時点で、過去のデバッグクリア履歴が
+    // 本編の正規クリア・星として突然認識されてしまう(Codexレビュー指摘)
+    if (G.currentStage < G.baseStageCount) {
+      if (stars > prev) G.saveData.bestStars[G.currentStage] = stars;
+      G.saveData.cleared[G.currentStage] = true;
+    }
     writeSave();
 
     SFX.stageClear();
@@ -986,13 +992,13 @@ export function showResult(win: boolean, stars: number, failedMission?: Mission)
     details += `<br><span class="coin-icon"></span> +${G.coinsEarned} コイン（所持: ${G.saveData.coins || 0}）`;
   }
   if (isFinalStage) {
-    details += `<br><span style="color:#ffd700">全${G.STAGES!.length}ステージ制覇、おめでとうございます！</span>`;
+    details += `<br><span style="color:#ffd700">全${G.baseStageCount}ステージ制覇、おめでとうございます！</span>`;
   }
   if (!win && failedMission) {
     details += `<br><span style="color:#4ecdc4">${getFailureProgress(failedMission)}</span>`;
   }
   d.resultDetails.innerHTML = details;
-  d.btnNext.style.display = win && G.currentStage < G.STAGES!.length - 1 ? "" : "none";
+  d.btnNext.style.display = win && G.currentStage < nextStageBoundary() - 1 ? "" : "none";
 
   if (!win && (G.debugMode || (G.saveData.coins || 0) >= ITEM_COSTS.addmoves)) {
     d.btnRescue.style.display = "";
