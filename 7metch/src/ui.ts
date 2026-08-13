@@ -184,49 +184,56 @@ function showTutorial(stageIndex: number): void {
   overlay.addEventListener("click", dismiss);
 }
 
+// ステージ開始直後の詰み回復チェック(下記)が非同期のため、この関数は完了まで
+// 最低でも1マイクロタスク、詰み回復が実際に走る場合は300ms以上かかる。その間に
+// ステージ選択・つづきから・リトライ等から2重にstartStage()が呼ばれると、
+// G.currentStage/G.board/G.rows/G.cols/G.animatingを2つの呼び出しが同時に
+// 書き換えてしまう(/code-review指摘)。doMove()等の既存パターンと同じく、
+// 関数の先頭でG.animatingを再入防止ガードとして使い、完了までtrue状態を維持する
+// (状態リセット・盤面生成・詰み回復・画面表示のすべてをガード区間に含める)
 export async function startStage(index: number): Promise<void> {
-  const stg = stageConfigAt(index);
-  G.cols = stg.boardCols;
-  G.rows = stg.boardRows;
-  G.movesLeft = stg.moves;
-  G.score = 0;
-  G.totalCleared = 0;
-  G.colorCleared = [];
-  G.chainCount = 0;
-  G.specialsCreated = 0;
-  G.maxChain = 0;
-  G.patternProgress = new Set();
-  G.selected = null;
-  G.animating = false;
-  G.vfxParticles = []; G.vfxShockwaves = []; G.vfxFlashes = []; G.vfxComets = []; G.vfxTexts = []; G.shakeX = G.shakeY = G.shakeIntensity = 0;
-  G.itemMode = null;
-  G.coinsEarned = 0;
-  G.canvas!.classList.remove("item-targeting");
-
-  resizeCanvas();
-  applyVisualOptions();
-  initCellState(stg);
-  createBoard(stg.colors);
-
-  // createBoard()は合法手0件の盤面を可能な限り避けるが、20回の生成試行が
-  // 全て範囲外に終わった場合の最終フォールバックは確率的にはまだ0件になりうる。
-  // ステージ開始直後（まだ1手も打っていない状態）の詰みはfinishTurn()経由の
-  // 詰み検知（プレイヤーが1手打った後にしか走らない）では発見できないため、
-  // 画面表示前にここでも同じ回復経路を通す（/code-review指摘）
+  if (G.animating) return;
   G.animating = true;
   try {
+    const stg = stageConfigAt(index);
+    G.cols = stg.boardCols;
+    G.rows = stg.boardRows;
+    G.movesLeft = stg.moves;
+    G.score = 0;
+    G.totalCleared = 0;
+    G.colorCleared = [];
+    G.chainCount = 0;
+    G.specialsCreated = 0;
+    G.maxChain = 0;
+    G.patternProgress = new Set();
+    G.selected = null;
+    G.vfxParticles = []; G.vfxShockwaves = []; G.vfxFlashes = []; G.vfxComets = []; G.vfxTexts = []; G.shakeX = G.shakeY = G.shakeIntensity = 0;
+    G.itemMode = null;
+    G.coinsEarned = 0;
+    G.canvas!.classList.remove("item-targeting");
+
+    resizeCanvas();
+    applyVisualOptions();
+    initCellState(stg);
+    createBoard(stg.colors);
+
+    // createBoard()は合法手0件の盤面を可能な限り避けるが、20回の生成試行が
+    // 全て範囲外に終わった場合の最終フォールバックは確率的にはまだ0件になりうる。
+    // ステージ開始直後（まだ1手も打っていない状態）の詰みはfinishTurn()経由の
+    // 詰み検知（プレイヤーが1手打った後にしか走らない）では発見できないため、
+    // 画面表示前にここでも同じ回復経路を通す（/code-review指摘）
     await ensurePlayableBoard();
+
+    updateHUD();
+    updateItemBar();
+    drawBoard();
+    showScreen("game");
+    track("stage_start", { stage: stg.name, mission_type: stg.mission.type });
+    showTutorial(index);
   } finally {
     G.animating = false;
     startHintTimer();
   }
-
-  updateHUD();
-  updateItemBar();
-  drawBoard();
-  showScreen("game");
-  track("stage_start", { stage: stg.name, mission_type: stg.mission.type });
-  showTutorial(index);
 }
 
 // --- Resize Canvas ---

@@ -725,10 +725,30 @@ describe("finishTurn", () => {
 describe("ensurePlayableBoard", () => {
   beforeEach(() => setupGame());
 
-  it("オービットの無いステージでは合法手0件でも回復しない(false)", async () => {
+  it("オービットの無いステージでも合法手0件なら回復する(true)——Stage 300〜500のcountdownBombsも合法手を塞ぎうるため、オービットの有無を問わない(/code-review指摘)", async () => {
     G.STAGES = [makeStage({ orbits: [] })];
+    expect(hasAnyLegalMove()).toBe(false); // 前提: setupGame()の既定盤面は詰み
+    expect(await ensurePlayableBoard()).toBe(true);
+    expect(findAllMatches().length).toBe(0);
+    expect(hasAnyLegalMove()).toBe(true);
+  });
+
+  it("既に合法手があれば回復せず(false)、盤面も変更しない(オービット無しでも同様)", async () => {
+    G.STAGES = [makeStage({ orbits: [] })];
+    // setupGame()の既定盤面は合法手0件のため、まず回復させて「合法手ありの盤面」を用意する
+    await ensurePlayableBoard();
+    expect(hasAnyLegalMove()).toBe(true);
+    const before = (() => {
+      const out: number[] = [];
+      for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) out.push(G.board[r][c]!.color);
+      return out;
+    })();
+
     expect(await ensurePlayableBoard()).toBe(false);
-    expect(hasAnyLegalMove()).toBe(false); // 盤面自体は変更されない
+
+    const after: number[] = [];
+    for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) after.push(G.board[r][c]!.color);
+    expect(after).toEqual(before);
   });
 
   it("オービットのあるステージで既に合法手があれば回復せず(false)、盤面も変更しない", async () => {
