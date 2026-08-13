@@ -266,6 +266,16 @@ export function drawPatternCellOverlays(ctx: CanvasRenderingContext2D): void {
   }
 }
 
+// 影響範囲境界線・パターン枠をまとめて描く共通ヘルパー。drawBoard()・animateSwap()・
+// animateDrop()の3箇所で全く同じ2行(この順序)が個別にコピーされていたため一本化した
+// (Codexレビュー指摘: この描画順序は過去に複数回のバグ〈ガイドがピースやアニメで
+// 上書きされる〉の原因になっており、3箇所で個別に順序を合わせ続けるのはドリフトの
+// リスクが高い)
+export function drawBoardGuides(ctx: CanvasRenderingContext2D): void {
+  drawOrbitInfluenceZones(ctx);
+  drawPatternCellOverlays(ctx);
+}
+
 // 選択中セルの選択枠(通常/タップ起動系パルス)を描く共通ヘルパー。ピース・盤面ガイドより
 // 後に描くことで、常に最前面に表示されるようにする(Codexレビュー指摘: パターン枠と同じ
 // 矩形・線幅のため、先に描くと達成済みセルで選択枠が完全に上書きされて見えなくなっていた)
@@ -314,8 +324,7 @@ export function drawBoard(overlay?: (ctx: CanvasRenderingContext2D) => void): vo
 
   // 盤面ガイド(影響範囲境界線・パターン枠)はピースより後に描く。土星のリングなど
   // セル境界まで広がるピース描画がガイドを上書きしてしまうため(Codexレビュー指摘)
-  drawOrbitInfluenceZones(G.ctx!);
-  drawPatternCellOverlays(G.ctx!);
+  drawBoardGuides(G.ctx!);
 
   drawSelectionOutline(G.ctx!);
   drawOrbitArrows(G.ctx!);
