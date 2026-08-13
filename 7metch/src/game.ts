@@ -8,7 +8,7 @@ import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, 
 import { drawBoard, buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startResultBgAnim, stopResultBgAnim, startChainLabel, flashInvalid } from "./rendering";
 import { SFX } from "./audio";
 import { track } from "./tracking";
-import { getMissionText, nextStageBoundary, stageConfigAt } from "./stages";
+import { getMissionText, nextStageBoundary, stageConfigAt, isRealCampaignStage } from "./stages";
 import { showScreen } from "./ui";
 
 // ============================================================
@@ -912,7 +912,7 @@ export function checkWinLose(): boolean {
     // 進捗を永続保存しない。保存すると、将来buildStages()にこれらのステージが
     // 正式追加された時点で、過去のデバッグクリア履歴が本編の正規クリア・星として
     // 突然認識されてしまう(Codexレビュー指摘)
-    if (G.currentStage < G.STAGES!.length) {
+    if (isRealCampaignStage(G.currentStage)) {
       if (stars > prev) G.saveData.bestStars[G.currentStage] = stars;
       G.saveData.cleared[G.currentStage] = true;
     }

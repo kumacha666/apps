@@ -1,4 +1,4 @@
-const CACHE_NAME = "7metch-v7.5.55";
+const CACHE_NAME = "7metch-v7.5.56";
 const ASSETS = ["./", "./index.html", "./style.css", "./game.js", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {
