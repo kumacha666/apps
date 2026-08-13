@@ -163,7 +163,7 @@ interface TutorialEntry {
 const TUTORIALS: Record<number, TutorialEntry> = {
   0: { icon: "👆", html: 'ピースをスワイプして<br>入れ替えよう！<br><strong>8方向</strong>に動かせるよ' },
   1: { icon: "🎯", html: '上の<strong>ミッション欄</strong>をチェック！<br>手数以内に達成して<br>★を集めよう' },
-  500: { icon: "🌀", html: '<strong>オービットセル</strong>が登場！<br>矢印の周囲3x3マスは<strong>矢印の向き</strong>からしか入れない<br>外周のマスを全部消して<strong>パターン消し</strong>を達成しよう' },
+  500: { icon: "🌀", html: '<strong>オービットセル</strong>が登場！<br>周囲3x3マスへは<strong>矢印と同じ方向にスワイプ</strong>した時だけ入れる<br>外周のマスを全部消して<strong>パターン消し</strong>を達成しよう' },
 };
 
 function showTutorial(stageIndex: number): void {
