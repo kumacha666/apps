@@ -82,6 +82,15 @@ export function initGameState(stageIndex) {
 
   initCellState(stg);
   createBoard(stg.colors);
+
+  // 実アプリのstartStage()（ui.ts）は、createBoard()直後にオービットの有無を問わず
+  // ensurePlayableBoard()で初期詰みを検知・回復する(/code-review指摘、PR #361)。
+  // ここで回復しないと、countdownBombsで合法手を塞ぎうるStage 300〜500がまさに
+  // createBoard()のフォールバックで合法手0件の盤面になった場合、実アプリでは
+  // 回復されるのに、シミュレーターはplayGame()の最初のターンで即座に詰み扱いに
+  // してしまい、詰み率・クリア率が実際の挙動と食い違う。通常ターン中の詰み検知
+  // (playGame()内、orbits.length > 0でのみ動作)は既存のスコープのまま変更しない
+  if (!hasAnyLegalMove()) recoverFromDeadlockSync();
 }
 
 export function trackClears(clearList) {

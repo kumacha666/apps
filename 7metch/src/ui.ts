@@ -17,7 +17,20 @@ export function refreshSupportId(): void {
   document.getElementById("support-id-value")!.textContent = peekAnonId() || "履歴なし";
 }
 
+// startStage()の詰み回復待機(await ensurePlayableBoard())中に、ステージ選択の
+// 「もどる」・ゲーム中の「やめる」等でプレイヤーが別画面へ遷移した場合、待機完了後の
+// showScreen("game")がその操作を上書きしてしまう欠落があった(/code-review指摘)。
+// showScreen()に"game"以外への遷移が来るたびに増分するカウンタを持たせ、
+// startStage()側で「待機前後でこのカウンタが変わっていないか」を見ることで、
+// 個々のボタンハンドラを1つずつガードせずに「競合するナビゲーションが起きたか」を
+// 一元的に検知できるようにする
+let navigationEpoch = 0;
+export function getNavigationEpoch(): number {
+  return navigationEpoch;
+}
+
 export function showScreen(name: ScreenName): void {
+  if (name !== "game") navigationEpoch++;
   const fromGame = name === "options" && G.optionsReturnScreen === "game";
   if (name !== "game" && !fromGame) { clearHint(); stopBgAnim(); }
   if (name !== "title" && name !== "splash") stopTitleBgAnim();
@@ -197,6 +210,7 @@ function showTutorial(stageIndex: number): void {
 export async function startStage(index: number): Promise<void> {
   if (G.animating) return;
   G.animating = true;
+  const epochBeforeWait = getNavigationEpoch();
   try {
     G.currentStage = index;
     const stg = stageConfigAt(index);
@@ -227,6 +241,13 @@ export async function startStage(index: number): Promise<void> {
     // 詰み検知（プレイヤーが1手打った後にしか走らない）では発見できないため、
     // 画面表示前にここでも同じ回復経路を通す（/code-review指摘）
     await ensurePlayableBoard();
+
+    // 上の待機中に「もどる」「やめる」等でプレイヤーが別画面へ既に遷移していた場合、
+    // ここでshowScreen("game")を呼ぶとその操作を上書きしてしまう(/code-review指摘)。
+    // navigationEpochが変化していれば競合するナビゲーションが起きたとみなし、
+    // 画面遷移・HUD更新・チュートリアル表示をスキップする(G.animating解除は
+    // finally側で必ず行われるので、次のステージ開始操作はブロックされない)
+    if (getNavigationEpoch() !== epochBeforeWait) return;
 
     updateHUD();
     updateItemBar();
