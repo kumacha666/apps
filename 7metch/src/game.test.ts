@@ -59,7 +59,7 @@ function setupGame(rows = 7, cols = 7): void {
   G.activeChainLabel = null;
   G.debugMode = false;
   G.STAGES = [makeStage()];
-  G.baseStageCount = G.STAGES.length;
+  G.debugPreviewStages = null;
   G.dom = makeDom();
   G.saveData = { cleared: {}, bestStars: {}, coins: 100 };
   G.boardPixelW = 336;
@@ -406,13 +406,13 @@ describe("checkWinLose", () => {
     expect(G.saveData.cleared[0]).toBeUndefined();
   });
 
-  // デバッグジャンプで開いたプレビュー面(currentStage >= baseStageCount)の進捗は
-  // 永続保存しないことの回帰テスト(Codexレビュー指摘: 保存すると、将来これらのステージが
-  // 正式にbuildStages()へ追加された時点で過去のデバッグクリア履歴が本編の正規クリアとして
-  // 突然認識されてしまう)
-  it("プレビュー面(currentStage >= baseStageCount)のクリアはcleared/bestStarsに保存しない", () => {
-    G.STAGES = [makeStage(), makeStage({ mission: { type: "score", target: 100 } })];
-    G.baseStageCount = 1; // 本編はindex0のみ、index1はプレビュー面
+  // デバッグジャンプで開いたプレビュー面(currentStage >= G.STAGES.length、
+  // G.debugPreviewStages側)の進捗は永続保存しないことの回帰テスト(Codexレビュー指摘:
+  // 保存すると、将来これらのステージが正式にbuildStages()へ追加された時点で過去の
+  // デバッグクリア履歴が本編の正規クリアとして突然認識されてしまう)
+  it("プレビュー面(currentStage >= G.STAGES.length)のクリアはcleared/bestStarsに保存しない", () => {
+    G.STAGES = [makeStage()]; // 本編はindex0のみ
+    G.debugPreviewStages = [makeStage({ mission: { type: "score", target: 100 } })]; // index1相当
     G.currentStage = 1;
     G.score = 100;
     G.movesLeft = 5;
@@ -421,9 +421,8 @@ describe("checkWinLose", () => {
     expect(G.saveData.bestStars[1]).toBeUndefined();
   });
 
-  it("本編ステージ(currentStage < baseStageCount)のクリアは従来通り保存する", () => {
+  it("本編ステージ(currentStage < G.STAGES.length)のクリアは従来通り保存する", () => {
     G.STAGES = [makeStage({ mission: { type: "score", target: 100 } })];
-    G.baseStageCount = 1;
     G.currentStage = 0;
     G.score = 100;
     G.movesLeft = 5;
@@ -517,7 +516,6 @@ describe("showResult", () => {
 
   it("最終ステージ以外のクリアでは通常のタイトルを表示", () => {
     G.STAGES = [makeStage(), makeStage()];
-    G.baseStageCount = G.STAGES.length;
     G.currentStage = 0;
     showResult(true, 3);
     expect(G.dom!.resultTitle.textContent).toBe("クリア！");
@@ -526,7 +524,6 @@ describe("showResult", () => {
 
   it("最終ステージのクリアでは全ステージ制覇メッセージを表示", () => {
     G.STAGES = [makeStage(), makeStage()];
-    G.baseStageCount = G.STAGES.length;
     G.currentStage = 1;
     showResult(true, 3);
     expect(G.dom!.resultTitle.textContent).toBe("🎉 全ステージ制覇！ 🎉");
@@ -536,19 +533,17 @@ describe("showResult", () => {
 
   it("最終ステージでも敗北時は制覇メッセージを表示しない", () => {
     G.STAGES = [makeStage(), makeStage()];
-    G.baseStageCount = G.STAGES.length;
     G.currentStage = 1;
     showResult(false, 0, { type: "clear", count: 10 });
     expect(G.dom!.resultTitle.textContent).toBe("あと少し…");
     expect(G.dom!.resultDetails.innerHTML).not.toContain("制覇");
   });
 
-  // デバッグジャンプ(ui.tsのbtn-debug-jumpハンドラ)がオービットパイロットプレビュー用に
-  // G.STAGESを追記した後も残りセッション中ずっと本編クリア判定が壊れないことの回帰テスト
-  // (/code-review指摘、G.baseStageCountを本編の最終ステージ判定の基準にする修正)
-  it("G.STAGESがbaseStageCountより長くなっていても、本編最終ステージのクリアは全ステージ制覇として扱う", () => {
-    G.STAGES = [makeStage(), makeStage(), makeStage()]; // デバッグジャンプでパイロット分が追記された想定
-    G.baseStageCount = 2; // 本編の実ステージ数
+  // デバッグジャンプ(ui.tsのbtn-debug-jumpハンドラ)がG.debugPreviewStagesへ
+  // オービットパイロットプレビューを積んでいても、本編クリア判定が壊れないことの回帰テスト
+  it("G.debugPreviewStagesがあっても、本編最終ステージのクリアは全ステージ制覇として扱う", () => {
+    G.STAGES = [makeStage(), makeStage()]; // 本編の実ステージ数=2
+    G.debugPreviewStages = [makeStage()]; // デバッグジャンプでパイロット分が生成された想定(index2相当)
     G.currentStage = 1; // 本編の最終ステージ(index 1)
     showResult(true, 3);
     expect(G.dom!.resultTitle.textContent).toBe("🎉 全ステージ制覇！ 🎉");
@@ -556,9 +551,9 @@ describe("showResult", () => {
     expect(G.dom!.btnNext.style.display).toBe("none");
   });
 
-  it("G.STAGESがbaseStageCountより長くなっていても、本編最終ステージより手前のクリアではnextボタンを表示する", () => {
-    G.STAGES = [makeStage(), makeStage(), makeStage()];
-    G.baseStageCount = 2;
+  it("G.debugPreviewStagesがあっても、本編最終ステージより手前のクリアではnextボタンを表示する", () => {
+    G.STAGES = [makeStage(), makeStage()];
+    G.debugPreviewStages = [makeStage()];
     G.currentStage = 0; // 本編の最初のステージ(まだ最終ではない)
     showResult(true, 3);
     expect(G.dom!.resultTitle.textContent).toBe("クリア！");
@@ -566,12 +561,11 @@ describe("showResult", () => {
     expect(G.dom!.btnNext.style.display).toBe("");
   });
 
-  // デバッグジャンプでプレビュー面(baseStageCount以上)に入っている間は、Nextボタンで
-  // プレビュー面同士を連続確認できることの回帰テスト(Codexレビュー指摘: baseStageCountへの
-  // 一律置き換えでプレビュー面内のNext進行が意図せず死んでいた)
-  it("プレビュー面(currentStage >= baseStageCount)のクリアでは、まだ後続のプレビュー面があればnextボタンを表示する", () => {
-    G.STAGES = [makeStage(), makeStage(), makeStage(), makeStage()]; // baseStageCount=2、index2,3がプレビュー面
-    G.baseStageCount = 2;
+  // デバッグジャンプでプレビュー面(G.STAGES.length以上)に入っている間は、Nextボタンで
+  // プレビュー面同士を連続確認できることの回帰テスト
+  it("プレビュー面(currentStage >= G.STAGES.length)のクリアでは、まだ後続のプレビュー面があればnextボタンを表示する", () => {
+    G.STAGES = [makeStage(), makeStage()]; // 本編の実ステージ数=2
+    G.debugPreviewStages = [makeStage(), makeStage()]; // index2,3がプレビュー面
     G.currentStage = 2; // プレビュー面(index 2)、まだ後続(index 3)がある
     showResult(true, 3);
     expect(G.dom!.resultTitle.textContent).toBe("クリア！");
@@ -579,9 +573,9 @@ describe("showResult", () => {
   });
 
   it("プレビュー面の最後のステージをクリアした場合はnextボタンを表示しない", () => {
-    G.STAGES = [makeStage(), makeStage(), makeStage()]; // length=3
-    G.baseStageCount = 2;
-    G.currentStage = 2; // プレビュー面の最後(index 2 === G.STAGES.length-1)
+    G.STAGES = [makeStage(), makeStage()]; // 本編の実ステージ数=2
+    G.debugPreviewStages = [makeStage()]; // index2のみがプレビュー面
+    G.currentStage = 2; // プレビュー面の最後
     showResult(true, 3);
     expect(G.dom!.btnNext.style.display).toBe("none");
   });

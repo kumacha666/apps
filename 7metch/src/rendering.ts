@@ -4,6 +4,7 @@ import { drawVFX, updateVFX, hasActiveVFX, addScreenShake, cellCenter } from "./
 import { isHole, isRock, isIce, isPlayable, inBounds, TAP_ACTIVATE_SPECIALS } from "./board";
 import { inInfluenceArea } from "./orbit";
 import { getPatternCells, cellKey } from "./patternClear";
+import { stageConfigAt } from "./stages";
 
 // --- Chain Label System ---
 
@@ -242,24 +243,24 @@ export function drawPatternCellOverlay(ctx: CanvasRenderingContext2D, r: number,
 // スワップ中・落下中にオービット境界/矢印/パターン枠が消えないようにする
 // (Codexレビュー指摘: 新レイヤーがdrawBoard()にしか無く、アニメ中は消えていた)
 export function drawOrbitInfluenceZones(ctx: CanvasRenderingContext2D): void {
-  const stg = G.STAGES?.[G.currentStage];
-  if (!stg || stg.orbits.length === 0) return;
+  const stg = stageConfigAt(G.currentStage);
+  if (stg.orbits.length === 0) return;
   for (const orbit of stg.orbits) {
     drawOrbitInfluenceZone(ctx, orbit);
   }
 }
 
 export function drawOrbitArrows(ctx: CanvasRenderingContext2D): void {
-  const stg = G.STAGES?.[G.currentStage];
-  if (!stg || stg.orbits.length === 0) return;
+  const stg = stageConfigAt(G.currentStage);
+  if (stg.orbits.length === 0) return;
   for (const orbit of stg.orbits) {
     drawOrbitArrow(ctx, orbit);
   }
 }
 
 export function drawPatternCellOverlays(ctx: CanvasRenderingContext2D): void {
-  const stg = G.STAGES?.[G.currentStage];
-  if (!stg || stg.mission.type !== "pattern") return;
+  const stg = stageConfigAt(G.currentStage);
+  if (stg.mission.type !== "pattern") return;
   for (const { r, c } of getPatternCells(stg.mission.patternShape, G.rows, G.cols)) {
     if (!isPlayable(r, c)) continue;
     drawPatternCellOverlay(ctx, r, c, G.patternProgress.has(cellKey(r, c)));

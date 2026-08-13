@@ -312,7 +312,13 @@ export interface GameState {
   shakeY: number;
   shakeIntensity: number;
   STAGES: StageConfig[] | null;
-  baseStageCount: number;
+  // 第1章「軌道系」パイロット(Stage 501〜524)のデバッグプレビュー用。デバッグジャンプ
+  // (ui.tsのbtn-debug-jumpハンドラ)で要求された時に一度だけ遅延生成する。G.STAGES自体は
+  // 起動後決して変更しない(常にbuildStages()の結果=本編の実ステージ数のまま)ことで、
+  // G.STAGES.lengthが「本編の実ステージ数」であるという不変条件を維持し、プレビュー面を
+  // 含めた見かけ上のステージ数管理を別の変数に閉じ込める設計(altitude角度の指摘を受けた
+  // 設計変更、旧`G.baseStageCount`/`G.STAGES!.push()`方式は廃止。詳細は7metch/CLAUDE.md参照)
+  debugPreviewStages: StageConfig[] | null;
   screens: GameScreens | null;
   dom: GameDom | null;
 }

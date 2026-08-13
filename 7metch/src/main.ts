@@ -28,12 +28,10 @@ G.dom = {
   btnRescue: document.getElementById("btn-rescue")!,
   itemCoinCount: document.getElementById("item-coin-count")!,
 } as GameDom;
+// G.STAGESは起動後決して変更しない(デバッグプレビュー面はG.debugPreviewStagesへ分離、
+// stages.tsのstageConfigAt()参照)。これによりG.STAGES.length===本編の実ステージ数という
+// 不変条件がセッション全体で常に成立する
 G.STAGES = buildStages();
-// デバッグジャンプ(ui.tsのbtn-debug-jumpハンドラ)がStage 501〜524プレビュー用に
-// G.STAGESへ追記した後も、通常プレイの「本編ステージ数」判定(全ステージ制覇・
-// ステージ選択・next移動)は起動時のこの値を使う(G.STAGES!.lengthを直接使うと
-// デバッグジャンプ後の残りセッションで本編クリア扱いが壊れる、/code-review指摘)
-G.baseStageCount = G.STAGES.length;
 G.options = loadOptions();
 G.saveData = loadSave();
 

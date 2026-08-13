@@ -4,6 +4,7 @@ import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, 
 import { drawBoard } from "./rendering";
 import { SFX } from "./audio";
 import { isSwapLegal } from "./orbit";
+import { stageConfigAt } from "./stages";
 
 const HINT_DELAY_MS = 4000;
 export const TAP_ACTIVATE_SPECIALS: Set<string> = new Set(["line_h", "line_v", "line_d", "bomb"]);
@@ -94,7 +95,7 @@ export function createBoard(numColors: number): void {
   const maxMoves = Math.max(10, Math.floor(G.rows * G.cols * 0.15));
   const minMoves = 2;
   const target = Math.floor((minMoves + maxMoves) / 2);
-  const stg = G.STAGES![G.currentStage];
+  const stg = stageConfigAt(G.currentStage);
   let bestBoard: (Piece | null)[][] | null = null;
   let bestDiff = Infinity;
 
@@ -279,7 +280,7 @@ export function isAdjacent(r1: number, c1: number, r2: number, c2: number): bool
 // 第1章「軌道系」（Stage 501〜）のオービット進入判定。現在のステージにオービットが無ければ
 // (Stage 1〜500は常にこの状態) 常にtrueを返し、既存の挙動に一切影響しない
 export function isSwapLegalForCurrentStage(r1: number, c1: number, r2: number, c2: number): boolean {
-  return isSwapLegal(r1, c1, r2, c2, G.STAGES![G.currentStage].orbits);
+  return isSwapLegal(r1, c1, r2, c2, stageConfigAt(G.currentStage).orbits);
 }
 
 // 入力受付(doMove)・ヒント(findHint)で共有するオービットの拒否判定。
@@ -337,7 +338,7 @@ export function findAllMatches(): [number, number][] {
       }
     }
   }
-  const stg = G.STAGES![G.currentStage];
+  const stg = stageConfigAt(G.currentStage);
   if (stg && stg.features && stg.features.diagonalLine) {
     for (let r = 0; r < G.rows - 1; r++) {
       for (let c = 0; c < G.cols - 1; c++) {
@@ -355,7 +356,7 @@ export function findAllMatches(): [number, number][] {
 export function findSpecialCreations(matches: [number, number][]): SpecialCreation[] {
   const specials: SpecialCreation[] = [];
   const matchSet = new Set(matches.map(([r, c]) => r * G.cols + c));
-  const stg = G.STAGES![G.currentStage];
+  const stg = stageConfigAt(G.currentStage);
 
   const hLines: { line: [number, number][]; color: number }[] = [];
   const vLines: { line: [number, number][]; color: number }[] = [];
@@ -792,7 +793,7 @@ export function activateSpecial(r: number, c: number, alreadyCleared: Set<number
 // ---------------------------------------------------------------------------
 
 export function applyGravityData(): FallEntry[] {
-  const numColors = G.STAGES![G.currentStage].colors;
+  const numColors = stageConfigAt(G.currentStage).colors;
   const fallMap: FallEntry[] = [];
   for (let c = 0; c < G.cols; c++) {
     let writeRow = G.rows - 1;

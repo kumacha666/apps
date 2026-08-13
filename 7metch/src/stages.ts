@@ -12,16 +12,34 @@ const PATTERN_SHAPE_JA: Record<PatternShape, string> = {
   corners: "四隅",
 };
 
+// 第1章「軌道系」パイロット(Stage 501〜524)のデバッグプレビューを含む、現在アクセス
+// 可能な総ステージ数。G.STAGESは起動後決して変更しないため、G.STAGES!.lengthは常に
+// 「本編の実ステージ数」を指す(altitude角度の指摘を受けた設計変更。旧`G.baseStageCount`は
+// 廃止——G.STAGESが不変になったことで、その時点のスナップショットを別途保持する必要が
+// 無くなった)
+export function totalReachableStageCount(): number {
+  return G.STAGES!.length + (G.debugPreviewStages?.length ?? 0);
+}
+
+// インデックスiのStageConfigを取得する。本編範囲(i < G.STAGES!.length)はG.STAGESから、
+// プレビュー範囲(デバッグジャンプ経由でのみ到達)はG.debugPreviewStagesから引く。
+// G.STAGES自体を伸ばさない設計にしたため、ゲームロジック側は「本編かプレビューか」を
+// 意識せずこの関数経由でステージ定義を取得できる
+export function stageConfigAt(i: number): StageConfig {
+  if (i < G.STAGES!.length) return G.STAGES![i];
+  return G.debugPreviewStages![i - G.STAGES!.length];
+}
+
 // デバッグジャンプ(本番ビルドでも7タップで開ける)でStage 501〜524(プレビュー)を
-// クリアするとG.saveData.cleared/bestStarsにbaseStageCount以上のキーが永続保存
+// クリアするとG.saveData.cleared/bestStarsに本編の実ステージ数以上のキーが永続保存
 // されるため、本編の集計（スターゲート判定・ステージ選択・つづきから）はどれも
 // これらのキーを除外する必要がある(Codexレビュー指摘)。getTotalStars()と
-// lastClearedRealStageIdx()で同じ「baseStageCount未満に絞る」処理が重複していたため
+// lastClearedRealStageIdx()で同じ「本編範囲に絞る」処理が重複していたため
 // 共通ヘルパーに一本化した
 function realStageEntries<T>(record: Record<number, T>): [number, T][] {
   return Object.entries(record)
     .map(([k, v]) => [Number(k), v] as [number, T])
-    .filter(([i]) => i < G.baseStageCount);
+    .filter(([i]) => i < G.STAGES!.length);
 }
 
 export function getTotalStars(): number {
@@ -40,13 +58,13 @@ export function getGateFor(i: number): StarGate | null {
   return STAR_GATES.find((g) => g.stage === i) || null;
 }
 
-// 本編（Stage 1〜baseStageCount）でクリア済みの最大インデックス(-1=未クリア)。
+// 本編（Stage 1〜G.STAGES!.length）でクリア済みの最大インデックス(-1=未クリア)。
 // ステージ選択の表示範囲・「つづきから」の遷移先計算はどちらもこれを経由する
 export function lastClearedRealStageIdx(): number {
   return realStageEntries(G.saveData.cleared).reduce((max, [i]) => Math.max(max, i), -1);
 }
 
-// ステージインデックスiが本編（Stage 1〜baseStageCount）の範囲内かどうか。
+// ステージインデックスiが本編（Stage 1〜G.STAGES!.length）の範囲内かどうか。
 // プレビュー範囲（デバッグジャンプ経由でのみ到達、Stage 501〜524）のクリアは
 // 永続保存しない設計にしたため、通常のスターゲート判定・isStageUnlocked()判定
 // （どちらも`cleared`の永続データを前提とする）をプレビュー範囲にそのまま適用すると
@@ -54,19 +72,18 @@ export function lastClearedRealStageIdx(): number {
 // (Codexレビュー指摘)。ui.tsのbtn-nextハンドラは、この関数がfalseを返す間は
 // ゲート/アンロック判定自体をスキップする
 export function isRealCampaignStage(i: number): boolean {
-  return i < G.baseStageCount;
+  return i < G.STAGES!.length;
 }
 
 // 「次のステージ」の境界値。本編プレイ中(isRealCampaignStage(currentStage))は
-// baseStageCountを使い、本編の最終ステージ判定を汚染しない。一方、デバッグジャンプ後の
-// プレビュー範囲内ではG.STAGES!.lengthを使うことで、Stage 501〜524のデバッグプレビューを
-// Nextボタンで連続確認できるようにする(Codexレビュー指摘: G.baseStageCountへの一律置き換えで、
-// パイロットステージ内のNext進行が意図せず死んでいた。本編プレイヤー向けの境界を守りつつ、
-// デバッグ専用の動作は元通りにする)。isRealCampaignStage()と同じ「本編/プレビュー」の
-// 境界判定をここでも独立に再実装しないよう、判定自体はisRealCampaignStage()に委譲する
-// (reuse指摘: 2つの関数が同じbaseStageCount比較を別々の形で持っているとドリフトしうる)
+// G.STAGES!.lengthを使い、本編の最終ステージ判定を汚染しない。一方、デバッグジャンプ後の
+// プレビュー範囲内では本編+プレビューの総数を使うことで、Stage 501〜524のデバッグ
+// プレビューをNextボタンで連続確認できるようにする。isRealCampaignStage()と同じ
+// 「本編/プレビュー」の境界判定をここでも独立に再実装しないよう、判定自体は
+// isRealCampaignStage()に委譲する(reuse指摘: 2つの関数が同じ境界比較を別々の形で
+// 持っているとドリフトしうる)
 export function nextStageBoundary(): number {
-  return isRealCampaignStage(G.currentStage) ? G.baseStageCount : (G.STAGES?.length ?? G.baseStageCount);
+  return isRealCampaignStage(G.currentStage) ? G.STAGES!.length : totalReachableStageCount();
 }
 
 // 350面以降、special/chainミッションのcount。4以上にするとhole配置
