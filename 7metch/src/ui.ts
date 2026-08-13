@@ -135,7 +135,6 @@ export function buildStageSelect(): void {
 
     if (unlocked) {
       btn.addEventListener("click", async () => {
-        G.currentStage = i;
         await startStage(i);
       });
     }
@@ -190,11 +189,16 @@ function showTutorial(stageIndex: number): void {
 // G.currentStage/G.board/G.rows/G.cols/G.animatingを2つの呼び出しが同時に
 // 書き換えてしまう(/code-review指摘)。doMove()等の既存パターンと同じく、
 // 関数の先頭でG.animatingを再入防止ガードとして使い、完了までtrue状態を維持する
-// (状態リセット・盤面生成・詰み回復・画面表示のすべてをガード区間に含める)
+// (状態リセット・盤面生成・詰み回復・画面表示のすべてをガード区間に含める)。
+// G.currentStageの代入もこのガードの内側で行う——呼び出し元(ui.ts内の各イベント
+// リスナー)がガードより前に`G.currentStage = index`していると、再入で拒否された
+// 側の代入だけが素通りして「実際に開始したステージ」と食い違ってしまうため
+// (2回目の/code-review指摘)
 export async function startStage(index: number): Promise<void> {
   if (G.animating) return;
   G.animating = true;
   try {
+    G.currentStage = index;
     const stg = stageConfigAt(index);
     G.cols = stg.boardCols;
     G.rows = stg.boardRows;
@@ -325,8 +329,7 @@ export function initUI(): void {
       showScreen("stageSelect");
       return;
     }
-    G.currentStage = next;
-    await startStage(G.currentStage);
+    await startStage(next);
   });
 
   document.getElementById("btn-stage-select")!.addEventListener("click", () => {
@@ -523,8 +526,7 @@ export function initUI(): void {
         return;
       }
     }
-    G.currentStage = next;
-    await startStage(G.currentStage);
+    await startStage(next);
   });
 
   document.getElementById("btn-result-retry")!.addEventListener("click", async () => {
@@ -571,9 +573,8 @@ export function initUI(): void {
       G.debugPreviewStages = buildOrbitPilotStages();
     }
     if (num >= 1 && num <= totalReachableStageCount()) {
-      G.currentStage = num - 1;
       document.getElementById("debug-panel")!.classList.add("hidden");
-      await startStage(G.currentStage);
+      await startStage(num - 1);
     }
   });
 

@@ -519,9 +519,10 @@ export async function resolveBoard(): Promise<void> {
 // プレイヤー操作を介さない自動処理のため許容する。手動シャッフルアイテムでは
 // このフォールバックを使わない — useShuffle()参照）
 async function recoverFromDeadlock(): Promise<void> {
-  const numColors = stageConfigAt(G.currentStage).colors;
+  const stg = stageConfigAt(G.currentStage);
+  const numColors = stg.colors;
   if (!shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS)) {
-    const regenerated = regenerateBoardForDeadlock(numColors, BOARD_REGEN_MAX_ATTEMPTS);
+    const regenerated = regenerateBoardForDeadlock(numColors, BOARD_REGEN_MAX_ATTEMPTS, stg);
     // 盤面を作り直しても合法手ありにできなかった場合、作り直し後の色分布で
     // もう一度だけ並べ替えを試す（色数・オービット制約次第では理論上残りうる
     // 最終手段のリスクを、既存のテスト済みプリミティブの再利用で少しでも減らす）。

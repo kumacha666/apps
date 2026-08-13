@@ -589,10 +589,17 @@ export function shuffleWithQualityGate(maxAttempts: number): boolean {
 // 盤面を丸ごと作り直す詰み回復の最終フォールバック（初期盤面生成と同じ
 // fillBoardUntilStable()を再利用）。既存の特殊ピースは失われるため、プレイヤー
 // 操作を介さない自動デッドロック回復でのみ使用する（有料の手動シャッフルアイテム
-// では絶対に使わないこと。既存の特殊ピースが対価もなく消滅してしまうため）
-export function regenerateBoardForDeadlock(numColors: number, maxAttempts: number): boolean {
+// では絶対に使わないこと。既存の特殊ピースが対価もなく消滅してしまうため）。
+// stg.countdownBombsが設定されたステージ(Stage 300〜500)でも再配置する
+// (createBoard()と同じくplaceCountdownBombs()をhasAnyLegalMove()判定の前に呼び、
+// 判定と実際の最終盤面を一致させる。/code-review指摘: 元々この関数はorbits.length > 0
+// のステージ専用の到達不能パスとして書かれ意図的にボム再配置を省いていたが、
+// ensurePlayableBoard()がオービットの有無を問わず動作するよう修正した結果、
+// countdownBombsを持つステージからも到達しうるようになったため対応が必要になった)
+export function regenerateBoardForDeadlock(numColors: number, maxAttempts: number, stg: StageConfig): boolean {
   for (let i = 0; i < maxAttempts; i++) {
     fillBoardUntilStable(numColors);
+    placeCountdownBombs(stg);
     if (hasAnyLegalMove()) return true;
   }
   return false;

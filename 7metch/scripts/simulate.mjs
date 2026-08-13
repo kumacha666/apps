@@ -368,10 +368,11 @@ export function doMoveSync(r1, c1, r2, c2) {
 // （手動シャッフルアイテムのような「コストを払って盤面変更をキャンセル」という概念が
 // シミュレーターには無いため、useShuffle()側のキャンセル分岐は移植しない）
 export function recoverFromDeadlockSync() {
-  const numColors = G.STAGES[G.currentStage].colors;
+  const stg = G.STAGES[G.currentStage];
+  const numColors = stg.colors;
   let recovered = shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS);
   if (!recovered) {
-    const regenerated = regenerateBoardForDeadlock(numColors, BOARD_REGEN_MAX_ATTEMPTS);
+    const regenerated = regenerateBoardForDeadlock(numColors, BOARD_REGEN_MAX_ATTEMPTS, stg);
     recovered = regenerated || shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS);
   }
   resolveMatchesSync();
