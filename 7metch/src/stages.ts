@@ -21,13 +21,31 @@ export function totalReachableStageCount(): number {
   return G.STAGES!.length + (G.debugPreviewStages?.length ?? 0);
 }
 
+// デバッグジャンプ(btn-debug-jump)が第1章パイロット(Stage 501〜524、buildOrbitPilotStages
+// が生成する24ステージ分)を遅延生成すべきかどうかの判定。1回生成すれば十分なため
+// hasPreviewで再生成を防ぐ(purge/再生成すると進行中のプレビュー面のプレイ状態が失われる)。
+// DOMハンドラから切り出した純粋関数として、この境界条件単体をテストできるようにする
+// (conventions角度の指摘: 本PRの他の境界判定はすべてstages.tsに切り出してテストされているが、
+// この判定だけがui.tsのクリックハンドラにインラインのまま残っていた)
+export function shouldGeneratePreviewStages(num: number, stagesLen: number, hasPreview: boolean): boolean {
+  return num > stagesLen && num <= 524 && !hasPreview;
+}
+
 // インデックスiのStageConfigを取得する。本編範囲(i < G.STAGES!.length)はG.STAGESから、
 // プレビュー範囲(デバッグジャンプ経由でのみ到達)はG.debugPreviewStagesから引く。
 // G.STAGES自体を伸ばさない設計にしたため、ゲームロジック側は「本編かプレビューか」を
-// 意識せずこの関数経由でステージ定義を取得できる
+// 意識せずこの関数経由でステージ定義を取得できる。
+// 範囲外呼び出しは、呼び出し側の不変条件(currentStageは常にtotalReachableStageCount()
+// 未満)が破れているというバグなので、素のnull参照エラーではなく診断しやすいメッセージ
+// で早期に落とす(altitude/removed-behavior角度の指摘: 旧設計のoptional chainingは
+// 範囲外を静かに無視していたが、この設計変更でfail-crashに変わったことを明示化する)
 export function stageConfigAt(i: number): StageConfig {
   if (i < G.STAGES!.length) return G.STAGES![i];
-  return G.debugPreviewStages![i - G.STAGES!.length];
+  const previewIdx = i - G.STAGES!.length;
+  if (!G.debugPreviewStages || previewIdx >= G.debugPreviewStages.length) {
+    throw new Error(`stageConfigAt: index ${i} is out of range (reachable: ${totalReachableStageCount()})`);
+  }
+  return G.debugPreviewStages[previewIdx];
 }
 
 // デバッグジャンプ(本番ビルドでも7タップで開ける)でStage 501〜524(プレビュー)を

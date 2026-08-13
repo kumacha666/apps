@@ -1,7 +1,7 @@
 import type { Piece, CellPos, FallEntry, SpecialInfo } from "./types";
 import { G, PIECE_COLORS, ANIM } from "./state";
 import { cellCenter, addBurstParticles, addShockwave, addFlash, addComet, addScreenShake, addParticle, addFloatingText, updateVFX, drawVFX } from "./vfx";
-import { drawBoard, drawPieceAt, drawBoardBase, drawIceOverlay, drawBoardGuides, drawOrbitArrows } from "./rendering";
+import { drawBoard, drawPieceAt, drawBoardBase, drawIceOverlay, drawAnimationOverlays } from "./rendering";
 import { SFX } from "./audio";
 import { isIce } from "./board";
 
@@ -43,8 +43,7 @@ export async function animateSwap(r1: number, c1: number, r2: number, c2: number
 
     // 盤面ガイドはピースより後(drawBoard()と同じ順序)。土星のリング等が
     // セル境界まで広がる描画でガイドを上書きしないようにする(Codexレビュー指摘)
-    drawBoardGuides(G.ctx!);
-    drawOrbitArrows(G.ctx!);
+    drawAnimationOverlays(G.ctx!);
 
     G.ctx!.restore();
     await sleep(ANIM.SWAP_FRAME_MS);
@@ -1116,8 +1115,7 @@ export async function animateDrop(fallMap: FallEntry[]): Promise<void> {
 
     // 盤面ガイドはピースより後(drawBoard()と同じ順序)。土星のリング等が
     // セル境界まで広がる描画でガイドを上書きしないようにする(Codexレビュー指摘)
-    drawBoardGuides(G.ctx!);
-    drawOrbitArrows(G.ctx!);
+    drawAnimationOverlays(G.ctx!);
 
     G.ctx!.restore();
 

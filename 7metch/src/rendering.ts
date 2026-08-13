@@ -277,6 +277,15 @@ export function drawBoardGuides(ctx: CanvasRenderingContext2D): void {
   drawPatternCellOverlays(ctx);
 }
 
+// animateSwap()/animateDrop()がdrawBoardBase()の直後に呼ぶ描画順序(ガイド→矢印)を
+// 1箇所にまとめたもの。この2行の並びは過去にCodexレビューで指摘されたバグ(ガイドが
+// アニメ中に消える)の原因だった箇所そのものなので、呼び出し側2箇所に生の2行として
+// コピーし続けるとドリフトのリスクが残る(reuse/simplification角度の指摘)
+export function drawAnimationOverlays(ctx: CanvasRenderingContext2D): void {
+  drawBoardGuides(ctx);
+  drawOrbitArrows(ctx);
+}
+
 // 選択中セルの選択枠(通常/タップ起動系パルス)を描く共通ヘルパー。ピース・盤面ガイドより
 // 後に描くことで、常に最前面に表示されるようにする(Codexレビュー指摘: パターン枠と同じ
 // 矩形・線幅のため、先に描くと達成済みセルで選択枠が完全に上書きされて見えなくなっていた)

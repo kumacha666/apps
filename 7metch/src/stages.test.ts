@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { G, PIECE_COLORS, PIECE_NAMES_JA } from "./state";
-import { getMissionText, buildStages, buildOrbitPilotStages, boardSizeForStage, isStageUnlocked, getTotalStars, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage, stageConfigAt, totalReachableStageCount } from "./stages";
+import { getMissionText, buildStages, buildOrbitPilotStages, boardSizeForStage, isStageUnlocked, getTotalStars, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage, stageConfigAt, totalReachableStageCount, shouldGeneratePreviewStages } from "./stages";
 import { hasEntrySource, orbitsHaveRequiredGap } from "./orbit";
 import type { Mission, StageConfig } from "./types";
 
@@ -514,5 +514,36 @@ describe("stageConfigAt / totalReachableStageCount", () => {
     expect(totalReachableStageCount()).toBe(500);
     G.debugPreviewStages = new Array(24).fill(null);
     expect(totalReachableStageCount()).toBe(524);
+  });
+
+  it("範囲外(i >= totalReachableStageCount())は診断可能なエラーを投げる(debugPreviewStagesがnullの場合)", () => {
+    G.STAGES = [{ name: "1" } as StageConfig];
+    G.debugPreviewStages = null;
+    expect(() => stageConfigAt(1)).toThrow(/stageConfigAt/);
+  });
+
+  it("範囲外(i >= totalReachableStageCount())は診断可能なエラーを投げる(debugPreviewStagesがある場合)", () => {
+    G.STAGES = [{ name: "1" } as StageConfig];
+    G.debugPreviewStages = [{ name: "501" } as StageConfig];
+    expect(() => stageConfigAt(2)).toThrow(/stageConfigAt/);
+  });
+});
+
+describe("shouldGeneratePreviewStages", () => {
+  it("本編範囲内(num <= stagesLen)ではfalse", () => {
+    expect(shouldGeneratePreviewStages(500, 500, false)).toBe(false);
+  });
+
+  it("プレビュー範囲(num > stagesLen)かつ524以下かつ未生成ならtrue", () => {
+    expect(shouldGeneratePreviewStages(501, 500, false)).toBe(true);
+    expect(shouldGeneratePreviewStages(524, 500, false)).toBe(true);
+  });
+
+  it("524を超える場合はfalse(第1章パイロットの範囲外)", () => {
+    expect(shouldGeneratePreviewStages(525, 500, false)).toBe(false);
+  });
+
+  it("既に生成済み(hasPreview=true)なら再生成しない", () => {
+    expect(shouldGeneratePreviewStages(501, 500, true)).toBe(false);
   });
 });

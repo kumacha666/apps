@@ -4,7 +4,7 @@ import { initAudio, switchBgm, stopAllBgm, applyAudioOptions, SFX } from "./audi
 import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim, stopTitleBgAnim, startResultBgAnim, stopResultBgAnim, startSplashBgAnim, stopSplashBgAnim, drawBoard } from "./rendering";
 import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker, finishTurn } from "./game";
 import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
-import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage, stageConfigAt, totalReachableStageCount } from "./stages";
+import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage, stageConfigAt, totalReachableStageCount, shouldGeneratePreviewStages } from "./stages";
 import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
 import { initInput, renderHelpPieceIcons } from "./input";
 
@@ -544,7 +544,7 @@ export function initUI(): void {
     // G.STAGES自体には追記しない(G.debugPreviewStagesへ分離、初回のみ生成。生成後は
     // num<=totalReachableStageCount()となり再実行されない)。Stage 501〜524が正式に
     // buildStages()へ追加されたらこの分岐は自然に使われなくなる
-    if (num > G.STAGES!.length && num <= 524 && !G.debugPreviewStages) {
+    if (shouldGeneratePreviewStages(num, G.STAGES!.length, !!G.debugPreviewStages)) {
       G.debugPreviewStages = buildOrbitPilotStages();
     }
     if (num >= 1 && num <= totalReachableStageCount()) {
