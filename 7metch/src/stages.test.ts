@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { G, PIECE_COLORS, PIECE_NAMES_JA } from "./state";
-import { getMissionText, buildStages, buildOrbitPilotStages, boardSizeForStage, isStageUnlocked, getTotalStars, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage } from "./stages";
+import { getMissionText, buildStages, buildOrbitPilotStages, boardSizeForStage, isStageUnlocked, getTotalStars, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage, stageConfigAt, totalReachableStageCount, shouldGeneratePreviewStages } from "./stages";
 import { hasEntrySource, orbitsHaveRequiredGap } from "./orbit";
 import type { Mission, StageConfig } from "./types";
 
@@ -350,7 +350,6 @@ describe("isStageUnlocked", () => {
   beforeEach(() => {
     G.saveData = { cleared: {}, bestStars: {}, coins: 0 };
     G.STAGES = buildStages();
-    G.baseStageCount = G.STAGES.length;
   });
 
   it("ステージ0は常にアンロック", () => {
@@ -383,7 +382,7 @@ describe("isStageUnlocked", () => {
 
   // デバッグジャンプでStage 501〜524(プレビュー)をクリアしても、本編のスターゲート判定・
   // 合計表示に混入しないことの回帰テスト(Codexレビュー指摘)
-  it("プレビュー面(baseStageCount以上)のbestStarsは合計に含めない", () => {
+  it("プレビュー面(G.STAGES.length以上)のbestStarsは合計に含めない", () => {
     G.saveData.bestStars[10] = 3;
     G.saveData.bestStars[500] = 3; // Stage 501をデバッグジャンプでクリアした想定
     G.saveData.bestStars[523] = 3; // Stage 524も同様
@@ -406,7 +405,7 @@ describe("isStageUnlocked", () => {
 describe("lastClearedRealStageIdx", () => {
   beforeEach(() => {
     G.saveData = { cleared: {}, bestStars: {}, coins: 0 };
-    G.baseStageCount = 500;
+    G.STAGES = new Array(500).fill(null);
   });
 
   it("クリア済みステージが無ければ-1", () => {
@@ -420,7 +419,7 @@ describe("lastClearedRealStageIdx", () => {
     expect(lastClearedRealStageIdx()).toBe(49);
   });
 
-  it("baseStageCount以上(デバッグジャンプのプレビュー面)のクリア履歴は無視する", () => {
+  it("G.STAGES.length以上(デバッグジャンプのプレビュー面)のクリア履歴は無視する", () => {
     G.saveData.cleared[49] = true;
     G.saveData.cleared[500] = true; // Stage 501をデバッグジャンプでクリアした想定
     G.saveData.cleared[523] = true; // Stage 524も同様
@@ -435,29 +434,29 @@ describe("lastClearedRealStageIdx", () => {
 });
 
 // ---------------------------------------------------------------------------
-// nextStageBoundary — 本編プレイ中はbaseStageCountで最終ステージ判定を守りつつ、
+// nextStageBoundary — 本編プレイ中はG.STAGES.lengthで最終ステージ判定を守りつつ、
 // デバッグジャンプ後のプレビュー範囲内ではNextボタンでの連続確認を維持できることの検証
-// (Codexレビュー指摘: baseStageCountへの一律置き換えでパイロットステージ内のNext進行が死んでいた)
 // ---------------------------------------------------------------------------
 describe("nextStageBoundary", () => {
   beforeEach(() => {
-    G.baseStageCount = 500;
+    G.STAGES = new Array(500).fill(null); // 本編500ステージ相当
+    G.debugPreviewStages = null;
   });
 
-  it("本編プレイ中(currentStage < baseStageCount)はbaseStageCountを返す", () => {
-    G.STAGES = new Array(524).fill(null); // デバッグジャンプでプレビュー分が追記された想定
+  it("本編プレイ中(currentStage < G.STAGES.length)はG.STAGES.lengthを返す", () => {
+    G.debugPreviewStages = new Array(24).fill(null); // デバッグジャンプでプレビュー分が生成された想定
     G.currentStage = 10;
     expect(nextStageBoundary()).toBe(500);
   });
 
-  it("本編最終ステージ(currentStage === baseStageCount-1)でもbaseStageCountを返す(全ステージ制覇を汚染しない)", () => {
-    G.STAGES = new Array(524).fill(null);
+  it("本編最終ステージ(currentStage === G.STAGES.length-1)でもG.STAGES.lengthを返す(全ステージ制覇を汚染しない)", () => {
+    G.debugPreviewStages = new Array(24).fill(null);
     G.currentStage = 499;
     expect(nextStageBoundary()).toBe(500);
   });
 
-  it("プレビュー範囲内(currentStage >= baseStageCount)ではG.STAGES.lengthを返す(Nextでの連続確認用)", () => {
-    G.STAGES = new Array(524).fill(null);
+  it("プレビュー範囲内(currentStage >= G.STAGES.length)では本編+プレビューの合計を返す(Nextでの連続確認用)", () => {
+    G.debugPreviewStages = new Array(24).fill(null);
     G.currentStage = 500; // Stage 501(デバッグジャンプ後)
     expect(nextStageBoundary()).toBe(524);
   });
@@ -471,16 +470,80 @@ describe("nextStageBoundary", () => {
 // ---------------------------------------------------------------------------
 describe("isRealCampaignStage", () => {
   beforeEach(() => {
-    G.baseStageCount = 500;
+    G.STAGES = new Array(500).fill(null);
   });
 
-  it("本編範囲内(i < baseStageCount)はtrue", () => {
+  it("本編範囲内(i < G.STAGES.length)はtrue", () => {
     expect(isRealCampaignStage(0)).toBe(true);
     expect(isRealCampaignStage(499)).toBe(true);
   });
 
-  it("プレビュー範囲(i >= baseStageCount)はfalse", () => {
+  it("プレビュー範囲(i >= G.STAGES.length)はfalse", () => {
     expect(isRealCampaignStage(500)).toBe(false);
     expect(isRealCampaignStage(523)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// stageConfigAt / totalReachableStageCount — G.STAGESを起動後決して変更しない設計
+// (altitude角度の指摘を受けた設計変更)における、本編/プレビュー統合アクセサの検証
+// ---------------------------------------------------------------------------
+describe("stageConfigAt / totalReachableStageCount", () => {
+  it("本編範囲(i < G.STAGES.length)ではG.STAGESから返す", () => {
+    const real0 = { name: "1" } as StageConfig;
+    const real1 = { name: "2" } as StageConfig;
+    G.STAGES = [real0, real1];
+    G.debugPreviewStages = null;
+    expect(stageConfigAt(0)).toBe(real0);
+    expect(stageConfigAt(1)).toBe(real1);
+  });
+
+  it("プレビュー範囲(i >= G.STAGES.length)ではG.debugPreviewStagesから返す", () => {
+    const real0 = { name: "1" } as StageConfig;
+    const preview0 = { name: "501" } as StageConfig;
+    const preview1 = { name: "502" } as StageConfig;
+    G.STAGES = [real0];
+    G.debugPreviewStages = [preview0, preview1];
+    expect(stageConfigAt(1)).toBe(preview0);
+    expect(stageConfigAt(2)).toBe(preview1);
+  });
+
+  it("totalReachableStageCountは本編とプレビューの合計を返す", () => {
+    G.STAGES = new Array(500).fill(null);
+    G.debugPreviewStages = null;
+    expect(totalReachableStageCount()).toBe(500);
+    G.debugPreviewStages = new Array(24).fill(null);
+    expect(totalReachableStageCount()).toBe(524);
+  });
+
+  it("範囲外(i >= totalReachableStageCount())は診断可能なエラーを投げる(debugPreviewStagesがnullの場合)", () => {
+    G.STAGES = [{ name: "1" } as StageConfig];
+    G.debugPreviewStages = null;
+    expect(() => stageConfigAt(1)).toThrow(/stageConfigAt/);
+  });
+
+  it("範囲外(i >= totalReachableStageCount())は診断可能なエラーを投げる(debugPreviewStagesがある場合)", () => {
+    G.STAGES = [{ name: "1" } as StageConfig];
+    G.debugPreviewStages = [{ name: "501" } as StageConfig];
+    expect(() => stageConfigAt(2)).toThrow(/stageConfigAt/);
+  });
+});
+
+describe("shouldGeneratePreviewStages", () => {
+  it("本編範囲内(num <= stagesLen)ではfalse", () => {
+    expect(shouldGeneratePreviewStages(500, 500, false)).toBe(false);
+  });
+
+  it("プレビュー範囲(num > stagesLen)かつ524以下かつ未生成ならtrue", () => {
+    expect(shouldGeneratePreviewStages(501, 500, false)).toBe(true);
+    expect(shouldGeneratePreviewStages(524, 500, false)).toBe(true);
+  });
+
+  it("524を超える場合はfalse(第1章パイロットの範囲外)", () => {
+    expect(shouldGeneratePreviewStages(525, 500, false)).toBe(false);
+  });
+
+  it("既に生成済み(hasPreview=true)なら再生成しない", () => {
+    expect(shouldGeneratePreviewStages(501, 500, true)).toBe(false);
   });
 });

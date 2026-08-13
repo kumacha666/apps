@@ -4,7 +4,7 @@ import { initAudio, switchBgm, stopAllBgm, applyAudioOptions, SFX } from "./audi
 import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim, stopTitleBgAnim, startResultBgAnim, stopResultBgAnim, startSplashBgAnim, stopSplashBgAnim, drawBoard } from "./rendering";
 import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker, finishTurn } from "./game";
 import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
-import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage } from "./stages";
+import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage, stageConfigAt, totalReachableStageCount, shouldGeneratePreviewStages } from "./stages";
 import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
 import { initInput, renderHelpPieceIcons } from "./input";
 
@@ -104,9 +104,9 @@ export function buildStageSelect(): void {
 
   let stopped = false;
 
-  // デバッグジャンプでG.STAGESにStage 501〜524プレビューが追記されていても、
-  // 通常のステージ選択には表示しない(baseStageCountで本編分だけに固定)
-  for (let i = 0; i < G.baseStageCount; i++) {
+  // Stage 501〜524(デバッグプレビュー)はG.STAGESに含まれないため、この
+  // ループは自然に本編分だけを対象にする(G.debugPreviewStagesは別管理)
+  for (let i = 0; i < G.STAGES!.length; i++) {
     if (stopped) break;
 
     const gate = getGateFor(i);
@@ -121,7 +121,7 @@ export function buildStageSelect(): void {
 
     if (i > visibleUpTo && !G.saveData.cleared[i]) break;
 
-    const stg = G.STAGES![i];
+    const stg = stageConfigAt(i);
     const btn = document.createElement("button");
     btn.className = "stage-btn";
     const unlocked = isStageUnlocked(i);
@@ -182,7 +182,7 @@ function showTutorial(stageIndex: number): void {
 }
 
 export function startStage(index: number): void {
-  const stg = G.STAGES![index];
+  const stg = stageConfigAt(index);
   G.cols = stg.boardCols;
   G.rows = stg.boardRows;
   G.movesLeft = stg.moves;
@@ -291,7 +291,7 @@ export function initUI(): void {
   // --- Start / Stage Select ---
   document.getElementById("btn-start")!.addEventListener("click", () => {
     initAudio();
-    const next = Math.min(lastClearedRealStageIdx() + 1, G.baseStageCount - 1);
+    const next = Math.min(lastClearedRealStageIdx() + 1, G.STAGES!.length - 1);
     const gate = getGateFor(next);
     if (gate && getTotalStars() < gate.stars) {
       showGateBlockMessage(gate);
@@ -467,7 +467,7 @@ export function initUI(): void {
   document.getElementById("btn-retry")!.addEventListener("click", async () => {
     const ok = await showGameModal("リトライしますか？");
     if (!ok) return;
-    track("stage_retry", { stage: G.STAGES![G.currentStage].name });
+    track("stage_retry", { stage: stageConfigAt(G.currentStage).name });
     startStage(G.currentStage);
   });
 
@@ -484,7 +484,7 @@ export function initUI(): void {
       showScreen("stageSelect");
       return;
     }
-    // プレビュー範囲(next >= baseStageCount)ではゲート/アンロック判定を行わない。
+    // プレビュー範囲(next >= G.STAGES!.length)ではゲート/アンロック判定を行わない。
     // プレビュー面のクリアはcleared/bestStarsへ永続保存しないため(前回の修正)、
     // isStageUnlocked()がclearedを前提とする通常判定をそのまま適用すると常にfalseに
     // なり、Nextでの連続進行が止まってしまう(Codexレビュー指摘)
@@ -505,7 +505,7 @@ export function initUI(): void {
   });
 
   document.getElementById("btn-result-retry")!.addEventListener("click", () => {
-    track("stage_retry", { stage: G.STAGES![G.currentStage].name });
+    track("stage_retry", { stage: stageConfigAt(G.currentStage).name });
     startStage(G.currentStage);
   });
 
@@ -540,13 +540,14 @@ export function initUI(): void {
   document.getElementById("btn-debug-jump")!.addEventListener("click", () => {
     const num = parseInt((document.getElementById("debug-stage-num") as HTMLInputElement).value, 10);
     // 第1章「軌道系」パイロット(Stage 501〜524)のデバッグプレビュー。buildStages()
-    // (Stage 1〜500)にはまだ追加されていないため、デバッグジャンプでのみ遅延生成して
-    // G.STAGESへ追記する(初回のみ。追記後はnum<=G.STAGES!.lengthとなり再実行されない)。
-    // Stage 501〜524が正式にbuildStages()へ追加されたらこの分岐は自然に使われなくなる
-    if (num > G.STAGES!.length && num <= 524) {
-      G.STAGES!.push(...buildOrbitPilotStages());
+    // (Stage 1〜500)にはまだ追加されていないため、デバッグジャンプでのみ遅延生成する。
+    // G.STAGES自体には追記しない(G.debugPreviewStagesへ分離、初回のみ生成。生成後は
+    // num<=totalReachableStageCount()となり再実行されない)。Stage 501〜524が正式に
+    // buildStages()へ追加されたらこの分岐は自然に使われなくなる
+    if (shouldGeneratePreviewStages(num, G.STAGES!.length, !!G.debugPreviewStages)) {
+      G.debugPreviewStages = buildOrbitPilotStages();
     }
-    if (num >= 1 && num <= G.STAGES!.length) {
+    if (num >= 1 && num <= totalReachableStageCount()) {
       G.currentStage = num - 1;
       document.getElementById("debug-panel")!.classList.add("hidden");
       startStage(G.currentStage);
@@ -554,10 +555,10 @@ export function initUI(): void {
   });
 
   document.getElementById("btn-debug-unlock-all")!.addEventListener("click", () => {
-    // プレビュー範囲(baseStageCount以上)は永続保存しない(checkWinLose()と同じ理由、
+    // プレビュー範囲(G.STAGES!.length以上)は永続保存しない(checkWinLose()と同じ理由、
     // Codexレビュー指摘)。デバッグジャンプ自体がisStageUnlocked()判定を経由せず
     // 直接ステージへ飛ぶため、そもそも「全解放」がプレビュー面のアクセスに必要ない
-    for (let i = 0; i < G.baseStageCount; i++) {
+    for (let i = 0; i < G.STAGES!.length; i++) {
       G.saveData.cleared[i] = true;
       if (!G.saveData.bestStars[i]) G.saveData.bestStars[i] = 1;
     }
@@ -626,7 +627,7 @@ export function initUI(): void {
     G.movesLeft += 3;
     updateItemBar();
     showScreen("game");
-    track("item_rescue", { stage: G.STAGES![G.currentStage].name, coins_remaining: G.saveData.coins });
+    track("item_rescue", { stage: stageConfigAt(G.currentStage).name, coins_remaining: G.saveData.coins });
     // 手数切れの失敗時はfinishTurn()の詰み回復チェックを経由せずに終了するため、
     // オービットステージで詰み盤面のままレスキュー(手数+3)された場合、そのままでは
     // 操作可能な手が無いまま復帰してしまう。finishTurn()を呼び直しHUD更新・勝敗再判定・

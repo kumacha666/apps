@@ -4,6 +4,7 @@ import { drawVFX, updateVFX, hasActiveVFX, addScreenShake, cellCenter } from "./
 import { isHole, isRock, isIce, isPlayable, inBounds, TAP_ACTIVATE_SPECIALS } from "./board";
 import { inInfluenceArea } from "./orbit";
 import { getPatternCells, cellKey } from "./patternClear";
+import { stageConfigAt } from "./stages";
 
 // --- Chain Label System ---
 
@@ -242,24 +243,24 @@ export function drawPatternCellOverlay(ctx: CanvasRenderingContext2D, r: number,
 // スワップ中・落下中にオービット境界/矢印/パターン枠が消えないようにする
 // (Codexレビュー指摘: 新レイヤーがdrawBoard()にしか無く、アニメ中は消えていた)
 export function drawOrbitInfluenceZones(ctx: CanvasRenderingContext2D): void {
-  const stg = G.STAGES?.[G.currentStage];
-  if (!stg || stg.orbits.length === 0) return;
+  const stg = stageConfigAt(G.currentStage);
+  if (stg.orbits.length === 0) return;
   for (const orbit of stg.orbits) {
     drawOrbitInfluenceZone(ctx, orbit);
   }
 }
 
 export function drawOrbitArrows(ctx: CanvasRenderingContext2D): void {
-  const stg = G.STAGES?.[G.currentStage];
-  if (!stg || stg.orbits.length === 0) return;
+  const stg = stageConfigAt(G.currentStage);
+  if (stg.orbits.length === 0) return;
   for (const orbit of stg.orbits) {
     drawOrbitArrow(ctx, orbit);
   }
 }
 
 export function drawPatternCellOverlays(ctx: CanvasRenderingContext2D): void {
-  const stg = G.STAGES?.[G.currentStage];
-  if (!stg || stg.mission.type !== "pattern") return;
+  const stg = stageConfigAt(G.currentStage);
+  if (stg.mission.type !== "pattern") return;
   for (const { r, c } of getPatternCells(stg.mission.patternShape, G.rows, G.cols)) {
     if (!isPlayable(r, c)) continue;
     drawPatternCellOverlay(ctx, r, c, G.patternProgress.has(cellKey(r, c)));
@@ -274,6 +275,15 @@ export function drawPatternCellOverlays(ctx: CanvasRenderingContext2D): void {
 export function drawBoardGuides(ctx: CanvasRenderingContext2D): void {
   drawOrbitInfluenceZones(ctx);
   drawPatternCellOverlays(ctx);
+}
+
+// animateSwap()/animateDrop()がdrawBoardBase()の直後に呼ぶ描画順序(ガイド→矢印)を
+// 1箇所にまとめたもの。この2行の並びは過去にCodexレビューで指摘されたバグ(ガイドが
+// アニメ中に消える)の原因だった箇所そのものなので、呼び出し側2箇所に生の2行として
+// コピーし続けるとドリフトのリスクが残る(reuse/simplification角度の指摘)
+export function drawAnimationOverlays(ctx: CanvasRenderingContext2D): void {
+  drawBoardGuides(ctx);
+  drawOrbitArrows(ctx);
 }
 
 // 選択中セルの選択枠(通常/タップ起動系パルス)を描く共通ヘルパー。ピース・盤面ガイドより

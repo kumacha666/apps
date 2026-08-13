@@ -8,7 +8,7 @@ import { cellCenter, addBurstParticles, addShockwave, addFlash, addScreenShake, 
 import { drawBoard, buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startResultBgAnim, stopResultBgAnim, startChainLabel, flashInvalid } from "./rendering";
 import { SFX } from "./audio";
 import { track } from "./tracking";
-import { getMissionText, nextStageBoundary } from "./stages";
+import { getMissionText, nextStageBoundary, stageConfigAt, isRealCampaignStage } from "./stages";
 import { showScreen } from "./ui";
 
 // ============================================================
@@ -23,7 +23,7 @@ function isPlayable(r: number, c: number): boolean {
 // ステージ・ミッション種が変わるたびに導出し直す(盤面サイズは最大でも9x10程度のため
 // 都度計算しても軽い。キャッシュはしない)
 function patternTargetCells(): ReadonlySet<string> | null {
-  const m = G.STAGES![G.currentStage].mission;
+  const m = stageConfigAt(G.currentStage).mission;
   if (m.type !== "pattern" || !m.patternShape) return null;
   return targetCellSet(getPatternCells(m.patternShape, G.rows, G.cols));
 }
@@ -86,7 +86,7 @@ export async function activateByTap(r: number, c: number): Promise<void> {
     if (piece.special === "bomb") SFX.bomb();
     else if (piece.special === "line_d") { SFX.line(); SFX.diagonal(); }
     else if (piece.special === "line_h" || piece.special === "line_v") SFX.line();
-    track("tap_activate", { type: piece.special, stage: G.STAGES![G.currentStage].name });
+    track("tap_activate", { type: piece.special, stage: stageConfigAt(G.currentStage).name });
     G.movesLeft--;
     G.chainCount = 1;
     updateHUD();
@@ -242,7 +242,7 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
       const comboType = getComboType(p1.special, p2.special);
       if (comboType) {
         SFX.combo(comboType);
-        track("special_combo", { combo_type: comboType, stage: G.STAGES![G.currentStage].name });
+        track("special_combo", { combo_type: comboType, stage: stageConfigAt(G.currentStage).name });
         G.movesLeft--;
         G.chainCount = 1;
         updateHUD();
@@ -348,7 +348,7 @@ export async function doMove(r1: number, c1: number, r2: number, c2: number): Pr
       if (!other.special) {
         const targetColor = other.color;
         SFX.combo("rainbow_line");
-        track("rainbow_swap", { target_color: targetColor, stage: G.STAGES![G.currentStage].name });
+        track("rainbow_swap", { target_color: targetColor, stage: stageConfigAt(G.currentStage).name });
         G.movesLeft--;
         G.chainCount = 1;
         updateHUD();
@@ -519,7 +519,7 @@ export async function resolveBoard(): Promise<void> {
 // プレイヤー操作を介さない自動処理のため許容する。手動シャッフルアイテムでは
 // このフォールバックを使わない — useShuffle()参照）
 async function recoverFromDeadlock(): Promise<void> {
-  const numColors = G.STAGES![G.currentStage].colors;
+  const numColors = stageConfigAt(G.currentStage).colors;
   if (!shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS)) {
     const regenerated = regenerateBoardForDeadlock(numColors, BOARD_REGEN_MAX_ATTEMPTS);
     // 盤面を作り直しても合法手ありにできなかった場合、作り直し後の色分布で
@@ -528,7 +528,7 @@ async function recoverFromDeadlock(): Promise<void> {
     // それでも解消しなければ「回復済み」と偽らず、分析用にイベントを記録して
     // 呼び出し側に委ねる（/code-review指摘、2026-08-12。PR #353）
     if (!regenerated && !shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS)) {
-      track("deadlock_recovery_failed", { stage: G.STAGES![G.currentStage].name });
+      track("deadlock_recovery_failed", { stage: stageConfigAt(G.currentStage).name });
     }
   }
   // shuffleWithQualityGate()は成功時のみ「即座マッチなし」を保証するため、全ての
@@ -551,7 +551,7 @@ async function recoverFromDeadlock(): Promise<void> {
 export async function finishTurn(): Promise<void> {
   updateHUD();
   if (checkWinLose()) return;
-  if (G.STAGES![G.currentStage].orbits.length > 0 && !hasAnyLegalMove()) {
+  if (stageConfigAt(G.currentStage).orbits.length > 0 && !hasAnyLegalMove()) {
     await recoverFromDeadlock();
     // recoverFromDeadlock()の最終フォールバック(resolveMatches())がスコア・消去数・
     // 特殊生成等を変化させ、ミッションを達成させる可能性がある。詰み回復後の状態で
@@ -647,7 +647,7 @@ export async function useShuffle(): Promise<void> {
     // （shuffleWithQualityGate、board.ts）を通す。基準を満たせなければ盤面を変更せず
     // アイテム使用そのものをキャンセルする（コストも消費しない。GIMMICK_REDESIGN.md
     // 「シャッフルアイテム」参照 — 既存の特殊ピースを黙って作り直すことはしない）
-    if (G.STAGES![G.currentStage].orbits.length > 0) {
+    if (stageConfigAt(G.currentStage).orbits.length > 0) {
       const original = cloneBoard();
       if (!shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS)) {
         G.board = original;
@@ -742,7 +742,7 @@ async function useColorBomb(colorIndex: number): Promise<void> {
 export function showColorPicker(): void {
   const grid = document.getElementById("color-picker-grid")!;
   grid.innerHTML = "";
-  const numColors = G.STAGES![G.currentStage].colors;
+  const numColors = stageConfigAt(G.currentStage).colors;
   for (let i = 0; i < numColors; i++) {
     const btn = document.createElement("button");
     btn.className = "color-pick-btn";
@@ -775,10 +775,10 @@ export function spawnSpecialAt(r: number, c: number, type: string): void {
 
 export function updateHUD(): void {
   const d = G.dom!;
-  d.hudStage.textContent = `Stage ${G.STAGES![G.currentStage].name}`;
+  d.hudStage.textContent = `Stage ${stageConfigAt(G.currentStage).name}`;
   d.hudMoves.textContent = `のこり ${G.movesLeft} 手`;
 
-  const m = G.STAGES![G.currentStage].mission;
+  const m = stageConfigAt(G.currentStage).mission;
   d.hudMissionLabel.innerHTML = getMissionText(m, true);
 
   let current = 0;
@@ -828,7 +828,7 @@ export function updateHUD(): void {
     d.hudMissionProgress.style.color = "";
   }
 
-  const stg = G.STAGES![G.currentStage];
+  const stg = stageConfigAt(G.currentStage);
   const usedMoves = stg.moves - G.movesLeft;
   let currentStars = 3;
   if (usedMoves > stg.star3moves) currentStars = 2;
@@ -855,13 +855,13 @@ export function updateHUD(): void {
 // ============================================================
 
 function isFinalStageClear(): boolean {
-  return G.currentStage === G.baseStageCount - 1;
+  return G.currentStage === G.STAGES!.length - 1;
 }
 
 // 戻り値: ステージがクリア/失敗して終了した場合true、まだ継続する場合false
 // （継続時のみ呼び出し側が詰み回復チェックを行う。finishTurn()参照）
 export function checkWinLose(): boolean {
-  const m = G.STAGES![G.currentStage].mission;
+  const m = stageConfigAt(G.currentStage).mission;
   let cleared = false;
 
   switch (m.type) {
@@ -892,7 +892,7 @@ export function checkWinLose(): boolean {
   }
 
   if (cleared) {
-    const stg = G.STAGES![G.currentStage];
+    const stg = stageConfigAt(G.currentStage);
     const usedMoves = stg.moves - G.movesLeft;
     let stars = 1;
     if (usedMoves <= stg.star3moves) stars = 3;
@@ -908,11 +908,11 @@ export function checkWinLose(): boolean {
     }
     G.saveData.coins = (G.saveData.coins || 0) + G.coinsEarned;
 
-    // デバッグジャンプで開いたプレビュー面(Stage 501〜524、baseStageCount以上)は
+    // デバッグジャンプで開いたプレビュー面(Stage 501〜524、G.debugPreviewStages側)は
     // 進捗を永続保存しない。保存すると、将来buildStages()にこれらのステージが
-    // 正式追加されてbaseStageCountが伸びた時点で、過去のデバッグクリア履歴が
-    // 本編の正規クリア・星として突然認識されてしまう(Codexレビュー指摘)
-    if (G.currentStage < G.baseStageCount) {
+    // 正式追加された時点で、過去のデバッグクリア履歴が本編の正規クリア・星として
+    // 突然認識されてしまう(Codexレビュー指摘)
+    if (isRealCampaignStage(G.currentStage)) {
       if (stars > prev) G.saveData.bestStars[G.currentStage] = stars;
       G.saveData.cleared[G.currentStage] = true;
     }
@@ -931,7 +931,7 @@ export function checkWinLose(): boolean {
     setTimeout(() => showResult(true, stars), 800);
     return true;
   } else if (G.movesLeft <= 0) {
-    const stg = G.STAGES![G.currentStage];
+    const stg = stageConfigAt(G.currentStage);
     SFX.stageFail();
     track("stage_fail", { stage: stg.name, moves_total: stg.moves, mission_type: stg.mission.type });
     showResult(false, 0, m);
@@ -992,7 +992,7 @@ export function showResult(win: boolean, stars: number, failedMission?: Mission)
     details += `<br><span class="coin-icon"></span> +${G.coinsEarned} コイン（所持: ${G.saveData.coins || 0}）`;
   }
   if (isFinalStage) {
-    details += `<br><span style="color:#ffd700">全${G.baseStageCount}ステージ制覇、おめでとうございます！</span>`;
+    details += `<br><span style="color:#ffd700">全${G.STAGES!.length}ステージ制覇、おめでとうございます！</span>`;
   }
   if (!win && failedMission) {
     details += `<br><span style="color:#4ecdc4">${getFailureProgress(failedMission)}</span>`;
