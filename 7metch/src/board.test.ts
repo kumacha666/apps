@@ -11,6 +11,7 @@ import {
   shuffleWithQualityGate, regenerateBoardForDeadlock, cloneBoard,
   SHUFFLE_QUALITY_MAX_ATTEMPTS, BOARD_REGEN_MAX_ATTEMPTS,
   countAvailableMoves, createBoard, hasSquare, placeCountdownBombs,
+  isBetterFallbackBoard,
 } from "./board";
 import type { OrbitCell } from "./types";
 
@@ -898,6 +899,33 @@ describe("createBoard", () => {
     // 旧実装同様「ボム設置前に品質基準を満たした盤面をそのまま採用した」ことになり、
     // 実際の合法手数(1)がminMoves(2)を割り込んだ状態を見逃す
     expect(callCount).toBeGreaterThan(controlled.length);
+  });
+});
+
+// isBetterFallbackBoard: createBoard()が20回とも[minMoves,maxMoves]を外れた場合の
+// フォールバック選定基準。合法手0件の盤面を採用してしまうと、詰み回復すら発動できない
+// まま(手動シャッフル等のアイテムでしか脱出できない状態で)ステージが始まってしまう
+// (/code-review指摘)。盤面生成そのものをMath.randomで決定的に駆動するテストは
+// コストが高いため、選定ロジックをここで直接検証する
+describe("isBetterFallbackBoard", () => {
+  it("合法手1件以上の候補は、targetから遠くても合法手0件の候補より優先される", () => {
+    // best: 合法手0件・diff=1(targetに近い) / 新候補: 合法手3件・diff=5(targetから遠い)
+    expect(isBetterFallbackBoard(3, 5, 0, 1)).toBe(true);
+  });
+
+  it("合法手0件の候補は、既に合法手1件以上ある候補を上書きしない(diffが小さくても)", () => {
+    // best: 合法手2件・diff=5 / 新候補: 合法手0件・diff=0(targetにちょうど一致)
+    expect(isBetterFallbackBoard(0, 0, 2, 5)).toBe(false);
+  });
+
+  it("両方とも合法手0件なら、targetに近い方(diffが小さい方)を優先する", () => {
+    expect(isBetterFallbackBoard(0, 1, 0, 2)).toBe(true);
+    expect(isBetterFallbackBoard(0, 2, 0, 1)).toBe(false);
+  });
+
+  it("両方とも合法手1件以上なら、targetに近い方(diffが小さい方)を優先する", () => {
+    expect(isBetterFallbackBoard(3, 1, 5, 3)).toBe(true);
+    expect(isBetterFallbackBoard(3, 5, 5, 1)).toBe(false);
   });
 });
 

@@ -544,6 +544,20 @@ async function recoverFromDeadlock(): Promise<void> {
   await sleep(300);
 }
 
+// オービット下で盤面が詰み(合法手0件)の状態を検知したら自動回復する。
+// finishTurn()（毎ターン確定後）とui.tsのstartStage()（ステージ開始直後、まだ1手も
+// 打っていない状態）の両方から共有する。createBoard()自身は「合法手が1つ以上ある
+// 盤面」をフォールバック候補として優先するが（board.tsのisBetterFallbackBoard参照）、
+// 20回の生成試行が全て範囲外に終わった場合の最終フォールバックは依然として確率的で
+// あり得るため、ステージ開始時にもこの回復経路で二重にガードする（/code-review指摘:
+// 開始直後の詰みはfinishTurn()経由の詰み検知——プレイヤーが1手打った後にしか
+// 走らない——では発見できなかった）。回復を実行した場合はtrueを返す
+export async function ensurePlayableBoard(): Promise<boolean> {
+  if (stageConfigAt(G.currentStage).orbits.length === 0 || hasAnyLegalMove()) return false;
+  await recoverFromDeadlock();
+  return true;
+}
+
 // プレイヤーの手・アイテム使用のたびに盤面が確定した後の共通の締めくくり処理。
 // HUD更新→勝敗判定→（ステージが継続する場合のみ）詰み検知・自動回復、の順に行う。
 // resolveBoard()の呼び出し箇所すべてがこれを経由することで、詰み検知が
@@ -551,8 +565,7 @@ async function recoverFromDeadlock(): Promise<void> {
 export async function finishTurn(): Promise<void> {
   updateHUD();
   if (checkWinLose()) return;
-  if (stageConfigAt(G.currentStage).orbits.length > 0 && !hasAnyLegalMove()) {
-    await recoverFromDeadlock();
+  if (await ensurePlayableBoard()) {
     // recoverFromDeadlock()の最終フォールバック(resolveMatches())がスコア・消去数・
     // 特殊生成等を変化させ、ミッションを達成させる可能性がある。詰み回復後の状態で
     // 勝敗を再判定しないと、結果画面へ遷移せずクリア済み扱いにならないまま残ってしまう

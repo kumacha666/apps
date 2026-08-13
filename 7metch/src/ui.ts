@@ -2,7 +2,7 @@ import type { ScreenName, StarGate, SaveData } from "./types";
 import { G, PIECE_COLORS, STAR_GATES, DEFAULT_OPTIONS, ITEM_COSTS, loadOptions, saveOptions, applyVisualOptions, loadSave, writeSave } from "./state";
 import { initAudio, switchBgm, stopAllBgm, applyAudioOptions, SFX } from "./audio";
 import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim, stopTitleBgAnim, startResultBgAnim, stopResultBgAnim, startSplashBgAnim, stopSplashBgAnim, drawBoard } from "./rendering";
-import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker, finishTurn } from "./game";
+import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker, finishTurn, ensurePlayableBoard } from "./game";
 import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
 import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage, stageConfigAt, totalReachableStageCount, shouldGeneratePreviewStages } from "./stages";
 import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
@@ -134,9 +134,9 @@ export function buildStageSelect(): void {
     btn.innerHTML = `<span class="stage-num">${stg.name}</span><span class="stage-stars">${filled}${empty}</span>`;
 
     if (unlocked) {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         G.currentStage = i;
-        startStage(i);
+        await startStage(i);
       });
     }
 
@@ -184,7 +184,7 @@ function showTutorial(stageIndex: number): void {
   overlay.addEventListener("click", dismiss);
 }
 
-export function startStage(index: number): void {
+export async function startStage(index: number): Promise<void> {
   const stg = stageConfigAt(index);
   G.cols = stg.boardCols;
   G.rows = stg.boardRows;
@@ -207,12 +207,25 @@ export function startStage(index: number): void {
   applyVisualOptions();
   initCellState(stg);
   createBoard(stg.colors);
+
+  // createBoard()は合法手0件の盤面を可能な限り避けるが、20回の生成試行が
+  // 全て範囲外に終わった場合の最終フォールバックは確率的にはまだ0件になりうる。
+  // ステージ開始直後（まだ1手も打っていない状態）の詰みはfinishTurn()経由の
+  // 詰み検知（プレイヤーが1手打った後にしか走らない）では発見できないため、
+  // 画面表示前にここでも同じ回復経路を通す（/code-review指摘）
+  G.animating = true;
+  try {
+    await ensurePlayableBoard();
+  } finally {
+    G.animating = false;
+    startHintTimer();
+  }
+
   updateHUD();
   updateItemBar();
   drawBoard();
   showScreen("game");
   track("stage_start", { stage: stg.name, mission_type: stg.mission.type });
-  startHintTimer();
   showTutorial(index);
 }
 
@@ -292,7 +305,7 @@ export function initUI(): void {
   });
 
   // --- Start / Stage Select ---
-  document.getElementById("btn-start")!.addEventListener("click", () => {
+  document.getElementById("btn-start")!.addEventListener("click", async () => {
     initAudio();
     const next = Math.min(lastClearedRealStageIdx() + 1, G.STAGES!.length - 1);
     const gate = getGateFor(next);
@@ -306,7 +319,7 @@ export function initUI(): void {
       return;
     }
     G.currentStage = next;
-    startStage(G.currentStage);
+    await startStage(G.currentStage);
   });
 
   document.getElementById("btn-stage-select")!.addEventListener("click", () => {
@@ -471,7 +484,7 @@ export function initUI(): void {
     const ok = await showGameModal("リトライしますか？");
     if (!ok) return;
     track("stage_retry", { stage: stageConfigAt(G.currentStage).name });
-    startStage(G.currentStage);
+    await startStage(G.currentStage);
   });
 
   document.getElementById("btn-quit")!.addEventListener("click", async () => {
@@ -480,7 +493,7 @@ export function initUI(): void {
     showScreen("title");
   });
 
-  document.getElementById("btn-next")!.addEventListener("click", () => {
+  document.getElementById("btn-next")!.addEventListener("click", async () => {
     const next = G.currentStage + 1;
     if (next >= nextStageBoundary()) {
       buildStageSelect();
@@ -504,12 +517,12 @@ export function initUI(): void {
       }
     }
     G.currentStage = next;
-    startStage(G.currentStage);
+    await startStage(G.currentStage);
   });
 
-  document.getElementById("btn-result-retry")!.addEventListener("click", () => {
+  document.getElementById("btn-result-retry")!.addEventListener("click", async () => {
     track("stage_retry", { stage: stageConfigAt(G.currentStage).name });
-    startStage(G.currentStage);
+    await startStage(G.currentStage);
   });
 
   document.getElementById("btn-result-stages")!.addEventListener("click", () => {
@@ -540,7 +553,7 @@ export function initUI(): void {
     }
   });
 
-  document.getElementById("btn-debug-jump")!.addEventListener("click", () => {
+  document.getElementById("btn-debug-jump")!.addEventListener("click", async () => {
     const num = parseInt((document.getElementById("debug-stage-num") as HTMLInputElement).value, 10);
     // 第1章「軌道系」パイロット(Stage 501〜524)のデバッグプレビュー。buildStages()
     // (Stage 1〜500)にはまだ追加されていないため、デバッグジャンプでのみ遅延生成する。
@@ -553,7 +566,7 @@ export function initUI(): void {
     if (num >= 1 && num <= totalReachableStageCount()) {
       G.currentStage = num - 1;
       document.getElementById("debug-panel")!.classList.add("hidden");
-      startStage(G.currentStage);
+      await startStage(G.currentStage);
     }
   });
 

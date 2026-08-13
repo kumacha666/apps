@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Piece, StageConfig, Mission, GameDom, OrbitCell } from "./types";
 import { G, SCORE_PER_PIECE, ITEM_COSTS } from "./state";
-import { doMove, activateByTap, activateCombo, checkWinLose, updateHUD, resolveMatches, showResult, useShuffle, finishTurn, usePinpoint, getFailureProgress } from "./game";
+import { doMove, activateByTap, activateCombo, checkWinLose, updateHUD, resolveMatches, showResult, useShuffle, finishTurn, usePinpoint, getFailureProgress, ensurePlayableBoard } from "./game";
 import { hasAnyLegalMove, findAllMatches } from "./board";
 import { getPatternCells, targetCellSet } from "./patternClear";
 
@@ -712,6 +712,49 @@ describe("finishTurn", () => {
     await expect(finishTurn()).resolves.toBeUndefined();
     expect(hasAnyLegalMove()).toBe(false); // 既知の残存リスク: 真に回復不能な盤面は詰みのまま
     expect(findAllMatches().length).toBe(0); // 全ての回復試行が失敗しても未解決マッチを残さない
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ensurePlayableBoard（finishTurn()から切り出した共有関数。ui.tsのstartStage()が
+// ステージ開始直後——まだ1手も打っていない状態——の詰みを検知するために直接呼ぶ。
+// createBoard()自身は合法手0件の盤面をできる限り避けるが、20回の生成試行が
+// 全て範囲外に終わった場合の最終フォールバックは確率的にまだ0件になりうるため、
+// 開始直後にも同じ回復経路で二重にガードする。/code-review指摘）
+// ---------------------------------------------------------------------------
+describe("ensurePlayableBoard", () => {
+  beforeEach(() => setupGame());
+
+  it("オービットの無いステージでは合法手0件でも回復しない(false)", async () => {
+    G.STAGES = [makeStage({ orbits: [] })];
+    expect(await ensurePlayableBoard()).toBe(false);
+    expect(hasAnyLegalMove()).toBe(false); // 盤面自体は変更されない
+  });
+
+  it("オービットのあるステージで既に合法手があれば回復せず(false)、盤面も変更しない", async () => {
+    G.STAGES = [makeStage({ orbits: [{ r: 3, c: 3, dir: [1, 0] }], colors: 5 })];
+    // setupGame()の既定盤面は合法手0件のため、まず回復させて「合法手ありの盤面」を用意する
+    await ensurePlayableBoard();
+    expect(hasAnyLegalMove()).toBe(true);
+    const before = (() => {
+      const out: number[] = [];
+      for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) out.push(G.board[r][c]!.color);
+      return out;
+    })();
+
+    expect(await ensurePlayableBoard()).toBe(false);
+
+    const after: number[] = [];
+    for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) after.push(G.board[r][c]!.color);
+    expect(after).toEqual(before);
+  });
+
+  it("オービットのあるステージで合法手0件なら回復し(true)、盤面が合法手ありの状態になる", async () => {
+    G.STAGES = [makeStage({ orbits: [{ r: 3, c: 3, dir: [1, 0] }], colors: 5 })];
+    expect(hasAnyLegalMove()).toBe(false); // 前提: setupGame()の既定盤面は詰み
+    expect(await ensurePlayableBoard()).toBe(true);
+    expect(findAllMatches().length).toBe(0);
+    expect(hasAnyLegalMove()).toBe(true);
   });
 });
 
