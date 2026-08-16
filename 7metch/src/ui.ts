@@ -215,6 +215,12 @@ function showTutorial(stageIndex: number): void {
 export async function startStage(index: number): Promise<void> {
   if (G.stageStarting) return;
   G.stageStarting = true;
+  // navigationEpochのスナップショットは、これから始まる全ての待機区間
+  // （下のG.animating待機・ensurePlayableBoard()の詰み回復待機）より前に取る。
+  // G.animating待機ループの後で取ると、その待機中に「やめる」等でナビゲーションが
+  // 起きた場合、遷移後の値をスナップショットしてしまい後続の比較で検知できず、
+  // ゲーム画面へ引き戻されてしまう(/code-review指摘)
+  const epochBeforeWait = getNavigationEpoch();
   // stageStartingは自分自身の再入だけを防ぐため、既に実行中の他の操作
   // （doMove/activateByTap/useShuffle/usePinpoint/useColorBomb、いずれも
   // G.animatingを共有ミューテックスとして使う）はここでは止まらず、そのまま
@@ -224,7 +230,6 @@ export async function startStage(index: number): Promise<void> {
   // 戻る（＝進行中の操作がfinallyまで完走する）のを待ってから自分の初期化を始める
   while (G.animating) { await sleep(16); }
   G.animating = true;
-  const epochBeforeWait = getNavigationEpoch();
   try {
     G.currentStage = index;
     const stg = stageConfigAt(index);

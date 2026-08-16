@@ -80,8 +80,11 @@ test("retry during an unrelated match animation is not silently ignored", async 
   // PR #361・7巡目)。startStage()がG.animatingの解除を待ってから再初期化する
   // よう修正済みで、待ち時間分だけリトライ自体は遅れるが黙って無視はされない。
   // 300ms（旧shuffleの待機時間）を超えて待ってから、ゲームがまだ正常に応答する
-  // こと（もう一度リトライが即座に効くこと）とコンソールエラーが無いことを確認する
-  await page.waitForTimeout(500);
+  // こと（もう一度リトライが即座に効くこと）とコンソールエラーが無いことを確認する。
+  // このサンドボックス環境ではタイマーが実時間より大幅に遅く進むことが実測で
+  // 確認されている(300ms想定のsleepが800ms近くかかることがある)ため、
+  // 余裕を持って3000ms待つ
+  await page.waitForTimeout(3000);
   await page.click("#btn-retry");
   await page.locator(".modal-btn-confirm").click();
   await expect(page.locator("#hud-moves")).toHaveText(movesBaseline);
@@ -90,4 +93,45 @@ test("retry during an unrelated match animation is not silently ignored", async 
   // 到達できず失敗しうる（アプリロジックとは無関係のネットワーク起因のノイズ）ため、
   // 実際のJS例外(pageerror)のみを見る。console.errorの資源読み込み失敗は対象外
   expect(errors).toEqual([]);
+});
+
+// navigationEpochのスナップショットをG.animating待機ループの「後」で取ると、
+// その待機中に「やめる」でタイトルへ遷移した場合、遷移後の値をスナップショット
+// してしまい後続の比較で検知できず、待機完了後にゲーム画面へ引き戻されてしまう
+// 回帰があった(PR #361・8巡目、/code-review指摘)。スナップショットを待機ループの
+// 「前」に移動した修正の恒久的な回帰テスト
+test("navigating away while waiting for an unrelated animation is not overridden by the stage start", async ({ page }) => {
+  await page.goto("/");
+  await page.click("#screen-splash");
+  await expect(page.locator("#screen-title")).toHaveClass(/active/);
+
+  for (let i = 0; i < 7; i++) await page.click("#version-info");
+  await expect(page.locator("#debug-panel")).not.toHaveClass(/hidden/);
+  await page.click("#btn-debug-close");
+
+  await page.click("#btn-stage-select");
+  await expect(page.locator("#screen-stage-select")).toHaveClass(/active/);
+  await page.locator(".stage-btn:not(.locked)").first().click();
+  await expect(page.locator("#screen-game")).toHaveClass(/active/);
+
+  const tutorial = page.locator("#tutorial-overlay");
+  if (await tutorial.isVisible()) await tutorial.click();
+
+  // シャッフル演出(G.animating=true、300ms+)を発生させ、その解決を待たずリトライを
+  // 確定する。startStage()はG.animatingの待機ループに入って足止めされる
+  await page.click('[data-item="shuffle"]');
+  await page.click("#btn-retry");
+  await page.locator(".modal-btn-confirm").click();
+
+  // startStage()がまだG.animating待機中の間に「やめる」でタイトルへ遷移する
+  await page.click("#btn-quit");
+  await page.locator(".modal-btn-confirm").click();
+  await expect(page.locator("#screen-title")).toHaveClass(/active/);
+
+  // シャッフルの300ms+待機・詰み回復チェックが完了するのを待っても、タイトル画面の
+  // ままであること(旧実装ではゲーム画面へ引き戻されていた)を確認する。このサンドボックス
+  // 環境ではタイマーが実時間より大幅に遅く進むことが実測で確認されているため、
+  // 余裕を持って3000ms待つ
+  await page.waitForTimeout(3000);
+  await expect(page.locator("#screen-title")).toHaveClass(/active/);
 });

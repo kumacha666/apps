@@ -83,6 +83,13 @@ export function initGameState(stageIndex) {
   initCellState(stg);
   createBoard(stg.colors);
 
+  // 詰み回復（下記）のresolveMatchesSync()がdamageAdjacentIce()経由で氷を解除
+  // しうるため、回復より前の時点で氷セル数を記録しておく。runOneGame()側で
+  // 回復後に数えると、回復中に解除された氷がiceCleared/iceTotal双方から
+  // 欠落し、score/totalCleared/maxChain等の他の統計（回復中の変化を含める）
+  // と基準が食い違ってしまう(/code-review指摘)
+  const initialIce = countIceCells();
+
   // 実アプリのstartStage()（ui.ts）は、createBoard()直後にオービットの有無を問わず
   // ensurePlayableBoard()で初期詰みを検知・回復する(/code-review指摘、PR #361)。
   // ここで回復しないと、countdownBombsで合法手を塞ぎうるStage 300〜500がまさに
@@ -91,6 +98,8 @@ export function initGameState(stageIndex) {
   // してしまい、詰み率・クリア率が実際の挙動と食い違う。通常ターン中の詰み検知
   // (playGame()内、orbits.length > 0でのみ動作)は既存のスコープのまま変更しない
   if (!hasAnyLegalMove()) recoverFromDeadlockSync();
+
+  return { initialIce };
 }
 
 export function trackClears(clearList) {
@@ -458,8 +467,7 @@ export function playGame() {
 }
 
 function runOneGame(stageIndex) {
-  initGameState(stageIndex);
-  const initialIce = countIceCells();
+  const { initialIce } = initGameState(stageIndex);
   const { turnsPlayed, deadlockOccurred } = playGame();
   const remainingIce = countIceCells();
   return {
