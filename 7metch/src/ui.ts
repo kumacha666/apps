@@ -227,8 +227,21 @@ export async function startStage(index: number): Promise<void> {
   // 完走しようとする。ここで待たずに盤面を再初期化すると、例えばシャッフル演出中の
   // await sleep(300)明けにその古い呼び出しがresolveBoard()/finishTurn()を
   // 新しいステージの盤面へ実行してしまう(/code-review指摘)。G.animatingが falseに
-  // 戻る（＝進行中の操作がfinallyまで完走する）のを待ってから自分の初期化を始める
-  while (G.animating) { await sleep(16); }
+  // 戻る（＝進行中の操作がfinallyまで完走する）のを待ってから自分の初期化を始める。
+  // この待機中に「やめる」等でナビゲーションが起きた場合、この呼び出し自体が
+  // もう無意味（結果を表示すべき画面がもう無い）になる。待ち切ってから
+  // 下のepoch比較で気づくのでは遅く、その間G.stageStartingを持ったままなので、
+  // 直後の「つづきから」等の新しい開始要求まで無言で拒否されてしまう
+  // (/code-review指摘)。ここでも毎周期epochを見て、変化していれば即座に
+  // G.stageStartingを解放して抜ける（盤面初期化は一切行っていないので他に
+  // 後始末は不要）
+  while (G.animating) {
+    if (getNavigationEpoch() !== epochBeforeWait) {
+      G.stageStarting = false;
+      return;
+    }
+    await sleep(16);
+  }
   G.animating = true;
   try {
     G.currentStage = index;

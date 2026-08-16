@@ -135,3 +135,45 @@ test("navigating away while waiting for an unrelated animation is not overridden
   await page.waitForTimeout(3000);
   await expect(page.locator("#screen-title")).toHaveClass(/active/);
 });
+
+// 上のテストと同じ状況（G.animating待機中に「やめる」でタイトルへ遷移）から、
+// 直後に「はじめる」で新しくstartStage()を呼ぶと、古い呼び出しがまだ
+// G.stageStartingを保持したままだと新しい呼び出しが無言で拒否され、
+// ボタンを押しても何も起きないように見える回帰があった(PR #361・9巡目、
+// /code-review指摘)。待機ループ内でもepochの変化を検知して即座に
+// G.stageStartingを解放するようにした修正の恒久的な回帰テスト
+test("starting a new stage right after navigating away is not silently dropped", async ({ page }) => {
+  await page.goto("/");
+  await page.click("#screen-splash");
+  await expect(page.locator("#screen-title")).toHaveClass(/active/);
+
+  for (let i = 0; i < 7; i++) await page.click("#version-info");
+  await expect(page.locator("#debug-panel")).not.toHaveClass(/hidden/);
+  await page.click("#btn-debug-close");
+
+  await page.click("#btn-stage-select");
+  await expect(page.locator("#screen-stage-select")).toHaveClass(/active/);
+  await page.locator(".stage-btn:not(.locked)").first().click();
+  await expect(page.locator("#screen-game")).toHaveClass(/active/);
+
+  const tutorial = page.locator("#tutorial-overlay");
+  if (await tutorial.isVisible()) await tutorial.click();
+
+  await page.click('[data-item="shuffle"]');
+  await page.click("#btn-retry");
+  await page.locator(".modal-btn-confirm").click();
+
+  await page.click("#btn-quit");
+  await page.locator(".modal-btn-confirm").click();
+  await expect(page.locator("#screen-title")).toHaveClass(/active/);
+
+  // 古いstartStage()呼び出しがepochの変化に気づいてG.stageStartingを解放するまで
+  // 短時間待ってから（旧shuffleの300ms+待機そのものを待つ必要はない）、
+  // 「はじめる」で新しく開始する
+  await page.waitForTimeout(200);
+  await page.click("#btn-start");
+
+  // 新しい開始要求が無言で拒否されていなければ、いずれゲーム画面に戻る
+  // (旧実装ではタイトル画面のまま何も起きなかった)
+  await expect(page.locator("#screen-game")).toHaveClass(/active/, { timeout: 5000 });
+});
