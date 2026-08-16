@@ -347,7 +347,8 @@ function scheduleNightStepFloorRetry(
 }
 
 /**
- * 配札済みかつオンラインの全員が現在の夜ステップでタップ済みなら、早めに次のステップへ進める。
+ * 配札済みの全員が現在の夜ステップでタップ済みなら、早めに次のステップへ進める
+ * （オンライン状態は問わない、`isNightStepComplete`参照）。
  * ただしステップ開始からNIGHT_STEP_MIN_DURATION_MS未満の場合は進めない。
  * 該当役職が誰にも配られていないステップ（中央カード行き）は行動する人がいないため
  * 全員が即タップでき、他のステップより明らかに早く終わってしまう。この所要時間の差が
@@ -391,7 +392,7 @@ export async function markDiscussReady(roomId: string, memberId: string, roundNu
   await maybeCloseDiscussEarly(roomId);
 }
 
-/** 配札済みかつオンラインの全員が議論フェーズでタップ済みなら、早めに投票フェーズへ進める。 */
+/** 配札済みの全員が議論フェーズでタップ済みなら、早めに投票フェーズへ進める（オンライン状態は問わない）。 */
 export async function maybeCloseDiscussEarly(roomId: string): Promise<void> {
   const snap = await get(ref(db, `rooms/${roomId}`));
   const room = snap.val();
