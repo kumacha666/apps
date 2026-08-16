@@ -1,5 +1,5 @@
 import type { AppContext } from "./context";
-import { participants, onlineMembers, myKnownRoleBanner } from "./context";
+import { participants, myKnownRoleBanner } from "./context";
 import { ROLE_META } from "../roles";
 import { robberSwap, markNightReady } from "../roomSync";
 import type { RoleId } from "../types";
@@ -67,8 +67,10 @@ export function render(container: HTMLElement, ctx: AppContext): void {
       <p class="role-description">${ROLE_META[currentRoleId].name}：${ROLE_META[currentRoleId].description}</p>
     `;
 
-  const online = onlineMembers(ctx).filter((m) => m.originalRole);
-  const readyCount = online.filter((m) => (m.nightReadyStep ?? -1) >= stepIndex).length;
+  // 早期進行の判定（isNightStepComplete）と同じ集合（配札済み全員、オンライン状態は問わない）
+  // を表示に使う。ずれるとカウンターと実際の進行タイミングが合わなくなる（2026-08-16）
+  const dealt = participants(ctx);
+  const readyCount = dealt.filter((m) => (m.nightReadyStep ?? -1) >= stepIndex).length;
 
   container.innerHTML = `
     ${header}
@@ -76,7 +78,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     <button id="btn-night-ready" class="btn-primary" ${readyDisabled ? "disabled" : ""}>
       ${alreadyReady ? "つぎを待っています…" : uiState.robberPending ? "交換中…" : "つぎへ"}
     </button>
-    <p class="hint-text">準備完了 ${readyCount}/${online.length}人</p>
+    <p class="hint-text">準備完了 ${readyCount}/${dealt.length}人</p>
     <p class="hint-text">全員がタップすると次に進みます（役職と関係なく全員タップしてください）</p>
   `;
 

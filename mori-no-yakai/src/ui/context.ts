@@ -29,6 +29,18 @@ export function onlineMembers(ctx: AppContext): Member[] {
   return Object.values(ctx.members).filter((m) => m.online);
 }
 
+/**
+ * ロビーで表示・カウントするメンバー。明示的に「トップに戻る」で退室した
+ * （left: true）人だけを除外し、スマホの画面ロック等でオンラインが一時的に
+ * falseの人は含める。`startGame()`の配札対象（`selectDealTargets`）と
+ * 必ず同じ集合になるようにすること（2026-08-16。ロビーの人数表示・開始ボタンの
+ * 有効化判定・役職構成の検証にオンライン限定の集合を使うと、実際に配られる
+ * 山札の人数とロビーの表示がずれてしまう）。
+ */
+export function activeMembers(ctx: AppContext): Member[] {
+  return Object.values(ctx.members).filter((m) => !m.left);
+}
+
 /** 配札されたプレイヤー（ゲーム参加者）。切断してもゲームからは消えない。 */
 export function participants(ctx: AppContext): Member[] {
   return Object.values(ctx.members).filter((m) => m.originalRole);

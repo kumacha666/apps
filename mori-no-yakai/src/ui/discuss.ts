@@ -1,5 +1,5 @@
 import type { AppContext } from "./context";
-import { onlineMembers, myKnownRoleBanner } from "./context";
+import { participants, myKnownRoleBanner } from "./context";
 import { ROLE_META } from "../roles";
 import { markDiscussReady } from "../roomSync";
 
@@ -23,8 +23,10 @@ export function render(container: HTMLElement, ctx: AppContext): void {
   const role = self?.knownRole ?? self?.originalRole;
   const alreadyReady = uiState.readyTapped || self?.discussReadyRound === roundNumber;
 
-  const online = onlineMembers(ctx).filter((m) => m.originalRole);
-  const readyCount = online.filter((m) => m.discussReadyRound === roundNumber).length;
+  // 早期進行の判定（isDiscussComplete）と同じ集合（配札済み全員、オンライン状態は問わない）
+  // を表示に使う（2026-08-16、night.tsと同じ理由）
+  const dealt = participants(ctx);
+  const readyCount = dealt.filter((m) => m.discussReadyRound === roundNumber).length;
 
   container.innerHTML = `
     <h2>🗣️ 議論タイム</h2>
@@ -35,7 +37,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     <button id="btn-discuss-ready" class="btn-primary" ${alreadyReady ? "disabled" : ""}>
       ${alreadyReady ? "投票を待っています…" : "話し合いおわり・投票へ"}
     </button>
-    <p class="hint-text">準備完了 ${readyCount}/${online.length}人</p>
+    <p class="hint-text">準備完了 ${readyCount}/${dealt.length}人</p>
   `;
 
   container.querySelector("#btn-discuss-ready")?.addEventListener("click", () => {

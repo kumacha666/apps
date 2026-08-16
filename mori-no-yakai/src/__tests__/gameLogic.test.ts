@@ -8,6 +8,7 @@ import {
   advanceNightState,
   advanceDiscussState,
   advanceVoteState,
+  selectDealTargets,
   DEFAULT_NIGHT_STEP_DURATION_MS,
   NIGHT_STEP_MIN_DURATION_MS,
 } from "../gameLogic";
@@ -143,37 +144,39 @@ describe("determineWinner", () => {
 });
 
 describe("isNightStepComplete", () => {
-  it("オンラインの参加者全員が現在のステップ以上にタップ済みならtrue", () => {
+  it("参加者全員が現在のステップ以上にタップ済みならtrue", () => {
     const members = [
-      { id: "a", online: true, nightReadyStep: 2 },
-      { id: "b", online: true, nightReadyStep: 3 },
+      { id: "a", nightReadyStep: 2 },
+      { id: "b", nightReadyStep: 3 },
     ];
     expect(isNightStepComplete(members, 2)).toBe(true);
   });
 
   it("1人でも未タップならfalse", () => {
     const members = [
-      { id: "a", online: true, nightReadyStep: 2 },
-      { id: "b", online: true, nightReadyStep: 1 },
+      { id: "a", nightReadyStep: 2 },
+      { id: "b", nightReadyStep: 1 },
     ];
     expect(isNightStepComplete(members, 2)).toBe(false);
   });
 
   it("nightReadyStep未設定（一度もタップしていない）ならfalse扱い", () => {
-    const members = [{ id: "a", online: true }];
+    const members = [{ id: "a" }];
     expect(isNightStepComplete(members, 0)).toBe(false);
   });
 
-  it("オフラインの参加者はタップ判定から除外する", () => {
+  it("画面ロック等でオフラインの参加者も、タップするまでは完了扱いにしない（2026-08-16）", () => {
+    // online: falseでも配札済みなら全員のタップを待つ。以前はオンラインの参加者だけを
+    // 完了条件にしていたため、画面ロック中の人の夜アクションが待たれずに飛ばされてしまっていた
     const members = [
       { id: "a", online: true, nightReadyStep: 2 },
-      { id: "b", online: false },
+      { id: "b", online: false, nightReadyStep: 1 },
     ];
-    expect(isNightStepComplete(members, 2)).toBe(true);
+    expect(isNightStepComplete(members, 2)).toBe(false);
   });
 
-  it("オンラインの参加者が誰もいなければfalse", () => {
-    expect(isNightStepComplete([{ id: "a", online: false }], 0)).toBe(false);
+  it("参加者が誰もいなければfalse", () => {
+    expect(isNightStepComplete([], 0)).toBe(false);
   });
 });
 
@@ -207,37 +210,38 @@ describe("isNightStepMinElapsed", () => {
 });
 
 describe("isDiscussComplete", () => {
-  it("オンラインの参加者全員が現在のroundNumberでタップ済みならtrue", () => {
+  it("参加者全員が現在のroundNumberでタップ済みならtrue", () => {
     const members = [
-      { id: "a", online: true, discussReadyRound: 3 },
-      { id: "b", online: true, discussReadyRound: 3 },
+      { id: "a", discussReadyRound: 3 },
+      { id: "b", discussReadyRound: 3 },
     ];
     expect(isDiscussComplete(members, 3)).toBe(true);
   });
 
   it("1人でも未タップならfalse", () => {
     const members = [
-      { id: "a", online: true, discussReadyRound: 3 },
-      { id: "b", online: true, discussReadyRound: undefined },
+      { id: "a", discussReadyRound: 3 },
+      { id: "b", discussReadyRound: undefined },
     ];
     expect(isDiscussComplete(members, 3)).toBe(false);
   });
 
   it("前のラウンドのタップは今回のラウンドではカウントしない", () => {
-    const members = [{ id: "a", online: true, discussReadyRound: 2 }];
+    const members = [{ id: "a", discussReadyRound: 2 }];
     expect(isDiscussComplete(members, 3)).toBe(false);
   });
 
-  it("オフラインの参加者はタップ判定から除外する", () => {
+  it("画面ロック等でオフラインの参加者も、タップするまでは完了扱いにしない（2026-08-16）", () => {
+    // online: falseでも配札済みなら全員のタップを待つ（isNightStepCompleteと同じ理由）
     const members = [
       { id: "a", online: true, discussReadyRound: 3 },
       { id: "b", online: false, discussReadyRound: undefined },
     ];
-    expect(isDiscussComplete(members, 3)).toBe(true);
+    expect(isDiscussComplete(members, 3)).toBe(false);
   });
 
-  it("オンラインの参加者が誰もいなければfalse", () => {
-    expect(isDiscussComplete([{ id: "a", online: false }], 0)).toBe(false);
+  it("参加者が誰もいなければfalse", () => {
+    expect(isDiscussComplete([], 0)).toBe(false);
   });
 });
 
@@ -292,5 +296,28 @@ describe("advanceNightState / advanceDiscussState / advanceVoteState", () => {
     const state = { ...baseState, phase: "vote" as const };
     const next = advanceVoteState(state);
     expect(next.phase).toBe("result");
+  });
+});
+
+describe("selectDealTargets", () => {
+  it("画面ロック等でオフライン（online: false）でも、leftでなければ配札対象に含める", () => {
+    const members = {
+      a: { online: true, left: false },
+      b: { online: false, left: false },
+    };
+    expect(selectDealTargets(members).sort()).toEqual(["a", "b"]);
+  });
+
+  it("明示的に退室した（left: true）メンバーは配札対象から除外する", () => {
+    const members = {
+      a: { online: true, left: false },
+      b: { online: false, left: true },
+    };
+    expect(selectDealTargets(members)).toEqual(["a"]);
+  });
+
+  it("leftが未設定（旧データ・新規参加直後）は退室していない扱い", () => {
+    const members = { a: {} };
+    expect(selectDealTargets(members)).toEqual(["a"]);
   });
 });

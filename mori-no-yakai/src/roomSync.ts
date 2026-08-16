@@ -22,6 +22,7 @@ import {
   isNightStepComplete,
   isNightStepMinElapsed,
   isDiscussComplete,
+  selectDealTargets,
 } from "./gameLogic";
 
 const ROOM_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -79,7 +80,9 @@ export async function joinRoom(roomId: string, memberId: string, name: string): 
   // 既存メンバーはプロフィール・プレゼンスのみをupdateする
   const memberSnap = await get(memberRef);
   if (memberSnap.exists()) {
-    await update(memberRef, { name, online: true });
+    // leftはleaveRoom()で明示的に退室した場合のみtrueになる。同じmemberIdで再入室する
+    // ケース（リロード時のセッション復元）では退室していないので念のためfalseに戻しておく
+    await update(memberRef, { name, online: true, left: false });
   } else {
     const member: Member = {
       id: memberId,
@@ -102,9 +105,16 @@ export async function markOnline(roomId: string, memberId: string): Promise<void
   onDisconnect(ref(db, `rooms/${roomId}/members/${memberId}/online`)).set(false);
 }
 
-/** ロビーから「トップに戻る」を押したときに使う。オンライン状態だけをfalseにして退室扱いにする。 */
+/**
+ * ロビーから「トップに戻る」を押したときに使う。online:falseに加えてleft:trueを立てる。
+ * スマホの画面ロック等による一時的な切断（online:falseだがleftはfalseのまま）とは
+ * 区別し、leftがtrueのメンバーだけをstartGame()の配札対象（selectDealTargets）から
+ * 除外する（2026-08-16。以前はonline:falseだけで退室を表現していたため、配札対象を
+ * オンライン限定からロビー全員に広げた際、明示的に退室した人にも役職が配られて
+ * しまう不具合があった）。
+ */
 export async function leaveRoom(roomId: string, memberId: string): Promise<void> {
-  await update(ref(db, `rooms/${roomId}/members/${memberId}`), { online: false });
+  await update(ref(db, `rooms/${roomId}/members/${memberId}`), { online: false, left: true });
 }
 
 export function listenRoomState(roomId: string, cb: (state: RoomState | null) => void): Unsubscribe {
@@ -160,13 +170,12 @@ export async function startGame(roomId: string): Promise<void> {
   await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
     if (!room || !room.state || room.state.phase !== "lobby") return room;
     const members: Record<string, Member> = room.members ?? {};
-    // 配札はロビーにいる全メンバーが対象。スマホの画面ロックはonDisconnectで
-    // ほぼ即座にonline:falseへ切り替わるため、「オンラインの人だけ」に限定すると
-    // ホストが開始ボタンを押した瞬間に画面が消えていただけの人が配札から
-    // まるごと弾かれてしまう（2026-08-16、実プレイでの報告により変更）。
-    // ロビー画面自体がオンラインのメンバーのみ表示するため、幽霊メンバーが
-    // 紛れ込む場合はホストが目視で気づける
-    const memberIds = Object.keys(members);
+    // 配札はオンライン/オフラインを問わず、明示的に退室(left:true)していない
+    // 全メンバーが対象（selectDealTargets、2026-08-16）。ロビー画面（ui/lobby.ts）の
+    // 人数表示・開始ボタンの有効化判定・役職構成の検証も同じ集合
+    // （ui/context.tsのactiveMembers）を使うこと。ここだけを変えると、ロビーに
+    // 表示された構成と実際に配られる山札の人数がずれてしまう
+    const memberIds = selectDealTargets(members);
     if (memberIds.length < 3) return room; // 最低3人必要
 
     const deck = buildRoleDeck(memberIds.length, room.state.roleConfig);
@@ -400,12 +409,17 @@ export async function maybeCloseDiscussEarly(roomId: string): Promise<void> {
   });
 }
 
-/** 配札済みかつオンラインのプレイヤー全員が投票済みなら、投票フェーズを早めに締め切る。 */
+/**
+ * 配札済みのプレイヤー全員が投票済みなら、投票フェーズを早めに締め切る。
+ * オンライン状態は問わない（`isNightStepComplete`と同じ理由、2026-08-16。
+ * 画面ロック中の参加者を早期締切の必須条件から除外すると、その人の投票の機会が
+ * 待たれずに飛ばされてしまう）。
+ */
 export async function maybeCloseVoteEarly(roomId: string): Promise<void> {
   const membersSnap = await get(ref(db, `rooms/${roomId}/members`));
   const members: Record<string, Member> = membersSnap.val() ?? {};
-  const onlineParticipants = Object.values(members).filter((m) => m.online && m.originalRole);
-  if (onlineParticipants.length === 0 || !onlineParticipants.every((m) => m.vote)) return;
+  const dealtParticipants = Object.values(members).filter((m) => m.originalRole);
+  if (dealtParticipants.length === 0 || !dealtParticipants.every((m) => m.vote)) return;
 
   await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
     if (!room?.state || room.state.phase !== "vote") return room;
