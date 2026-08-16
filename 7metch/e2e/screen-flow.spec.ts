@@ -38,6 +38,9 @@ test("help screen is reachable from title and back", async ({ page }) => {
 // 回帰テスト。+3手アイテムで残り手数をbaseと区別できる値にしておき、シャッフル
 // 演出中に即座にリトライを押しても実際に効く(baseへ戻る)ことを確認する
 test("retry during an unrelated match animation is not silently ignored", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+
   await page.goto("/");
   await page.click("#screen-splash");
   await expect(page.locator("#screen-title")).toHaveClass(/active/);
@@ -63,10 +66,28 @@ test("retry during an unrelated match animation is not silently ignored", async 
   // リトライを押す
   await page.click('[data-item="shuffle"]');
   await page.click("#btn-retry");
-  const confirmBtn = page.locator(".modal-btn-confirm");
-  if (await confirmBtn.isVisible().catch(() => false)) await confirmBtn.click();
+  // btn-retryのクリックハンドラは必ず確認モーダルを開くため、表示チェックを挟まず
+  // 直接クリックする(Playwrightのlocator.click()は要素が操作可能になるまで自動待機
+  // するため、モーダル表示の非同期タイミングを気にする必要はない)
+  await page.locator(".modal-btn-confirm").click();
 
   // リトライが効いていればステージが再生成され、手数はbaselineへ戻る
   // (旧実装では無視されるためbaseline+3のまま止まっていた)
   await expect(page.locator("#hud-moves")).toHaveText(movesBaseline);
+
+  // 旧shuffleのawait sleep(300)明けの残処理(resolveBoard()/finishTurn())が、
+  // 新しいステージの盤面へ実行されてしまう別の回帰があった(/code-review指摘、
+  // PR #361・7巡目)。startStage()がG.animatingの解除を待ってから再初期化する
+  // よう修正済みで、待ち時間分だけリトライ自体は遅れるが黙って無視はされない。
+  // 300ms（旧shuffleの待機時間）を超えて待ってから、ゲームがまだ正常に応答する
+  // こと（もう一度リトライが即座に効くこと）とコンソールエラーが無いことを確認する
+  await page.waitForTimeout(500);
+  await page.click("#btn-retry");
+  await page.locator(".modal-btn-confirm").click();
+  await expect(page.locator("#hud-moves")).toHaveText(movesBaseline);
+
+  // track()呼び出しのGAS/analyticsエンドポイントへのfetchはこのサンドボックス環境では
+  // 到達できず失敗しうる（アプリロジックとは無関係のネットワーク起因のノイズ）ため、
+  // 実際のJS例外(pageerror)のみを見る。console.errorの資源読み込み失敗は対象外
+  expect(errors).toEqual([]);
 });

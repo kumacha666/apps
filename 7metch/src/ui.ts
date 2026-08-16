@@ -7,6 +7,7 @@ import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearH
 import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage, stageConfigAt, totalReachableStageCount, shouldGeneratePreviewStages } from "./stages";
 import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
 import { initInput, renderHelpPieceIcons } from "./input";
+import { sleep } from "./animations";
 
 // --- Screens ---
 
@@ -214,6 +215,14 @@ function showTutorial(stageIndex: number): void {
 export async function startStage(index: number): Promise<void> {
   if (G.stageStarting) return;
   G.stageStarting = true;
+  // stageStartingは自分自身の再入だけを防ぐため、既に実行中の他の操作
+  // （doMove/activateByTap/useShuffle/usePinpoint/useColorBomb、いずれも
+  // G.animatingを共有ミューテックスとして使う）はここでは止まらず、そのまま
+  // 完走しようとする。ここで待たずに盤面を再初期化すると、例えばシャッフル演出中の
+  // await sleep(300)明けにその古い呼び出しがresolveBoard()/finishTurn()を
+  // 新しいステージの盤面へ実行してしまう(/code-review指摘)。G.animatingが falseに
+  // 戻る（＝進行中の操作がfinallyまで完走する）のを待ってから自分の初期化を始める
+  while (G.animating) { await sleep(16); }
   G.animating = true;
   const epochBeforeWait = getNavigationEpoch();
   try {
