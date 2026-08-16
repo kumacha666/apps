@@ -70,16 +70,20 @@ export function determineWinner(
 }
 
 /**
- * 現在の夜ステップについて、オンラインの参加者全員が「つぎへ」をタップ済みか判定する。
+ * 現在の夜ステップについて、配札済みの参加者全員が「つぎへ」をタップ済みか判定する。
  * 該当役職の人だけがタップすると誰が誰か推測できてしまうため、全員のタップを揃える。
+ * オンライン状態は問わない（スマホの画面ロック中でも配札済みなら待つ対象に含める。
+ * 2026-08-16、画面ロック中の参加者を早期進行の必須条件から除外していたため、
+ * その人の夜アクション・投票の機会が待たれずに飛ばされてしまう不具合の修正）。
+ * 本当に復帰しない参加者がいても、タイマー満了による自然な進行（`maybeAdvancePhase`）
+ * が別途あるため、この判定だけに頼っていつまでも進行できなくなることはない。
  */
 export function isNightStepComplete(
-  participants: Pick<Member, "id" | "online" | "nightReadyStep">[],
+  participants: Pick<Member, "id" | "nightReadyStep">[],
   stepIndex: number
 ): boolean {
-  const online = participants.filter((m) => m.online);
-  if (online.length === 0) return false;
-  return online.every((m) => (m.nightReadyStep ?? -1) >= stepIndex);
+  if (participants.length === 0) return false;
+  return participants.every((m) => (m.nightReadyStep ?? -1) >= stepIndex);
 }
 
 /**
@@ -123,20 +127,31 @@ export function advanceDiscussState(state: RoomState, now: number): RoomState {
 }
 
 /**
- * オンラインの参加者全員が、現在のroundNumberについて議論フェーズの「つぎへ」を
+ * 配札済みの参加者全員が、現在のroundNumberについて議論フェーズの「つぎへ」を
  * タップ済みか判定する。夜ステップと異なり議論は1ラウンドにつき1回しかないため、
- * ステップindexではなくroundNumberをキーにする。
+ * ステップindexではなくroundNumberをキーにする。オンライン状態は問わない
+ * （`isNightStepComplete`と同じ理由、2026-08-16）。
  */
 export function isDiscussComplete(
-  participants: Pick<Member, "id" | "online" | "discussReadyRound">[],
+  participants: Pick<Member, "id" | "discussReadyRound">[],
   roundNumber: number
 ): boolean {
-  const online = participants.filter((m) => m.online);
-  if (online.length === 0) return false;
-  return online.every((m) => m.discussReadyRound === roundNumber);
+  if (participants.length === 0) return false;
+  return participants.every((m) => m.discussReadyRound === roundNumber);
 }
 
 /** 投票フェーズから結果フェーズへ進める。 */
 export function advanceVoteState(state: RoomState): RoomState {
   return { ...state, phase: "result" };
+}
+
+/**
+ * ゲーム開始（startGame）で配札する対象のメンバーIDを選ぶ。
+ * オンライン/オフラインは問わない（スマホの画面ロックでonDisconnectがほぼ即座に
+ * online:falseへ切り替わるため、オンラインのみに限定すると開始ボタンを押した瞬間に
+ * 画面が消えていただけの人が配札からまるごと弾かれてしまう、2026-08-16）。
+ * 「トップに戻る」で明示的に退室した（left: true）メンバーだけを除外する。
+ */
+export function selectDealTargets(members: Record<string, Pick<Member, "left">>): string[] {
+  return Object.keys(members).filter((id) => !members[id].left);
 }

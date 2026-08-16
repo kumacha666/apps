@@ -1,5 +1,5 @@
 import type { AppContext } from "./context";
-import { isHost, currentHostId, onlineMembers } from "./context";
+import { isHost, currentHostId, activeMembers } from "./context";
 import { ROLE_META } from "../roles";
 import { computeVillagerCount, isValidRoleConfig } from "../roles";
 import { DISCUSS_DURATION_OPTIONS_MS, NIGHT_STEP_DURATION_OPTIONS_MS } from "../gameLogic";
@@ -14,7 +14,9 @@ import type { RoleConfig } from "../types";
 
 export function render(container: HTMLElement, ctx: AppContext): void {
   const host = isHost(ctx);
-  const members = onlineMembers(ctx);
+  // 配札対象（startGame）と同じ集合を使う。オンライン限定にすると、画面ロック中の
+  // 人がいる状態でロビーの人数・開始条件が実際の配札結果とずれてしまう（2026-08-16）
+  const members = activeMembers(ctx);
   const config = ctx.state.roleConfig;
   const discussDurationMs = ctx.state.discussDurationMs;
   const nightStepDurationMs = ctx.state.nightStepDurationMs;
@@ -34,7 +36,9 @@ export function render(container: HTMLElement, ctx: AppContext): void {
       ${members
         .map(
           (m) =>
-            `<li>${escapeHtml(m.name)}${m.id === currentHostId(ctx) ? " 👑" : ""}</li>`
+            `<li>${escapeHtml(m.name)}${m.id === currentHostId(ctx) ? " 👑" : ""}${
+              m.online ? "" : "（オフライン）"
+            }</li>`
         )
         .join("")}
     </ul>

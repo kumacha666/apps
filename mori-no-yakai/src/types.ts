@@ -46,6 +46,12 @@ export interface Member {
    */
   knownRole?: RoleId;
   vote?: string;
+  /**
+   * 「トップに戻る」で明示的に退室したかどうか。スマホの画面ロック等による
+   * 一時的な切断（online:falseだがleftはfalseのまま）とは区別する。leftがtrueの
+   * メンバーは配札対象（startGame）から除外する（selectDealTargets参照）。
+   */
+  left?: boolean;
   /** 直近でタップ済みの夜ステップindex。全員が現在のステップに追いつくと早期に次へ進む。 */
   nightReadyStep?: number;
   /** 議論フェーズで「つぎへ」をタップしたときのroundNumber。全員が現在のroundNumberに追いつくと早期に次へ進む。 */
