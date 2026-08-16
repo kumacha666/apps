@@ -244,4 +244,15 @@ describe("playGame", () => {
     expect(result.deadlockOccurred).toBe(true);
     expect(G.movesLeft).toBe(5);
   });
+
+  it("呼び出し時点で既にミッション達成済みなら1手も消費せず終了する(初期詰み回復が偶然達成させたケース相当)", () => {
+    setupSim();
+    G.STAGES = [makeSimStage({ mission: { type: "clear", count: 0 } })];
+    G.mission = G.STAGES[0].mission;
+    G.movesLeft = 20;
+    const result = playGame();
+    expect(result.turnsPlayed).toBe(0);
+    expect(result.deadlockOccurred).toBe(false);
+    expect(G.movesLeft).toBe(20);
+  });
 });

@@ -416,6 +416,15 @@ export function playGame() {
   let turnsPlayed = 0;
   let deadlockOccurred = false;
 
+  // initGameState()の初期詰み回復(createBoard()直後のensurePlayableBoard()相当)が
+  // 偶然ミッションを達成させている場合、実アプリのstartStage()は1手も消費せず
+  // checkWinLose()でそのまま結果画面へ遷移する。ここで判定しないと、シミュレーターは
+  // 以降の手を1手余分に実行してしまい、turnsPlayed/movesLeft/score等の統計が
+  // 実アプリと食い違う(/code-review指摘、PR #361)
+  if (checkMissionComplete()) {
+    return { turnsPlayed, deadlockOccurred };
+  }
+
   while (G.movesLeft > 0) {
     const moves = findValidMoves();
     if (moves.length === 0) {
