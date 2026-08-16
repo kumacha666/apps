@@ -160,14 +160,19 @@ export async function startGame(roomId: string): Promise<void> {
   await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
     if (!room || !room.state || room.state.phase !== "lobby") return room;
     const members: Record<string, Member> = room.members ?? {};
-    // 配札はオンラインのメンバーのみが対象（切断した幽霊メンバーには配らない）
-    const onlineIds = Object.keys(members).filter((id) => members[id].online);
-    if (onlineIds.length < 3) return room; // 最低3人必要
+    // 配札はロビーにいる全メンバーが対象。スマホの画面ロックはonDisconnectで
+    // ほぼ即座にonline:falseへ切り替わるため、「オンラインの人だけ」に限定すると
+    // ホストが開始ボタンを押した瞬間に画面が消えていただけの人が配札から
+    // まるごと弾かれてしまう（2026-08-16、実プレイでの報告により変更）。
+    // ロビー画面自体がオンラインのメンバーのみ表示するため、幽霊メンバーが
+    // 紛れ込む場合はホストが目視で気づける
+    const memberIds = Object.keys(members);
+    if (memberIds.length < 3) return room; // 最低3人必要
 
-    const deck = buildRoleDeck(onlineIds.length, room.state.roleConfig);
+    const deck = buildRoleDeck(memberIds.length, room.state.roleConfig);
     const shuffled = shuffle(deck);
-    const dealt = shuffled.slice(0, onlineIds.length);
-    const center = shuffled.slice(onlineIds.length);
+    const dealt = shuffled.slice(0, memberIds.length);
+    const center = shuffled.slice(memberIds.length);
 
     // RTDBはトランザクション結果にundefinedを含む値を拒否するため、
     // フィールドのクリアは代入ではなくdeleteで行う
@@ -179,7 +184,7 @@ export async function startGame(roomId: string): Promise<void> {
       delete members[id].nightReadyStep;
       delete members[id].discussReadyRound;
     }
-    onlineIds.forEach((id, i) => {
+    memberIds.forEach((id, i) => {
       members[id].originalRole = dealt[i];
       members[id].currentRole = dealt[i];
       members[id].knownRole = dealt[i];
