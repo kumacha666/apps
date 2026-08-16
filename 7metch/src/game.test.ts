@@ -659,6 +659,16 @@ describe("getFailureProgress", () => {
   });
 });
 
+// finishTurn・ensurePlayableBoardの両方で使う盤面スナップショット（詰み回復前後の
+// 盤面が変わった/変わっていないことを比較するため）
+function boardColors(): number[] {
+  const out: number[] = [];
+  for (let r = 0; r < G.rows; r++)
+    for (let c = 0; c < G.cols; c++)
+      out.push(G.board[r][c]!.color);
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // finishTurn（第1章「軌道系」Phase 4b-2: 自動デッドロック回復のゲーティング）
 // setupGame()の既定盤面（mod5パターン）はboard.test.tsのhasAnyLegalMove()テストで
@@ -667,14 +677,6 @@ describe("getFailureProgress", () => {
 // ---------------------------------------------------------------------------
 describe("finishTurn", () => {
   beforeEach(() => setupGame());
-
-  function boardColors(): number[] {
-    const out: number[] = [];
-    for (let r = 0; r < G.rows; r++)
-      for (let c = 0; c < G.cols; c++)
-        out.push(G.board[r][c]!.color);
-    return out;
-  }
 
   it("ステージが終了した場合(手数切れ)は詰み回復チェックを行わない", async () => {
     G.STAGES = [makeStage({ orbits: [{ r: 3, c: 3, dir: [1, 0] }], mission: { type: "score", target: 9999 } })];
@@ -738,17 +740,11 @@ describe("ensurePlayableBoard", () => {
     // setupGame()の既定盤面は合法手0件のため、まず回復させて「合法手ありの盤面」を用意する
     await ensurePlayableBoard();
     expect(hasAnyLegalMove()).toBe(true);
-    const before = (() => {
-      const out: number[] = [];
-      for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) out.push(G.board[r][c]!.color);
-      return out;
-    })();
+    const before = boardColors();
 
     expect(await ensurePlayableBoard()).toBe(false);
 
-    const after: number[] = [];
-    for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) after.push(G.board[r][c]!.color);
-    expect(after).toEqual(before);
+    expect(boardColors()).toEqual(before);
   });
 
   it("オービットのあるステージで既に合法手があれば回復せず(false)、盤面も変更しない", async () => {
@@ -756,17 +752,11 @@ describe("ensurePlayableBoard", () => {
     // setupGame()の既定盤面は合法手0件のため、まず回復させて「合法手ありの盤面」を用意する
     await ensurePlayableBoard();
     expect(hasAnyLegalMove()).toBe(true);
-    const before = (() => {
-      const out: number[] = [];
-      for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) out.push(G.board[r][c]!.color);
-      return out;
-    })();
+    const before = boardColors();
 
     expect(await ensurePlayableBoard()).toBe(false);
 
-    const after: number[] = [];
-    for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) after.push(G.board[r][c]!.color);
-    expect(after).toEqual(before);
+    expect(boardColors()).toEqual(before);
   });
 
   it("オービットのあるステージで合法手0件なら回復し(true)、盤面が合法手ありの状態になる", async () => {

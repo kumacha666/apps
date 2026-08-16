@@ -91,6 +91,7 @@ export const G: GameState = {
   cellState: [],
   selected: null,
   animating: false,
+  stageStarting: false,
   currentStage: 0,
   movesLeft: 0,
   mission: {} as GameState["mission"],

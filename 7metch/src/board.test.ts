@@ -765,20 +765,20 @@ describe("shuffleWithQualityGate", () => {
 describe("regenerateBoardForDeadlock", () => {
   it("十分な色数・マスがあれば盤面を作り直して合法手ありの状態にする(既存のcreateBoard()と同じ生成ロジックを再利用)", () => {
     setupBoard(7, 7);
-    expect(regenerateBoardForDeadlock(5, BOARD_REGEN_MAX_ATTEMPTS, G.STAGES![0])).toBe(true);
+    expect(regenerateBoardForDeadlock(BOARD_REGEN_MAX_ATTEMPTS, G.STAGES![0])).toBe(true);
     expect(findAllMatches().length).toBe(0);
     expect(hasAnyLegalMove()).toBe(true);
   });
 
   it("操作可能セルが1つしか無い盤面では、何度作り直しても合法手が生まれないためfalseを返す", () => {
     setupBoard(1, 1);
-    expect(regenerateBoardForDeadlock(5, 5, G.STAGES![0])).toBe(false);
+    expect(regenerateBoardForDeadlock(5, G.STAGES![0])).toBe(false);
   });
 
   it("countdownBombsが設定されたステージでは、作り直した盤面にもボムを再配置する(/code-review指摘: この関数はorbits.length > 0専用の到達不能パスとして書かれボム再配置を省いていたが、ensurePlayableBoard()がオービットの有無を問わず動作するようになった結果countdownBombsを持つステージからも到達しうるようになった)", () => {
     setupBoard(7, 7);
     const stg = { ...G.STAGES![0], countdownBombs: 2 } as any;
-    expect(regenerateBoardForDeadlock(5, BOARD_REGEN_MAX_ATTEMPTS, stg)).toBe(true);
+    expect(regenerateBoardForDeadlock(BOARD_REGEN_MAX_ATTEMPTS, stg)).toBe(true);
     let bombCount = 0;
     for (let r = 0; r < G.rows; r++)
       for (let c = 0; c < G.cols; c++)

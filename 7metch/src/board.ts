@@ -596,9 +596,9 @@ export function shuffleWithQualityGate(maxAttempts: number): boolean {
 // のステージ専用の到達不能パスとして書かれ意図的にボム再配置を省いていたが、
 // ensurePlayableBoard()がオービットの有無を問わず動作するよう修正した結果、
 // countdownBombsを持つステージからも到達しうるようになったため対応が必要になった)
-export function regenerateBoardForDeadlock(numColors: number, maxAttempts: number, stg: StageConfig): boolean {
+export function regenerateBoardForDeadlock(maxAttempts: number, stg: StageConfig): boolean {
   for (let i = 0; i < maxAttempts; i++) {
-    fillBoardUntilStable(numColors);
+    fillBoardUntilStable(stg.colors);
     placeCountdownBombs(stg);
     if (hasAnyLegalMove()) return true;
   }

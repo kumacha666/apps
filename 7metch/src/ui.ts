@@ -2,7 +2,7 @@ import type { ScreenName, StarGate, SaveData } from "./types";
 import { G, PIECE_COLORS, STAR_GATES, DEFAULT_OPTIONS, ITEM_COSTS, loadOptions, saveOptions, applyVisualOptions, loadSave, writeSave } from "./state";
 import { initAudio, switchBgm, stopAllBgm, applyAudioOptions, SFX } from "./audio";
 import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim, stopTitleBgAnim, startResultBgAnim, stopResultBgAnim, startSplashBgAnim, stopSplashBgAnim, drawBoard } from "./rendering";
-import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker, finishTurn, ensurePlayableBoard } from "./game";
+import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker, finishTurn, ensurePlayableBoard, checkWinLose } from "./game";
 import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
 import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage, stageConfigAt, totalReachableStageCount, shouldGeneratePreviewStages } from "./stages";
 import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
@@ -200,15 +200,20 @@ function showTutorial(stageIndex: number): void {
 // 最低でも1マイクロタスク、詰み回復が実際に走る場合は300ms以上かかる。その間に
 // ステージ選択・つづきから・リトライ等から2重にstartStage()が呼ばれると、
 // G.currentStage/G.board/G.rows/G.cols/G.animatingを2つの呼び出しが同時に
-// 書き換えてしまう(/code-review指摘)。doMove()等の既存パターンと同じく、
-// 関数の先頭でG.animatingを再入防止ガードとして使い、完了までtrue状態を維持する
+// 書き換えてしまう(/code-review指摘)。再入ガードには専用の`G.stageStarting`を使う
+// （`G.animating`ではない）——直前の手のマッチ演出がまだ解決中の間にリトライ・
+// やめる等を押した場合、`G.animating`をそのままstartStage()の再入ガードに流用すると
+// 演出とは無関係のこの呼び出しまで黙って無視されてしまう回帰があった
+// (5巡目の/code-reviewで独立に2箇所から指摘)。`G.animating`自体はこの関数の
+// 実行中も引き続きtrueにする（詰み回復中の入力を防ぐ、既存の用途のまま）
 // (状態リセット・盤面生成・詰み回復・画面表示のすべてをガード区間に含める)。
 // G.currentStageの代入もこのガードの内側で行う——呼び出し元(ui.ts内の各イベント
 // リスナー)がガードより前に`G.currentStage = index`していると、再入で拒否された
 // 側の代入だけが素通りして「実際に開始したステージ」と食い違ってしまうため
 // (2回目の/code-review指摘)
 export async function startStage(index: number): Promise<void> {
-  if (G.animating) return;
+  if (G.stageStarting) return;
+  G.stageStarting = true;
   G.animating = true;
   const epochBeforeWait = getNavigationEpoch();
   try {
@@ -239,23 +244,37 @@ export async function startStage(index: number): Promise<void> {
     // 全て範囲外に終わった場合の最終フォールバックは確率的にはまだ0件になりうる。
     // ステージ開始直後（まだ1手も打っていない状態）の詰みはfinishTurn()経由の
     // 詰み検知（プレイヤーが1手打った後にしか走らない）では発見できないため、
-    // 画面表示前にここでも同じ回復経路を通す（/code-review指摘）
+    // showScreen("game")の前にここでも同じ回復経路を通す（/code-review指摘）。
+    // 注意: リトライ・Next・結果画面リトライ経由の場合は前のステージの
+    // #screen-gameが既にactiveなままなので、実際に回復（シャッフル演出）が
+    // 走った場合はプレイヤーに見える（タイトル・ステージ選択経由の場合のみ
+    // 画面が非activeなので見えない）。詰み回復自体が稀なケースであることに加え、
+    // 見えたとしても新ステージの盤面が一瞬シャッフルされるだけで実害が無いため、
+    // 現時点では許容している
     await ensurePlayableBoard();
 
     // 上の待機中に「もどる」「やめる」等でプレイヤーが別画面へ既に遷移していた場合、
     // ここでshowScreen("game")を呼ぶとその操作を上書きしてしまう(/code-review指摘)。
     // navigationEpochが変化していれば競合するナビゲーションが起きたとみなし、
-    // 画面遷移・HUD更新・チュートリアル表示をスキップする(G.animating解除は
-    // finally側で必ず行われるので、次のステージ開始操作はブロックされない)
+    // 画面遷移・HUD更新・チュートリアル表示をスキップする(G.animating/G.stageStarting
+    // の解除自体はfinally側で必ず行われるので、次のステージ開始操作はブロックされない)
     if (getNavigationEpoch() !== epochBeforeWait) return;
 
+    // ensurePlayableBoard()の詰み回復（recoverFromDeadlock()内のresolveMatches
+    // ("recovery_shuffle")）が偶然ミッションを達成させてしまう可能性がある。
+    // finishTurn()が詰み回復後に勝敗を再判定するのと同じ理由で、ここでも
+    // 回復後に判定する（/code-review指摘）。達成済みならcheckWinLose()内部で
+    // showResult()へのタイマーが仕込まれるため、通常の開始処理は行わない
     updateHUD();
+    if (checkWinLose()) return;
+
     updateItemBar();
     drawBoard();
     showScreen("game");
     track("stage_start", { stage: stg.name, mission_type: stg.mission.type });
     showTutorial(index);
   } finally {
+    G.stageStarting = false;
     G.animating = false;
     startHintTimer();
   }
