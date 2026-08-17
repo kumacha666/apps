@@ -292,3 +292,60 @@ test("consecutive start requests without any navigation reflect only the last on
 
   expect(errors).toEqual([]);
 });
+
+// 上の「reflects the latest request」テストは「画面遷移→開始要求」の順序
+// （やめる→デバッグジャンプ）だったが、逆順「開始要求→画面遷移」（デバッグジャンプ→
+// やめる）では別の欠落が残っていた（PR #361・11巡目、/code-review指摘）。
+// runStageStart()が要求ごとにnavigationEpochを新たに取り直していたため、保留要求
+// （Stage 3）が実際に実行される時点で改めてepochを取得すると、既に起きていた
+// 「やめる」によるナビゲーションを「実行開始前からの既定値」として扱ってしまい
+// 検知できず、結果的にタイトルへ戻ったはずなのにStage 3のゲーム画面へ引き戻されて
+// しまっていた。要求が発行された瞬間のepochをStageStartQueueが保持し、それを
+// 基準に比較するよう修正した恒久的な回帰テスト
+test("a request queued before navigating away does not override the navigation once it finally runs", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+
+  await page.goto("/");
+  await page.click("#screen-splash");
+  await expect(page.locator("#screen-title")).toHaveClass(/active/);
+
+  for (let i = 0; i < 7; i++) await page.click("#version-info");
+  await expect(page.locator("#debug-panel")).not.toHaveClass(/hidden/);
+  await page.click("#btn-debug-close");
+
+  await page.click("#btn-stage-select");
+  await page.locator(".stage-btn:not(.locked)").first().click();
+  await expect(page.locator("#screen-game")).toHaveClass(/active/);
+  await expect(page.locator("#hud-stage")).toHaveText("Stage 1");
+
+  const tutorial = page.locator("#tutorial-overlay");
+  if (await tutorial.isVisible()) await tutorial.click();
+
+  // ensurePlayableBoard()直後の待機を人為的に2500ms引き延ばす
+  await page.evaluate(() => { window.__test_stageStartDelayMs = 2500; });
+
+  // リトライ(Stage 1)。直後のテスト専用フックで2500ms足止めされる
+  await page.click("#btn-retry");
+  await page.locator(".modal-btn-confirm").click();
+
+  // 足止めされている間に、まずStage 3への開始要求を発行する（この時点では
+  // まだ画面遷移していない）
+  await page.click("#btn-debug-open");
+  await page.fill("#debug-stage-num", "3");
+  await page.click("#btn-debug-jump");
+
+  // その後、Stage 3の要求より後に「やめる」でタイトルへ遷移する。ユーザーの
+  // 最後の意思表示は「タイトルへ戻る」であり、その前に出したStage 3の要求が
+  // 後から実行されても、タイトルへ戻った操作を上書きすべきではない
+  await page.click("#btn-quit");
+  await page.locator(".modal-btn-confirm").click();
+  await expect(page.locator("#screen-title")).toHaveClass(/active/);
+
+  // 引き延ばした待機が終わり、保留していたStage 3の要求が処理された後も、
+  // タイトル画面のままであること（ゲーム画面へ引き戻されないこと）を確認する
+  await page.waitForTimeout(3000);
+  await expect(page.locator("#screen-title")).toHaveClass(/active/);
+
+  expect(errors).toEqual([]);
+});

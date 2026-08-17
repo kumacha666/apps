@@ -204,21 +204,28 @@ function showTutorial(stageIndex: number): void {
 // なり（9巡目・10巡目の/code-review指摘、下記CLAUDE.md参照）、かといって並行実行を
 // 許すと古い処理が新しいステージのGを後から上書きしてしまう。StageStartQueueが
 // 「実行中は1つだけ・新しい要求は最新のものだけ保留し、実行中の処理が完了してから
-// 1回だけ反映する」という直列化を管理する（詳細はstageStartQueue.ts参照）
-const stageStartQueue = new StageStartQueue();
+// 1回だけ反映する」という直列化を管理する（詳細はstageStartQueue.ts参照）。
+// contextにはnavigationEpochを渡す——要求が実際に実行されるのは要求された瞬間より
+// 後になりうるため（先行する古い要求の処理待ち）、要求時点のepochを保持しておかないと
+// 「要求後・実行開始前に起きたナビゲーション」を実行側が検知できない
+// (11巡目、/code-review指摘)
+const stageStartQueue = new StageStartQueue<number>();
 
 export async function startStage(index: number): Promise<void> {
-  if (!stageStartQueue.requestStart(index)) return;
+  const epoch = getNavigationEpoch();
+  if (!stageStartQueue.requestStart(index, epoch)) return;
   try {
     let target = index;
+    let epochAtRequest = epoch;
     // 保留要求をループで消化する（再帰にしない——要求が連続してもコールスタックが
     // 積み上がらない）。1回のrunStageStart()が完了するたびに、その間に来た
     // 新しい要求（最後のものだけ）があれば続けて処理する
     for (;;) {
-      await runStageStart(target);
+      await runStageStart(target, epochAtRequest);
       const next = stageStartQueue.takeNextOrFinish();
       if (next === null) break;
-      target = next;
+      target = next.index;
+      epochAtRequest = next.context;
     }
   } finally {
     // runStageStart()が例外を投げた場合でも、キューを確実にrunning=falseへ戻す
@@ -229,14 +236,14 @@ export async function startStage(index: number): Promise<void> {
 }
 
 // 1回分のステージ開始処理本体。呼び出し元(startStage())が直列化を保証しているため、
-// この関数の実行中に他のrunStageStart()呼び出しが並行して動くことは無い
-async function runStageStart(index: number): Promise<void> {
-  // navigationEpochのスナップショットは、これから始まる全ての待機区間
-  // （下のG.animating待機・ensurePlayableBoard()の詰み回復待機）より前に取る。
-  // 待機ループの後で取ると、その待機中に「やめる」等でナビゲーションが起きた場合、
-  // 遷移後の値をスナップショットしてしまい後続の比較で検知できず、ゲーム画面へ
-  // 引き戻されてしまう(8巡目の/code-review指摘)
-  const epochBeforeWait = getNavigationEpoch();
+// この関数の実行中に他のrunStageStart()呼び出しが並行して動くことは無い。
+// epochAtRequestはこの要求が発行された瞬間のnavigationEpoch（呼び出し元から
+// そのまま受け取る）——この関数の内部で改めてgetNavigationEpoch()を取り直すと、
+// 「要求されてから先行する古い要求の処理待ちで、この試行が実際に始まるまでの間」に
+// 起きたナビゲーションを見逃してしまう（実行開始時点を基準にすると「変化なし」に
+// 見えてしまうため。11巡目、/code-review指摘）
+async function runStageStart(index: number, epochAtRequest: number): Promise<void> {
+  const epochBeforeWait = epochAtRequest;
   // 既に実行中の他の操作（doMove/activateByTap/useShuffle/usePinpoint/
   // useColorBomb、いずれもG.animatingを共有ミューテックスとして使う）はここでは
   // 止まらず、そのまま完走しようとする。ここで待たずに盤面を再初期化すると、
