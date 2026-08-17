@@ -10,6 +10,9 @@
     { "movieId": "avengers-age-of-ultron", "role": "main" }, { "movieId": "captain-america-civil-war", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
     { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "spider-man-far-from-home", "role": "sub" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
+  { "id": "peggy-carter", "name": "ペギー・カーター", "appearances": [
+    { "movieId": "captain-america-first-avenger", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+  ] },
   { "id": "thor", "name": "ソー", "appearances": [
     { "movieId": "thor", "role": "main" }, { "movieId": "avengers", "role": "main" }, { "movieId": "thor-dark-world", "role": "main" },
     { "movieId": "avengers-age-of-ultron", "role": "main" }, { "movieId": "thor-ragnarok", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
