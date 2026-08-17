@@ -26,7 +26,12 @@ export function mulberry32(seed: number): () => number {
 // ---------------------------------------------------------------------------
 // オービット配置の一括生成（一括生成→一括検証、NGなら全体を破棄して再抽選）
 // ---------------------------------------------------------------------------
-const MAX_LAYOUT_ATTEMPTS = 100;
+// 盤端から1マス内側にのみ生成するよう制約した(2026-08-17)ことで候補プールが
+// 8x7=56マスから6x5=30マスに縮小し、特にcount=3では3つ相互に間隔条件
+// (Chebyshev距離4以上)を満たす組み合わせを引き当てるのに以前より試行回数が
+// 必要になった（seed 0〜299の範囲で実測、最大423回）。余裕を持って1000に
+// 引き上げ、フォールバックへの意図しない依存を避ける
+const MAX_LAYOUT_ATTEMPTS = 1000;
 
 export interface OrbitLayoutResult {
   orbits: OrbitCell[];
@@ -36,9 +41,16 @@ export interface OrbitLayoutResult {
 function tryGenerateLayout(
   count: number, rows: number, cols: number, rng: () => number,
 ): OrbitCell[] | null {
+  // オービットセルの3x3影響範囲は盤端で欠ける仕様（orbit.tsのinInfluenceArea参照）だが、
+  // 欠けると「進入できる辺」の選択肢が減り、扉が1つしか無いという設計の意図が伝わり
+  // づらくなる（実際のプレイフィードバックを受けて決定、2026-08-17）。オービットセル
+  // 自体は盤端から1マス内側の範囲にのみ生成し、影響範囲が常にフルの3x3になるように
+  // する。内側の候補が無いほど盤面が小さい場合は即座にnullを返し、既存のリトライ→
+  // フォールバックの流れに委ねる
+  if (rows < 3 || cols < 3) return null;
   const positions: CellPos[] = [];
   for (let i = 0; i < count; i++) {
-    positions.push({ r: Math.floor(rng() * rows), c: Math.floor(rng() * cols) });
+    positions.push({ r: 1 + Math.floor(rng() * (rows - 2)), c: 1 + Math.floor(rng() * (cols - 2)) });
   }
   // 一括検証: 重複・隣接禁止（最低1マスの間隔、チェビシェフ距離）
   for (let i = 0; i < positions.length; i++) {
