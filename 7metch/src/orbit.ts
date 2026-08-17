@@ -1,4 +1,4 @@
-import type { OrbitCell, OrbitDirection } from "./types";
+import type { CellPos, OrbitCell, OrbitDirection } from "./types";
 
 // 第1章「軌道系」（Stage 501〜想定、ai-workspace/projects/7metch/GIMMICK_REDESIGN.md参照）
 // このモジュールはStage 1〜500の既存ロジックには一切依存・影響しない（Phase 1: 判定ロジックとテストのみ）
@@ -48,6 +48,31 @@ export function hasEntrySource(
     }
   }
   return false;
+}
+
+// 出入り可能な「扉」セルの列挙（描画用、UI視認性改善のため2026-08-17追加）。
+// isSwapLegal()と全く同じ幾何条件（進入元セル=対象セルからdirの逆方向に1マス、
+// 影響範囲の外側かつ盤内）を満たす、影響範囲内側のセルをすべて返す。
+// 直交4方向は「反対側の辺」丸ごと3マスが扉になるが、斜め4方向は「隣接する2辺」
+// 計5マス（角1マス+各辺の残り2マスずつ）が扉になる点に注意（コーナー1マスだけ
+// ではない）。例えばdir=[1,1](南東)なら、上辺3マス+左辺3マスの計5マスいずれも
+// 進入元が影響範囲外に実在するため扉として成立する（isSwapLegalのテストで検証済み）
+export function orbitDoorCells(
+  orbit: OrbitCell, rows: number, cols: number,
+): CellPos[] {
+  const [dr, dc] = orbit.dir;
+  const doors: CellPos[] = [];
+  for (let a = -1; a <= 1; a++) {
+    for (let b = -1; b <= 1; b++) {
+      const insideR = orbit.r + a, insideC = orbit.c + b;
+      if (insideR < 0 || insideR >= rows || insideC < 0 || insideC >= cols) continue;
+      const outsideR = insideR - dr, outsideC = insideC - dc;
+      if (outsideR < 0 || outsideR >= rows || outsideC < 0 || outsideC >= cols) continue;
+      if (inInfluenceArea(orbit, outsideR, outsideC)) continue; // 進入元は影響範囲の外側であること
+      doors.push({ r: insideR, c: insideC });
+    }
+  }
+  return doors;
 }
 
 // 2つのオービットの影響範囲が、重複も隣接もせず最低1マスの間隔を空けているか
