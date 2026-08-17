@@ -8,6 +8,7 @@ import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, get
 import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
 import { initInput, renderHelpPieceIcons } from "./input";
 import { sleep } from "./animations";
+import { StageStartQueue } from "./stageStartQueue";
 
 // --- Screens ---
 
@@ -197,49 +198,58 @@ function showTutorial(stageIndex: number): void {
   overlay.addEventListener("click", dismiss);
 }
 
-// ステージ開始直後の詰み回復チェック(下記)が非同期のため、この関数は完了まで
-// 最低でも1マイクロタスク、詰み回復が実際に走る場合は300ms以上かかる。その間に
-// ステージ選択・つづきから・リトライ等から2重にstartStage()が呼ばれると、
-// G.currentStage/G.board/G.rows/G.cols/G.animatingを2つの呼び出しが同時に
-// 書き換えてしまう(/code-review指摘)。再入ガードには専用の`G.stageStarting`を使う
-// （`G.animating`ではない）——直前の手のマッチ演出がまだ解決中の間にリトライ・
-// やめる等を押した場合、`G.animating`をそのままstartStage()の再入ガードに流用すると
-// 演出とは無関係のこの呼び出しまで黙って無視されてしまう回帰があった
-// (5巡目の/code-reviewで独立に2箇所から指摘)。`G.animating`自体はこの関数の
-// 実行中も引き続きtrueにする（詰み回復中の入力を防ぐ、既存の用途のまま）
-// (状態リセット・盤面生成・詰み回復・画面表示のすべてをガード区間に含める)。
-// G.currentStageの代入もこのガードの内側で行う——呼び出し元(ui.ts内の各イベント
-// リスナー)がガードより前に`G.currentStage = index`していると、再入で拒否された
-// 側の代入だけが素通りして「実際に開始したステージ」と食い違ってしまうため
-// (2回目の/code-review指摘)
+// startStage()は非同期（詰み回復待機を含む）で、その間にG.currentStage/G.board/
+// G.rows/G.cols等のGを直接書き換える。実行中に別のstartStage()呼び出しが来た
+// 場合、単純にreturnで破棄すると「ボタンを押しても何も起きない」に見える無言破棄に
+// なり（9巡目・10巡目の/code-review指摘、下記CLAUDE.md参照）、かといって並行実行を
+// 許すと古い処理が新しいステージのGを後から上書きしてしまう。StageStartQueueが
+// 「実行中は1つだけ・新しい要求は最新のものだけ保留し、実行中の処理が完了してから
+// 1回だけ反映する」という直列化を管理する（詳細はstageStartQueue.ts参照）
+const stageStartQueue = new StageStartQueue();
+
 export async function startStage(index: number): Promise<void> {
-  if (G.stageStarting) return;
-  G.stageStarting = true;
+  if (!stageStartQueue.requestStart(index)) return;
+  try {
+    let target = index;
+    // 保留要求をループで消化する（再帰にしない——要求が連続してもコールスタックが
+    // 積み上がらない）。1回のrunStageStart()が完了するたびに、その間に来た
+    // 新しい要求（最後のものだけ）があれば続けて処理する
+    for (;;) {
+      await runStageStart(target);
+      const next = stageStartQueue.takeNextOrFinish();
+      if (next === null) break;
+      target = next;
+    }
+  } finally {
+    // runStageStart()が例外を投げた場合でも、キューを確実にrunning=falseへ戻す
+    // （通常経路ではtakeNextOrFinish()が既にfalseにしているため、この呼び出しは
+    // 冪等・無害）
+    stageStartQueue.reset();
+  }
+}
+
+// 1回分のステージ開始処理本体。呼び出し元(startStage())が直列化を保証しているため、
+// この関数の実行中に他のrunStageStart()呼び出しが並行して動くことは無い
+async function runStageStart(index: number): Promise<void> {
   // navigationEpochのスナップショットは、これから始まる全ての待機区間
   // （下のG.animating待機・ensurePlayableBoard()の詰み回復待機）より前に取る。
-  // G.animating待機ループの後で取ると、その待機中に「やめる」等でナビゲーションが
-  // 起きた場合、遷移後の値をスナップショットしてしまい後続の比較で検知できず、
-  // ゲーム画面へ引き戻されてしまう(/code-review指摘)
+  // 待機ループの後で取ると、その待機中に「やめる」等でナビゲーションが起きた場合、
+  // 遷移後の値をスナップショットしてしまい後続の比較で検知できず、ゲーム画面へ
+  // 引き戻されてしまう(8巡目の/code-review指摘)
   const epochBeforeWait = getNavigationEpoch();
-  // stageStartingは自分自身の再入だけを防ぐため、既に実行中の他の操作
-  // （doMove/activateByTap/useShuffle/usePinpoint/useColorBomb、いずれも
-  // G.animatingを共有ミューテックスとして使う）はここでは止まらず、そのまま
-  // 完走しようとする。ここで待たずに盤面を再初期化すると、例えばシャッフル演出中の
-  // await sleep(300)明けにその古い呼び出しがresolveBoard()/finishTurn()を
-  // 新しいステージの盤面へ実行してしまう(/code-review指摘)。G.animatingが falseに
-  // 戻る（＝進行中の操作がfinallyまで完走する）のを待ってから自分の初期化を始める。
-  // この待機中に「やめる」等でナビゲーションが起きた場合、この呼び出し自体が
-  // もう無意味（結果を表示すべき画面がもう無い）になる。待ち切ってから
-  // 下のepoch比較で気づくのでは遅く、その間G.stageStartingを持ったままなので、
-  // 直後の「つづきから」等の新しい開始要求まで無言で拒否されてしまう
-  // (/code-review指摘)。ここでも毎周期epochを見て、変化していれば即座に
-  // G.stageStartingを解放して抜ける（盤面初期化は一切行っていないので他に
-  // 後始末は不要）
+  // 既に実行中の他の操作（doMove/activateByTap/useShuffle/usePinpoint/
+  // useColorBomb、いずれもG.animatingを共有ミューテックスとして使う）はここでは
+  // 止まらず、そのまま完走しようとする。ここで待たずに盤面を再初期化すると、
+  // 例えばシャッフル演出中のawait sleep(300)明けにその古い呼び出しが
+  // resolveBoard()/finishTurn()を新しいステージの盤面へ実行してしまう
+  // (7巡目の/code-review指摘)。G.animatingがfalseに戻る（＝進行中の操作が
+  // finallyまで完走する）のを待ってから自分の初期化を始める。この待機中に
+  // 新しい開始要求が来ている、または「やめる」等でナビゲーションが起きた場合、
+  // この試行はもう無意味になるので即座に諦める（盤面初期化は一切行っていないので
+  // 他に後始末は不要。新しい要求があれば呼び出し元のループが続けて処理する。
+  // 9巡目の/code-review指摘）
   while (G.animating) {
-    if (getNavigationEpoch() !== epochBeforeWait) {
-      G.stageStarting = false;
-      return;
-    }
+    if (stageStartQueue.hasPending() || getNavigationEpoch() !== epochBeforeWait) return;
     await sleep(16);
   }
   G.animating = true;
@@ -279,13 +289,20 @@ export async function startStage(index: number): Promise<void> {
     // 見えたとしても新ステージの盤面が一瞬シャッフルされるだけで実害が無いため、
     // 現時点では許容している
     await ensurePlayableBoard();
+    // E2Eテストが「初期詰み回復の待機中」を確率に頼らず決定的に再現するための
+    // テスト専用フック。本番ビルドではimport.meta.env.DEVが静的にfalseへ置き換わり
+    // デッドコード除去されるため一切含まれない（Viteの標準的なdev-onlyコード分離
+    // パターン）。詳細はtestOnlyStageStartDelay()参照（10巡目、/code-review指摘）
+    await testOnlyStageStartDelay();
 
-    // 上の待機中に「もどる」「やめる」等でプレイヤーが別画面へ既に遷移していた場合、
-    // ここでshowScreen("game")を呼ぶとその操作を上書きしてしまう(/code-review指摘)。
-    // navigationEpochが変化していれば競合するナビゲーションが起きたとみなし、
-    // 画面遷移・HUD更新・チュートリアル表示をスキップする(G.animating/G.stageStarting
-    // の解除自体はfinally側で必ず行われるので、次のステージ開始操作はブロックされない)
-    if (getNavigationEpoch() !== epochBeforeWait) return;
+    // 上の待機中に新しい開始要求が来ている、または「もどる」「やめる」等で
+    // プレイヤーが別画面へ既に遷移していた場合、ここでshowScreen("game")を
+    // 呼ぶとその操作を上書きしてしまう(/code-review指摘)。navigationEpochが
+    // 変化していれば競合するナビゲーションが起きたとみなし、画面遷移・HUD更新・
+    // チュートリアル表示をスキップする。新しい要求があれば呼び出し元のループが
+    // 続けて処理する（G.animatingの解除自体はfinally側で必ず行われるので、
+    // 次の開始操作はブロックされない。10巡目の/code-review指摘）
+    if (stageStartQueue.hasPending() || getNavigationEpoch() !== epochBeforeWait) return;
 
     // ensurePlayableBoard()の詰み回復（recoverFromDeadlock()内のresolveMatches
     // ("recovery_shuffle")）が偶然ミッションを達成させてしまう可能性がある。
@@ -301,10 +318,31 @@ export async function startStage(index: number): Promise<void> {
     track("stage_start", { stage: stg.name, mission_type: stg.mission.type });
     showTutorial(index);
   } finally {
-    G.stageStarting = false;
     G.animating = false;
     startHintTimer();
   }
+}
+
+declare global {
+  interface Window {
+    __test_stageStartDelayMs?: number;
+  }
+}
+
+// startStage()のensurePlayableBoard()待機を確率的な詰み発生に頼らず引き延ばすための
+// テスト専用フック。import.meta.env.DEVはViteが本番ビルド時に静的にfalseへ置き換え、
+// 到達不能になったこの関数の中身ごとデッドコード除去する（tree-shaking）ため、
+// 本番ビルドの挙動には一切影響しない。E2Eテスト（npx vite --port経由のdevサーバー）
+// からのみ`window.__test_stageStartDelayMs`経由で有効化できる（10巡目、/code-review指摘）
+async function testOnlyStageStartDelay(): Promise<void> {
+  if (!import.meta.env.DEV) return;
+  const ms = window.__test_stageStartDelayMs;
+  if (!ms) return;
+  // 1回使ったら消費する（後続のrunStageStart()呼び出し——特に、この待機中に
+  // 割り込んで最終的に表示される側のセッション——まで毎回追加で遅延させたくない。
+  // このフラグは「最初の試行を足止めして割り込みの余地を作る」ためだけのもの）
+  window.__test_stageStartDelayMs = undefined;
+  await sleep(ms);
 }
 
 // --- Resize Canvas ---

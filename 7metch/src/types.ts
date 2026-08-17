@@ -248,12 +248,6 @@ export interface GameState {
   cellState: CellStateType[][];
   selected: CellPos | null;
   animating: boolean;
-  // startStage()専用の再入防止フラグ。animatingは通常のマッチ演出・アイテム処理の
-  // 進行中を示す汎用フラグのため、これをstartStage()の再入ガードにも流用すると、
-  // 直前の手のマッチ演出がまだ解決中の間にリトライ・やめる等を押した場合、演出とは
-  // 無関係のstartStage()呼び出しまで黙って無視されてしまう回帰があった
-  // (/code-review指摘)。startStage()専用の別フラグにすることで、両者の関心を分離する
-  stageStarting: boolean;
   currentStage: number;
   movesLeft: number;
   mission: Mission;

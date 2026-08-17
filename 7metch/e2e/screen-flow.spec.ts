@@ -137,11 +137,10 @@ test("navigating away while waiting for an unrelated animation is not overridden
 });
 
 // 上のテストと同じ状況（G.animating待機中に「やめる」でタイトルへ遷移）から、
-// 直後に「はじめる」で新しくstartStage()を呼ぶと、古い呼び出しがまだ
-// G.stageStartingを保持したままだと新しい呼び出しが無言で拒否され、
-// ボタンを押しても何も起きないように見える回帰があった(PR #361・9巡目、
-// /code-review指摘)。待機ループ内でもepochの変化を検知して即座に
-// G.stageStartingを解放するようにした修正の恒久的な回帰テスト
+// 直後に「はじめる」で新しくstartStage()を呼ぶと、古い呼び出しの処理が完了する
+// までは新しい呼び出しが無言で拒否され、ボタンを押しても何も起きないように見える
+// 回帰があった(PR #361・9巡目、/code-review指摘)。待機ループ内でもepochの変化を
+// 検知して即座に古い試行を諦めるようにした修正の恒久的な回帰テスト
 test("starting a new stage right after navigating away is not silently dropped", async ({ page }) => {
   await page.goto("/");
   await page.click("#screen-splash");
@@ -176,4 +175,120 @@ test("starting a new stage right after navigating away is not silently dropped",
   // 新しい開始要求が無言で拒否されていなければ、いずれゲーム画面に戻る
   // (旧実装ではタイトル画面のまま何も起きなかった)
   await expect(page.locator("#screen-game")).toHaveClass(/active/, { timeout: 5000 });
+});
+
+// 上の2件は「他の操作(シャッフル等)の完了待ちG.animating」区間で新しい開始要求を
+// 取りこぼす回帰だったが、startStage()自身が開始するensurePlayableBoard()の
+// 詰み回復待機中に同じことが起きるケースは別の欠落として残っていた(PR #361・10巡目、
+// /code-review指摘)。実際の初期詰みは確率的で決定的なテストにしづらいため、
+// window.__test_stageStartDelayMs（DEVビルドのみ有効なテスト専用フック、本番では
+// import.meta.env.DEVの静的評価によりデッドコード除去される）でensurePlayableBoard()
+// 直後の待機を人為的に引き延ばし、その間の「別画面へ遷移→直後に別ステージを要求」を
+// 決定的に再現する。StageStartQueueによる直列化・最新要求優先の修正で、この新しい
+// 要求（デバッグジャンプでStage 3を指定）が無言で破棄されず、かつ最終的に反映される
+// のがretryの対象だった元のStage 1ではなくStage 3であることまで確認する
+test("a start request made while startStage()'s own recovery wait is pending reflects the latest request, not the stale one", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+
+  await page.goto("/");
+  await page.click("#screen-splash");
+  await expect(page.locator("#screen-title")).toHaveClass(/active/);
+
+  for (let i = 0; i < 7; i++) await page.click("#version-info");
+  await expect(page.locator("#debug-panel")).not.toHaveClass(/hidden/);
+  await page.click("#btn-debug-close");
+
+  await page.click("#btn-stage-select");
+  await expect(page.locator("#screen-stage-select")).toHaveClass(/active/);
+  await page.locator(".stage-btn:not(.locked)").first().click();
+  await expect(page.locator("#screen-game")).toHaveClass(/active/);
+  await expect(page.locator("#hud-stage")).toHaveText("Stage 1");
+
+  const tutorial = page.locator("#tutorial-overlay");
+  if (await tutorial.isVisible()) await tutorial.click();
+
+  // ensurePlayableBoard()直後の待機を人為的に2500ms引き延ばす
+  await page.evaluate(() => { window.__test_stageStartDelayMs = 2500; });
+
+  // リトライ(Stage 1を再度要求)。createBoard()/ensurePlayableBoard()自体は速いが、
+  // 直後のテスト専用フックで2500ms足止めされる
+  await page.click("#btn-retry");
+  await page.locator(".modal-btn-confirm").click();
+
+  // 足止めされている間に「やめる」でタイトルへ遷移する
+  await page.click("#btn-quit");
+  await page.locator(".modal-btn-confirm").click();
+  await expect(page.locator("#screen-title")).toHaveClass(/active/);
+
+  // 引き延ばされた待機がまだ終わっていないうちに、デバッグジャンプでStage 3への
+  // 開始要求を新たに発行する（retryの対象＝Stage 1とは異なる、最終結果を明確に
+  // 区別するため）。#btn-debug-openは#screen-game内にしかないため、タイトル画面
+  // からは7タップで改めてデバッグパネルを開く（G.debugModeは既にtrueなので冪等）
+  for (let i = 0; i < 7; i++) await page.click("#version-info");
+  await expect(page.locator("#debug-panel")).not.toHaveClass(/hidden/);
+  await page.fill("#debug-stage-num", "3");
+  await page.click("#btn-debug-jump");
+
+  // 新しい要求が無言で破棄されていなければ、引き延ばした待機が終わり次第
+  // ゲーム画面に戻る。最終的にG.currentStageが一致すべきは最後に要求した
+  // Stage 3であり、古いリトライが対象にしていたStage 1ではない
+  await expect(page.locator("#screen-game")).toHaveClass(/active/, { timeout: 5000 });
+  await expect(page.locator("#hud-stage")).toHaveText("Stage 3");
+
+  // 引き延ばした古い試行(Stage 1向け)が後から解決しても、Stage 3の盤面・HUDを
+  // 書き換えないことを確認する(2500ms分は既に消化済みだが、念のため猶予を見て待つ)
+  await page.waitForTimeout(500);
+  await expect(page.locator("#hud-stage")).toHaveText("Stage 3");
+  await expect(page.locator("#screen-game")).toHaveClass(/active/);
+
+  expect(errors).toEqual([]);
+});
+
+// 上のテストはナビゲーション(「やめる」)を伴うケースだが、レビューで要求された
+// 「複数の開始要求が連続した場合は最後の要求を反映する」（StageStartQueueの
+// 保留上書きロジック）は、ナビゲーションを介さずゲーム画面に留まったまま連続で
+// デバッグジャンプした場合にも成り立つ必要がある。この場合navigationEpochは
+// 変化しないため、StageStartQueue.hasPending()による早期打ち切りが無いと
+// 検知できない（PR #361・10巡目、/code-review指摘の要件6）
+test("consecutive start requests without any navigation reflect only the last one", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+
+  await page.goto("/");
+  await page.click("#screen-splash");
+  await expect(page.locator("#screen-title")).toHaveClass(/active/);
+
+  for (let i = 0; i < 7; i++) await page.click("#version-info");
+  await expect(page.locator("#debug-panel")).not.toHaveClass(/hidden/);
+  await page.click("#btn-debug-close");
+
+  await page.click("#btn-stage-select");
+  await page.locator(".stage-btn:not(.locked)").first().click();
+  await expect(page.locator("#screen-game")).toHaveClass(/active/);
+  await expect(page.locator("#hud-stage")).toHaveText("Stage 1");
+
+  const tutorial = page.locator("#tutorial-overlay");
+  if (await tutorial.isVisible()) await tutorial.click();
+
+  await page.evaluate(() => { window.__test_stageStartDelayMs = 2500; });
+
+  // Stage 2への切り替えを要求（#screen-gameから離れないため#btn-debug-openが使える）
+  await page.click("#btn-debug-open");
+  await page.fill("#debug-stage-num", "2");
+  await page.click("#btn-debug-jump");
+
+  // 最初の要求(Stage 2)がまだテスト専用フックで足止めされている間に、
+  // Stage 3への切り替えを重ねて要求する（画面遷移は一切しない）
+  await page.click("#btn-debug-open");
+  await page.fill("#debug-stage-num", "3");
+  await page.click("#btn-debug-jump");
+
+  // 最終的に反映されるのは最後に要求したStage 3であり、途中のStage 2ではない
+  await expect(page.locator("#hud-stage")).toHaveText("Stage 3", { timeout: 5000 });
+  await page.waitForTimeout(500);
+  await expect(page.locator("#hud-stage")).toHaveText("Stage 3");
+  await expect(page.locator("#screen-game")).toHaveClass(/active/);
+
+  expect(errors).toEqual([]);
 });
