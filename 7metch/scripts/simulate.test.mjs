@@ -2,8 +2,10 @@ import { describe, it, expect, vi } from "vitest";
 import { G } from "../src/state.ts";
 import * as boardModule from "../src/board.ts";
 import { findAllMatches, hasAnyLegalMove } from "../src/board.ts";
+import { cellKey } from "../src/patternClear.ts";
 import {
   findValidMoves, tapActivateSync, doMoveSync, recoverFromDeadlockSync, playGame, initGameState,
+  trackClears, checkMissionComplete,
 } from "./simulate.mjs";
 
 // 4b-2b: シミュレーターの「有効な1手」列挙・実行を、ゲーム本編(board.ts/game.ts)と
@@ -270,5 +272,128 @@ describe("initGameState", () => {
   it("氷を持つステージのinitialIceが実際の氷セル数と一致する", () => {
     const { initialIce } = initGameState(100); // Stage 101 (0-indexed 100), iceCells=1
     expect(initialIce).toBe(1);
+  });
+});
+
+// 第1章「軌道系」パイロット(Stage 501〜524、2026-08-17にbuildStages()へ本編化)の
+// "pattern"ミッションは、以前はcheckMissionComplete()/trackClears()に未対応のまま
+// 残されていた(到達しないためPhase 4c時点では実害無しと判断されていた)。本編化に
+// 伴い、game.tsのpatternTargetCells()/trackClears()と同じ設計をそのまま移植した
+// （patternClear.tsの純粋関数を直接import、独自実装は持たない）
+describe("trackClears — パターン進捗の計上(pattern mission)", () => {
+  function makePatternStage() {
+    return {
+      name: "pattern-sim", moves: 20, colors: 5, boardCols: 3, boardRows: 3,
+      mission: { type: "pattern", patternShape: "corners" }, // 3x3盤面ではcorners=全9マス
+      star2moves: 12, star3moves: 8,
+      features: { diagonalLine: true },
+      iceCells: 0, rockCells: 0, holePattern: null, countdownBombs: 0, orbits: [],
+    };
+  }
+
+  function setupPatternSim() {
+    G.rows = 3;
+    G.cols = 3;
+    G.board = [];
+    G.cellState = [];
+    G.currentStage = 0;
+    const stage = makePatternStage();
+    G.STAGES = [stage];
+    G.mission = stage.mission;
+    G.patternProgress = new Set();
+    for (let r = 0; r < 3; r++) {
+      G.board[r] = [];
+      G.cellState[r] = [];
+      for (let c = 0; c < 3; c++) {
+        G.board[r][c] = { color: (r * 3 + c) % 5, special: null };
+        G.cellState[r][c] = null;
+      }
+    }
+  }
+
+  it("cause='match'（デフォルト）で消去したセルはパターン進捗に計上される", () => {
+    setupPatternSim();
+    trackClears([[0, 0], [0, 1]]);
+    expect(G.patternProgress.has(cellKey(0, 0))).toBe(true);
+    expect(G.patternProgress.has(cellKey(0, 1))).toBe(true);
+  });
+
+  it("cause='recovery_shuffle'（詰み回復由来）は計上されない", () => {
+    setupPatternSim();
+    trackClears([[0, 0]], "recovery_shuffle");
+    expect(G.patternProgress.has(cellKey(0, 0))).toBe(false);
+  });
+
+  it("cause='special_activate'は計上される", () => {
+    setupPatternSim();
+    trackClears([[1, 1]], "special_activate");
+    expect(G.patternProgress.has(cellKey(1, 1))).toBe(true);
+  });
+
+  it("patternミッションでないステージでは何も起きない(G.patternProgress未設定でも例外にならない)", () => {
+    setupSim(); // "clear"ミッションのデフォルトステージ、G.patternProgressは設定しない
+    expect(() => trackClears([[0, 0]])).not.toThrow();
+  });
+});
+
+describe("checkMissionComplete — pattern", () => {
+  it("対象セルが全て計上されるまではfalse、揃うとtrue", () => {
+    G.rows = 3;
+    G.cols = 3;
+    G.currentStage = 0;
+    G.STAGES = [{
+      boardRows: 3, boardCols: 3,
+      mission: { type: "pattern", patternShape: "corners" }, // 3x3では全9マスが対象
+    }];
+    G.mission = G.STAGES[0].mission;
+    G.patternProgress = new Set();
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        if (r === 2 && c === 2) continue; // 1マスだけ未消去
+        G.patternProgress.add(cellKey(r, c));
+      }
+    }
+    expect(checkMissionComplete()).toBe(false);
+    G.patternProgress.add(cellKey(2, 2));
+    expect(checkMissionComplete()).toBe(true);
+  });
+});
+
+// doMoveSync()を通した結合テスト。Stage 501〜524を本編化した際、trackClears()の
+// cause配線だけでなくcheckMissionComplete()の"pattern"分岐も含めて、実際のスワップ
+// →マッチ解決→ミッション判定という一連の流れで達成を検知できることを確認する
+// （単体テストだけでは配線漏れを見逃しうるため。playGame()全体を回すMath.random
+// 依存の結合テストは決定的にしづらいため、doMoveSync()を直接1回呼ぶ形にとどめる）
+describe("doMoveSync — patternミッションの結合テスト", () => {
+  it("最後の対象セルを消去する手を打つとcheckMissionComplete()がtrueになる", () => {
+    setupSim(3, 3);
+    G.STAGES = [{
+      name: "pattern-integration", moves: 20, colors: 5, boardCols: 3, boardRows: 3,
+      mission: { type: "pattern", patternShape: "corners" }, // 3x3ではcorners=全9マス
+      star2moves: 12, star3moves: 8,
+      features: { diagonalLine: true },
+      iceCells: 0, rockCells: 0, holePattern: null, countdownBombs: 0, orbits: [],
+    }];
+    G.mission = G.STAGES[0].mission;
+    G.patternProgress = new Set();
+    // (2,2)以外の8マスは既に消去済みという想定で進捗を埋めておく
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        if (r === 2 && c === 2) continue;
+        G.patternProgress.add(cellKey(r, c));
+      }
+    }
+    expect(checkMissionComplete()).toBe(false);
+
+    // (2,1)<->(2,2)をスワップすると列2が[0,0,0]の縦マッチになり、(2,2)を含めて消去される
+    G.board[0][2] = { color: 0, special: null };
+    G.board[1][2] = { color: 0, special: null };
+    G.board[2][1] = { color: 0, special: null };
+    G.board[2][2] = { color: 1, special: null };
+
+    doMoveSync(2, 1, 2, 2);
+
+    expect(G.patternProgress.has(cellKey(2, 2))).toBe(true);
+    expect(checkMissionComplete()).toBe(true);
   });
 });
