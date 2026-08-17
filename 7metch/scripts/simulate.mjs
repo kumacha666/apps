@@ -53,10 +53,21 @@ import {
   SHUFFLE_QUALITY_MAX_ATTEMPTS, BOARD_REGEN_MAX_ATTEMPTS,
   forEachAdjacentPlayablePair,
 } from "../src/board.ts";
-import { buildStages } from "../src/stages.ts";
+import { buildStages, stageConfigAt } from "../src/stages.ts";
 // game.tsのactivateCombo()は既にexport済み・純粋関数（DOM/SFX/awaitなし、G.boardのみ操作）
 // なので独自の同期移植を作らず直接importする（/code-review指摘、PR #354）
 import { activateCombo } from "../src/game.ts";
+// パターン消し判定(第1章「軌道系」Stage 501〜524、2026-08-17に本編化)はpatternClear.tsが
+// 既にDOM/G非依存の純粋関数として提供しているため、game.tsと同様にそのままimportして使う
+import { getPatternCells, targetCellSet, recordClear, isPatternComplete } from "../src/patternClear.ts";
+
+// "pattern"ミッションの対象セル集合。game.tsのpatternTargetCells()と同じロジック
+// （盤面サイズは小さいため都度計算・キャッシュ無し）
+function patternTargetCells() {
+  const m = stageConfigAt(G.currentStage).mission;
+  if (m.type !== "pattern" || !m.patternShape) return null;
+  return targetCellSet(getPatternCells(m.patternShape, G.rows, G.cols));
+}
 
 // --- Game simulation ---
 export function initGameState(stageIndex) {
@@ -70,6 +81,7 @@ export function initGameState(stageIndex) {
   G.movesLeft = stg.moves;
   G.mission = stg.mission;
   G.missionProgress = {};
+  G.patternProgress = new Set();
   G.score = 0;
   G.totalCleared = 0;
   G.colorCleared = [];
@@ -102,7 +114,11 @@ export function initGameState(stageIndex) {
   return { initialIce };
 }
 
-export function trackClears(clearList) {
+// causeはgame.tsのtrackClears()と同じ意味（"match"/"special_activate"/"item"は
+// パターン進捗に計上、"recovery_shuffle"/"recovery_regen"/"manual_shuffle"は計上しない、
+// patternClear.tsのisCountedCause()参照）。デフォルト"match"はresolveMatchesSync()の
+// 通常呼び出しに合わせたもの
+export function trackClears(clearList, cause = "match") {
   clearList.forEach(([r, c]) => {
     if (G.board[r][c]) {
       const ci = G.board[r][c].color;
@@ -110,9 +126,13 @@ export function trackClears(clearList) {
       G.totalCleared++;
     }
   });
+  const targets = patternTargetCells();
+  if (targets) {
+    recordClear(G.patternProgress, clearList.map(([r, c]) => ({ r, c })), targets, cause);
+  }
 }
 
-export function resolveMatchesSync() {
+export function resolveMatchesSync(cause = "match") {
   let matches = findAllMatches();
   while (matches.length > 0) {
     G.chainCount++;
@@ -140,7 +160,7 @@ export function resolveMatchesSync() {
     });
 
     const clearList = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols]);
-    trackClears(clearList);
+    trackClears(clearList, cause);
     G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
 
     clearList.forEach(([r, c]) => { G.board[r][c] = null; });
@@ -179,7 +199,7 @@ function handleCountdownExplosionsSync(exploded) {
     }
   }
   const clearList = [...cleared].map((v) => [Math.floor(v / G.cols), v % G.cols]);
-  trackClears(clearList);
+  trackClears(clearList, "special_activate");
   G.score += clearList.length * SCORE_PER_PIECE;
   clearList.forEach(([r, c]) => { G.board[r][c] = null; });
   damageAdjacentIce(clearList);
@@ -235,7 +255,7 @@ export function findValidMoves() {
 // 連鎖解決）。tapActivateSyncとdoMoveSyncの3分岐（コンボ・カウントダウン・レインボー）
 // で共通のため1箇所にまとめる（/code-review指摘、PR #354）
 function finalizeClears(clearList) {
-  trackClears(clearList);
+  trackClears(clearList, "special_activate");
   G.score += clearList.length * SCORE_PER_PIECE * G.chainCount;
   clearList.forEach(([cr, cc]) => { G.board[cr][cc] = null; });
   damageAdjacentIce(clearList);
@@ -392,7 +412,10 @@ export function recoverFromDeadlockSync() {
     const regenerated = regenerateBoardForDeadlock(BOARD_REGEN_MAX_ATTEMPTS, stg);
     recovered = regenerated || shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS);
   }
-  resolveMatchesSync();
+  // 詰み回復由来の未解決マッチはプレイヤーの行動によるものではないため、
+  // game.tsのrecoverFromDeadlock()と同じく"recovery_shuffle"を渡してパターン進捗に
+  // 計上しない(patternClear.tsのisCountedCause()参照)
+  resolveMatchesSync("recovery_shuffle");
   return recovered;
 }
 
@@ -404,6 +427,10 @@ export function checkMissionComplete() {
     case "color": return (G.colorCleared[m.colorIndex] || 0) >= m.count;
     case "special": return G.specialsCreated >= m.count;
     case "chain": return G.maxChain >= m.count;
+    case "pattern": {
+      const targets = patternTargetCells();
+      return targets ? isPatternComplete(G.patternProgress, targets) : false;
+    }
   }
   return false;
 }
@@ -507,7 +534,9 @@ function parseArgs() {
   }
 
   if (!opts.stages) {
-    opts.stages = [1, 5, 10, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300, 325, 350, 400, 450, 500];
+    // 501/512/524はStage 1〜500と別体系の第1章「軌道系」パイロット(2026-08-17に本編化)の
+    // 最初・中間・最後を代表させたもの
+    opts.stages = [1, 5, 10, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300, 325, 350, 400, 450, 500, 501, 512, 524];
   }
 
   return opts;
@@ -525,9 +554,12 @@ function runSimulation() {
   );
   console.log(`${"-".repeat(100)}`);
 
+  // 500決め打ちだとStage 501〜524(第1章「軌道系」、2026-08-17に本編化)が
+  // シミュレーション対象から漏れてしまうため、buildStages()の実際の長さを使う
+  const totalStages = buildStages().length;
   for (const stageNum of opts.stages) {
     const stageIndex = stageNum - 1;
-    if (stageIndex < 0 || stageIndex >= 500) continue;
+    if (stageIndex < 0 || stageIndex >= totalStages) continue;
 
     const results = [];
     for (let i = 0; i < opts.runs; i++) {

@@ -259,10 +259,16 @@ export function buildStages(): StageConfig[] {
       rockCells,
       holePattern,
       countdownBombs,
-      orbits: [], // Stage 1〜500はオービット無し(第1章「軌道系」はStage 501〜、未着手)
+      orbits: [], // Stage 1〜500はオービット無し(第1章「軌道系」はStage 501〜)
     });
   }
-  return stages;
+  // 第1章「軌道系」パイロット(Stage 501〜524)をStage 1〜500に連結して返す。
+  // Phase 4e時点ではPhase 5(描画)・Phase 6(チュートリアル)が未完成だったため
+  // 意図的に未配線のままにしていたが、両方完成し11巡のレビューを経たPR #361も
+  // マージ済みのため、2026-08-17に人間の合意のもと本編へ組み込んだ（「Stage 501〜524の
+  // 実公開タイミング」の決定事項どおり、ロジック・描画・チュートリアルが全て揃って
+  // からまとめて1回で公開）
+  return [...stages, ...buildOrbitPilotStages()];
 }
 
 // 第1章「軌道系」パイロット(Stage 501〜524、章内相対インデックス0〜23)のステージ定義を
@@ -270,9 +276,7 @@ export function buildStages(): StageConfig[] {
 // 盤面サイズは固定7x8で作り直し(boardSizeForStage()参照)、氷・岩・カウントダウンボムは
 // 意図的に付けない(人間との相談により決定、2026-08-12。オービット×パターン消しという
 // 新ギミック単体の完成度を先に固める狙いで、既存ギミックとの組み合わせ検証は別課題として
-// 切り出した)。**この関数はまだbuildStages()から呼ばれていない**（Phase 5の描画・Phase 6の
-// チュートリアルが揃うまでStage 501は未公開のまま。7metch/CLAUDE.mdの「第1章『軌道系』」
-// 節、Stage 501〜524の実公開タイミングの決定事項を参照）
+// 切り出した)。2026-08-17、buildStages()から呼ばれるようになり本編へ組み込まれた
 export function buildOrbitPilotStages(): StageConfig[] {
   const stages: StageConfig[] = [];
   for (let chapterIndex = 0; chapterIndex < 24; chapterIndex++) {

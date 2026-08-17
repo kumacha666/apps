@@ -1,8 +1,8 @@
-import type { Piece, SpecialType, ChainLabel, BgStar, ShootingStar, OrbitCell } from "./types";
+import type { Piece, SpecialType, ChainLabel, BgStar, ShootingStar, OrbitCell, CellPos } from "./types";
 import { G, PIECE_COLORS, PIECE_SHAPES, PIECE_SYMBOLS, ANIM } from "./state";
 import { drawVFX, updateVFX, hasActiveVFX, addScreenShake, cellCenter } from "./vfx";
 import { isHole, isRock, isIce, isPlayable, inBounds, TAP_ACTIVATE_SPECIALS } from "./board";
-import { inInfluenceArea } from "./orbit";
+import { inInfluenceArea, orbitDoorCells } from "./orbit";
 import { getPatternCells, cellKey } from "./patternClear";
 import { stageConfigAt } from "./stages";
 
@@ -195,20 +195,27 @@ export function drawOrbitInfluenceZone(ctx: CanvasRenderingContext2D, orbit: Orb
   ctx.restore();
 }
 
-// 重力方向を示す矢印。オービットセル自体(常に何らかのピースが乗っている)の上に
-// 半透明で重ねて描く。ピースを完全に隠さないよう小さめ・半透明にしている
-export function drawOrbitArrow(ctx: CanvasRenderingContext2D, orbit: OrbitCell): void {
-  const { x: cx, y: cy } = cellCenter(orbit.r, orbit.c);
+// 出入り可能な「扉」セル1つにつき1本、進入元側の壁の位置に重力方向を示す矢印を描く
+// (2026-08-17変更: 従来はオービットセル中心に1個だけ表示していたが、ユーザーの実プレイ
+// フィードバックで「どのマス・どの壁から出入りできるか伝わらない」と指摘を受け、
+// orbitDoorCells()が列挙する実際の扉セルそれぞれに、その壁の位置へ矢印を配置する方式に
+// 変更した。壁の位置は「扉セルの中心から-dir方向にセル半分ずらした点」＝境界線上になる
+// (直交方向なら辺の中点、斜め方向ならセルの角)。ピースを完全に隠さないよう小さめ・
+// 半透明にしている
+export function drawOrbitDoorArrow(ctx: CanvasRenderingContext2D, orbit: OrbitCell, door: CellPos): void {
+  const { x: cx, y: cy } = cellCenter(door.r, door.c);
   const [dr, dc] = orbit.dir;
-  const len = G.cellSize * 0.32;
+  const wallX = cx - dc * (G.cellSize / 2);
+  const wallY = cy - dr * (G.cellSize / 2);
+  const len = G.cellSize * 0.22;
   const angle = Math.atan2(dr, dc);
   ctx.save();
-  ctx.globalAlpha = 0.85;
-  ctx.translate(cx, cy);
+  ctx.globalAlpha = 0.9;
+  ctx.translate(wallX, wallY);
   ctx.rotate(angle);
   ctx.fillStyle = "#7fd4ff";
   ctx.strokeStyle = "#0a2a40";
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.2;
   ctx.beginPath();
   ctx.moveTo(len, 0);
   ctx.lineTo(-len * 0.5, len * 0.45);
@@ -254,7 +261,9 @@ export function drawOrbitArrows(ctx: CanvasRenderingContext2D): void {
   const stg = stageConfigAt(G.currentStage);
   if (stg.orbits.length === 0) return;
   for (const orbit of stg.orbits) {
-    drawOrbitArrow(ctx, orbit);
+    for (const door of orbitDoorCells(orbit, G.rows, G.cols)) {
+      drawOrbitDoorArrow(ctx, orbit, door);
+    }
   }
 }
 

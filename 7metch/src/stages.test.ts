@@ -58,7 +58,8 @@ describe("getMissionText", () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildStages — 全500ステージ検証
+// buildStages — 全524ステージ検証（Stage 1〜500 + 第1章「軌道系」Stage 501〜524、
+// 2026-08-17に本編へ組み込み）
 // ---------------------------------------------------------------------------
 describe("buildStages", () => {
   let stages: StageConfig[];
@@ -67,8 +68,8 @@ describe("buildStages", () => {
     stages = buildStages();
   });
 
-  it("500ステージ生成される", () => {
-    expect(stages.length).toBe(500);
+  it("524ステージ生成される(Stage 1〜500 + 第1章パイロットStage 501〜524)", () => {
+    expect(stages.length).toBe(524);
   });
 
   it("全ステージにname, moves, colors, missionが存在する", () => {
@@ -96,7 +97,8 @@ describe("buildStages", () => {
   });
 
   it("ミッション種別が有効な値のみ", () => {
-    const validTypes = new Set(["score", "clear", "color", "special", "chain"]);
+    // "pattern"はStage 501〜524(第1章「軌道系」)専用のミッション種別
+    const validTypes = new Set(["score", "clear", "color", "special", "chain", "pattern"]);
     for (const stg of stages) {
       expect(validTypes.has(stg.mission.type)).toBe(true);
     }
@@ -177,13 +179,14 @@ describe("buildStages", () => {
     expect(stages[300].countdownBombs).toBeGreaterThan(0);
   });
 
-  it("全5ミッション種が使われている", () => {
+  it("全6ミッション種が使われている(score/clear/color/special/chain + Stage 501〜524のpattern)", () => {
     const types = new Set(stages.map((s) => s.mission.type));
     expect(types.has("score")).toBe(true);
     expect(types.has("clear")).toBe(true);
     expect(types.has("color")).toBe(true);
     expect(types.has("special")).toBe(true);
     expect(types.has("chain")).toBe(true);
+    expect(types.has("pattern")).toBe(true);
   });
 
   // 350面以降のspecial/chainミッションが最低値(旧: slot1/2は2、slot5/6は3)
@@ -243,9 +246,9 @@ describe("boardSizeForStage", () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildOrbitPilotStages — 第1章「軌道系」パイロット(Stage 501〜524)、オービットPhase 4e
-// この関数はまだbuildStages()から呼ばれていない(Phase 5・6完成後にまとめて有効化する
-// 計画、7metch/CLAUDE.md参照)ため、buildStages()の500ステージには影響しない
+// buildOrbitPilotStages — 第1章「軌道系」パイロット(Stage 501〜524)、オービットPhase 4e。
+// 2026-08-17、buildStages()がこの関数の出力をStage 1〜500に連結して返すよう
+// なった(本編へ組み込み)
 // ---------------------------------------------------------------------------
 describe("buildOrbitPilotStages", () => {
   let stages: StageConfig[];
@@ -337,9 +340,15 @@ describe("buildOrbitPilotStages", () => {
     expect(again.map((s) => s.orbits)).toEqual(stages.map((s) => s.orbits));
   });
 
-  it("buildStages()(Stage 1〜500)には影響しない", () => {
+  it("buildStages()はStage 1〜500に自身の出力をそのまま連結して返す", () => {
     const normalStages = buildStages();
-    expect(normalStages.length).toBe(500);
+    expect(normalStages.length).toBe(524);
+    // Stage 1〜500部分はオービット無しのまま(第1章の影響を受けない)
+    for (let i = 0; i < 500; i++) {
+      expect(normalStages[i].orbits).toEqual([]);
+    }
+    // Stage 501〜524部分はbuildOrbitPilotStages()の出力とそのまま一致する
+    expect(normalStages.slice(500)).toEqual(stages);
   });
 });
 
@@ -380,18 +389,23 @@ describe("isStageUnlocked", () => {
     expect(isStageUnlocked(25)).toBe(true);
   });
 
-  // デバッグジャンプでStage 501〜524(プレビュー)をクリアしても、本編のスターゲート判定・
-  // 合計表示に混入しないことの回帰テスト(Codexレビュー指摘)
+  // デバッグジャンプでプレビュー面(G.STAGES.length以上、Stage 525以降が該当。
+  // 2026-08-17にStage 501〜524が本編化されて以降はこの範囲のみが該当)をクリアしても、
+  // 本編のスターゲート判定・合計表示に混入しないことの回帰テスト(Codexレビュー指摘)。
+  // 「G.STAGES.length以上は集計対象外」という一般的な仕組みの検証のため、本編の
+  // 実際のステージ数(524)に依存しないよう、ここではG.STAGESを意図的に短く固定する
   it("プレビュー面(G.STAGES.length以上)のbestStarsは合計に含めない", () => {
+    G.STAGES = new Array(524).fill(null);
     G.saveData.bestStars[10] = 3;
-    G.saveData.bestStars[500] = 3; // Stage 501をデバッグジャンプでクリアした想定
-    G.saveData.bestStars[523] = 3; // Stage 524も同様
+    G.saveData.bestStars[524] = 3; // Stage 525(将来のプレビュー範囲)をクリアした想定
+    G.saveData.bestStars[547] = 3; // 同様
     expect(getTotalStars()).toBe(3);
   });
 
   it("プレビュー面の星だけでは本編のスターゲートを解除できない", () => {
+    G.STAGES = new Array(524).fill(null);
     G.saveData.cleared[24] = true;
-    for (let i = 500; i < 524; i++) G.saveData.bestStars[i] = 3; // プレビュー24面満点
+    for (let i = 524; i < 548; i++) G.saveData.bestStars[i] = 3; // プレビュー24面満点
     expect(getTotalStars()).toBe(0);
     expect(isStageUnlocked(25)).toBe(false);
   });

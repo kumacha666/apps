@@ -14,6 +14,12 @@ function assertLayoutValid(orbits: readonly OrbitCell[], rows: number, cols: num
     expect(o.r).toBeLessThan(rows);
     expect(o.c).toBeGreaterThanOrEqual(0);
     expect(o.c).toBeLessThan(cols);
+    // オービットセル自体は盤端から1マス内側にのみ生成する(3x3影響範囲が盤端で
+    // 欠けると進入できる辺の選択肢が減ってわかりづらいため、2026-08-17決定)
+    expect(o.r).toBeGreaterThanOrEqual(1);
+    expect(o.r).toBeLessThanOrEqual(rows - 2);
+    expect(o.c).toBeGreaterThanOrEqual(1);
+    expect(o.c).toBeLessThanOrEqual(cols - 2);
     expect(hasEntrySource(o.r, o.c, o.dir, rows, cols)).toBe(true);
   }
   for (let i = 0; i < orbits.length; i++) {
@@ -92,6 +98,29 @@ describe("generateOrbitLayout", () => {
     // 1x1の盤面にはフォールバックデータが無いため、フォールバック自体が例外を投げることを確認する
     // （個数を勝手に減らして誤魔化さない、という設計要件の裏付け）
     expect(() => generateOrbitLayout(1, 1, 1, 0)).toThrow(/フォールバックが未整備/);
+  });
+
+  it("盤端から1マス内側の候補が存在しない盤面(rows<3またはcols<3)ではフォールバックを試みる", () => {
+    // 2x8のような「片方の辺だけ短い」盤面でも、フルの3x3を確保できる内側候補が
+    // 無いため即座にnullを返し、リトライ上限到達後フォールバックへ進む(フォールバック
+    // データも無いため最終的に例外を投げる)
+    expect(() => generateOrbitLayout(1, 2, 8, 0)).toThrow(/フォールバックが未整備/);
+  });
+
+  it("3x3ちょうどの盤面は、内側候補(1,1)自体は存在するが盤全体が影響範囲に含まれ進入元が無いため失敗する", () => {
+    // フルの3x3を確保できる唯一の候補(1,1)を選んでも、その影響範囲が盤面3x3全体と
+    // 一致してしまい「外側」のセルが存在しない。rows<3/cols<3のガードだけでは
+    // 救えない、hasEntrySource()側の既存チェックが効くことの確認
+    expect(() => generateOrbitLayout(1, 3, 3, 0)).toThrow(/フォールバックが未整備/);
+  });
+
+  it("進入元を確保できる最小盤面(3x4)では、フルの3x3が確保できる(1,1)に配置される", () => {
+    const result = generateOrbitLayout(1, 3, 4, 0);
+    expect(result.usedFallback).toBe(false);
+    expect(result.orbits.length).toBe(1);
+    expect(result.orbits[0].r).toBe(1);
+    expect(result.orbits[0].c).toBe(1);
+    assertLayoutValid(result.orbits, 3, 4);
   });
 });
 

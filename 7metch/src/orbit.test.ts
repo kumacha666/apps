@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { inInfluenceArea, isSwapLegal, hasEntrySource, orbitsHaveRequiredGap, DIRECTIONS8 } from "./orbit";
+import { inInfluenceArea, isSwapLegal, hasEntrySource, orbitsHaveRequiredGap, orbitDoorCells, DIRECTIONS8 } from "./orbit";
 import type { OrbitCell } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -175,5 +175,73 @@ describe("orbitsHaveRequiredGap", () => {
 
   it("斜め方向に十分離れていれば可", () => {
     expect(orbitsHaveRequiredGap({ r: 1, c: 1 }, { r: 5, c: 5 })).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// orbitDoorCells（描画用: 出入り可能な扉セルの列挙）
+// ---------------------------------------------------------------------------
+describe("orbitDoorCells", () => {
+  it("直交方向(南)は、反対側の辺(北辺)3マスすべてが扉になる", () => {
+    const orbit: OrbitCell = { r: 5, c: 5, dir: [1, 0] };
+    const doors = orbitDoorCells(orbit, 10, 10);
+    expect(doors).toEqual(
+      expect.arrayContaining([{ r: 4, c: 4 }, { r: 4, c: 5 }, { r: 4, c: 6 }]),
+    );
+    expect(doors.length).toBe(3);
+  });
+
+  it("斜め方向(南東)は、隣接する2辺(北辺+西辺)計5マスが扉になる(角だけではない)", () => {
+    const orbit: OrbitCell = { r: 5, c: 5, dir: [1, 1] };
+    const doors = orbitDoorCells(orbit, 10, 10);
+    expect(doors).toEqual(
+      expect.arrayContaining([
+        { r: 4, c: 4 }, { r: 4, c: 5 }, { r: 4, c: 6 },
+        { r: 5, c: 4 }, { r: 6, c: 4 },
+      ]),
+    );
+    expect(doors.length).toBe(5); // 角(4,4)は北辺・西辺どちらからも1回しか列挙されない(重複なし)
+  });
+
+  it("8方向すべてで、扉として列挙された各セルはisSwapLegal()でも実際に合法と判定される(整合性)", () => {
+    for (const dir of DIRECTIONS8) {
+      const orbit: OrbitCell = { r: 5, c: 5, dir };
+      const doors = orbitDoorCells(orbit, 10, 10);
+      expect(doors.length).toBeGreaterThan(0);
+      for (const door of doors) {
+        const outsideR = door.r - dir[0], outsideC = door.c - dir[1];
+        expect(isSwapLegal(outsideR, outsideC, door.r, door.c, [orbit])).toBe(true);
+      }
+    }
+  });
+
+  it("影響範囲境界のセルのうち、扉として列挙されなかったものはisSwapLegal()で不合法と判定される", () => {
+    // 南向き(dir=[1,0])では北辺3マスのみが扉。東西南の各辺境界セルは扉ではないはず
+    const orbit: OrbitCell = { r: 5, c: 5, dir: [1, 0] };
+    const doors = orbitDoorCells(orbit, 10, 10);
+    const doorKeys = new Set(doors.map((d) => `${d.r},${d.c}`));
+    // 南辺(insideR=6)の外側(outsideR=7)への退出/侵入は不合法のはず
+    expect(doorKeys.has("6,5")).toBe(false);
+    expect(isSwapLegal(7, 5, 6, 5, [orbit])).toBe(false);
+    // 東辺(insideC=6)も不合法のはず
+    expect(doorKeys.has("5,6")).toBe(false);
+    expect(isSwapLegal(5, 7, 5, 6, [orbit])).toBe(false);
+  });
+
+  it("盤端で進入元セルが盤外にはみ出す場合は扉として数えない(盤外アクセスもしない)", () => {
+    // rows=3の盤で北向き(dir=[-1,0])のオービットを中心r=1に置くと、
+    // 扉候補(南辺、insideR=2)の進入元はoutsideR=2-(-1)=3で盤外(rows=3は0-2)
+    const orbit: OrbitCell = { r: 1, c: 2, dir: [-1, 0] };
+    const doors = orbitDoorCells(orbit, 3, 5);
+    expect(doors).toEqual([]);
+  });
+
+  it("盤端でオービット自身の影響範囲が欠ける場合も、範囲内に収まる候補だけを扉として数える", () => {
+    // rows=5,cols=5の盤でr=0(盤端)に置いたオービット。影響範囲は2x3に欠けるが、
+    // クラッシュせず盤内に収まる候補だけを正しく扉判定する
+    const orbit: OrbitCell = { r: 0, c: 2, dir: [1, 0] };
+    const doors = orbitDoorCells(orbit, 5, 5);
+    // 南向きの扉は本来「北辺」だが、r=0では北辺自体が盤外(r=-1)のため扉は存在しない
+    expect(doors).toEqual([]);
   });
 });
