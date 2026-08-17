@@ -10,6 +10,9 @@
     { "movieId": "avengers-age-of-ultron", "role": "main" }, { "movieId": "captain-america-civil-war", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
     { "movieId": "avengers-endgame", "role": "main" }, { "movieId": "spider-man-far-from-home", "role": "sub" }, { "movieId": "avengers-doomsday", "role": "main" }
   ] },
+  { "id": "peggy-carter", "name": "ペギー・カーター", "appearances": [
+    { "movieId": "captain-america-first-avenger", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+  ] },
   { "id": "thor", "name": "ソー", "appearances": [
     { "movieId": "thor", "role": "main" }, { "movieId": "avengers", "role": "main" }, { "movieId": "thor-dark-world", "role": "main" },
     { "movieId": "avengers-age-of-ultron", "role": "main" }, { "movieId": "thor-ragnarok", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
@@ -55,7 +58,13 @@
   ] },
   { "id": "vision", "name": "ヴィジョン", "appearances": [
     { "movieId": "avengers-age-of-ultron", "role": "main" }, { "movieId": "captain-america-civil-war", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" },
-    { "movieId": "wandavision-s1", "role": "main" }
+    { "movieId": "wandavision-s1", "role": "main" }, { "movieId": "vision-quest-s1", "role": "main" }
+  ] },
+  { "id": "ultron", "name": "ウルトロン", "appearances": [
+    { "movieId": "avengers-age-of-ultron", "role": "main" }, { "movieId": "vision-quest-s1", "role": "main" }
+  ] },
+  { "id": "tommy-maximoff", "name": "トミー・マキシモフ／スピード", "appearances": [
+    { "movieId": "wandavision-s1", "role": "sub" }, { "movieId": "vision-quest-s1", "role": "main" }
   ] },
   { "id": "sam-wilson", "name": "サム・ウィルソン／ファルコン→キャプテン・アメリカ", "appearances": [
     { "movieId": "captain-america-winter-soldier", "role": "main" }, { "movieId": "avengers-age-of-ultron", "role": "sub" }, { "movieId": "captain-america-civil-war", "role": "main" },
@@ -248,11 +257,11 @@
     { "movieId": "captain-america-brave-new-world", "role": "main" }
   ] },
   { "id": "m-baku", "name": "エムバク", "appearances": [
-    { "movieId": "black-panther", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "sub" }, { "movieId": "black-panther-wakanda-forever", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+    { "movieId": "black-panther", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "sub" }, { "movieId": "black-panther-wakanda-forever", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }, { "movieId": "black-panther-3", "role": "main" }
   ] },
   { "id": "shuri", "name": "シュリ", "appearances": [
     { "movieId": "black-panther", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "sub" }, { "movieId": "avengers-endgame", "role": "sub" },
-    { "movieId": "black-panther-wakanda-forever", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }
+    { "movieId": "black-panther-wakanda-forever", "role": "main" }, { "movieId": "avengers-doomsday", "role": "main" }, { "movieId": "black-panther-3", "role": "main" }
   ] },
   { "id": "okoye", "name": "オコエ", "appearances": [
     { "movieId": "black-panther", "role": "main" }, { "movieId": "avengers-infinity-war", "role": "main" }, { "movieId": "avengers-endgame", "role": "sub" },
