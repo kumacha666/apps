@@ -3,7 +3,7 @@ import { G } from "../src/state.ts";
 import * as boardModule from "../src/board.ts";
 import { findAllMatches, hasAnyLegalMove } from "../src/board.ts";
 import {
-  findValidMoves, tapActivateSync, doMoveSync, recoverFromDeadlockSync, playGame,
+  findValidMoves, tapActivateSync, doMoveSync, recoverFromDeadlockSync, playGame, initGameState,
 } from "./simulate.mjs";
 
 // 4b-2b: シミュレーターの「有効な1手」列挙・実行を、ゲーム本編(board.ts/game.ts)と
@@ -243,5 +243,32 @@ describe("playGame", () => {
     const result = playGame();
     expect(result.deadlockOccurred).toBe(true);
     expect(G.movesLeft).toBe(5);
+  });
+
+  it("呼び出し時点で既にミッション達成済みなら1手も消費せず終了する(初期詰み回復が偶然達成させたケース相当)", () => {
+    setupSim();
+    G.STAGES = [makeSimStage({ mission: { type: "clear", count: 0 } })];
+    G.mission = G.STAGES[0].mission;
+    G.movesLeft = 20;
+    const result = playGame();
+    expect(result.turnsPlayed).toBe(0);
+    expect(result.deadlockOccurred).toBe(false);
+    expect(G.movesLeft).toBe(20);
+  });
+});
+
+// initGameState()の初期詰み回復(recoverFromDeadlockSync())はdamageAdjacentIce()経由で
+// 氷を解除しうるため、回復より前に氷セル数を記録して返すようにした(/code-review指摘、
+// PR #361・8巡目)。以前はrunOneGame()側が回復後にcountIceCells()を呼んでいたため、
+// 回復中に解除された氷がiceCleared/iceTotal双方から欠落し、score等の他の統計
+// （回復中の変化を含める）と基準が食い違っていた。createBoard()をMath.randomで
+// 意図的に20回とも失敗させて回復を強制するテストは、既存の同種の判断（4巡目2番、
+// scripts/simulate.mjs参照）と同じ理由でコストに見合わないため、氷を持つ実ステージ
+// (Stage 101、iceCells=1、countdownBombs=0で通常は回復が起きない)でinitGameState()の
+// 戻り値が実際の氷セル数と一致することのみを検証する
+describe("initGameState", () => {
+  it("氷を持つステージのinitialIceが実際の氷セル数と一致する", () => {
+    const { initialIce } = initGameState(100); // Stage 101 (0-indexed 100), iceCells=1
+    expect(initialIce).toBe(1);
   });
 });

@@ -519,9 +519,9 @@ export async function resolveBoard(): Promise<void> {
 // プレイヤー操作を介さない自動処理のため許容する。手動シャッフルアイテムでは
 // このフォールバックを使わない — useShuffle()参照）
 async function recoverFromDeadlock(): Promise<void> {
-  const numColors = stageConfigAt(G.currentStage).colors;
+  const stg = stageConfigAt(G.currentStage);
   if (!shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS)) {
-    const regenerated = regenerateBoardForDeadlock(numColors, BOARD_REGEN_MAX_ATTEMPTS);
+    const regenerated = regenerateBoardForDeadlock(BOARD_REGEN_MAX_ATTEMPTS, stg);
     // 盤面を作り直しても合法手ありにできなかった場合、作り直し後の色分布で
     // もう一度だけ並べ替えを試す（色数・オービット制約次第では理論上残りうる
     // 最終手段のリスクを、既存のテスト済みプリミティブの再利用で少しでも減らす）。
@@ -544,15 +544,33 @@ async function recoverFromDeadlock(): Promise<void> {
   await sleep(300);
 }
 
+// 盤面が詰み(合法手0件)の状態を検知したら自動回復する。オービットの有無を
+// 問わない——createBoard()のフォールバック(board.tsのisBetterFallbackBoard参照)は
+// 「合法手が1つ以上ある盤面」を優先するが、20回の生成試行が全て範囲外に終わった
+// 場合の最終フォールバックは依然として確率的にありうるため、Stage 300〜500
+// (countdownBombsにより合法手を塞ぎうる、orbits: [])でも起こりうる（/code-review指摘）。
+// finishTurn()（毎ターン確定後、orbits.length > 0の場合のみ呼ばれる——後述）と
+// ui.tsのstartStage()（ステージ開始直後、まだ1手も打っていない状態、全ステージで
+// 呼ばれる）の両方から共有する。回復を実行した場合はtrueを返す
+export async function ensurePlayableBoard(): Promise<boolean> {
+  if (hasAnyLegalMove()) return false;
+  await recoverFromDeadlock();
+  return true;
+}
+
 // プレイヤーの手・アイテム使用のたびに盤面が確定した後の共通の締めくくり処理。
 // HUD更新→勝敗判定→（ステージが継続する場合のみ）詰み検知・自動回復、の順に行う。
 // resolveBoard()の呼び出し箇所すべてがこれを経由することで、詰み検知が
-// 「盤面確定後の毎ターン」漏れなく行われる（GIMMICK_REDESIGN.md参照）
+// 「盤面確定後の毎ターン」漏れなく行われる（GIMMICK_REDESIGN.md参照）。
+// 自動デッドロック回復は元々オービット制約下でのみ詰みが発生しうる前提で
+// orbits.length > 0のときだけ動作させる設計だった(Phase 4b-2)。この前提自体は
+// 変更しない——Stage 1〜500の毎ターンの詰み挙動を新たに変えるのは本PRのスコープ外
+// (ensurePlayableBoard()自体はオービットを問わず動作するようになったが、それを
+// 呼ぶかどうかの判断はfinishTurn()側がこれまで通りorbits.length > 0で行う)
 export async function finishTurn(): Promise<void> {
   updateHUD();
   if (checkWinLose()) return;
-  if (stageConfigAt(G.currentStage).orbits.length > 0 && !hasAnyLegalMove()) {
-    await recoverFromDeadlock();
+  if (stageConfigAt(G.currentStage).orbits.length > 0 && await ensurePlayableBoard()) {
     // recoverFromDeadlock()の最終フォールバック(resolveMatches())がスコア・消去数・
     // 特殊生成等を変化させ、ミッションを達成させる可能性がある。詰み回復後の状態で
     // 勝敗を再判定しないと、結果画面へ遷移せずクリア済み扱いにならないまま残ってしまう

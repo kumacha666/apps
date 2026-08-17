@@ -87,6 +87,15 @@ export function placeCountdownBombs(stg: StageConfig): void {
   }
 }
 
+// createBoard()の品質チェックが20回とも[minMoves,maxMoves]を外れた場合の
+// フォールバック候補選定。合法手が1つ以上ある候補を、0件の候補より必ず優先する
+// (0件の盤面を採用すると、詰み回復すら発動できないまま——手動シャッフル等の
+// アイテムでしか脱出できない状態で——ステージが始まってしまう。/code-review指摘)。
+// 同じ「合法手あり/なし」のグループ内ではtargetとの差が小さい方を優先する
+export function isBetterFallbackBoard(moves: number, diff: number, bestMoves: number, bestDiff: number): boolean {
+  return (moves > 0 && bestMoves <= 0) || ((moves > 0) === (bestMoves > 0) && diff < bestDiff);
+}
+
 // minMoves/maxMoves判定はcountAvailableMoves()に委譲しているため、第1章「軌道系」
 // (Stage 501〜)のオービット制約はcountAvailableMoves()側の対応だけで自動的に反映される
 // (このループ自体には変更不要。パイロットの固定7x8盤面ではmaxMoves=10になり、
@@ -97,6 +106,7 @@ export function createBoard(numColors: number): void {
   const target = Math.floor((minMoves + maxMoves) / 2);
   const stg = stageConfigAt(G.currentStage);
   let bestBoard: (Piece | null)[][] | null = null;
+  let bestMoves = -1;
   let bestDiff = Infinity;
 
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -109,7 +119,8 @@ export function createBoard(numColors: number): void {
       break;
     }
     const diff = Math.abs(moves - target);
-    if (diff < bestDiff) {
+    if (bestBoard === null || isBetterFallbackBoard(moves, diff, bestMoves, bestDiff)) {
+      bestMoves = moves;
       bestDiff = diff;
       bestBoard = G.board.map(row => row.map(cell => cell ? {...cell} : null));
     }
@@ -578,10 +589,17 @@ export function shuffleWithQualityGate(maxAttempts: number): boolean {
 // 盤面を丸ごと作り直す詰み回復の最終フォールバック（初期盤面生成と同じ
 // fillBoardUntilStable()を再利用）。既存の特殊ピースは失われるため、プレイヤー
 // 操作を介さない自動デッドロック回復でのみ使用する（有料の手動シャッフルアイテム
-// では絶対に使わないこと。既存の特殊ピースが対価もなく消滅してしまうため）
-export function regenerateBoardForDeadlock(numColors: number, maxAttempts: number): boolean {
+// では絶対に使わないこと。既存の特殊ピースが対価もなく消滅してしまうため）。
+// stg.countdownBombsが設定されたステージ(Stage 300〜500)でも再配置する
+// (createBoard()と同じくplaceCountdownBombs()をhasAnyLegalMove()判定の前に呼び、
+// 判定と実際の最終盤面を一致させる。/code-review指摘: 元々この関数はorbits.length > 0
+// のステージ専用の到達不能パスとして書かれ意図的にボム再配置を省いていたが、
+// ensurePlayableBoard()がオービットの有無を問わず動作するよう修正した結果、
+// countdownBombsを持つステージからも到達しうるようになったため対応が必要になった)
+export function regenerateBoardForDeadlock(maxAttempts: number, stg: StageConfig): boolean {
   for (let i = 0; i < maxAttempts; i++) {
-    fillBoardUntilStable(numColors);
+    fillBoardUntilStable(stg.colors);
+    placeCountdownBombs(stg);
     if (hasAnyLegalMove()) return true;
   }
   return false;

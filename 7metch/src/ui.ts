@@ -2,11 +2,13 @@ import type { ScreenName, StarGate, SaveData } from "./types";
 import { G, PIECE_COLORS, STAR_GATES, DEFAULT_OPTIONS, ITEM_COSTS, loadOptions, saveOptions, applyVisualOptions, loadSave, writeSave } from "./state";
 import { initAudio, switchBgm, stopAllBgm, applyAudioOptions, SFX } from "./audio";
 import { buildPieceCache, startBgAnim, stopBgAnim, initBgStars, startTitleBgAnim, stopTitleBgAnim, startResultBgAnim, stopResultBgAnim, startSplashBgAnim, stopSplashBgAnim, drawBoard } from "./rendering";
-import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker, finishTurn } from "./game";
+import { updateItemBar, cancelItemMode, updateHUD, doMove, useShuffle, useAddMoves, showColorPicker, finishTurn, ensurePlayableBoard, checkWinLose } from "./game";
 import { createBoard, initCellState, countAvailableMoves, startHintTimer, clearHint } from "./board";
 import { buildStages, buildOrbitPilotStages, getTotalStars, isStageUnlocked, getGateFor, boardSizeForStage, getMissionText, lastClearedRealStageIdx, nextStageBoundary, isRealCampaignStage, stageConfigAt, totalReachableStageCount, shouldGeneratePreviewStages } from "./stages";
 import { track, FEEDBACK_URL, peekAnonId } from "./tracking";
 import { initInput, renderHelpPieceIcons } from "./input";
+import { sleep } from "./animations";
+import { StageStartQueue } from "./stageStartQueue";
 
 // --- Screens ---
 
@@ -17,7 +19,20 @@ export function refreshSupportId(): void {
   document.getElementById("support-id-value")!.textContent = peekAnonId() || "履歴なし";
 }
 
+// startStage()の詰み回復待機(await ensurePlayableBoard())中に、ステージ選択の
+// 「もどる」・ゲーム中の「やめる」等でプレイヤーが別画面へ遷移した場合、待機完了後の
+// showScreen("game")がその操作を上書きしてしまう欠落があった(/code-review指摘)。
+// showScreen()に"game"以外への遷移が来るたびに増分するカウンタを持たせ、
+// startStage()側で「待機前後でこのカウンタが変わっていないか」を見ることで、
+// 個々のボタンハンドラを1つずつガードせずに「競合するナビゲーションが起きたか」を
+// 一元的に検知できるようにする
+let navigationEpoch = 0;
+export function getNavigationEpoch(): number {
+  return navigationEpoch;
+}
+
 export function showScreen(name: ScreenName): void {
+  if (name !== "game") navigationEpoch++;
   const fromGame = name === "options" && G.optionsReturnScreen === "game";
   if (name !== "game" && !fromGame) { clearHint(); stopBgAnim(); }
   if (name !== "title" && name !== "splash") stopTitleBgAnim();
@@ -134,9 +149,8 @@ export function buildStageSelect(): void {
     btn.innerHTML = `<span class="stage-num">${stg.name}</span><span class="stage-stars">${filled}${empty}</span>`;
 
     if (unlocked) {
-      btn.addEventListener("click", () => {
-        G.currentStage = i;
-        startStage(i);
+      btn.addEventListener("click", async () => {
+        await startStage(i);
       });
     }
 
@@ -184,36 +198,158 @@ function showTutorial(stageIndex: number): void {
   overlay.addEventListener("click", dismiss);
 }
 
-export function startStage(index: number): void {
-  const stg = stageConfigAt(index);
-  G.cols = stg.boardCols;
-  G.rows = stg.boardRows;
-  G.movesLeft = stg.moves;
-  G.score = 0;
-  G.totalCleared = 0;
-  G.colorCleared = [];
-  G.chainCount = 0;
-  G.specialsCreated = 0;
-  G.maxChain = 0;
-  G.patternProgress = new Set();
-  G.selected = null;
-  G.animating = false;
-  G.vfxParticles = []; G.vfxShockwaves = []; G.vfxFlashes = []; G.vfxComets = []; G.vfxTexts = []; G.shakeX = G.shakeY = G.shakeIntensity = 0;
-  G.itemMode = null;
-  G.coinsEarned = 0;
-  G.canvas!.classList.remove("item-targeting");
+// startStage()は非同期（詰み回復待機を含む）で、その間にG.currentStage/G.board/
+// G.rows/G.cols等のGを直接書き換える。実行中に別のstartStage()呼び出しが来た
+// 場合、単純にreturnで破棄すると「ボタンを押しても何も起きない」に見える無言破棄に
+// なり（9巡目・10巡目の/code-review指摘、下記CLAUDE.md参照）、かといって並行実行を
+// 許すと古い処理が新しいステージのGを後から上書きしてしまう。StageStartQueueが
+// 「実行中は1つだけ・新しい要求は最新のものだけ保留し、実行中の処理が完了してから
+// 1回だけ反映する」という直列化を管理する（詳細はstageStartQueue.ts参照）。
+// contextにはnavigationEpochを渡す——要求が実際に実行されるのは要求された瞬間より
+// 後になりうるため（先行する古い要求の処理待ち）、要求時点のepochを保持しておかないと
+// 「要求後・実行開始前に起きたナビゲーション」を実行側が検知できない
+// (11巡目、/code-review指摘)
+const stageStartQueue = new StageStartQueue<number>();
 
-  resizeCanvas();
-  applyVisualOptions();
-  initCellState(stg);
-  createBoard(stg.colors);
-  updateHUD();
-  updateItemBar();
-  drawBoard();
-  showScreen("game");
-  track("stage_start", { stage: stg.name, mission_type: stg.mission.type });
-  startHintTimer();
-  showTutorial(index);
+export async function startStage(index: number): Promise<void> {
+  const epoch = getNavigationEpoch();
+  if (!stageStartQueue.requestStart(index, epoch)) return;
+  try {
+    let target = index;
+    let epochAtRequest = epoch;
+    // 保留要求をループで消化する（再帰にしない——要求が連続してもコールスタックが
+    // 積み上がらない）。1回のrunStageStart()が完了するたびに、その間に来た
+    // 新しい要求（最後のものだけ）があれば続けて処理する
+    for (;;) {
+      await runStageStart(target, epochAtRequest);
+      const next = stageStartQueue.takeNextOrFinish();
+      if (next === null) break;
+      target = next.index;
+      epochAtRequest = next.context;
+    }
+  } finally {
+    // runStageStart()が例外を投げた場合でも、キューを確実にrunning=falseへ戻す
+    // （通常経路ではtakeNextOrFinish()が既にfalseにしているため、この呼び出しは
+    // 冪等・無害）
+    stageStartQueue.reset();
+  }
+}
+
+// 1回分のステージ開始処理本体。呼び出し元(startStage())が直列化を保証しているため、
+// この関数の実行中に他のrunStageStart()呼び出しが並行して動くことは無い。
+// epochAtRequestはこの要求が発行された瞬間のnavigationEpoch（呼び出し元から
+// そのまま受け取る）——この関数の内部で改めてgetNavigationEpoch()を取り直すと、
+// 「要求されてから先行する古い要求の処理待ちで、この試行が実際に始まるまでの間」に
+// 起きたナビゲーションを見逃してしまう（実行開始時点を基準にすると「変化なし」に
+// 見えてしまうため。11巡目、/code-review指摘）
+async function runStageStart(index: number, epochAtRequest: number): Promise<void> {
+  const epochBeforeWait = epochAtRequest;
+  // 既に実行中の他の操作（doMove/activateByTap/useShuffle/usePinpoint/
+  // useColorBomb、いずれもG.animatingを共有ミューテックスとして使う）はここでは
+  // 止まらず、そのまま完走しようとする。ここで待たずに盤面を再初期化すると、
+  // 例えばシャッフル演出中のawait sleep(300)明けにその古い呼び出しが
+  // resolveBoard()/finishTurn()を新しいステージの盤面へ実行してしまう
+  // (7巡目の/code-review指摘)。G.animatingがfalseに戻る（＝進行中の操作が
+  // finallyまで完走する）のを待ってから自分の初期化を始める。この待機中に
+  // 新しい開始要求が来ている、または「やめる」等でナビゲーションが起きた場合、
+  // この試行はもう無意味になるので即座に諦める（盤面初期化は一切行っていないので
+  // 他に後始末は不要。新しい要求があれば呼び出し元のループが続けて処理する。
+  // 9巡目の/code-review指摘）
+  while (G.animating) {
+    if (stageStartQueue.hasPending() || getNavigationEpoch() !== epochBeforeWait) return;
+    await sleep(16);
+  }
+  G.animating = true;
+  try {
+    G.currentStage = index;
+    const stg = stageConfigAt(index);
+    G.cols = stg.boardCols;
+    G.rows = stg.boardRows;
+    G.movesLeft = stg.moves;
+    G.score = 0;
+    G.totalCleared = 0;
+    G.colorCleared = [];
+    G.chainCount = 0;
+    G.specialsCreated = 0;
+    G.maxChain = 0;
+    G.patternProgress = new Set();
+    G.selected = null;
+    G.vfxParticles = []; G.vfxShockwaves = []; G.vfxFlashes = []; G.vfxComets = []; G.vfxTexts = []; G.shakeX = G.shakeY = G.shakeIntensity = 0;
+    G.itemMode = null;
+    G.coinsEarned = 0;
+    G.canvas!.classList.remove("item-targeting");
+
+    resizeCanvas();
+    applyVisualOptions();
+    initCellState(stg);
+    createBoard(stg.colors);
+
+    // createBoard()は合法手0件の盤面を可能な限り避けるが、20回の生成試行が
+    // 全て範囲外に終わった場合の最終フォールバックは確率的にはまだ0件になりうる。
+    // ステージ開始直後（まだ1手も打っていない状態）の詰みはfinishTurn()経由の
+    // 詰み検知（プレイヤーが1手打った後にしか走らない）では発見できないため、
+    // showScreen("game")の前にここでも同じ回復経路を通す（/code-review指摘）。
+    // 注意: リトライ・Next・結果画面リトライ経由の場合は前のステージの
+    // #screen-gameが既にactiveなままなので、実際に回復（シャッフル演出）が
+    // 走った場合はプレイヤーに見える（タイトル・ステージ選択経由の場合のみ
+    // 画面が非activeなので見えない）。詰み回復自体が稀なケースであることに加え、
+    // 見えたとしても新ステージの盤面が一瞬シャッフルされるだけで実害が無いため、
+    // 現時点では許容している
+    await ensurePlayableBoard();
+    // E2Eテストが「初期詰み回復の待機中」を確率に頼らず決定的に再現するための
+    // テスト専用フック。本番ビルドではimport.meta.env.DEVが静的にfalseへ置き換わり
+    // デッドコード除去されるため一切含まれない（Viteの標準的なdev-onlyコード分離
+    // パターン）。詳細はtestOnlyStageStartDelay()参照（10巡目、/code-review指摘）
+    await testOnlyStageStartDelay();
+
+    // 上の待機中に新しい開始要求が来ている、または「もどる」「やめる」等で
+    // プレイヤーが別画面へ既に遷移していた場合、ここでshowScreen("game")を
+    // 呼ぶとその操作を上書きしてしまう(/code-review指摘)。navigationEpochが
+    // 変化していれば競合するナビゲーションが起きたとみなし、画面遷移・HUD更新・
+    // チュートリアル表示をスキップする。新しい要求があれば呼び出し元のループが
+    // 続けて処理する（G.animatingの解除自体はfinally側で必ず行われるので、
+    // 次の開始操作はブロックされない。10巡目の/code-review指摘）
+    if (stageStartQueue.hasPending() || getNavigationEpoch() !== epochBeforeWait) return;
+
+    // ensurePlayableBoard()の詰み回復（recoverFromDeadlock()内のresolveMatches
+    // ("recovery_shuffle")）が偶然ミッションを達成させてしまう可能性がある。
+    // finishTurn()が詰み回復後に勝敗を再判定するのと同じ理由で、ここでも
+    // 回復後に判定する（/code-review指摘）。達成済みならcheckWinLose()内部で
+    // showResult()へのタイマーが仕込まれるため、通常の開始処理は行わない
+    updateHUD();
+    if (checkWinLose()) return;
+
+    updateItemBar();
+    drawBoard();
+    showScreen("game");
+    track("stage_start", { stage: stg.name, mission_type: stg.mission.type });
+    showTutorial(index);
+  } finally {
+    G.animating = false;
+    startHintTimer();
+  }
+}
+
+declare global {
+  interface Window {
+    __test_stageStartDelayMs?: number;
+  }
+}
+
+// startStage()のensurePlayableBoard()待機を確率的な詰み発生に頼らず引き延ばすための
+// テスト専用フック。import.meta.env.DEVはViteが本番ビルド時に静的にfalseへ置き換え、
+// 到達不能になったこの関数の中身ごとデッドコード除去する（tree-shaking）ため、
+// 本番ビルドの挙動には一切影響しない。E2Eテスト（npx vite --port経由のdevサーバー）
+// からのみ`window.__test_stageStartDelayMs`経由で有効化できる（10巡目、/code-review指摘）
+async function testOnlyStageStartDelay(): Promise<void> {
+  if (!import.meta.env.DEV) return;
+  const ms = window.__test_stageStartDelayMs;
+  if (!ms) return;
+  // 1回使ったら消費する（後続のrunStageStart()呼び出し——特に、この待機中に
+  // 割り込んで最終的に表示される側のセッション——まで毎回追加で遅延させたくない。
+  // このフラグは「最初の試行を足止めして割り込みの余地を作る」ためだけのもの）
+  window.__test_stageStartDelayMs = undefined;
+  await sleep(ms);
 }
 
 // --- Resize Canvas ---
@@ -292,7 +428,7 @@ export function initUI(): void {
   });
 
   // --- Start / Stage Select ---
-  document.getElementById("btn-start")!.addEventListener("click", () => {
+  document.getElementById("btn-start")!.addEventListener("click", async () => {
     initAudio();
     const next = Math.min(lastClearedRealStageIdx() + 1, G.STAGES!.length - 1);
     const gate = getGateFor(next);
@@ -305,8 +441,7 @@ export function initUI(): void {
       showScreen("stageSelect");
       return;
     }
-    G.currentStage = next;
-    startStage(G.currentStage);
+    await startStage(next);
   });
 
   document.getElementById("btn-stage-select")!.addEventListener("click", () => {
@@ -471,7 +606,7 @@ export function initUI(): void {
     const ok = await showGameModal("リトライしますか？");
     if (!ok) return;
     track("stage_retry", { stage: stageConfigAt(G.currentStage).name });
-    startStage(G.currentStage);
+    await startStage(G.currentStage);
   });
 
   document.getElementById("btn-quit")!.addEventListener("click", async () => {
@@ -480,7 +615,7 @@ export function initUI(): void {
     showScreen("title");
   });
 
-  document.getElementById("btn-next")!.addEventListener("click", () => {
+  document.getElementById("btn-next")!.addEventListener("click", async () => {
     const next = G.currentStage + 1;
     if (next >= nextStageBoundary()) {
       buildStageSelect();
@@ -503,13 +638,12 @@ export function initUI(): void {
         return;
       }
     }
-    G.currentStage = next;
-    startStage(G.currentStage);
+    await startStage(next);
   });
 
-  document.getElementById("btn-result-retry")!.addEventListener("click", () => {
+  document.getElementById("btn-result-retry")!.addEventListener("click", async () => {
     track("stage_retry", { stage: stageConfigAt(G.currentStage).name });
-    startStage(G.currentStage);
+    await startStage(G.currentStage);
   });
 
   document.getElementById("btn-result-stages")!.addEventListener("click", () => {
@@ -540,7 +674,7 @@ export function initUI(): void {
     }
   });
 
-  document.getElementById("btn-debug-jump")!.addEventListener("click", () => {
+  document.getElementById("btn-debug-jump")!.addEventListener("click", async () => {
     const num = parseInt((document.getElementById("debug-stage-num") as HTMLInputElement).value, 10);
     // 第1章「軌道系」パイロット(Stage 501〜524)のデバッグプレビュー。buildStages()
     // (Stage 1〜500)にはまだ追加されていないため、デバッグジャンプでのみ遅延生成する。
@@ -551,9 +685,8 @@ export function initUI(): void {
       G.debugPreviewStages = buildOrbitPilotStages();
     }
     if (num >= 1 && num <= totalReachableStageCount()) {
-      G.currentStage = num - 1;
       document.getElementById("debug-panel")!.classList.add("hidden");
-      startStage(G.currentStage);
+      await startStage(num - 1);
     }
   });
 

@@ -82,6 +82,24 @@ export function initGameState(stageIndex) {
 
   initCellState(stg);
   createBoard(stg.colors);
+
+  // 詰み回復（下記）のresolveMatchesSync()がdamageAdjacentIce()経由で氷を解除
+  // しうるため、回復より前の時点で氷セル数を記録しておく。runOneGame()側で
+  // 回復後に数えると、回復中に解除された氷がiceCleared/iceTotal双方から
+  // 欠落し、score/totalCleared/maxChain等の他の統計（回復中の変化を含める）
+  // と基準が食い違ってしまう(/code-review指摘)
+  const initialIce = countIceCells();
+
+  // 実アプリのstartStage()（ui.ts）は、createBoard()直後にオービットの有無を問わず
+  // ensurePlayableBoard()で初期詰みを検知・回復する(/code-review指摘、PR #361)。
+  // ここで回復しないと、countdownBombsで合法手を塞ぎうるStage 300〜500がまさに
+  // createBoard()のフォールバックで合法手0件の盤面になった場合、実アプリでは
+  // 回復されるのに、シミュレーターはplayGame()の最初のターンで即座に詰み扱いに
+  // してしまい、詰み率・クリア率が実際の挙動と食い違う。通常ターン中の詰み検知
+  // (playGame()内、orbits.length > 0でのみ動作)は既存のスコープのまま変更しない
+  if (!hasAnyLegalMove()) recoverFromDeadlockSync();
+
+  return { initialIce };
 }
 
 export function trackClears(clearList) {
@@ -368,10 +386,10 @@ export function doMoveSync(r1, c1, r2, c2) {
 // （手動シャッフルアイテムのような「コストを払って盤面変更をキャンセル」という概念が
 // シミュレーターには無いため、useShuffle()側のキャンセル分岐は移植しない）
 export function recoverFromDeadlockSync() {
-  const numColors = G.STAGES[G.currentStage].colors;
+  const stg = G.STAGES[G.currentStage];
   let recovered = shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS);
   if (!recovered) {
-    const regenerated = regenerateBoardForDeadlock(numColors, BOARD_REGEN_MAX_ATTEMPTS);
+    const regenerated = regenerateBoardForDeadlock(BOARD_REGEN_MAX_ATTEMPTS, stg);
     recovered = regenerated || shuffleWithQualityGate(SHUFFLE_QUALITY_MAX_ATTEMPTS);
   }
   resolveMatchesSync();
@@ -407,6 +425,15 @@ export function playGame() {
   let turnsPlayed = 0;
   let deadlockOccurred = false;
 
+  // initGameState()の初期詰み回復(createBoard()直後のensurePlayableBoard()相当)が
+  // 偶然ミッションを達成させている場合、実アプリのstartStage()は1手も消費せず
+  // checkWinLose()でそのまま結果画面へ遷移する。ここで判定しないと、シミュレーターは
+  // 以降の手を1手余分に実行してしまい、turnsPlayed/movesLeft/score等の統計が
+  // 実アプリと食い違う(/code-review指摘、PR #361)
+  if (checkMissionComplete()) {
+    return { turnsPlayed, deadlockOccurred };
+  }
+
   while (G.movesLeft > 0) {
     const moves = findValidMoves();
     if (moves.length === 0) {
@@ -440,8 +467,7 @@ export function playGame() {
 }
 
 function runOneGame(stageIndex) {
-  initGameState(stageIndex);
-  const initialIce = countIceCells();
+  const { initialIce } = initGameState(stageIndex);
   const { turnsPlayed, deadlockOccurred } = playGame();
   const remainingIce = countIceCells();
   return {
