@@ -52,6 +52,7 @@
   { "id": "madame-web", "title": "マダム・ウェブ", "releaseDate": "2024-02-14", "universe": "sony", "group": "ソニー・スパイダーマン・ユニバース", "type": "movie" },
   { "id": "venom-the-last-dance", "title": "ヴェノム：ザ・ラストダンス", "releaseDate": "2024-10-25", "universe": "sony", "group": "ソニー・スパイダーマン・ユニバース", "type": "movie" },
   { "id": "kraven-the-hunter", "title": "クレイヴン・ザ・ハンター", "releaseDate": "2024-12-13", "universe": "sony", "group": "ソニー・スパイダーマン・ユニバース", "type": "movie" },
+  { "id": "spider-noir-s1", "title": "スパイダー・ノワール シーズン1", "releaseDate": "2026-05-25", "universe": "sony", "group": "ソニー・スパイダーマン・ユニバース", "type": "series" },
   { "id": "x-men", "title": "X-MEN", "releaseDate": "2000-07-14", "universe": "fox", "group": "X-MEN オリジナル三部作〜前日譚", "type": "movie" },
   { "id": "x2", "title": "X-MEN2", "releaseDate": "2003-05-02", "universe": "fox", "group": "X-MEN オリジナル三部作〜前日譚", "type": "movie" },
   { "id": "x-men-last-stand", "title": "X-MEN：ファイナルディシジョン", "releaseDate": "2006-05-26", "universe": "fox", "group": "X-MEN オリジナル三部作〜前日譚", "type": "movie" },
