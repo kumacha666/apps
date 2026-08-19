@@ -140,14 +140,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isRetryableStatus(status: number): boolean {
-  return status === 429 || (status >= 500 && status < 600);
+// Drive APIはクォータ超過を429だけでなく、reasonが"rateLimitExceeded"/"userRateLimitExceeded"の
+// HTTP 403でも返すことがある（2026-08-19 Codexレビュー指摘）。403を一律リトライ対象にはできない
+// （権限無し等の恒久的な403もあるため）ので、レスポンス本文のerror reasonを見て判定する。
+const RETRYABLE_403_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded"]);
+
+function isRetryableError(status: number, bodyText: string): boolean {
+  if (status === 429) return true;
+  if (status >= 500 && status < 600) return true;
+  if (status === 403) {
+    try {
+      const body = JSON.parse(bodyText) as { error?: { errors?: { reason?: string }[] } };
+      return (body.error?.errors ?? []).some((e) => RETRYABLE_403_REASONS.has(e.reason ?? ""));
+    } catch {
+      return false; // レスポンス本文がJSONでない場合は判定できないためリトライしない
+    }
+  }
+  return false;
 }
 
 // DriveListFnの実実装。ensureAccessTokenで取得したアクセストークンをAuthorizationヘッダーに載せる。
 // drive.readonlyスコープに固定されたトークンのみを使うため、書き込み系エンドポイントは呼びようがない（CONCEPT.md 2節）。
-// 429/5xx（スロットリング・一時障害）は指数バックオフで数回リトライする。401等は即座にDriveHttpErrorとして
-// 呼び出し元（listAudioFilesRecursiveInternal）に伝え、認証エラーとしての特別扱いを可能にする。
+// 429/5xx・クォータ超過理由の403（スロットリング・一時障害）は指数バックオフで数回リトライする。
+// 401等は即座にDriveHttpErrorとして呼び出し元（listAudioFilesRecursiveInternal）に伝え、
+// 認証エラーとしての特別扱いを可能にする。
 export function createDriveListFn(getAccessToken: () => Promise<string>): DriveListFn {
   return async (folderId, pageToken) => {
     const params = new URLSearchParams({
@@ -167,8 +183,9 @@ export function createDriveListFn(getAccessToken: () => Promise<string>): DriveL
         const data = (await res.json()) as { files?: DriveFile[]; nextPageToken?: string };
         return { files: data.files ?? [], nextPageToken: data.nextPageToken };
       }
-      lastError = new DriveHttpError(res.status, `Drive files.list failed: ${res.status} ${await res.text()}`);
-      if (attempt >= maxRetries || !isRetryableStatus(res.status)) throw lastError;
+      const bodyText = await res.text();
+      lastError = new DriveHttpError(res.status, `Drive files.list failed: ${res.status} ${bodyText}`);
+      if (attempt >= maxRetries || !isRetryableError(res.status, bodyText)) throw lastError;
       await sleep(500 * 2 ** attempt);
     }
     // ループは必ずreturn/throwで終わるが、TypeScriptの制御フロー解析のために明示しておく

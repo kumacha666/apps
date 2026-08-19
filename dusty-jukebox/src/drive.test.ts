@@ -1,7 +1,8 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   listAudioFilesRecursive,
   listFolderChildren,
+  createDriveListFn,
   ConcurrencyLimiter,
   DriveHttpError,
   type DriveFile,
@@ -159,5 +160,73 @@ describe("ConcurrencyLimiter", () => {
       )
     );
     expect(results.sort()).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
+describe("createDriveListFn", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  function fakeResponse(status: number, body: unknown): Response {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      text: async () => JSON.stringify(body),
+      json: async () => body,
+    } as unknown as Response;
+  }
+
+  test("429は指数バックオフでリトライし、最終的に成功する", async () => {
+    vi.useFakeTimers();
+    const responses = [
+      fakeResponse(429, { error: { errors: [{ reason: "rateLimitExceeded" }] } }),
+      fakeResponse(200, { files: [{ id: "a", name: "a.mp3", mimeType: "audio/mpeg" }] }),
+    ];
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => responses[call++]));
+
+    const list = createDriveListFn(async () => "token");
+    const promise = list("folder", undefined);
+    await vi.runAllTimersAsync();
+    const page = await promise;
+    expect(page.files.map((f) => f.id)).toEqual(["a"]);
+  });
+
+  test("reasonがrateLimitExceeded/userRateLimitExceededの403もリトライする（2026-08-19 Codexレビュー指摘）", async () => {
+    vi.useFakeTimers();
+    const responses = [
+      fakeResponse(403, { error: { errors: [{ reason: "userRateLimitExceeded" }] } }),
+      fakeResponse(200, { files: [] }),
+    ];
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => responses[call++]));
+
+    const list = createDriveListFn(async () => "token");
+    const promise = list("folder", undefined);
+    await vi.runAllTimersAsync();
+    const page = await promise;
+    expect(page.files).toEqual([]);
+  });
+
+  test("権限無し等の恒久的な403（rateLimitExceeded系ではない）はリトライせず即座にDriveHttpErrorを投げる", async () => {
+    const response = fakeResponse(403, { error: { errors: [{ reason: "insufficientPermissions" }] } });
+    const fetchMock = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const list = createDriveListFn(async () => "token");
+    await expect(list("folder", undefined)).rejects.toMatchObject({ status: 403 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("401はリトライせず即座にDriveHttpErrorを投げる", async () => {
+    const response = fakeResponse(401, { error: { errors: [{ reason: "authError" }] } });
+    const fetchMock = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const list = createDriveListFn(async () => "token");
+    await expect(list("folder", undefined)).rejects.toBeInstanceOf(DriveHttpError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
