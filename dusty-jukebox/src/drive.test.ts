@@ -3,11 +3,15 @@ import {
   listAudioFilesRecursive,
   listFolderChildren,
   createDriveListFn,
+  createDriveGetFn,
+  validateRootFolder,
   ConcurrencyLimiter,
   DriveHttpError,
   type DriveFile,
+  type DriveGetFn,
   type DriveListFn,
 } from "./drive";
+import { AuthError } from "./auth";
 
 // フォルダID -> 直接の子（ファイル・フォルダ混在）のフェイクツリー。
 // 3.1節の実データ構成（アーティスト/アルバム階層＋非楽曲ファイルの混在）を模したサンプル。
@@ -165,6 +169,71 @@ describe("listAudioFilesRecursive", () => {
     // 中断によるスキップはfailedFoldersに積む対象の失敗ではない
     expect(failedFolders).toEqual([]);
   });
+
+  test("フォルダを指すショートカットは参照先を辿って走査する（2026-08-19 Codexレビュー指摘）", async () => {
+    const tree: Record<string, DriveFile[]> = {
+      root: [
+        {
+          id: "shortcut-to-wands",
+          name: "WANDS (shortcut)",
+          mimeType: "application/vnd.google-apps.shortcut",
+          shortcutDetails: { targetId: "wands", targetMimeType: "application/vnd.google-apps.folder" },
+        },
+      ],
+      wands: [{ id: "w1", name: "01.mp3", mimeType: "audio/mpeg" }],
+    };
+    const list: DriveListFn = async (folderId) => ({ files: tree[folderId] ?? [] });
+    const found = await listAudioFilesRecursive(list, "root");
+    expect(found.map((e) => e.file.id)).toEqual(["w1"]);
+    expect(found[0].folderPath).toBe("WANDS (shortcut)");
+  });
+
+  test("ファイルを指すショートカットは走査対象に含めない（フォルダショートカットのみ解決する）", async () => {
+    const tree: Record<string, DriveFile[]> = {
+      root: [
+        {
+          id: "shortcut-to-file",
+          name: "shortcut-to-file",
+          mimeType: "application/vnd.google-apps.shortcut",
+          shortcutDetails: { targetId: "some-file", targetMimeType: "audio/mpeg" },
+        },
+      ],
+    };
+    const list: DriveListFn = async (folderId) => ({ files: tree[folderId] ?? [] });
+    const found = await listAudioFilesRecursive(list, "root");
+    expect(found).toEqual([]);
+  });
+
+  test("ショートカットが祖先フォルダを指す循環参照でも無限再帰にならない", async () => {
+    const tree: Record<string, DriveFile[]> = {
+      root: [
+        { id: "child", name: "child", mimeType: "application/vnd.google-apps.folder" },
+      ],
+      child: [
+        {
+          id: "shortcut-to-root",
+          name: "back-to-root",
+          mimeType: "application/vnd.google-apps.shortcut",
+          shortcutDetails: { targetId: "root", targetMimeType: "application/vnd.google-apps.folder" },
+        },
+        { id: "song", name: "song.mp3", mimeType: "audio/mpeg" },
+      ],
+    };
+    const list: DriveListFn = async (folderId) => ({ files: tree[folderId] ?? [] });
+    const found = await listAudioFilesRecursive(list, "root");
+    expect(found.map((e) => e.file.id)).toEqual(["song"]);
+  });
+
+  test("ensureAccessToken()のサイレント再取得失敗（AuthError）も401と同様に走査全体を中断する（2026-08-19 Codexレビュー指摘）", async () => {
+    const tree = makeFakeTree();
+    const list: DriveListFn = async (folderId) => {
+      if (folderId === "various") throw new AuthError("再ログインが必要です");
+      return { files: tree[folderId] ?? [] };
+    };
+    const failedFolders: string[] = [];
+    await expect(listAudioFilesRecursive(list, "root", "", failedFolders)).rejects.toBeInstanceOf(AuthError);
+    expect(failedFolders).toEqual([]);
+  });
 });
 
 describe("ConcurrencyLimiter", () => {
@@ -199,20 +268,20 @@ describe("ConcurrencyLimiter", () => {
   });
 });
 
+function fakeResponse(status: number, body: unknown): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => JSON.stringify(body),
+    json: async () => body,
+  } as unknown as Response;
+}
+
 describe("createDriveListFn", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
-
-  function fakeResponse(status: number, body: unknown): Response {
-    return {
-      ok: status >= 200 && status < 300,
-      status,
-      text: async () => JSON.stringify(body),
-      json: async () => body,
-    } as unknown as Response;
-  }
 
   test("429は指数バックオフでリトライし、最終的に成功する", async () => {
     vi.useFakeTimers();
@@ -263,6 +332,49 @@ describe("createDriveListFn", () => {
 
     const list = createDriveListFn(async () => "token");
     await expect(list("folder", undefined)).rejects.toBeInstanceOf(DriveHttpError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("validateRootFolder", () => {
+  test("フォルダとして取得できれば何もしない（例外を投げない）", async () => {
+    const getFile: DriveGetFn = async () => ({ mimeType: "application/vnd.google-apps.folder" });
+    await expect(validateRootFolder(getFile, "some-folder-id")).resolves.toBeUndefined();
+  });
+
+  test("フォルダ以外（例: 通常ファイル）の場合はエラーを投げる", async () => {
+    const getFile: DriveGetFn = async () => ({ mimeType: "audio/mpeg" });
+    await expect(validateRootFolder(getFile, "some-file-id")).rejects.toThrow(/フォルダではありません/);
+  });
+
+  test("存在しない・権限が無いフォルダIDの場合はgetFileの例外（DriveHttpError）がそのまま伝わる（2026-08-19 Codexレビュー指摘: files.listは空一覧を返すだけでルート自体を検証しない）", async () => {
+    const getFile: DriveGetFn = async () => {
+      throw new DriveHttpError(404, "File not found");
+    };
+    await expect(validateRootFolder(getFile, "does-not-exist")).rejects.toBeInstanceOf(DriveHttpError);
+  });
+});
+
+describe("createDriveGetFn", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("成功時はmimeTypeを返す", async () => {
+    const response = fakeResponse(200, { id: "abc", mimeType: "application/vnd.google-apps.folder" });
+    vi.stubGlobal("fetch", vi.fn(async () => response));
+
+    const getFile = createDriveGetFn(async () => "token");
+    await expect(getFile("abc")).resolves.toEqual({ mimeType: "application/vnd.google-apps.folder" });
+  });
+
+  test("404はDriveHttpErrorとして即座に投げる", async () => {
+    const response = fakeResponse(404, { error: { errors: [{ reason: "notFound" }] } });
+    const fetchMock = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getFile = createDriveGetFn(async () => "token");
+    await expect(getFile("does-not-exist")).rejects.toMatchObject({ status: 404 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,7 +1,7 @@
 // エントリポイント。Phase 1着手順1: OAuth認証（トークンモデル）＋drive.readonlyでのファイル一覧取得のみ実装。
 // 索引Sheets書き込み・実Rangeフェッチ・絞り込み/再生UIは未着手（dusty-jukebox/CLAUDE.md参照）。
 import { AuthError, DriveAuth } from "./auth";
-import { createDriveListFn, listAudioFilesRecursive, type AudioFileEntry } from "./drive";
+import { createDriveGetFn, createDriveListFn, listAudioFilesRecursive, validateRootFolder, type AudioFileEntry } from "./drive";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
@@ -73,11 +73,17 @@ async function handleScan(): Promise<void> {
   const scanBtn = el<HTMLButtonElement>("scan-btn");
   scanBtn.disabled = true;
   try {
+    setStatus("フォルダを確認中...");
+    const getFn = createDriveGetFn(() => auth.ensureAccessToken());
+    // files.listは'<folderId>' in parentsのクエリで、folderId自体の存在・種別・権限は
+    // 検証しない（誤ったIDでも単に空の子一覧を返しうる）。「フォルダが空」と
+    // 「そもそも無効なID」を区別するため、スキャン開始前にフォルダ自身を検証する
+    // （2026-08-19 Codexレビュー指摘）
+    await validateRootFolder(getFn, folderId);
+
     setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
     const listFn = createDriveListFn(() => auth.ensureAccessToken());
     const failedFolders: string[] = [];
-    // 入力されたフォルダID自体が誤り・権限無し等で取得できない場合はここで例外が投げられる
-    // （listAudioFilesRecursiveはルート取得の失敗を「0件」に変換しない、drive.ts参照）
     const entries = await listAudioFilesRecursive(listFn, folderId, "", failedFolders);
     renderResults(entries, failedFolders);
     setStatus("スキャン完了");

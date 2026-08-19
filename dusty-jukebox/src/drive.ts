@@ -5,6 +5,7 @@
 // 再帰走査・ページング・拡張子フィルタのロジックだけを担当する（rangeTokenizer.tsと同じDI方針でテスト可能にする）。
 
 import { isAudioFile } from "./lib";
+import { AuthError } from "./auth";
 
 export interface DriveFile {
   id: string;
@@ -12,6 +13,9 @@ export interface DriveFile {
   mimeType: string;
   size?: string;
   parents?: string[];
+  // フォルダショートカット（3.1節のフォルダ構成の実データには無かったが、Drive一般では
+  // 存在しうる）解決用。files.list/files.getのfieldsに含めた場合のみ埋まる
+  shortcutDetails?: { targetId?: string; targetMimeType?: string };
 }
 
 export interface DriveListPage {
@@ -34,8 +38,14 @@ export class DriveHttpError extends Error {
   }
 }
 
+// トークン失効・拒否を表す認証エラー全般。Drive APIが直接401を返したケース（DriveHttpError）
+// だけでなく、GISのサイレント再取得自体が失敗したケース（auth.tsのAuthError、
+// createDriveListFn呼び出し前のgetAccessToken()段階で発生）も同じ「走査全体を中断すべき
+// エラー」として扱う（2026-08-19 Codexレビュー指摘：後者がDriveHttpErrorではないため
+// 子フォルダの一時的な失敗として握りつぶされ、走査が中断されずに無効なトークンで
+// 続行してしまっていた）。
 function isAuthError(err: unknown): boolean {
-  return err instanceof DriveHttpError && err.status === 401;
+  return (err instanceof DriveHttpError && err.status === 401) || err instanceof AuthError;
 }
 
 // 401検知後、ConcurrencyLimiterのキューに残っている・まだ開始していない走査タスクを
@@ -44,6 +54,20 @@ function isAuthError(err: unknown): boolean {
 class ScanAbortedError extends Error {}
 
 const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
+const SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut";
+
+// フォルダIDそのものの存在・種別・アクセス権を確認する。files.list（'<folderId>' in parents）は
+// folderId自体を検証せず、存在しない/権限が無いIDに対しても単に空の子一覧（200応答）を返しうるため、
+// 「フォルダが空」と「そもそも無効なID」を区別できない（2026-08-19 Codexレビュー指摘）。
+// 呼び出し元（main.ts）はlistAudioFilesRecursiveの前にこれを呼び、失敗時のエラー表示に使う。
+export type DriveGetFn = (fileId: string) => Promise<{ mimeType: string }>;
+
+export async function validateRootFolder(getFile: DriveGetFn, folderId: string): Promise<void> {
+  const meta = await getFile(folderId);
+  if (meta.mimeType !== FOLDER_MIME_TYPE) {
+    throw new Error(`指定されたIDはフォルダではありません（mimeType: ${meta.mimeType}）`);
+  }
+}
 
 export async function listFolderChildren(list: DriveListFn, folderId: string): Promise<DriveFile[]> {
   const all: DriveFile[] = [];
@@ -109,8 +133,12 @@ export async function listAudioFilesRecursive(
 ): Promise<AudioFileEntry[]> {
   const limiter = new ConcurrencyLimiter(maxConcurrentLists);
   const controller = new AbortController();
+  // 通常の親子関係だけを辿る限り循環は起きないが、フォルダショートカットは任意のフォルダ
+  // （自分の祖先を含む）を指しうるため、訪問済みフォルダIDを共有して無限再帰を防ぐ
+  // （2026-08-19 Codexレビュー指摘。ルート自身も最初から訪問済みとして登録する）
+  const visited = new Set<string>([folderId]);
   try {
-    return await listAudioFilesRecursiveInternal(list, folderId, folderPath, failedFolders, true, limiter, controller);
+    return await listAudioFilesRecursiveInternal(list, folderId, folderPath, failedFolders, true, limiter, controller, visited);
   } finally {
     // 正常終了時は既に全タスクが完了しているため実質no-opだが、想定外の経路で
     // キュー済みタスクが残っていた場合の安全網として明示的に打ち切っておく
@@ -125,7 +153,8 @@ async function listAudioFilesRecursiveInternal(
   failedFolders: string[],
   isRoot: boolean,
   limiter: ConcurrencyLimiter,
-  controller: AbortController
+  controller: AbortController,
+  visited: Set<string>
 ): Promise<AudioFileEntry[]> {
   let children: DriveFile[];
   try {
@@ -147,13 +176,30 @@ async function listAudioFilesRecursiveInternal(
   // レイテンシが積み上がってしまうため
   const subfolderScans: Promise<AudioFileEntry[]>[] = [];
   for (const file of children) {
+    // フォルダ本体・フォルダを指すショートカットのどちらも再帰対象にする
+    // （2026-08-19 Codexレビュー指摘：ショートカットは走査対象外のためライブラリ整理に
+    // ショートカットを使っている場合、参照先のサブツリーが丸ごと欠落していた。
+    // ファイルを指すショートカット＝音源そのものの解決は対象外のまま残す）
+    let targetFolderId: string | null = null;
     if (file.mimeType === FOLDER_MIME_TYPE) {
-      const childPath = folderPath ? `${folderPath}/${file.name}` : file.name;
-      subfolderScans.push(
-        listAudioFilesRecursiveInternal(list, file.id, childPath, failedFolders, false, limiter, controller)
-      );
+      targetFolderId = file.id;
+    } else if (
+      file.mimeType === SHORTCUT_MIME_TYPE &&
+      file.shortcutDetails?.targetMimeType === FOLDER_MIME_TYPE &&
+      file.shortcutDetails.targetId
+    ) {
+      targetFolderId = file.shortcutDetails.targetId;
     } else if (isAudioFile(file.name)) {
       results.push({ file, folderPath });
+      continue;
+    }
+
+    if (targetFolderId && !visited.has(targetFolderId)) {
+      visited.add(targetFolderId);
+      const childPath = folderPath ? `${folderPath}/${file.name}` : file.name;
+      subfolderScans.push(
+        listAudioFilesRecursiveInternal(list, targetFolderId, childPath, failedFolders, false, limiter, controller, visited)
+      );
     }
   }
   for (const nested of await Promise.all(subfolderScans)) {
@@ -190,31 +236,58 @@ function isRetryableError(status: number, bodyText: string): boolean {
 // 429/5xx・クォータ超過理由の403（スロットリング・一時障害）は指数バックオフで数回リトライする。
 // 401等は即座にDriveHttpErrorとして呼び出し元（listAudioFilesRecursiveInternal）に伝え、
 // 認証エラーとしての特別扱いを可能にする。
+// files.list/files.get共通のリトライ付きfetch。getAccessToken()自体が失敗した場合
+// （AuthError、GISのサイレント再取得失敗）はリトライせずそのまま投げる
+// （isAuthError()でDriveHttpError(401)と同様に扱われ、走査全体の中断につながる）。
+async function fetchDriveApiWithRetry(url: string, getAccessToken: () => Promise<string>): Promise<Response> {
+  const maxRetries = 3;
+  let lastError: DriveHttpError | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const accessToken = await getAccessToken();
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (res.ok) return res;
+    const bodyText = await res.text();
+    lastError = new DriveHttpError(res.status, `Drive API request failed: ${res.status} ${bodyText}`);
+    if (attempt >= maxRetries || !isRetryableError(res.status, bodyText)) throw lastError;
+    await sleep(500 * 2 ** attempt);
+  }
+  // ループは必ずreturn/throwで終わるが、TypeScriptの制御フロー解析のために明示しておく
+  throw lastError ?? new Error("unreachable");
+}
+
+// DriveListFnの実実装。ensureAccessTokenで取得したアクセストークンをAuthorizationヘッダーに載せる。
+// drive.readonlyスコープに固定されたトークンのみを使うため、書き込み系エンドポイントは呼びようがない（CONCEPT.md 2節）。
+// 429/5xx・クォータ超過理由の403（スロットリング・一時障害）は指数バックオフで数回リトライする。
+// 401等は即座にDriveHttpErrorとして呼び出し元（listAudioFilesRecursiveInternal）に伝え、
+// 認証エラーとしての特別扱いを可能にする。
+// supportsAllDrives/includeItemsFromAllDrivesを指定し、共有ドライブ配下のフォルダを
+// ルートに指定した場合でも子が取得できるようにする（既定ではマイドライブのみが対象になり、
+// 共有ドライブは空のライブラリとして「スキャン完了」してしまう。2026-08-19 Codexレビュー指摘）
 export function createDriveListFn(getAccessToken: () => Promise<string>): DriveListFn {
   return async (folderId, pageToken) => {
     const params = new URLSearchParams({
       q: `'${folderId}' in parents and trashed = false`,
-      fields: "nextPageToken, files(id, name, mimeType, size, parents)",
+      fields: "nextPageToken, files(id, name, mimeType, size, parents, shortcutDetails)",
       pageSize: "1000",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
     });
     if (pageToken) params.set("pageToken", pageToken);
     const url = `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
 
-    const maxRetries = 3;
-    let lastError: DriveHttpError | null = null;
-    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-      const accessToken = await getAccessToken();
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-      if (res.ok) {
-        const data = (await res.json()) as { files?: DriveFile[]; nextPageToken?: string };
-        return { files: data.files ?? [], nextPageToken: data.nextPageToken };
-      }
-      const bodyText = await res.text();
-      lastError = new DriveHttpError(res.status, `Drive files.list failed: ${res.status} ${bodyText}`);
-      if (attempt >= maxRetries || !isRetryableError(res.status, bodyText)) throw lastError;
-      await sleep(500 * 2 ** attempt);
-    }
-    // ループは必ずreturn/throwで終わるが、TypeScriptの制御フロー解析のために明示しておく
-    throw lastError ?? new Error("unreachable");
+    const res = await fetchDriveApiWithRetry(url, getAccessToken);
+    const data = (await res.json()) as { files?: DriveFile[]; nextPageToken?: string };
+    return { files: data.files ?? [], nextPageToken: data.nextPageToken };
+  };
+}
+
+// DriveGetFnの実実装。validateRootFolder()（ルートフォルダの存在・種別検証）専用。
+export function createDriveGetFn(getAccessToken: () => Promise<string>): DriveGetFn {
+  return async (fileId) => {
+    const params = new URLSearchParams({ fields: "id,mimeType", supportsAllDrives: "true" });
+    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`;
+    const res = await fetchDriveApiWithRetry(url, getAccessToken);
+    const data = (await res.json()) as { mimeType: string };
+    return { mimeType: data.mimeType };
   };
 }
