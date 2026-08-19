@@ -113,4 +113,18 @@ describe("auth", () => {
     // requestAccessToken()（GISへの実際の要求）は1回しか呼ばれていない
     expect(gis.requestAccessTokenCallCount()).toBe(1);
   });
+
+  test("DriveAuth: clearToken()はキャッシュ済みトークンを無効化する（2026-08-19 Codexレビュー指摘: 401後もトークンを残すと再スキャンが必ず同じ拒否済みトークンで失敗する）", async () => {
+    const gis = installFakeGis();
+    const auth = new DriveAuth();
+    auth.init("dummy-client-id");
+
+    const pending = auth.requestAccessToken({ prompt: "consent" });
+    gis.emitToken({ access_token: "revoked-token", expires_in: 3600 });
+    await pending;
+    expect(auth.getAccessToken()).toBe("revoked-token");
+
+    auth.clearToken();
+    expect(auth.getAccessToken()).toBeNull();
+  });
 });

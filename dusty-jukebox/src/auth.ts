@@ -100,6 +100,14 @@ export class DriveAuth {
     return isTokenValid(this.state) ? this.state.accessToken : null;
   }
 
+  // Drive APIが401を返した場合（取り消し・失効等、ローカルのexpiresAtではまだ有効に
+  // 見えていても実際には拒否されるケース）に呼ぶ。呼ばないと、次回のensureAccessToken()が
+  // 同じ拒否済みトークンを期限マージンに入るまで返し続け、再スキャンが必ず失敗する
+  // （2026-08-19 Codexレビュー指摘）。呼び出し元（main.ts）で401/AuthError検知時に呼び出す。
+  clearToken(): void {
+    this.state = null;
+  }
+
   // prompt: ""はサイレント取得（既存セッションがあれば同意画面を出さない）。
   // 明示ログイン時は呼び出し側でprompt: "consent"等を指定する。
   requestAccessToken(opts?: { prompt?: string }): Promise<TokenState> {

@@ -266,16 +266,28 @@ function isRetryableError(status: number, bodyText: string): boolean {
 // （AuthError、GISのサイレント再取得失敗）はリトライせずそのまま投げる
 // （isAuthError()でDriveHttpError(401)と同様に扱われ、走査全体の中断につながる）。
 // 429/5xx・クォータ超過理由の403（スロットリング・一時障害）は指数バックオフで数回リトライする。
+// fetch()自体が例外を投げるケース（一時的な切断・DNS障害等のTypeError、HTTPレスポンスすら
+// 返ってこない）も同じリトライ予算で扱う（2026-08-19 Codexレビュー指摘。元々はHTTPレスポンスを
+// 受け取った場合しかリトライ対象にしておらず、この種の一時的な通信断がそのまま
+// 子フォルダの失敗として確定してしまっていた）。
 async function fetchDriveApiWithRetry(
   url: string,
   getAccessToken: () => Promise<string>,
   extraHeaders?: Record<string, string>
 ): Promise<Response> {
   const maxRetries = 3;
-  let lastError: DriveHttpError | null = null;
+  let lastError: Error | null = null;
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     const accessToken = await getAccessToken();
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}`, ...extraHeaders } });
+    let res: Response;
+    try {
+      res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}`, ...extraHeaders } });
+    } catch (networkErr) {
+      lastError = networkErr instanceof Error ? networkErr : new Error(String(networkErr));
+      if (attempt >= maxRetries) throw lastError;
+      await sleep(500 * 2 ** attempt);
+      continue;
+    }
     if (res.ok) return res;
     const bodyText = await res.text();
     lastError = new DriveHttpError(res.status, `Drive API request failed: ${res.status} ${bodyText}`);

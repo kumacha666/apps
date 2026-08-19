@@ -353,6 +353,37 @@ describe("createDriveListFn", () => {
     expect(page.files.map((f) => f.id)).toEqual(["a"]);
   });
 
+  test("fetch()自体が例外を投げる一時的な通信断もリトライし、最終的に成功する（2026-08-19 Codexレビュー指摘）", async () => {
+    vi.useFakeTimers();
+    let call = 0;
+    const fetchMock = vi.fn(async () => {
+      call += 1;
+      if (call === 1) throw new TypeError("Failed to fetch");
+      return fakeResponse(200, { files: [{ id: "a", name: "a.mp3", mimeType: "audio/mpeg" }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const list = createDriveListFn(async () => "token");
+    const promise = list("folder", undefined);
+    await vi.runAllTimersAsync();
+    const page = await promise;
+    expect(page.files.map((f) => f.id)).toEqual(["a"]);
+  });
+
+  test("fetch()の通信断がリトライ上限まで続いた場合は最後の例外をそのまま投げる", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const list = createDriveListFn(async () => "token");
+    const promise = list("folder", undefined);
+    promise.catch(() => {}); // unhandled rejection警告を避ける（下のexpectで実際にawaitして検証する）
+    await vi.runAllTimersAsync();
+    await expect(promise).rejects.toBeInstanceOf(TypeError);
+  });
+
   test("reasonがrateLimitExceeded/userRateLimitExceededの403もリトライする（2026-08-19 Codexレビュー指摘）", async () => {
     vi.useFakeTimers();
     const responses = [

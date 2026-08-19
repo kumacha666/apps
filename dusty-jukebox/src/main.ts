@@ -1,7 +1,20 @@
 // エントリポイント。Phase 1着手順1: OAuth認証（トークンモデル）＋drive.readonlyでのファイル一覧取得のみ実装。
 // 索引Sheets書き込み・実Rangeフェッチ・絞り込み/再生UIは未着手（dusty-jukebox/CLAUDE.md参照）。
 import { AuthError, DriveAuth } from "./auth";
-import { createDriveGetFn, createDriveListFn, listAudioFilesRecursive, validateRootFolder, type AudioFileEntry } from "./drive";
+import {
+  createDriveGetFn,
+  createDriveListFn,
+  listAudioFilesRecursive,
+  validateRootFolder,
+  DriveHttpError,
+  type AudioFileEntry,
+} from "./drive";
+
+// Drive APIが直接401を返したケース・GISのサイレント再取得自体が失敗したケースのどちらも、
+// 「今キャッシュされているトークンはもう使えない」ことを意味する
+function isAuthFailure(err: unknown): boolean {
+  return err instanceof AuthError || (err instanceof DriveHttpError && err.status === 401);
+}
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
@@ -88,6 +101,11 @@ async function handleScan(): Promise<void> {
     renderResults(entries, failedFolders);
     setStatus("スキャン完了");
   } catch (err) {
+    // 401（トークン取り消し等）は、ローカルのexpiresAtがまだ有効に見えていても
+    // Drive APIに拒否されたことを意味する。キャッシュを残したままだと次回の
+    // ensureAccessToken()も同じ拒否済みトークンを返し続け、期限マージンに入るか
+    // ユーザーが再ログインするまで必ず失敗し続けてしまう（2026-08-19 Codexレビュー指摘）
+    if (isAuthFailure(err)) auth.clearToken();
     setStatus(err instanceof Error ? err.message : String(err), true);
   } finally {
     scanBtn.disabled = false;
