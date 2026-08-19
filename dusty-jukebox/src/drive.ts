@@ -38,6 +38,11 @@ function isAuthError(err: unknown): boolean {
   return err instanceof DriveHttpError && err.status === 401;
 }
 
+// 401検知後、ConcurrencyLimiterのキューに残っている・まだ開始していない走査タスクを
+// 静かに打ち切るための内部エラー。同じ無効なトークンでAPIを叩き続けるのを防ぐ
+// （2026-08-19 Codexレビュー指摘）。呼び出し元には伝播させない（failedFoldersにも積まない）。
+class ScanAbortedError extends Error {}
+
 const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 
 export async function listFolderChildren(list: DriveListFn, folderId: string): Promise<DriveFile[]> {
@@ -89,6 +94,12 @@ export class ConcurrencyLimiter {
 // 認証エラー（401、トークン失効・拒否）は、走査を続けても意味が無いため呼び出し元に
 // 例外として伝える。それ以外の子フォルダ単位の失敗（一時的な5xx等）はfailedFoldersに
 // 積んで先へ進み、スキャン全体は止めない（catalog-script/src/scan.jsの方針と同じ）。
+//
+// 401が起きた際、他の兄弟フォルダの走査（既にConcurrencyLimiterのキューに並んでいる、
+// またはこれから並ぶ分）は共有のAbortControllerで打ち切る。同じ無効なトークンのまま
+// 走査を続けさせない（2026-08-19 Codexレビュー指摘）。JS版のfetchにsignalを渡す形の
+// 厳密な中断ではなく、キュー未消化のタスクを対象にした協調的な打ち切りである点に注意
+// （既にHTTPリクエストが発行済みのタスクまでは止められない。実装の詳細はdrive.test.ts参照）。
 export async function listAudioFilesRecursive(
   list: DriveListFn,
   folderId: string,
@@ -97,7 +108,14 @@ export async function listAudioFilesRecursive(
   maxConcurrentLists = DEFAULT_MAX_CONCURRENT_LISTS
 ): Promise<AudioFileEntry[]> {
   const limiter = new ConcurrencyLimiter(maxConcurrentLists);
-  return listAudioFilesRecursiveInternal(list, folderId, folderPath, failedFolders, true, limiter);
+  const controller = new AbortController();
+  try {
+    return await listAudioFilesRecursiveInternal(list, folderId, folderPath, failedFolders, true, limiter, controller);
+  } finally {
+    // 正常終了時は既に全タスクが完了しているため実質no-opだが、想定外の経路で
+    // キュー済みタスクが残っていた場合の安全網として明示的に打ち切っておく
+    controller.abort();
+  }
 }
 
 async function listAudioFilesRecursiveInternal(
@@ -106,12 +124,18 @@ async function listAudioFilesRecursiveInternal(
   folderPath: string,
   failedFolders: string[],
   isRoot: boolean,
-  limiter: ConcurrencyLimiter
+  limiter: ConcurrencyLimiter,
+  controller: AbortController
 ): Promise<AudioFileEntry[]> {
   let children: DriveFile[];
   try {
-    children = await limiter.run(() => listFolderChildren(list, folderId));
+    children = await limiter.run(() => {
+      if (controller.signal.aborted) throw new ScanAbortedError("走査は中断されました");
+      return listFolderChildren(list, folderId);
+    });
   } catch (err) {
+    if (isAuthError(err)) controller.abort();
+    if (err instanceof ScanAbortedError) return []; // 中断による静かな終了。failedFoldersには積まない
     if (isRoot || isAuthError(err)) throw err;
     failedFolders.push(folderPath || folderId);
     return [];
@@ -125,7 +149,9 @@ async function listAudioFilesRecursiveInternal(
   for (const file of children) {
     if (file.mimeType === FOLDER_MIME_TYPE) {
       const childPath = folderPath ? `${folderPath}/${file.name}` : file.name;
-      subfolderScans.push(listAudioFilesRecursiveInternal(list, file.id, childPath, failedFolders, false, limiter));
+      subfolderScans.push(
+        listAudioFilesRecursiveInternal(list, file.id, childPath, failedFolders, false, limiter, controller)
+      );
     } else if (isAudioFile(file.name)) {
       results.push({ file, folderPath });
     }

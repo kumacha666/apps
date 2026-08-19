@@ -129,6 +129,42 @@ describe("listAudioFilesRecursive", () => {
     expect(failedFolders).toEqual(["VARIOUS"]);
     expect(found.some((e) => e.file.id === "w1")).toBe(true);
   });
+
+  test("401後は同時実行数の制限キューに並んでいた他の兄弟フォルダの走査を打ち切り、無効なトークンでAPIを叩き続けない（2026-08-19 Codexレビュー指摘）", async () => {
+    // maxConcurrentLists=1にして、兄弟フォルダA/B/C/D/Eが厳密に1件ずつ順番に処理される
+    // ようにする。Aが401を返した後、まだ実行に入っていなかった後方のフォルダ（少なくとも
+    // 最後のE）は実際のAPI呼び出しが発生しないことを確認する。
+    const wide: Record<string, DriveFile[]> = {
+      root: ["A", "B", "C", "D", "E"].map((id) => ({
+        id,
+        name: id,
+        mimeType: "application/vnd.google-apps.folder",
+      })),
+      A: [],
+      B: [],
+      C: [],
+      D: [],
+      E: [],
+    };
+    const calledFolders: string[] = [];
+    const list: DriveListFn = async (folderId) => {
+      calledFolders.push(folderId);
+      if (folderId === "A") throw new DriveHttpError(401, "invalid_token");
+      return { files: wide[folderId] ?? [] };
+    };
+
+    const failedFolders: string[] = [];
+    await expect(listAudioFilesRecursive(list, "root", "", failedFolders, 1)).rejects.toBeInstanceOf(DriveHttpError);
+
+    expect(calledFolders).toContain("A");
+    // ConcurrencyLimiterのキューに既に並んでいた1件程度が「巻き込まれて」実行される可能性は
+    // 許容するが（協調的キャンセルであり、発行済みのHTTPリクエストまでは止められない）、
+    // 最後尾のEまで律儀に実行され続けることはない
+    expect(calledFolders).not.toContain("E");
+    expect(calledFolders.length).toBeLessThan(5);
+    // 中断によるスキップはfailedFoldersに積む対象の失敗ではない
+    expect(failedFolders).toEqual([]);
+  });
 });
 
 describe("ConcurrencyLimiter", () => {
