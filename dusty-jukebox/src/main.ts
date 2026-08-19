@@ -85,6 +85,9 @@ async function handleScan(): Promise<void> {
   }
   const scanBtn = el<HTMLButtonElement>("scan-btn");
   scanBtn.disabled = true;
+  // 前回の結果を残したまま失敗すると、新しいフォルダのエラーと前回の件数が同時に
+  // 表示され古い件数を今回の結果と誤認しうる（2026-08-19 Codexレビュー指摘）
+  el<HTMLUListElement>("result-list").innerHTML = "";
   try {
     setStatus("フォルダを確認中...");
     const getFn = createDriveGetFn(() => auth.ensureAccessToken());
