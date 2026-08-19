@@ -44,6 +44,10 @@ export function sheetRange(sheetName: string, cell: string): string {
 // UTF-8のJIS系文字列をShift_JIS/EUC-JP等で誤デコードした際に頻出する文字（いわゆる「文字化けマーカー」）と、
 // デコード失敗を示すU+FFFDの出現を検出する簡易ヒューリスティック。完全な判定ではなく「要目視確認」フラグ用途。
 const MOJIBAKE_MARKERS = ["縺", "繧", "繝", "蟲", "繹", "荳", "隱"];
+// buildRow()は1ファイルあたり最大5回detectGarbled()を呼ぶため、10235件規模のスキャンでは
+// マーカーごとのRegExpを毎回newすると数十万回のコンパイルが走る。固定のマーカー集合なので
+// モジュールロード時に1度だけコンパイルして使い回す。
+const MOJIBAKE_MARKER_REGEXES = MOJIBAKE_MARKERS.map((marker) => new RegExp(marker, "g"));
 
 export function detectGarbled(text: string | undefined | null): boolean {
   if (!text) return false;
@@ -55,8 +59,8 @@ export function detectGarbled(text: string | undefined | null): boolean {
   // 見逃してしまうため（閾値2は、通常の日本語文章にマーカー文字が単発で
   // 紛れ込むだけでは誤検出しないようにするためのもの）
   let markerHits = 0;
-  for (const marker of MOJIBAKE_MARKERS) {
-    const matches = text.match(new RegExp(marker, "g"));
+  for (const regex of MOJIBAKE_MARKER_REGEXES) {
+    const matches = text.match(regex);
     if (matches) markerHits += matches.length;
   }
   return markerHits >= 2;
