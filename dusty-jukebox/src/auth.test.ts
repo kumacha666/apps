@@ -16,9 +16,11 @@ import {
 function installFakeGis(): {
   emitToken: (resp: GisTokenResponse) => void;
   emitError: (err: GisTokenErrorResponse) => void;
+  requestAccessTokenCallCount: () => number;
 } {
   let onToken: (resp: GisTokenResponse) => void = () => {};
   let onError: (err: GisTokenErrorResponse) => void = () => {};
+  let requestCount = 0;
 
   const oauth2: GisAccounts["oauth2"] = {
     initTokenClient: (config) => {
@@ -31,7 +33,9 @@ function installFakeGis(): {
         set callback(cb) {
           onToken = cb;
         },
-        requestAccessToken: () => {},
+        requestAccessToken: () => {
+          requestCount += 1;
+        },
       };
     },
   };
@@ -42,6 +46,7 @@ function installFakeGis(): {
   return {
     emitToken: (resp) => onToken(resp),
     emitError: (err) => onError(err),
+    requestAccessTokenCallCount: () => requestCount,
   };
 }
 
@@ -93,5 +98,19 @@ describe("auth", () => {
     gis.emitToken({ access_token: "token-1", expires_in: 3600 });
     const state = await first;
     expect(state.accessToken).toBe("token-1");
+  });
+
+  test("DriveAuth: ensureAccessToken()の並行呼び出しは同じ更新を共有する（drive.tsの並行フォルダ走査を想定）", async () => {
+    const gis = installFakeGis();
+    const auth = new DriveAuth();
+    auth.init("dummy-client-id");
+
+    // 兄弟フォルダの並行走査から同時にensureAccessToken()が呼ばれる状況を再現する
+    const results = Promise.all([auth.ensureAccessToken(), auth.ensureAccessToken(), auth.ensureAccessToken()]);
+    gis.emitToken({ access_token: "shared-token", expires_in: 3600 });
+
+    expect(await results).toEqual(["shared-token", "shared-token", "shared-token"]);
+    // requestAccessToken()（GISへの実際の要求）は1回しか呼ばれていない
+    expect(gis.requestAccessTokenCallCount()).toBe(1);
   });
 });

@@ -76,6 +76,8 @@ export class DriveAuth {
   // requestAccessToken()実行中のreject。GISのcallback/error_callbackはどちらも
   // トークンクライアント単位の1つの登録先にしかならないため、多重実行を防ぐガードにも使う
   private pendingReject: ((err: Error) => void) | null = null;
+  // ensureAccessToken()の多重呼び出しが同じ更新処理を共有するための進行中Promise（下記参照）
+  private pendingEnsure: Promise<string> | null = null;
 
   init(clientId: string): void {
     if (!window.google) {
@@ -131,10 +133,23 @@ export class DriveAuth {
 
   // 期限が近ければサイレント再取得を試み、有効なトークンを返す。
   // サイレント取得が失敗した場合（同意が必要等）は呼び出し側でrequestAccessToken({prompt: "consent"})を促す
+  //
+  // drive.tsのフォルダ走査は兄弟フォルダを並行に処理するため、トークンが期限マージンに
+  // 入ったタイミングで複数のensureAccessToken()が同時に呼ばれうる。requestAccessToken()の
+  // 多重実行ガードにそのまま任せると、最初の1件だけが実際に更新を試み、残りは
+  // 「進行中です」で即座にrejectされ、大量のフォルダが取得失敗扱いになってしまう
+  // （2026-08-19 Codexレビュー指摘）。進行中の更新Promiseを共有することでこれを避ける。
   async ensureAccessToken(): Promise<string> {
     const existing = this.getAccessToken();
     if (existing) return existing;
-    const state = await this.requestAccessToken({ prompt: "" });
-    return state.accessToken;
+    if (this.pendingEnsure) return this.pendingEnsure;
+
+    const ensure = this.requestAccessToken({ prompt: "" })
+      .then((state) => state.accessToken)
+      .finally(() => {
+        this.pendingEnsure = null;
+      });
+    this.pendingEnsure = ensure;
+    return ensure;
   }
 }

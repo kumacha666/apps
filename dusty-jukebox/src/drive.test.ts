@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { listAudioFilesRecursive, listFolderChildren, type DriveFile, type DriveListFn } from "./drive";
+import {
+  listAudioFilesRecursive,
+  listFolderChildren,
+  ConcurrencyLimiter,
+  DriveHttpError,
+  type DriveFile,
+  type DriveListFn,
+} from "./drive";
 
 // フォルダID -> 直接の子（ファイル・フォルダ混在）のフェイクツリー。
 // 3.1節の実データ構成（アーティスト/アルバム階層＋非楽曲ファイルの混在）を模したサンプル。
@@ -96,5 +103,61 @@ describe("listAudioFilesRecursive", () => {
     );
     // 子フォルダの失敗とは異なり、ルート自体の失敗はfailedFoldersにも積まれない（例外がそのまま伝わるため）
     expect(failedFolders).toEqual([]);
+  });
+
+  test("深い階層で401（認証エラー）が起きた場合は子フォルダの失敗として握りつぶさず、走査全体を中断して呼び出し元に伝える", async () => {
+    const tree = makeFakeTree();
+    const list: DriveListFn = async (folderId) => {
+      if (folderId === "various") throw new DriveHttpError(401, "invalid_token");
+      return { files: tree[folderId] ?? [] };
+    };
+    const failedFolders: string[] = [];
+    await expect(listAudioFilesRecursive(list, "root", "", failedFolders)).rejects.toBeInstanceOf(DriveHttpError);
+    // 401はfailedFoldersに積んで継続する対象ではない（トークンが有効な間は再試行しても同じ結果になるため）
+    expect(failedFolders).toEqual([]);
+  });
+
+  test("401以外のDriveHttpError（例: 403）はこれまで通り子フォルダの失敗として記録し継続する", async () => {
+    const tree = makeFakeTree();
+    const list: DriveListFn = async (folderId) => {
+      if (folderId === "various") throw new DriveHttpError(403, "insufficient permissions");
+      return { files: tree[folderId] ?? [] };
+    };
+    const failedFolders: string[] = [];
+    const found = await listAudioFilesRecursive(list, "root", "", failedFolders);
+    expect(failedFolders).toEqual(["VARIOUS"]);
+    expect(found.some((e) => e.file.id === "w1")).toBe(true);
+  });
+});
+
+describe("ConcurrencyLimiter", () => {
+  test("同時実行数がmaxを超えない", async () => {
+    const limiter = new ConcurrencyLimiter(2);
+    let active = 0;
+    let peak = 0;
+
+    const task = () =>
+      limiter.run(async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+      });
+
+    await Promise.all([task(), task(), task(), task(), task()]);
+    expect(peak).toBeLessThanOrEqual(2);
+  });
+
+  test("全タスクが実行される（キューイングで取りこぼさない）", async () => {
+    const limiter = new ConcurrencyLimiter(2);
+    const results: number[] = [];
+    await Promise.all(
+      [1, 2, 3, 4, 5].map((n) =>
+        limiter.run(async () => {
+          results.push(n);
+        })
+      )
+    );
+    expect(results.sort()).toEqual([1, 2, 3, 4, 5]);
   });
 });
