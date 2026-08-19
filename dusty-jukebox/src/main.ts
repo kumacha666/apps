@@ -42,6 +42,8 @@ function setStatus(message: string, isError = false): void {
 }
 
 async function handleLogin(): Promise<void> {
+  const loginBtn = el<HTMLButtonElement>("login-btn");
+  loginBtn.disabled = true;
   try {
     setStatus("ログイン中...");
     await auth.requestAccessToken({ prompt: "consent" });
@@ -49,6 +51,8 @@ async function handleLogin(): Promise<void> {
     el<HTMLButtonElement>("scan-btn").disabled = false;
   } catch (err) {
     setStatus(err instanceof AuthError ? err.message : String(err), true);
+  } finally {
+    loginBtn.disabled = false;
   }
 }
 
@@ -66,15 +70,34 @@ async function handleScan(): Promise<void> {
     setStatus("フォルダIDを入力してください", true);
     return;
   }
+  const scanBtn = el<HTMLButtonElement>("scan-btn");
+  scanBtn.disabled = true;
   try {
     setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
     const listFn = createDriveListFn(() => auth.ensureAccessToken());
     const failedFolders: string[] = [];
+    // 入力されたフォルダID自体が誤り・権限無し等で取得できない場合はここで例外が投げられる
+    // （listAudioFilesRecursiveはルート取得の失敗を「0件」に変換しない、drive.ts参照）
     const entries = await listAudioFilesRecursive(listFn, folderId, "", failedFolders);
     renderResults(entries, failedFolders);
     setStatus("スキャン完了");
   } catch (err) {
     setStatus(err instanceof Error ? err.message : String(err), true);
+  } finally {
+    scanBtn.disabled = false;
+  }
+}
+
+// Google Identity Servicesの<script async defer>は、同じくtype="module"で読み込まれる
+// このスクリプトより先に実行が終わる保証も後に終わる保証も無い（asyncはdeferと違い実行順序を
+// 保証しない）。window.loadは非同期スクリプトの読み込み完了も待つため、これを待ってから
+// auth.init()を呼ぶことで「GISの読み込みが間に合わずwindow.googleが無い」競合を避ける
+// （2026-08-19 Codexレビュー指摘）。
+function whenPageLoaded(cb: () => void): void {
+  if (document.readyState === "complete") {
+    cb();
+  } else {
+    window.addEventListener("load", cb, { once: true });
   }
 }
 
@@ -82,9 +105,16 @@ function init(): void {
   render();
   if (!CLIENT_ID) return;
 
-  auth.init(CLIENT_ID);
-  el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
-  el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
+  whenPageLoaded(() => {
+    try {
+      auth.init(CLIENT_ID);
+    } catch (err) {
+      setStatus(err instanceof AuthError ? err.message : String(err), true);
+      return;
+    }
+    el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
+    el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
+  });
 }
 
 init();

@@ -85,4 +85,16 @@ describe("listAudioFilesRecursive", () => {
     expect(found.some((e) => e.file.id === "w1")).toBe(true);
     expect(found.some((e) => e.file.id === "v1")).toBe(false);
   });
+
+  test("ルートフォルダ自体の取得失敗は握りつぶさず呼び出し元に例外として伝える（フォルダID誤り等を「0件」と区別する）", async () => {
+    const list: DriveListFn = async () => {
+      throw new Error("404 Not Found");
+    };
+    const failedFolders: string[] = [];
+    await expect(listAudioFilesRecursive(list, "does-not-exist", "", failedFolders)).rejects.toThrow(
+      "404 Not Found"
+    );
+    // 子フォルダの失敗とは異なり、ルート自体の失敗はfailedFoldersにも積まれない（例外がそのまま伝わるため）
+    expect(failedFolders).toEqual([]);
+  });
 });

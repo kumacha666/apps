@@ -34,6 +34,15 @@ export interface GisTokenResponse {
   error_description?: string;
 }
 
+// GISはトークン取得の失敗をcallbackではなくerror_callbackで通知する場合がある
+// （ユーザーがOAuthポップアップを閉じた・ブラウザがポップアップをブロックした等）。
+// これをハンドルしないとrequestAccessToken()のPromiseが永遠にpendingのままになる
+// （2026-08-19 Codexレビュー指摘）。
+export interface GisTokenErrorResponse {
+  type: string;
+  message?: string;
+}
+
 export interface GisTokenClient {
   callback: (resp: GisTokenResponse) => void;
   requestAccessToken: (opts?: { prompt?: string }) => void;
@@ -45,6 +54,7 @@ export interface GisAccounts {
       client_id: string;
       scope: string;
       callback: (resp: GisTokenResponse) => void;
+      error_callback: (err: GisTokenErrorResponse) => void;
     }) => GisTokenClient;
   };
 }
@@ -63,6 +73,9 @@ export class AuthError extends Error {}
 export class DriveAuth {
   private tokenClient: GisTokenClient | null = null;
   private state: TokenState | null = null;
+  // requestAccessToken()実行中のreject。GISのcallback/error_callbackはどちらも
+  // トークンクライアント単位の1つの登録先にしかならないため、多重実行を防ぐガードにも使う
+  private pendingReject: ((err: Error) => void) | null = null;
 
   init(clientId: string): void {
     if (!window.google) {
@@ -72,6 +85,12 @@ export class DriveAuth {
       client_id: clientId,
       scope: DRIVE_READONLY_SCOPE,
       callback: () => {}, // requestAccessToken()の都度差し替える
+      error_callback: (err) => {
+        // ポップアップを閉じた・ブロックされた等、callbackが一度も呼ばれないまま終わるケース。
+        // pendingRejectが無ければ(このクラスの外で発生した無関係なエラー等)何もしない
+        this.pendingReject?.(new AuthError(err.message ?? err.type));
+        this.pendingReject = null;
+      },
     });
   }
 
@@ -85,9 +104,16 @@ export class DriveAuth {
     if (!this.tokenClient) {
       return Promise.reject(new AuthError("DriveAuth.init()が呼ばれていません"));
     }
+    // 前回の要求が完了していないうちに二重に呼ぶと、callback/error_callbackの
+    // 登録が上書きされ最初のPromiseが永遠にpendingのまま残ってしまうため、明示的に弾く
+    if (this.pendingReject) {
+      return Promise.reject(new AuthError("ログイン処理が既に進行中です"));
+    }
     const client = this.tokenClient;
     return new Promise((resolve, reject) => {
+      this.pendingReject = reject;
       client.callback = (resp) => {
+        this.pendingReject = null;
         if (resp.error || !resp.access_token) {
           reject(new AuthError(resp.error_description ?? resp.error ?? "アクセストークン取得に失敗しました"));
           return;

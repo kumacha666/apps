@@ -41,31 +41,50 @@ export interface AudioFileEntry {
 }
 
 // folderId配下を再帰的に走査し、拡張子ベースで音楽ファイルを発見する（3.2節）。
-// 1フォルダの取得失敗はfailedFoldersに積んで先へ進み、スキャン全体を止めない
-// （catalog-script/src/scan.jsの方針と同じ）。
+// 呼び出し元が指定したルートフォルダ自体の取得失敗は、フォルダIDの誤り・権限無し・
+// トークン拒否等スキャン全体が無効な可能性が高いため、子フォルダの失敗（failedFoldersに
+// 積んで継続）とは区別して呼び出し元に例外として伝える（2026-08-19 Codexレビュー指摘:
+// 「0件見つかった」と「そもそも取得に失敗した」を区別できないと、誤ったフォルダIDでの
+// スキャンが「完了・0件」と表示されてしまう）。
 export async function listAudioFilesRecursive(
   list: DriveListFn,
   folderId: string,
   folderPath = "",
   failedFolders: string[] = []
 ): Promise<AudioFileEntry[]> {
+  return listAudioFilesRecursiveInternal(list, folderId, folderPath, failedFolders, true);
+}
+
+async function listAudioFilesRecursiveInternal(
+  list: DriveListFn,
+  folderId: string,
+  folderPath: string,
+  failedFolders: string[],
+  isRoot: boolean
+): Promise<AudioFileEntry[]> {
   let children: DriveFile[];
   try {
     children = await listFolderChildren(list, folderId);
-  } catch {
+  } catch (err) {
+    if (isRoot) throw err;
     failedFolders.push(folderPath || folderId);
     return [];
   }
 
   const results: AudioFileEntry[] = [];
+  // 兄弟フォルダは互いに依存しないため並行に走査する。10235件規模のライブラリ（CONCEPT.md 3.4節）を
+  // 直列に走査すると、フォルダ数だけ往復レイテンシが積み上がってしまうため
+  const subfolderScans: Promise<AudioFileEntry[]>[] = [];
   for (const file of children) {
     if (file.mimeType === FOLDER_MIME_TYPE) {
       const childPath = folderPath ? `${folderPath}/${file.name}` : file.name;
-      const nested = await listAudioFilesRecursive(list, file.id, childPath, failedFolders);
-      results.push(...nested);
+      subfolderScans.push(listAudioFilesRecursiveInternal(list, file.id, childPath, failedFolders, false));
     } else if (isAudioFile(file.name)) {
       results.push({ file, folderPath });
     }
+  }
+  for (const nested of await Promise.all(subfolderScans)) {
+    results.push(...nested);
   }
   return results;
 }
