@@ -14,6 +14,7 @@
 /7metch2/            ナナメッチ系列の新作（開発中）— Vite+TS、ビルド有
 /7metch-tools/       7metch用デバッグ・プレビュー用の単独HTMLツール群
 /combrawl/           カード×オートバトラー・ローグライク「combrawl」（開発中）— Vite+TS、ビルド有
+/dusty-jukebox/      Googleドライブ音楽プレイヤー「DustyJukebox」（開発中・雛形段階）— Vite+TS、ビルド有
 /enblo/              ローグライクバトラー（開発中）— Vite+TS、ビルド有、Playwright e2e有
 /enblo-classic/      enbloの大規模再設計前の完成形（試作品v1）を凍結・独立公開したもの — Vite+TS、ビルド有
 /enblo-tools/        enblo用デバッグ・プレビュー用の単独HTMLツール群
@@ -43,7 +44,7 @@
 - `marvel-checklist` は`icon-192.png`/`icon-512.png`のPNGファイルを持たず、単一の`icon.svg`（`sizes: "any"`）を`manifest.json`から参照する方式（PNG生成不要でスケーラブル）。データは`data/movies.json`にMCU（フェイズ別、映画＋Disney+ドラマシリーズをシーズン単位で混在）・ソニー（サム・ライミ版／アメイジング・スパイダーマン／SSU）・フォックス（X-MEN系／ファンタスティック・フォー）・その他（ブレイド等）の作品を`type`（`movie`/`series`）・`releaseDate`付きで収録し、視聴済みフラグと見るべき度合い評価（◎〇△✕、任意項目）は`localStorage`（`marvel-checklist-state-v1`）に保存。未公開作品（`releaseDate`が未来）は視聴済みチェックを無効化しつつ評価のみ設定可能。共有リンク経由で友達のリストを自分の端末にローカル保存・手動編集できる「友達」機能（バックエンド無し・自動同期無し、`marvel-checklist-friends-v1`等に保存）、`data/characters.json`（登場キャラクターの出演作収録、2作品以上に登場するキャラのみ）に基づき各作品カードに「前提作品」（登場人物の理解に先に見ておきたい作品）を表示する機能も持つ。**A系の中で唯一ユニットテストを持つ例外**（ビルドステップは無いが、公開日判定・進捗集計・インポート検証などのロジックを`logic.js`に切り出しており、`npm test`（Node標準テストランナー、`test/logic.test.mjs`）で検証する。`app.js`はDOM描画のみを担当しESモジュールとして`logic.js`を読み込む）。詳細は`marvel-checklist/CLAUDE.md`参照
 
 ### B. Vite+TypeScriptビルドアプリ
-`7metch`, `7metch2`, `enblo`, `enblo-classic`, `combrawl` が該当。共通構成:
+`7metch`, `7metch2`, `enblo`, `enblo-classic`, `combrawl`, `dusty-jukebox` が該当。共通構成:
 - `src/` 配下にTypeScript、`vite.config.js` でビルド設定
 - `package.json` の `prebuild` フックで `npm test`（Vitest）を自動実行 → テスト失敗時はビルド自体が止まる
 - `npm run deploy` で「ビルド → dist/ を所定の場所にコピー → SWバージョン自動更新」まで1コマンドで完結（手動コピー・手動バージョン更新はしない方針）
@@ -51,6 +52,7 @@
 - `enblo`/`enblo-classic`/`combrawl`/`7metch` は Playwright による E2E テスト（`e2e/`, `npm run test:e2e`）を持つ。画面遷移の疎通確認用で、ユニットテストの代替ではない（`combrawl`は加えて、特性バッジ等の見た目の重なりを座標で検証する回帰テストも持つ。詳細は各アプリの`CLAUDE.md`参照）。`7metch2`/`mori-no-yakai`は未整備
 - **`enblo-classic`は凍結アプリ**。`enblo`の大規模再設計に着手する前の完成形をそのままコピーしたもので、以降は変更しない前提（バグ修正のみ最小対応）
 - **`7metch2`は開発中につきPWA未対応**（`manifest.json`/`sw.js`なし、CSSは`index.html`にインライン）。`npm run deploy` は `dist/game.js` のコピーのみで現状の構成としては完結している。公開時にPWA化とdeployスクリプト拡充（manifest/SWコピー・SWバージョン自動更新）を行うこと
+- **`dusty-jukebox`は雛形段階**（`manifest.json`/`sw.js`なし、CSSは`index.html`にインライン、`npm run deploy` は `dist/app.js` のコピーのみ）。認証（OAuth）・Drive索引スキャン・プレイヤーUIは未実装で、`src/lib.ts`（タグ解析・文字化け検出）と`src/rangeTokenizer.ts`（HTTP Rangeリクエストによるランダムアクセストークナイザー）のみ、姉妹リポジトリの検証スクリプト（`ai-workspace/projects/google-drive-music-player/catalog-script/`）からテスト付きで移植済み。詳細は`dusty-jukebox/CLAUDE.md`参照
 - 詳細なテスト方針・難易度パラメータ・変更時チェックリストはアプリごとの `CLAUDE.md`（例: `7metch/CLAUDE.md`, `7metch2/CLAUDE.md`, `enblo/CLAUDE.md`, `enblo-classic/CLAUDE.md`, `combrawl/CLAUDE.md`）を参照
 
 ### C. 補助ツール
