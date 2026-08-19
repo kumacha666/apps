@@ -52,7 +52,7 @@
 - `enblo`/`enblo-classic`/`combrawl`/`7metch` は Playwright による E2E テスト（`e2e/`, `npm run test:e2e`）を持つ。画面遷移の疎通確認用で、ユニットテストの代替ではない（`combrawl`は加えて、特性バッジ等の見た目の重なりを座標で検証する回帰テストも持つ。詳細は各アプリの`CLAUDE.md`参照）。`7metch2`/`mori-no-yakai`は未整備
 - **`enblo-classic`は凍結アプリ**。`enblo`の大規模再設計に着手する前の完成形をそのままコピーしたもので、以降は変更しない前提（バグ修正のみ最小対応）
 - **`7metch2`は開発中につきPWA未対応**（`manifest.json`/`sw.js`なし、CSSは`index.html`にインライン）。`npm run deploy` は `dist/game.js` のコピーのみで現状の構成としては完結している。公開時にPWA化とdeployスクリプト拡充（manifest/SWコピー・SWバージョン自動更新）を行うこと
-- **`dusty-jukebox`は雛形段階**（`manifest.json`/`sw.js`なし、CSSは`index.html`にインライン、`npm run deploy` は `dist/app.js` のコピーのみ）。認証（OAuth）・Drive索引スキャン・プレイヤーUIは未実装で、`src/lib.ts`（タグ解析・文字化け検出）と`src/rangeTokenizer.ts`（HTTP Rangeリクエストによるランダムアクセストークナイザー）のみ、姉妹リポジトリの検証スクリプト（`ai-workspace/projects/google-drive-music-player/catalog-script/`）からテスト付きで移植済み。詳細は`dusty-jukebox/CLAUDE.md`参照
+- **`dusty-jukebox`は実装初期段階**（`manifest.json`/`sw.js`なし、CSSは`index.html`にインライン、`npm run deploy` は `dist/app.js` のコピーのみ）。OAuth認証（トークンモデル）＋`drive.readonly`でのファイル一覧取得を実装済み（`src/auth.ts`/`src/drive.ts`）。Sheets索引書き込み・実Rangeフェッチ・絞り込み/再生UIは未実装。ログイン系機能を有効にするには`.env`に`VITE_GOOGLE_CLIENT_ID`（Web用OAuthクライアントID）の設定が必要（未設定時はビルドで自動的に除去され「未設定」表示になる）。詳細は`dusty-jukebox/CLAUDE.md`参照
 - 詳細なテスト方針・難易度パラメータ・変更時チェックリストはアプリごとの `CLAUDE.md`（例: `7metch/CLAUDE.md`, `7metch2/CLAUDE.md`, `enblo/CLAUDE.md`, `enblo-classic/CLAUDE.md`, `combrawl/CLAUDE.md`）を参照
 
 ### C. 補助ツール
