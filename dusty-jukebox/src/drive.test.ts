@@ -224,6 +224,33 @@ describe("listAudioFilesRecursive", () => {
     expect(found.map((e) => e.file.id)).toEqual(["song"]);
   });
 
+  test("フォルダショートカットのtargetResourceKeyを参照先フォルダへの以降のリクエストに引き継ぐ（2026-08-19 Codexレビュー指摘: リンク共有のセキュリティ更新が適用された参照先はresource keyが無いと解決できない）", async () => {
+    const tree: Record<string, DriveFile[]> = {
+      root: [
+        {
+          id: "shortcut-to-protected",
+          name: "Protected (shortcut)",
+          mimeType: "application/vnd.google-apps.shortcut",
+          shortcutDetails: {
+            targetId: "protected-folder",
+            targetMimeType: "application/vnd.google-apps.folder",
+            targetResourceKey: "abc123",
+          },
+        },
+      ],
+      "protected-folder": [{ id: "song", name: "song.mp3", mimeType: "audio/mpeg" }],
+    };
+    const receivedResourceKeys: (string | undefined)[] = [];
+    const list: DriveListFn = async (folderId, _pageToken, resourceKey) => {
+      receivedResourceKeys.push(resourceKey);
+      return { files: tree[folderId] ?? [] };
+    };
+    const found = await listAudioFilesRecursive(list, "root");
+    expect(found.map((e) => e.file.id)).toEqual(["song"]);
+    // ルートへのリクエストにはresourceKeyは付かず、ショートカット参照先へのリクエストにのみ付く
+    expect(receivedResourceKeys).toEqual([undefined, "abc123"]);
+  });
+
   test("ensureAccessToken()のサイレント再取得失敗（AuthError）も401と同様に走査全体を中断する（2026-08-19 Codexレビュー指摘）", async () => {
     const tree = makeFakeTree();
     const list: DriveListFn = async (folderId) => {
@@ -281,6 +308,33 @@ describe("createDriveListFn", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  test("resourceKeyが指定された場合はX-Goog-Drive-Resource-Keysヘッダーを付与する（2026-08-19 Codexレビュー指摘）", async () => {
+    const response = fakeResponse(200, { files: [] });
+    const fetchMock = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const list = createDriveListFn(async () => "token");
+    await list("folder-id", undefined, "the-resource-key");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-Goog-Drive-Resource-Keys"]).toBe("folder-id/the-resource-key");
+  });
+
+  test("resourceKey未指定の場合はヘッダーを付与しない", async () => {
+    const response = fakeResponse(200, { files: [] });
+    const fetchMock = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const list = createDriveListFn(async () => "token");
+    await list("folder-id", undefined);
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-Goog-Drive-Resource-Keys"]).toBeUndefined();
   });
 
   test("429は指数バックオフでリトライし、最終的に成功する", async () => {

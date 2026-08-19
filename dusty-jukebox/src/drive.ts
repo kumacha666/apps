@@ -14,8 +14,11 @@ export interface DriveFile {
   size?: string;
   parents?: string[];
   // フォルダショートカット（3.1節のフォルダ構成の実データには無かったが、Drive一般では
-  // 存在しうる）解決用。files.list/files.getのfieldsに含めた場合のみ埋まる
-  shortcutDetails?: { targetId?: string; targetMimeType?: string };
+  // 存在しうる）解決用。files.list/files.getのfieldsに含めた場合のみ埋まる。
+  // targetResourceKey: リンク共有のセキュリティ更新が適用されたファイル/フォルダへの
+  // ショートカットは、参照先を単独のIDだけでは解決できず、後続のDrive APIリクエストに
+  // このresource keyを添える必要がある（2026-08-19 Codexレビュー指摘）
+  shortcutDetails?: { targetId?: string; targetMimeType?: string; targetResourceKey?: string };
 }
 
 export interface DriveListPage {
@@ -24,7 +27,9 @@ export interface DriveListPage {
 }
 
 // 1回のfiles.list呼び出し。folderIdの直接の子（フォルダ・ファイル両方、trashedは除く）をページングして返す。
-export type DriveListFn = (folderId: string, pageToken: string | undefined) => Promise<DriveListPage>;
+// resourceKeyは、folderIdがリンク共有のセキュリティ更新が適用されたフォルダへの
+// ショートカット経由で解決された場合にのみ渡される（shortcutDetails.targetResourceKey）。
+export type DriveListFn = (folderId: string, pageToken: string | undefined, resourceKey?: string) => Promise<DriveListPage>;
 
 // HTTPステータスを保持したエラー。401（トークン失効・拒否）は、フォルダ単位の一時的な失敗
 // （権限無し・503等）とは性質が異なり、走査を続けても全滅するだけなので特別扱いする
@@ -69,11 +74,11 @@ export async function validateRootFolder(getFile: DriveGetFn, folderId: string):
   }
 }
 
-export async function listFolderChildren(list: DriveListFn, folderId: string): Promise<DriveFile[]> {
+export async function listFolderChildren(list: DriveListFn, folderId: string, resourceKey?: string): Promise<DriveFile[]> {
   const all: DriveFile[] = [];
   let pageToken: string | undefined;
   do {
-    const page = await list(folderId, pageToken);
+    const page = await list(folderId, pageToken, resourceKey);
     all.push(...page.files);
     pageToken = page.nextPageToken;
   } while (pageToken);
@@ -138,7 +143,17 @@ export async function listAudioFilesRecursive(
   // （2026-08-19 Codexレビュー指摘。ルート自身も最初から訪問済みとして登録する）
   const visited = new Set<string>([folderId]);
   try {
-    return await listAudioFilesRecursiveInternal(list, folderId, folderPath, failedFolders, true, limiter, controller, visited);
+    return await listAudioFilesRecursiveInternal(
+      list,
+      folderId,
+      folderPath,
+      failedFolders,
+      true,
+      limiter,
+      controller,
+      visited,
+      undefined
+    );
   } finally {
     // 正常終了時は既に全タスクが完了しているため実質no-opだが、想定外の経路で
     // キュー済みタスクが残っていた場合の安全網として明示的に打ち切っておく
@@ -154,13 +169,14 @@ async function listAudioFilesRecursiveInternal(
   isRoot: boolean,
   limiter: ConcurrencyLimiter,
   controller: AbortController,
-  visited: Set<string>
+  visited: Set<string>,
+  resourceKey: string | undefined
 ): Promise<AudioFileEntry[]> {
   let children: DriveFile[];
   try {
     children = await limiter.run(() => {
       if (controller.signal.aborted) throw new ScanAbortedError("走査は中断されました");
-      return listFolderChildren(list, folderId);
+      return listFolderChildren(list, folderId, resourceKey);
     });
   } catch (err) {
     if (isAuthError(err)) controller.abort();
@@ -181,6 +197,7 @@ async function listAudioFilesRecursiveInternal(
     // ショートカットを使っている場合、参照先のサブツリーが丸ごと欠落していた。
     // ファイルを指すショートカット＝音源そのものの解決は対象外のまま残す）
     let targetFolderId: string | null = null;
+    let targetResourceKey: string | undefined;
     if (file.mimeType === FOLDER_MIME_TYPE) {
       targetFolderId = file.id;
     } else if (
@@ -189,6 +206,10 @@ async function listAudioFilesRecursiveInternal(
       file.shortcutDetails.targetId
     ) {
       targetFolderId = file.shortcutDetails.targetId;
+      // リンク共有のセキュリティ更新が適用された参照先は、targetIdだけでは以降のリクエストが
+      // 404になる。targetResourceKeyを取得し、参照先フォルダへの一覧要求に引き継ぐ
+      // （2026-08-19 Codexレビュー指摘）
+      targetResourceKey = file.shortcutDetails.targetResourceKey;
     } else if (isAudioFile(file.name)) {
       results.push({ file, folderPath });
       continue;
@@ -198,7 +219,17 @@ async function listAudioFilesRecursiveInternal(
       visited.add(targetFolderId);
       const childPath = folderPath ? `${folderPath}/${file.name}` : file.name;
       subfolderScans.push(
-        listAudioFilesRecursiveInternal(list, targetFolderId, childPath, failedFolders, false, limiter, controller, visited)
+        listAudioFilesRecursiveInternal(
+          list,
+          targetFolderId,
+          childPath,
+          failedFolders,
+          false,
+          limiter,
+          controller,
+          visited,
+          targetResourceKey
+        )
       );
     }
   }
@@ -231,20 +262,20 @@ function isRetryableError(status: number, bodyText: string): boolean {
   return false;
 }
 
-// DriveListFnの実実装。ensureAccessTokenで取得したアクセストークンをAuthorizationヘッダーに載せる。
-// drive.readonlyスコープに固定されたトークンのみを使うため、書き込み系エンドポイントは呼びようがない（CONCEPT.md 2節）。
-// 429/5xx・クォータ超過理由の403（スロットリング・一時障害）は指数バックオフで数回リトライする。
-// 401等は即座にDriveHttpErrorとして呼び出し元（listAudioFilesRecursiveInternal）に伝え、
-// 認証エラーとしての特別扱いを可能にする。
 // files.list/files.get共通のリトライ付きfetch。getAccessToken()自体が失敗した場合
 // （AuthError、GISのサイレント再取得失敗）はリトライせずそのまま投げる
 // （isAuthError()でDriveHttpError(401)と同様に扱われ、走査全体の中断につながる）。
-async function fetchDriveApiWithRetry(url: string, getAccessToken: () => Promise<string>): Promise<Response> {
+// 429/5xx・クォータ超過理由の403（スロットリング・一時障害）は指数バックオフで数回リトライする。
+async function fetchDriveApiWithRetry(
+  url: string,
+  getAccessToken: () => Promise<string>,
+  extraHeaders?: Record<string, string>
+): Promise<Response> {
   const maxRetries = 3;
   let lastError: DriveHttpError | null = null;
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     const accessToken = await getAccessToken();
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}`, ...extraHeaders } });
     if (res.ok) return res;
     const bodyText = await res.text();
     lastError = new DriveHttpError(res.status, `Drive API request failed: ${res.status} ${bodyText}`);
@@ -257,14 +288,15 @@ async function fetchDriveApiWithRetry(url: string, getAccessToken: () => Promise
 
 // DriveListFnの実実装。ensureAccessTokenで取得したアクセストークンをAuthorizationヘッダーに載せる。
 // drive.readonlyスコープに固定されたトークンのみを使うため、書き込み系エンドポイントは呼びようがない（CONCEPT.md 2節）。
-// 429/5xx・クォータ超過理由の403（スロットリング・一時障害）は指数バックオフで数回リトライする。
 // 401等は即座にDriveHttpErrorとして呼び出し元（listAudioFilesRecursiveInternal）に伝え、
 // 認証エラーとしての特別扱いを可能にする。
 // supportsAllDrives/includeItemsFromAllDrivesを指定し、共有ドライブ配下のフォルダを
 // ルートに指定した場合でも子が取得できるようにする（既定ではマイドライブのみが対象になり、
-// 共有ドライブは空のライブラリとして「スキャン完了」してしまう。2026-08-19 Codexレビュー指摘）
+// 共有ドライブは空のライブラリとして「スキャン完了」してしまう。2026-08-19 Codexレビュー指摘）。
+// resourceKeyが渡された場合はX-Goog-Drive-Resource-Keysヘッダーで添える
+// （リンク共有のセキュリティ更新が適用されたショートカット参照先の解決に必要。同日Codexレビュー指摘）
 export function createDriveListFn(getAccessToken: () => Promise<string>): DriveListFn {
-  return async (folderId, pageToken) => {
+  return async (folderId, pageToken, resourceKey) => {
     const params = new URLSearchParams({
       q: `'${folderId}' in parents and trashed = false`,
       fields: "nextPageToken, files(id, name, mimeType, size, parents, shortcutDetails)",
@@ -274,8 +306,9 @@ export function createDriveListFn(getAccessToken: () => Promise<string>): DriveL
     });
     if (pageToken) params.set("pageToken", pageToken);
     const url = `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
+    const extraHeaders = resourceKey ? { "X-Goog-Drive-Resource-Keys": `${folderId}/${resourceKey}` } : undefined;
 
-    const res = await fetchDriveApiWithRetry(url, getAccessToken);
+    const res = await fetchDriveApiWithRetry(url, getAccessToken, extraHeaders);
     const data = (await res.json()) as { files?: DriveFile[]; nextPageToken?: string };
     return { files: data.files ?? [], nextPageToken: data.nextPageToken };
   };
