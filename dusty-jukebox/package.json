@@ -12,6 +12,7 @@
     "deploy": "npm run build && cp dist/app.js . && echo 'Deploy complete. Commit and push to deploy.'"
   },
   "dependencies": {
+    "music-metadata": "^10.6.4",
     "strtok3": "^10.2.1"
   },
   "devDependencies": {

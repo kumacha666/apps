@@ -24,18 +24,25 @@
   - **大規模`batchUpdate`の分割は未実装**（2026-08-20 Codexレビュー指摘、見送り）：10235件規模の再スキャンで全行を1回の`values:batchUpdate`にまとめると、ペイロードがSheets APIの推奨リクエストサイズ・処理時間上限を超えうる。件数またはペイロードサイズでの分割は、次のステップで実装する「初回スキャンのバッチ処理・中断再開」（CONCEPT.md 5節の中断・再開可能なバッチ処理設計）と合わせて対応する想定（スキャン自体をチャンク単位で進める設計と、upsertの分割単位は自然に揃うため）
   - **ビルド成果物（`dist/app.js`のコピー）はこのPRでは更新していない**：`.env`の`VITE_GOOGLE_CLIENT_ID`は2026-08-19に実際の値が設定され本番ビルドされたが（コミット`729bc18`）、その値自体は`.gitignore`済みでリポジトリには含まれないため、`.env`未設定のセッションで`npm run deploy`すると本番の実クライアントIDが「未設定」ビルドに巻き戻り、ログイン機能ごと消えてしまう。このため今回のPRでは`src/`のみ変更しコミット済みの`app.js`はそのまま残した。**`OAUTH_SCOPES`（`spreadsheets`スコープ追加）はソースには反映済みだが、実際にデプロイされているビルドにはまだ含まれない**。実クライアントIDを持つ環境で次回`npm run deploy`する際に反映される
   - 次のステップ（`rangeTokenizer.ts`用の実Drive `fetchRange`実装、初回スキャンのバッチ処理・中断再開、`sync`タブ管理、`index`タブの初回作成）に進む前に、実際のフォルダスキャン結果を`buildIndexRow`に渡して`main.ts`から呼び出す配線が必要
+- **2026-08-20、`rangeTokenizer.ts`用の実Drive `fetchRange`実装＋タグ抽出を`main.ts`のスキャンUIと`sheets.ts`のupsertに結線**（着手順の目安3の一部）。`drive.ts`に`createDriveFetchRange`（`alt=media`のRangeリクエスト、`fetchDriveApiWithRetry`と同じリトライ方針、`AbortSignal`に対応）、`src/tagExtraction.ts`に`extractTags`（`DriveRangeTokenizer`+`music-metadata`の`parseFromTokenizer`を結線し、5節の可変タイムアウト方針——基本30秒＋100MB超過分は10MBごとに+3秒、上限180秒——をタイムアウト時に`AbortController`で実際のRangeリクエストも中断する形で実装）を追加した。`main.ts`の`handleScan`は、スキャンで見つかった全ファイルに対して`ConcurrencyLimiter`（既定4並行、タグ抽出はフォルダ一覧取得より重いためdrive.tsの既定6よりやや控えめ）でタグを抽出し、`buildIndexRow`で行を組み立てて`upsertIndexRows`でスプレッドシートへ書き込むところまで一気通貫で動作する。UIにスプレッドシートID入力欄を追加した（`index`タブ＋ヘッダー行はユーザーが事前に作成済みであることが前提、`sheets.ts`の既存の制約のまま）
+  - **`music-metadata`を依存に追加**（`^10.6.4`、`catalog-script`と同じバージョン）。ブラウザ向けバンドル（Viteのdead code elimination込み）で問題なく動作することをビルドで確認済み
+  - **`vite.config.js`に`build.rollupOptions.output.inlineDynamicImports: true`を追加（重要）**：`music-metadata`はフォーマットごとのパーサーを内部で`dynamic import()`しており、これを許すと`vite build`が`dist/app.js`本体とは別に`dist/assets/*.js`へコード分割してしまう。本アプリの`npm run deploy`は`dist/app.js`1本のみをルート直下にコピーする前提（`apps/CLAUDE.md`「ルート直下に存在する`game.js`/`style.css`/`sw.js`はビルド成果物のコピー」）のため、分割されたチャンクのままデプロイすると実行時に404で壊れる。`inlineDynamicImports: true`で単一ファイルへ強制的にインライン化することで解消した（CLIENT_ID未設定時のdead code elimination・素の`app.js`が9.78kBになる既存の動作は変わらず維持されることをビルドで確認済み）
+  - **このPRのスキャンは「見つかった全ファイルを1回で最後まで処理する」素朴な実装**：`sync`タブ管理（`startPageToken`/`rootFolderId`/`initialScanCompletedAt`）・初回スキャンのバッチ処理・中断再開（5節）は引き続き未実装。ブラウザのタブを閉じる、通信が長時間切れる等が起きると最初からやり直しになる。10235件規模（3.4節）での実運用にはバッチ・中断再開の実装が必須
+  - **`index`タブ自体の初回作成（ヘッダー行の書き込み）・重複行のマージ（4.3節）は引き続き未実装**（`sheets.ts`の既存の制約のまま）
+  - **ファイル単位のresourceKeyは未対応**：フォルダショートカットの参照先解決に必要な`resourceKey`（`drive.ts`の`listAudioFilesRecursive`が解決済み）は`AudioFileEntry`から`createDriveFetchRange`へは引き継いでいない。音源ファイル自体がリンク共有のセキュリティ更新の対象になっているケース（レアケースと想定）はタグ抽出が404で失敗し、`extractionFailed=true`として記録される
+  - **実ブラウザでの動作確認はまだできていない**（`VITE_GOOGLE_CLIENT_ID`未作成のため、これまでの着手順と同様）。ユニットテスト（`music-metadata`をモックした`extractTags`の結線・タイムアウト検証、フェイクの`fetch`に対する`createDriveFetchRange`のリトライ・Range ヘッダー・resourceKey・abort伝播）とビルド確認（単一`app.js`への出力）のみ済み
 
 ## 移植元
 
 `ai-workspace/projects/google-drive-music-player/catalog-script/`（使い捨て検証スクリプト）からの移植:
 
 - `src/lib.ts` ← `catalog-script/src/lib.js`：タグ解析・文字化け検出ロジック。`SHEET_HEADER`はcatalog-script実行時の列順のまま残しており、本体のスプレッドシート列（`CONCEPT.md` 4.3節、`_override`列等を含む実際のスキーマ）とは異なる。索引読み書きの実装時に本体スキーマへ合わせて作り直すこと
-- `src/rangeTokenizer.ts` ← `catalog-script/src/rangeTokenizer.js`：strtok3の`ITokenizer`実装。Drive呼び出し部分（`fetchRange`関数）は未実装で、コンストラクタに渡す関数として外側から注入する設計のまま（catalog-scriptの`verify-range.js`にあった実際のDrive Range fetch実装はまだ移植していない）
+- `src/rangeTokenizer.ts` ← `catalog-script/src/rangeTokenizer.js`：strtok3の`ITokenizer`実装。Drive呼び出し部分（`fetchRange`関数）はコンストラクタに渡す関数として外側から注入する設計のまま。実装自体は`drive.ts`の`createDriveFetchRange`として2026-08-20に追加済み（`catalog-script/src/verify-range.js`の`makeFetchRange`と同じ方針、ブラウザの`fetch` Range リクエストに置き換え）
 
 ## テスト
 
 - **フレームワーク**: Vitest
-- **テストファイル**: `src/lib.test.ts`, `src/rangeTokenizer.test.ts`（移植元の`node:test`ベーステストをVitestに書き換えたもの、内容は同一）、`src/auth.test.ts`（トークン期限判定に加え、フェイクの`window.google`でGISを模擬し`DriveAuth`の`error_callback`処理・多重呼び出しガード・`ensureAccessToken()`の並行共有を検証）、`src/drive.test.ts`（フェイクのフォルダツリーに対する再帰走査・拡張子フィルタ・ページング・子フォルダ失敗時の継続動作・401/AuthErrorでの走査中断・`ConcurrencyLimiter`の同時実行数制限・フォルダショートカットの解決と循環参照対策・`validateRootFolder`/`createDriveGetFn`）、`src/sheets.test.ts`（`buildIndexRow`の列数・`_override`列が常に空欄・文字化け検出・`extractionFailed`、フェイクの`SheetsIndexIO`に対する`upsertIndexRows`の更新/追記振り分け）
+- **テストファイル**: `src/lib.test.ts`, `src/rangeTokenizer.test.ts`（移植元の`node:test`ベーステストをVitestに書き換えたもの、内容は同一）、`src/auth.test.ts`（トークン期限判定に加え、フェイクの`window.google`でGISを模擬し`DriveAuth`の`error_callback`処理・多重呼び出しガード・`ensureAccessToken()`の並行共有を検証）、`src/drive.test.ts`（フェイクのフォルダツリーに対する再帰走査・拡張子フィルタ・ページング・子フォルダ失敗時の継続動作・401/AuthErrorでの走査中断・`ConcurrencyLimiter`の同時実行数制限・フォルダショートカットの解決と循環参照対策・`validateRootFolder`/`createDriveGetFn`・`createDriveFetchRange`のRangeヘッダー/resourceKey/リトライ/abort伝播）、`src/sheets.test.ts`（`buildIndexRow`の列数・`_override`列が常に空欄・文字化け検出・`extractionFailed`、フェイクの`SheetsIndexIO`に対する`upsertIndexRows`の更新/追記振り分け）、`src/tagExtraction.test.ts`（可変タイムアウト計算・著作権表記からの西暦抽出、`music-metadata`の`parseFromTokenizer`をモックした`extractTags`の結線・パースエラー時の扱い・タイムアウト時の`AbortSignal`伝播）
 - **実行タイミング**: `npm run build` の prebuild で自動実行。テスト失敗時はビルドが中断される
 
 ## ビルド・デプロイ
@@ -49,5 +56,6 @@
 
 1. ~~OAuth認証（トークンモデル、`initTokenClient`）＋`drive.readonly`でのファイル一覧取得~~（2026-08-19実装済み、上記参照）
 2. ~~Sheets APIでの索引upsert最小基盤（スキーマ定義＋fileId起点upsert）~~（2026-08-20実装済み、上記参照。`sync`タブ管理・重複行マージは未実装のまま残っている）
-3. `rangeTokenizer.ts`用の実Drive `fetchRange`実装、初回スキャンのバッチ処理・中断再開（`sync`タブでの`startPageToken`/`rootFolderId`/`initialScanCompletedAt`管理を含む）、`main.ts`のスキャンUIと`sheets.ts`の結線
-4. 絞り込み・除外・再生UI、Service Workerストリーミングプロキシ
+3. ~~`rangeTokenizer.ts`用の実Drive `fetchRange`実装、`main.ts`のスキャンUIと`sheets.ts`の結線~~（2026-08-20実装済み、上記参照。「1回で最後まで処理する」素朴な実装であり、次の4は未着手のまま残っている）
+4. 初回スキャンのバッチ処理・中断再開（`sync`タブでの`startPageToken`/`rootFolderId`/`initialScanCompletedAt`管理を含む）、`index`タブの初回作成、索引upsertの重複行マージ（4.3節）
+5. 絞り込み・除外・再生UI、Service Workerストリーミングプロキシ

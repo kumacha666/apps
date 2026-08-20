@@ -29,6 +29,11 @@ export default defineConfig(({ command }) => ({
       input: { main: "src/main.ts" },
       output: {
         entryFileNames: "app.js",
+        // music-metadataはフォーマットごとのパーサーを内部でdynamic import()する（コード分割）。
+        // このアプリのdeployスクリプトはdist/app.js1本のみをルート直下にコピーする前提
+        // （apps/CLAUDE.md「ルート直下に存在するgame.js/style.css/sw.jsはビルド成果物のコピー」）
+        // のため、分割されたチャンクを単一ファイルへ強制的にインライン化する。
+        inlineDynamicImports: true,
       },
     },
   },
