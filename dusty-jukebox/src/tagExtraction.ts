@@ -7,6 +7,17 @@ import { parseFromTokenizer } from "music-metadata";
 import { DriveRangeTokenizer, type FetchRangeFn } from "./rangeTokenizer";
 import { guessMimeType } from "./lib";
 import type { IndexTagsLike } from "./sheets";
+import { DriveHttpError } from "./drive";
+import { AuthError } from "./auth";
+
+// drive.tsのisAuthError()と同じ判定（401・GISのサイレント再取得失敗）。長時間のスキャン中に
+// トークンが失効した場合、これをファイル単位の失敗（extractionFailed）として握りつぶすと、
+// main.ts側のisAuthFailure()に到達せず、残り全ファイルが同じ無効なトークンで失敗し続けてしまう
+// （2026-08-20 Codexレビュー指摘）。呼び出し元がトークンをクリアし再ログインを促せるよう、
+// このエラーだけは呼び出し元へそのまま再throwする。
+function isAuthFailure(err: unknown): boolean {
+  return err instanceof AuthError || (err instanceof DriveHttpError && err.status === 401);
+}
 
 // 巨大ファイル（数百MB級）向けのタイムアウト方針（CONCEPT.md 5節、2026-08-18確定）:
 // 基本30秒＋ファイルサイズが100MBを超える分は10MBごとに+3秒を加算、上限180秒。
@@ -79,7 +90,20 @@ export async function extractTags(
   createFetchRange: CreateFetchRangeFn
 ): Promise<ExtractTagsResult> {
   const abortController = new AbortController();
-  const fetchRange = createFetchRange(abortController.signal);
+  const baseFetchRange = createFetchRange(abortController.signal);
+  // music-metadataはtokenizerが投げたI/Oエラーを内部で独自の例外型にラップすることがあるため、
+  // parseFromTokenizer()側の例外だけを見ていると認証エラー（DriveHttpError/AuthError）の
+  // instanceof判定が生き残る保証が無い。fetchRange自身が投げた時点で捕捉して保持しておき、
+  // 最終的にどんな形でエラーが浮上してきても判定できるようにする（2026-08-20 Codexレビュー指摘）。
+  let capturedAuthError: unknown = null;
+  const fetchRange: FetchRangeFn = async (start, endInclusive) => {
+    try {
+      return await baseFetchRange(start, endInclusive);
+    } catch (err) {
+      if (isAuthFailure(err)) capturedAuthError = err;
+      throw err;
+    }
+  };
   const tokenizer = new DriveRangeTokenizer(fetchRange, { size: file.size, mimeType: guessMimeType(file.name) });
   const timeoutMs = computeTagExtractionTimeoutMs(file.size);
 
@@ -102,6 +126,9 @@ export async function extractTags(
     const metadata = await Promise.race([parsePromise, timeout]);
     return { tags: toIndexTags(metadata.common), extractionFailed: false };
   } catch {
+    // 認証エラーはファイル単位の失敗として握りつぶさず、呼び出し元（main.ts）へ再throwする。
+    // 呼び出し元のisAuthFailure()がこれを検知してスキャン全体を中断し、トークンをクリアできる。
+    if (capturedAuthError) throw capturedAuthError;
     return { tags: null, extractionFailed: true };
   } finally {
     clearTimeout(timer!);

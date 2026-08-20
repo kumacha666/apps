@@ -16,6 +16,7 @@ import {
 } from "./drive";
 import { extractTags } from "./tagExtraction";
 import { buildIndexRow, createSheetsIndexIO, upsertIndexRows, SheetsHttpError, type UpsertIndexEntry } from "./sheets";
+import { deriveFallbackTitle } from "./lib";
 
 // Drive/Sheets双方が直接401を返したケース・GISのサイレント再取得自体が失敗したケースのどれも、
 // 「今キャッシュされているトークンはもう使えない」ことを意味する
@@ -50,13 +51,19 @@ async function extractAndBuildEntries(
         );
         done += 1;
         onProgress(done, entries.length);
+        // indexスキーマには元のファイル名を保存する列が無いため、タイトルタグが無い
+        // （抽出失敗、またはtitleタグ自体が空）行はfileId以外で識別できなくなる
+        // （2026-08-20 Codexレビュー指摘）。ファイル名（拡張子除く）を暫定タイトルとして補う。
+        // 既存行の再スキャンで抽出に失敗した場合は、この値はsheets.tsのmergeWithExistingが
+        // 既存の抽出値を優先するため使われない（新規ファイルの初回スキャンでのみ効く）。
+        const effectiveTags = { ...(tags ?? {}), title: tags?.title || deriveFallbackTitle(file.name) };
         const row = buildIndexRow({
           fileId: file.id,
           fileName: file.name,
           parentId: file.parents?.[0] ?? "",
           driveModifiedTime: file.modifiedTime ?? "",
           lastScannedAtIso,
-          tags,
+          tags: effectiveTags,
           extractionFailed,
         });
         return { fileId: file.id, row };
@@ -156,6 +163,14 @@ async function handleScan(): Promise<void> {
     // （2026-08-19 Codexレビュー指摘）
     await validateRootFolder(getFn, folderId);
 
+    // スプレッドシートIDのタイプミス・アクセス権不足・indexタブ未作成は、抽出開始前に
+    // 検出したい。1万件規模のタグ抽出（フォルダ走査より遥かに時間がかかる）をすべて
+    // 実行してから失敗すると、中断・再開機能が無いため最初からやり直しになってしまう
+    // （2026-08-20 Codexレビュー指摘）。フォルダ検証と同様にここで先に検証する
+    setStatus("書き込み先スプレッドシートを確認中...");
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    await sheetsIO.listExistingRows();
+
     setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
     const listFn = createDriveListFn(() => auth.ensureAccessToken());
     const failedFolders: string[] = [];
@@ -168,7 +183,6 @@ async function handleScan(): Promise<void> {
     );
 
     setStatus("スプレッドシートへ書き込み中...");
-    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
     await upsertIndexRows(sheetsIO, upsertEntries);
 
     setStatus(`スキャン完了（${entries.length}件を索引に反映${failedFolders.length > 0 ? `、取得失敗フォルダ: ${failedFolders.length}件` : ""}）`);

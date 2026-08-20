@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { computeTagExtractionTimeoutMs, extractYearFromCopyright } from "./tagExtraction";
+import { DriveHttpError } from "./drive";
+import { AuthError } from "./auth";
+import type { DriveRangeTokenizer } from "./rangeTokenizer";
 
 // music-metadataの実パース処理は実際の音源バイト列が無いと成功しないため、外部ライブラリ呼び出し
 // 自体はモックし（drive.tsのfetchモック・sheets.tsのフェイクIOと同じDI方針）、extractTags()の
@@ -107,5 +110,51 @@ describe("extractTags", () => {
 
     expect(result).toEqual({ tags: null, extractionFailed: true });
     expect(capturedSignal?.aborted).toBe(true);
+  });
+
+  test("認証エラー（401）はextractionFailedとして握りつぶさず、そのまま呼び出し元へ再throwする（2026-08-20 Codexレビュー指摘：main.tsのisAuthFailure()がスキャン中断・トークンクリアを判断できるようにするため）", async () => {
+    const authError = new DriveHttpError(401, "invalid_token");
+    // music-metadataは内部でtokenizer.readBuffer/peekBufferを呼び、そこで投げたI/Oエラーを
+    // 独自の例外型にラップしうる。ここではtokenizerを実際に読ませてfetchRange経由でエラーを
+    // 発生させ、extractTags側がparseFromTokenizerの例外の型に頼らず判定できることを検証する。
+    parseFromTokenizerMock.mockImplementation(async (tokenizer: DriveRangeTokenizer) => {
+      await tokenizer.readBuffer(new Uint8Array(4), { position: 0, length: 4 });
+      throw new Error("unreachable");
+    });
+    const { extractTags } = await import("./tagExtraction");
+
+    const fetchRange = async () => {
+      throw authError;
+    };
+    await expect(extractTags({ id: "f1", name: "song.mp3", size: 1000 }, () => fetchRange)).rejects.toBe(authError);
+  });
+
+  test("AuthError（GISのサイレント再取得失敗）も同様に再throwする", async () => {
+    const authError = new AuthError("再ログインが必要です");
+    parseFromTokenizerMock.mockImplementation(async (tokenizer: DriveRangeTokenizer) => {
+      await tokenizer.readBuffer(new Uint8Array(4), { position: 0, length: 4 });
+      throw new Error("unreachable");
+    });
+    const { extractTags } = await import("./tagExtraction");
+
+    const fetchRange = async () => {
+      throw authError;
+    };
+    await expect(extractTags({ id: "f1", name: "song.mp3", size: 1000 }, () => fetchRange)).rejects.toBe(authError);
+  });
+
+  test("401以外のエラー（例: 500）はこれまで通りextractionFailed=trueとして扱う（走査は継続する）", async () => {
+    const serverError = new DriveHttpError(500, "internal error");
+    parseFromTokenizerMock.mockImplementation(async (tokenizer: DriveRangeTokenizer) => {
+      await tokenizer.readBuffer(new Uint8Array(4), { position: 0, length: 4 });
+      throw new Error("unreachable");
+    });
+    const { extractTags } = await import("./tagExtraction");
+
+    const fetchRange = async () => {
+      throw serverError;
+    };
+    const result = await extractTags({ id: "f1", name: "song.mp3", size: 1000 }, () => fetchRange);
+    expect(result).toEqual({ tags: null, extractionFailed: true });
   });
 });

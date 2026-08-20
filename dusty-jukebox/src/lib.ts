@@ -34,6 +34,15 @@ export function guessMimeType(fileName: string): string | undefined {
   return EXTENSION_MIME_TYPES[getExtension(fileName)];
 }
 
+// タイトルタグが無い場合のフォールバック（CONCEPT.md 3.3/4.4節）。indexスキーマには
+// 元のファイル名を保存する列が無いため、タグ抽出に失敗した・またはtitleタグが空だった行を
+// fileId以外で識別する手段が無くなってしまう（2026-08-20 Codexレビュー指摘）。拡張子を
+// 除いたファイル名を暫定タイトルとして使う。
+export function deriveFallbackTitle(fileName: string): string {
+  const ext = getExtension(fileName);
+  return ext ? fileName.slice(0, -(ext.length + 1)) : fileName;
+}
+
 // A1記法のシート名はスペース・アポストロフィ等を含む場合クォートが必須
 export function sheetRange(sheetName: string, cell: string): string {
   const quoted = `'${sheetName.replace(/'/g, "''")}'`;
