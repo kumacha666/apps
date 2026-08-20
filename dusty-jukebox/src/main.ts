@@ -200,13 +200,11 @@ async function handleScan(): Promise<void> {
 
     // 前回の実行（このscanRunStartedAt）で既に処理済み（lastScannedAt >= scanRunStartedAt）の
     // ファイルはスキップする。中断・再開時にタグ抽出（重い処理）をやり直さないための判定
-    // （着手順の目安5）。この読み取り結果（existingRowsSnapshot）は後続の各バッチの
-    // upsertIndexRowsにもそのまま渡し、バッチのたびに全件（10235行規模）を読み直さない
-    // （バッチは互いに素なfileId集合を担当するため、使い回しても安全。sheets.tsの
-    // upsertIndexRowsのコメント参照）。
+    // （着手順の目安5）。この読み取り結果は「何をスキップするか」の判定だけに使い、多少
+    // 古くても実害は無い（最悪の場合、他デバイスが直後に処理し終えたファイルをもう一度
+    // 処理するだけ）。
     setStatus("進捗を確認中...");
-    const existingRowsSnapshot = await sheetsIO.listExistingRows();
-    const lastScannedAtByFileId = indexRowsLastScannedAt(existingRowsSnapshot);
+    const lastScannedAtByFileId = indexRowsLastScannedAt(await sheetsIO.listExistingRows());
     const pendingEntries = entries.filter((entry) => {
       const lastScannedAt = lastScannedAtByFileId.get(entry.file.id);
       return !lastScannedAt || lastScannedAt < scanRunStartedAt;
@@ -218,6 +216,15 @@ async function handleScan(): Promise<void> {
     // 通信が長時間切れる等でスキャンが中断しても、既に書き込み済みのバッチはスプレッドシート側に
     // 残るため、再開時（次のスキャンクリック）はscanRunStartedAtのウォーターマークで
     // 既に処理済みのファイルをスキップし、残りのバッチから再開できる。
+    //
+    // 各バッチのupsertIndexRows直前に改めてlistExistingRows()を読み直す（バッチ開始前の
+    // スキップ判定用スナップショットを全バッチで使い回さない）。10235件規模で全バッチ分の
+    // 全件読み取りを繰り返すコストはあるが、スキャン開始時に読んだ1回のスナップショットを
+    // 全バッチに使い回すと、長時間のタグ抽出中にユーザー（または別デバイス）が加えた
+    // `_override`列の手動補正を、後続バッチのupsertIndexRows（sheets.tsのmergeWithExisting）が
+    // 古いスナップショットの値で上書きして消してしまう（2026-08-20 Codexレビュー指摘：P1、
+    // 変更前は抽出完了後に1回だけlistExistingRowsを読んでいたためこの回帰は無かった）。
+    // データ損失の回避を全件読み取りの節約より優先する。
     const BATCH_SIZE = 200;
     let processedCount = 0;
     for (let i = 0; i < pendingEntries.length; i += BATCH_SIZE) {
@@ -237,7 +244,10 @@ async function handleScan(): Promise<void> {
             `タグを抽出中...（バッチ ${batchNumber}/${totalBatches}、${processedCount + alreadyDoneCount + done}/${entries.length}件）`
           )
       );
-      await upsertIndexRows(sheetsIO, upsertEntries, existingRowsSnapshot);
+      // upsert直前に読み直す（このバッチのタグ抽出中に加えられた手動補正まではカバーできないが、
+      // それより前の他バッチ・他デバイスの更新は反映された状態でマージできる）。
+      const freshExistingRows = await sheetsIO.listExistingRows();
+      await upsertIndexRows(sheetsIO, upsertEntries, freshExistingRows);
       processedCount += batch.length;
     }
 
@@ -273,7 +283,7 @@ async function handleScan(): Promise<void> {
     // 今回処理済みのファイルも次のscanRunStartedAt以降で改めて対象になる（着手順の目安5）。
     // failedFolders自体はinitialScanCompletedAtとは独立に、常にクリアしてよい（フォルダ一覧の
     // 取得失敗は別の問題であり、見つかった全ファイルに対するタグ抽出・書き込みは完走している）。
-    await clearScanRunStartedAt(syncIO, { rootFolderId: folderId, startPageToken });
+    await clearScanRunStartedAt(syncIO, { rootFolderId: folderId, startPageToken, scanRunStartedAt });
 
     setStatus(
       `スキャン完了（${entries.length}件を索引に反映${alreadyDoneCount > 0 ? `、前回実行分${alreadyDoneCount}件はスキップ` : ""}${

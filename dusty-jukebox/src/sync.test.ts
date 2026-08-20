@@ -188,13 +188,13 @@ describe("prepareSyncForScan", () => {
 });
 
 describe("clearScanRunStartedAt", () => {
-  test("準備時と現在のroot/tokenが一致し、scanRunStartedAtが設定されていれば空文字列で書き込む", async () => {
+  test("準備時と現在のroot/token/scanRunStartedAtが一致すれば空文字列で書き込む", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
       ["scanRunStartedAt", "2026-08-20T09:00:00.000Z"],
     ]);
-    await clearScanRunStartedAt(io, { rootFolderId: "root1", startPageToken: "T0" });
+    await clearScanRunStartedAt(io, { rootFolderId: "root1", startPageToken: "T0", scanRunStartedAt: "2026-08-20T09:00:00.000Z" });
     expect(io.updateCalls).toEqual([[{ rowNumber: 4, row: ["scanRunStartedAt", ""] }]]);
   });
 
@@ -204,7 +204,18 @@ describe("clearScanRunStartedAt", () => {
       ["rootFolderId", "root-B"],
       ["scanRunStartedAt", "2026-08-20T09:00:00.000Z"],
     ]);
-    await clearScanRunStartedAt(io, { rootFolderId: "root-A", startPageToken: "T-old" });
+    await clearScanRunStartedAt(io, { rootFolderId: "root-A", startPageToken: "T-old", scanRunStartedAt: "2026-08-20T09:00:00.000Z" });
+    expect(io.updateCalls).toEqual([]);
+    expect(io.appendCalls).toEqual([]);
+  });
+
+  test("root/tokenは一致するがscanRunStartedAtが異なる場合は書き込まない（2026-08-20 Codexレビュー指摘：P2。同じルート・トークンのまま別デバイスが新しい実行を開始していた場合、その新しいウォーターマークを誤ってクリアしないため）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunStartedAt", "2026-08-20T10:00:00.000Z"], // 別デバイスが新しい実行を開始済み
+    ]);
+    await clearScanRunStartedAt(io, { rootFolderId: "root1", startPageToken: "T0", scanRunStartedAt: "2026-08-20T09:00:00.000Z" });
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
   });
@@ -214,7 +225,7 @@ describe("clearScanRunStartedAt", () => {
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
     ]);
-    await clearScanRunStartedAt(io, { rootFolderId: "root1", startPageToken: "T0" });
+    await clearScanRunStartedAt(io, { rootFolderId: "root1", startPageToken: "T0", scanRunStartedAt: "2026-08-20T09:00:00.000Z" });
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
   });

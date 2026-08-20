@@ -184,14 +184,28 @@ export async function prepareSyncForScan(
 // クリアすることで、次回のスキャンクリックを新しい実行として扱う（＝新しいウォーターマークで
 // 全ファイルを対象にする）。markInitialScanCompletedと同様、直前に現在のsync状態と照合し
 // 一致する場合のみ書き込む（長時間のスキャン中に別デバイスがルートを切り替えていた場合、
-// この実行とは無関係になったウォーターマードを誤ってクリアしないため）。
-export async function clearScanRunStartedAt(io: SyncTabIO, expected: { rootFolderId: string; startPageToken: string }): Promise<void> {
+// この実行とは無関係になったウォーターマークを誤ってクリアしないため）。
+//
+// expected.scanRunStartedAtも照合する（2026-08-20 Codexレビュー指摘：P2）。rootFolderId・
+// startPageTokenだけの一致では、同じルート・同じトークンのまま別デバイスが新しい実行を
+// 開始し新しいscanRunStartedAtを書き込んでいた場合（ルート変更を伴わないため両方とも
+// 変わらない）を区別できず、この呼び出しが誤ってその新しい実行のウォーターマークを
+// クリアしてしまう。その新しい実行が完走前に中断すると、次回は開始時刻を再利用できず
+// 中断・再開の効果が失われる（本アプリの明記された挙動）ため、このスキャン実行が確保した
+// scanRunStartedAt自体と現在値が一致する場合のみクリアする。
+export async function clearScanRunStartedAt(
+  io: SyncTabIO,
+  expected: { rootFolderId: string; startPageToken: string; scanRunStartedAt: string }
+): Promise<void> {
   const rows = await io.readAllRows();
   const state = parseSyncState(rows);
-  if (state.rootFolderId !== expected.rootFolderId || state.startPageToken !== expected.startPageToken) {
+  if (
+    state.rootFolderId !== expected.rootFolderId ||
+    state.startPageToken !== expected.startPageToken ||
+    state.scanRunStartedAt !== expected.scanRunStartedAt
+  ) {
     return;
   }
-  if (!state.scanRunStartedAt) return;
   await writeSyncEntries(io, rows, { scanRunStartedAt: "" });
 }
 
