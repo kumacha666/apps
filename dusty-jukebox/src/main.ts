@@ -26,7 +26,7 @@ import {
   INDEX_SHEET_HEADER,
   INDEX_SHEET_NAME,
 } from "./sheets";
-import { ensureIndexAndSyncTabsExist, ensureValidHeader, createSpreadsheetSetupIO } from "./sheetsSetup";
+import { ensureIndexAndSyncTabsExist, ensureValidHeader, createSpreadsheetSetupIO, migrateLegacyIndexHeaderV1 } from "./sheetsSetup";
 import { createSyncTabIO, isValidSyncHeader, markInitialScanCompleted, prepareSyncForScan, SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 
 // drive.tsのisAuthError()（AuthError・DriveHttpError(401)）に加え、main.tsではSheets側の
@@ -153,8 +153,15 @@ async function handleScan(): Promise<void> {
     // （2026-08-20 Codexレビュー指摘）。ensureValidHeader()がヘッダー検証・失敗時の回復
     // （タブが真に空なら書き直して再検証）・それでも無効な場合のエラーをまとめて行う
     // （index/syncで同じ検証ロジックが重複していたのを共通化、2026-08-20 /code-review指摘）
+    // 旧バージョン（27列、2026-08-20の重複行マージ実装より前）のindexタブヘッダーを使っている
+    // 既存ユーザーは、新スキーマ（45列）とのisValidIndexHeader不一致でここに来る。
+    // migrateLegacyIndexHeaderV1がこの旧ヘッダーを検出した場合のみグリッド拡張＋ヘッダー
+    // 書き換えを行う（2026-08-20 Codexレビュー指摘：この移行が無いと既存の27列indexタブが
+    // 永久にヘッダー不一致エラーでブロックされ続けてしまっていた）。
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    await ensureValidHeader(sheetsIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, isValidIndexHeader);
+    await ensureValidHeader(sheetsIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, isValidIndexHeader, (header) =>
+      migrateLegacyIndexHeaderV1(setupIO, header)
+    );
 
     // syncタブについてもindexタブと同じ理由でヘッダー行を検証する（2026-08-20 Codexレビュー指摘）：
     // ensureIndexAndSyncTabsExistは既存タブに一切触れないため、「sync」という名前の無関係な

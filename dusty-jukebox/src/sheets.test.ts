@@ -4,7 +4,9 @@ import {
   columnLetter,
   createSheetsIndexIO,
   INDEX_SHEET_HEADER,
+  isLegacyIndexHeaderV1,
   isValidIndexHeader,
+  LEGACY_INDEX_SHEET_HEADER_V1,
   mergeDuplicateIndexRows,
   upsertIndexRows,
   type SheetsIndexIO,
@@ -555,6 +557,20 @@ describe("isValidIndexHeader", () => {
 
   test("ヘッダー行が空（indexタブは存在するがヘッダー未作成）の場合はfalse", () => {
     expect(isValidIndexHeader([])).toBe(false);
+  });
+});
+
+describe("isLegacyIndexHeaderV1", () => {
+  test("2026-08-20の重複行マージ実装より前の旧27列ヘッダーと完全一致する場合はtrue", () => {
+    expect(isLegacyIndexHeaderV1([...LEGACY_INDEX_SHEET_HEADER_V1])).toBe(true);
+  });
+
+  test("現行の45列ヘッダーはfalse（旧ヘッダーではない）", () => {
+    expect(isLegacyIndexHeaderV1([...INDEX_SHEET_HEADER])).toBe(false);
+  });
+
+  test("無関係なヘッダーはfalse", () => {
+    expect(isLegacyIndexHeaderV1(["foo", "bar"])).toBe(false);
   });
 });
 

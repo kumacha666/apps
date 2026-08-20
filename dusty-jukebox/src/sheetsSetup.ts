@@ -17,7 +17,7 @@
 // `ensureValidHeader`（下記）が、`main.ts`側のヘッダー検証が実際に失敗した場合にのみ行う
 // フォールバックとして引き受ける。定常状態のスキャンでは一切呼ばれない。
 
-import { columnLetter, createSheetsFetch, INDEX_SHEET_HEADER, INDEX_SHEET_NAME } from "./sheets";
+import { columnLetter, createSheetsFetch, INDEX_SHEET_HEADER, INDEX_SHEET_NAME, isLegacyIndexHeaderV1 } from "./sheets";
 import { SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 
 // スプレッドシートのタブ一覧確認・タブ追加・ヘッダー行書き込みをDIするインターフェース
@@ -43,6 +43,11 @@ export interface SpreadsheetSetupIO {
   // 限定せずタブ全体を確認するよう修正。呼び出しコストが比較的重いため、`ensureValidHeader`の
   // フォールバック経路でのみ呼ばれる（上記コメント参照）。
   isTabEmpty(sheetName: string): Promise<boolean>;
+  // 指定タブのグリッド列数がcolumnCount未満であれば拡張する（既にcolumnCount以上ならAPIを呼ばない）。
+  // 旧バージョン（27列）のindexタブを新スキーマ（45列）へマイグレーションする際、ヘッダー行の
+  // 書き込み範囲がグリッドの列数を超えると「範囲がグリッドを超える」エラーになるため、
+  // writeHeaderRowの前に呼ぶ必要がある（migrateLegacyIndexHeaderV1参照）。
+  expandColumnCount(sheetName: string, columnCount: number): Promise<void>;
 }
 
 async function ensureTabExists(io: SpreadsheetSetupIO, title: string, header: readonly (string | number)[], titles: Set<string>): Promise<void> {
@@ -81,9 +86,17 @@ export async function ensureValidHeader(
   setupIO: SpreadsheetSetupIO,
   sheetName: string,
   expectedHeader: readonly (string | number)[],
-  isValid: (header: (string | number)[]) => boolean
+  isValid: (header: (string | number)[]) => boolean,
+  // ヘッダーが無効だった場合に先に試す、スキーマ移行のためのフック（例：旧バージョンの
+  // indexタブヘッダーを新スキーマへ書き換えるmigrateLegacyIndexHeaderV1）。「タブが真に空」
+  // フォールバックとは独立した経路で、データが入っている既存タブ（＝isTabEmptyがfalseを
+  // 返すタブ）でも対象になりうる。移行を行った場合はtrueを返す。
+  migrateLegacy?: (header: (string | number)[]) => Promise<boolean>
 ): Promise<void> {
   let header = await headerIO.readHeaderRow();
+  if (!isValid(header) && migrateLegacy && (await migrateLegacy(header))) {
+    header = await headerIO.readHeaderRow();
+  }
   if (!isValid(header) && (await setupIO.isTabEmpty(sheetName))) {
     await setupIO.writeHeaderRow(sheetName, expectedHeader);
     header = await headerIO.readHeaderRow();
@@ -93,6 +106,19 @@ export async function ensureValidHeader(
       `索引スプレッドシートの「${sheetName}」タブのヘッダー行が想定と一致しません。スプレッドシートIDが正しいか、無関係な「${sheetName}」タブが既に存在していないかご確認ください。`
     );
   }
+}
+
+// 旧バージョン（27列、2026-08-20の重複行マージ実装より前）のindexタブヘッダーを検出し、
+// グリッドを45列へ拡張したうえで新ヘッダーを書き込むマイグレーション（2026-08-20 Codexレビュー
+// 指摘：P1、この移行が無いと既存の27列indexタブが次回スキャン時に永久にヘッダー不一致
+// エラーでブロックされ続ける）。既存のデータ行（A2以降）には一切触れない：新設列は
+// 空欄のまま残るが、sheets.tsのbuildIndexRow/upsertIndexRowsは空欄を「オーバーライド無し」
+// 「競合なし」の初期値と同じ意味で扱うため、読み取り側の解釈に影響しない。
+export async function migrateLegacyIndexHeaderV1(setupIO: SpreadsheetSetupIO, header: (string | number)[]): Promise<boolean> {
+  if (!isLegacyIndexHeaderV1(header)) return false;
+  await setupIO.expandColumnCount(INDEX_SHEET_NAME, INDEX_SHEET_HEADER.length);
+  await setupIO.writeHeaderRow(INDEX_SHEET_NAME, INDEX_SHEET_HEADER);
+  return true;
 }
 
 // SpreadsheetSetupIOの実実装。sheets.tsのcreateSheetsFetch（認証・リトライ共通）を再利用する。
@@ -133,6 +159,32 @@ export function createSpreadsheetSetupIO(spreadsheetId: string, getAccessToken: 
       const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range)}`);
       const data = (await res.json()) as { values?: unknown[][] };
       return !data.values || data.values.length === 0;
+    },
+    async expandColumnCount(sheetName, columnCount) {
+      const res = await sheetsFetch(
+        `${base}?fields=${encodeURIComponent("sheets.properties(sheetId,title,gridProperties.columnCount)")}`
+      );
+      const data = (await res.json()) as {
+        sheets?: { properties?: { sheetId?: number; title?: string; gridProperties?: { columnCount?: number } } }[];
+      };
+      const sheet = (data.sheets ?? []).find((s) => s.properties?.title === sheetName);
+      const sheetId = sheet?.properties?.sheetId;
+      if (sheetId === undefined) throw new Error(`シート「${sheetName}」が見つかりません`);
+      const currentColumnCount = sheet?.properties?.gridProperties?.columnCount ?? 0;
+      if (currentColumnCount >= columnCount) return; // 既に十分な列数がある場合はAPIを呼ばない
+      await sheetsFetch(`${base}:batchUpdate`, {
+        method: "POST",
+        body: JSON.stringify({
+          requests: [
+            {
+              updateSheetProperties: {
+                properties: { sheetId, gridProperties: { columnCount } },
+                fields: "gridProperties.columnCount",
+              },
+            },
+          ],
+        }),
+      });
     },
   };
 }

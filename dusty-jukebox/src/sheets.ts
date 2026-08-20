@@ -236,6 +236,21 @@ export function isValidIndexHeader(header: (string | number)[]): boolean {
   return header.length === INDEX_SHEET_HEADER.length && header.every((v, i) => v === INDEX_SHEET_HEADER[i]);
 }
 
+// 2026-08-20の重複行マージ実装で追加した18列（conflictCandidate/hasConflict）より前の、
+// 旧バージョンのindexタブヘッダー（27列）。既存の27列indexタブを使っていたユーザーは
+// isValidIndexHeaderで弾かれてしまい、ensureValidHeaderの「タブが真に空なら書き直す」
+// フォールバックも対象外（データが入っているタブは空ではないため）のため、次回スキャンが
+// 常にヘッダー不一致エラーでブロックされ続けてしまう（2026-08-20 Codexレビュー指摘：P1）。
+// sheetsSetup.tsのmigrateLegacyIndexHeaderV1がこの旧ヘッダーを検出してグリッド拡張＋
+// ヘッダー書き換えのマイグレーションを行う。
+export const LEGACY_INDEX_SHEET_HEADER_V1 = INDEX_SHEET_HEADER.slice(0, 27);
+
+export function isLegacyIndexHeaderV1(header: (string | number)[]): boolean {
+  return (
+    header.length === LEGACY_INDEX_SHEET_HEADER_V1.length && header.every((v, i) => v === LEGACY_INDEX_SHEET_HEADER_V1[i])
+  );
+}
+
 export interface UpsertIndexEntry {
   fileId: string;
   row: (string | number)[];
@@ -383,6 +398,18 @@ export interface MergeDuplicateIndexRowsResult {
 // （Sheets APIには行削除に必要なnumericなsheetIdを持たない設計上、削除の代わりに全列を
 // 空欄にする。空欄行のfileIdは空のためlistExistingRows()の以降の呼び出しでは無視され、
 // 通常のupsertが誤ってこの行を再利用することもない）。重複が無ければAPIを呼ばない。
+//
+// **既知の限界（TOCTOU、2026-08-20 Codexレビュー指摘、対応は見送り）**：listExistingRows()で
+// 読んだスナップショットとio.updateRows()での実際の書き込みの間に、別デバイスが同じ重複行の
+// どちらかを更新（新しい抽出結果の反映・手動補正の追加等）した場合、この関数はその更新を
+// 知らないまま古いスナップショットに基づいてマージ・空欄化を行い、別デバイスの更新を
+// 上書き・消失させてしまいうる。Sheets APIには行単位のロックや条件付き書き込み（CAS）が
+// 無く、この関数自体がまさに「事後の整合」（CONCEPT.md 4.3節）として設計されている以上、
+// 根本解消にはバージョン/ロック用セル＋条件付き書き込みのような追加設計が必要でこのPRの
+// 範囲を超える。sync.tsのTOCTOU（CLAUDE.md参照）と同じ理由で、事前防止ではなく事後の整合
+// という本アプリ全体の方針の範囲内として受け入れる（実運用での発生頻度は、そもそも重複行
+// 自体が2デバイスのほぼ同時書き込みという稀なケースの産物であるため、その上でさらに
+// マージ実行と別の書き込みが競合する確率はさらに低いと想定）。
 export async function mergeDuplicateIndexRows(io: SheetsIndexIO): Promise<MergeDuplicateIndexRowsResult> {
   const rows = await io.listExistingRows();
   const rowsByFileId = new Map<string, { rowNumber: number; row: (string | number)[] }[]>();
