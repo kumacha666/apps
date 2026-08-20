@@ -93,5 +93,16 @@
 1. ~~OAuth認証（トークンモデル、`initTokenClient`）＋`drive.readonly`でのファイル一覧取得~~（2026-08-19実装済み、上記参照）
 2. ~~Sheets APIでの索引upsert最小基盤（スキーマ定義＋fileId起点upsert）~~（2026-08-20実装済み、上記参照。`sync`タブ管理・重複行マージは未実装のまま残っている）
 3. ~~`rangeTokenizer.ts`用の実Drive `fetchRange`実装、`main.ts`のスキャンUIと`sheets.ts`の結線~~（2026-08-20実装済み、上記参照。「1回で最後まで処理する」素朴な実装であり、次の4は未着手のまま残っている）
-4. ~~`sync`タブ基盤（`startPageToken`/`rootFolderId`/`initialScanCompletedAt`管理）＋`index`/`sync`タブの初回自動作成~~（2026-08-20実装済み、上記参照）。~~索引upsertの重複行マージ（4.3節）~~（2026-08-20実装済み、上記参照）。**残り**：`changes.list`による実際の差分同期の消費、初回スキャンのバッチ処理・中断再開（ページ単位の進捗保存）、ルート変更後の旧ルート配下行の削除（リコンサイル）
+4. ~~`sync`タブ基盤（`startPageToken`/`rootFolderId`/`initialScanCompletedAt`管理）＋`index`/`sync`タブの初回自動作成~~（2026-08-20実装済み、上記参照）。~~索引upsertの重複行マージ（4.3節）~~（2026-08-20実装済み、上記参照）。~~初回スキャンのバッチ処理・中断再開~~（2026-08-20実装済み、下記参照）。**残り**：`changes.list`による実際の差分同期の消費、ルート変更後の旧ルート配下行の削除（リコンサイル）
 5. 絞り込み・除外・再生UI、Service Workerストリーミングプロキシ
+
+- **2026-08-20、初回スキャンのバッチ処理・中断再開（着手順の目安4の残り項目の一つ、CONCEPT.md 5節）を実装**。`main.ts`の`handleScan()`が、フォルダ走査で見つかった全ファイルを一度に抽出・書き込みする代わりに、200件単位のバッチに分けてタグ抽出→`upsertIndexRows`書き込みを繰り返す。ブラウザのタブを閉じる・通信が長時間切れる等でスキャンが中断しても、既に書き込み済みのバッチはスプレッドシート側に残る
+  - **中断・再開のウォーターマークは`sync`タブの新しいキー`scanRunStartedAt`**（`src/sync.ts`）：`prepareSyncForScan()`が、ルート変更時または新規実行時は現在時刻を新規に書き込み、**前回の実行が完走せず中断していた場合（既に値が設定されている場合）はその値をそのまま再利用する**。スキャン開始時、`main.ts`はindexタブの各行の`lastScannedAt`を読み、`scanRunStartedAt`以降に走査済みの行（＝今回の実行の以前のバッチ、または中断前のセッションで既に処理済み）をスキップ対象として除外してから残りをバッチ処理する。全バッチが完走した時点で`clearScanRunStartedAt()`を呼びウォーターマークをクリアし、次回のスキャンクリックを新しい実行として扱う
+  - **「フォルダ一覧の再取得」自体は中断・再開の対象にしていない**：スキャンのたびに`listAudioFilesRecursive`によるフォルダ再帰走査は毎回最初からやり直す（Driveのフォルダ一覧取得はタグ抽出ほど重くないため、CONCEPT.md 5節が主眼を置く「タグ抽出（重い処理）のやり直しを避ける」目的は上記のウォーターマークで達成できる）。`files.list`のページング単位でのフォルダ走査自体の中断・再開（ページトークンの永続化）は本PRの範囲外
+  - **`existingRowsSnapshot`によるSheets全件読み取りの重複回避**：バッチのたびに`upsertIndexRows`が10235行規模の`listExistingRows()`を再度呼ぶと非常に重くなるため、`sheets.ts`の`upsertIndexRows`に3番目の引数（`existingRowsSnapshot`、省略可）を追加した。`main.ts`はスキャン開始時に1回だけ読んだスナップショットを全バッチに渡し回す。各バッチが担当するfileId集合は互いに素（同じfileIdを2つのバッチが処理することは無い）ため、あるバッチの追記が後続バッチの「既存行の行番号」を変えることはなく、スナップショットを使い回しても安全（appendは常にシート末尾へ、updateは各バッチが自分のfileId範囲内の行番号のみを参照するため）。この判定（既に処理済みのfileIdの抽出）にも同じスナップショットを`sheets.ts`の新しいヘルパー`indexRowsLastScannedAt()`で使う
+  - **`mergeDuplicateIndexRows`は従来通り全バッチ完了後に1回だけ呼ぶ**（バッチごとには呼ばない）：重複行マージ自体は毎バッチ実行するほど頻繁である必要が無く、全件スキャンを伴う重い処理のため
+  - **`markInitialScanCompleted`（`failedFolders.length === 0`の場合のみ）と`clearScanRunStartedAt`（無条件）は別の関数のまま**：前者は「フォルダ一覧の取得が一度も失敗しなかった完全な初回スキャン」を示す既存のフラグで意味が異なるため、後者（このスキャン実行のバッチ処理が完走したかどうか）とは独立に扱う。フォルダ取得に一部失敗があっても、見つかった範囲のファイルに対するタグ抽出・書き込みは完走しているため、`scanRunStartedAt`は毎回クリアしてよい
+  - **バッチサイズ（200件）は暫定値**：Sheets APIの`values:batchUpdate`のペイロードサイズ・処理時間上限を踏まえた調整は未検証（`sheets.ts`の「大規模`batchUpdate`の分割は未実装」という既知の制約と同じ理由。バッチサイズを小さくするほど中断時の再実行コストは下がるが、Sheets API呼び出し回数は増える）
+  - ユニットテスト：`src/sync.test.ts`（`prepareSyncForScan`の新規実行/中断再開時の`scanRunStartedAt`の扱い3パターン、`clearScanRunStartedAt`の一致/不一致/未設定の3パターン）、`src/sheets.test.ts`（`indexRowsLastScannedAt`、`upsertIndexRows`への`existingRowsSnapshot`渡し）
+  - **実ブラウザでの動作確認はまだできていない**（`VITE_GOOGLE_CLIENT_ID`未作成のため、これまでの着手順と同様）。ユニットテストとビルド確認（`VITE_GOOGLE_CLIENT_ID`未設定時に従来通りdead code eliminationされ`dist/app.js`が変わらないこと）のみ済み
+  - **公開用の`dist/app.js`コピーはこのPRでも更新していない**：これまでのPRと同じ理由（`.env`の実クライアントIDが本セッションには無い）

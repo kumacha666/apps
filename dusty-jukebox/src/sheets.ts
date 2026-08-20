@@ -256,6 +256,22 @@ export interface UpsertIndexEntry {
   row: (string | number)[];
 }
 
+// 着手順の目安5（初回スキャンのバッチ処理・中断再開）向け：indexタブの既存行スナップショットから
+// fileId→lastScannedAtの対応を作る。main.tsが「今回のスキャン開始（sync.tsのscanRunStartedAt）
+// より後にlastScannedAtされたfileIdは、このスキャン実行の以前のバッチ（または中断前のセッション）
+// で既に処理済み」と判定してスキップするために使う。列インデックス（FILE_ID_INDEX/
+// LAST_SCANNED_AT_INDEX）はこのファイル内に閉じた実装詳細のため、main.ts側に漏らさずここで
+// 変換関数として提供する。
+export function indexRowsLastScannedAt(rows: (string | number)[][]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const row of rows) {
+    const fileId = row[FILE_ID_INDEX];
+    if (!fileId) continue;
+    map.set(String(fileId), String(row[LAST_SCANNED_AT_INDEX] ?? ""));
+  }
+  return map;
+}
+
 // 既存行のうち、スキャナが絶対に書き換えてはならない_override列（4.2節）は常に温存する。
 // 今回の抽出が失敗（extractionFailed=TRUE）だった場合は、タグ抽出由来の列（title/artist等）も
 // 空値で上書きせず既存値を保持する（失敗行は「今回読めなかった」ことを記録するだけで、
@@ -271,7 +287,20 @@ function mergeWithExisting(existingRow: (string | number)[], newRow: (string | n
 
 // fileIdを一意キーとしたupsert（CONCEPT.md 5節）。既存行があれば_override列を温存したうえで
 // 抽出値列だけを更新し、無ければ末尾に追記する。
-export async function upsertIndexRows(io: SheetsIndexIO, entries: UpsertIndexEntry[]): Promise<void> {
+//
+// existingRowsSnapshot: 呼び出し元が既に読み取り済みのlistExistingRows()結果を渡せる（省略時は
+// このタブから改めて読み取る、従来通りの挙動）。着手順の目安5（初回スキャンのバッチ処理・
+// 中断再開）でmain.tsが1回のスキャンを複数バッチに分けてこの関数を繰り返し呼ぶ際、バッチごとに
+// 10235行規模の全件読み取りを繰り返すと非常に重くなるため、スキャン開始時に1回だけ読んだ
+// スナップショットを全バッチで使い回せるようにする。各バッチが担当するfileId集合は互いに素
+// （呼び出し元がpending分を1回ずつしか処理しないよう分割する）ため、あるバッチの追記が後続
+// バッチの「既存行の行番号」を変えることはなく、使い回しても安全（appendは常にシート末尾へ、
+// updateは各バッチが自分のfileId範囲内の行番号のみを参照するため）。
+export async function upsertIndexRows(
+  io: SheetsIndexIO,
+  entries: UpsertIndexEntry[],
+  existingRowsSnapshot?: (string | number)[][]
+): Promise<void> {
   if (entries.length === 0) return;
 
   // 同一バッチ内に同じfileIdが複数含まれる場合は最後のものを採用する（挿入順を保つためMapを使う）
@@ -280,7 +309,7 @@ export async function upsertIndexRows(io: SheetsIndexIO, entries: UpsertIndexEnt
   const dedupedEntries = new Map<string, (string | number)[]>();
   for (const { fileId, row } of entries) dedupedEntries.set(fileId, row);
 
-  const existingRows = await io.listExistingRows();
+  const existingRows = existingRowsSnapshot ?? (await io.listExistingRows());
   const existingRowByFileId = new Map<string, { rowNumber: number; row: (string | number)[] }>();
   existingRows.forEach((row, i) => {
     const fileId = row[0];

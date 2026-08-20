@@ -15,13 +15,20 @@ import { columnLetter, createSheetsFetch } from "./sheets";
 export const SYNC_SHEET_NAME = "sync";
 export const SYNC_TAB_HEADER = ["key", "value"] as const;
 
-const SYNC_KEYS = ["startPageToken", "rootFolderId", "initialScanCompletedAt"] as const;
+const SYNC_KEYS = ["startPageToken", "rootFolderId", "initialScanCompletedAt", "scanRunStartedAt"] as const;
 export type SyncKey = (typeof SYNC_KEYS)[number];
 
 export interface SyncState {
   startPageToken?: string;
   rootFolderId?: string;
   initialScanCompletedAt?: string;
+  // 着手順の目安5（初回スキャンのバッチ処理・中断再開）向けの、進行中スキャン実行の開始時刻。
+  // main.tsはこの値を「今回のスキャン実行」のウォーターマークとして使う：indexタブの各行の
+  // lastScannedAtがこの値以降であれば、そのファイルは今回の実行（過去のバッチ、または
+  // 中断前のセッション）で既に処理済みとみなしタグ抽出をスキップする。スキャン実行が
+  // 最後まで完了したらclearScanRunStartedAtで空文字列に戻す（次回のスキャンクリックが
+  // 新しい実行として扱われるようにするため）。
+  scanRunStartedAt?: string;
 }
 
 // syncタブへの実際の読み書きをDIするインターフェース（drive.ts/sheets.tsと同じ方針）。
@@ -74,6 +81,9 @@ export function parseSyncState(rows: (string | number)[][]): SyncState {
       case "initialScanCompletedAt":
         state.initialScanCompletedAt = value;
         break;
+      case "scanRunStartedAt":
+        state.scanRunStartedAt = value;
+        break;
       default: {
         const _exhaustive: never = key;
         throw new Error(`unknown sync key: ${String(_exhaustive)}`);
@@ -110,48 +120,79 @@ async function writeSyncEntries(io: SyncTabIO, rows: (string | number)[][], entr
 
 export interface PrepareSyncResult {
   startPageToken: string;
+  // このスキャン実行のウォーターマーク（着手順の目安5）。新規実行なら今回設定した現在時刻、
+  // 前回の実行が完走せず中断していた場合はその実行が開始した時刻を再利用する。
+  scanRunStartedAt: string;
 }
 
-// スキャン開始前に呼ぶ。CONCEPT.md 4.3節の3つのルールを実装する：
+// スキャン開始前に呼ぶ。CONCEPT.md 4.3節の3つのルールに加え、着手順の目安5（バッチ処理・
+// 中断再開）のためのscanRunStartedAt管理を実装する：
 // 1. rootFolderIdが変わった（または未設定）場合：新しいstartPageTokenを取得し、
-//    rootFolderId・startPageToken・initialScanCompletedAtのクリアを1回にまとめて書く
+//    rootFolderId・startPageToken・initialScanCompletedAtのクリア・新しいscanRunStartedAtを
+//    1回にまとめて書く（ルートが変わった以上、以前の実行の処理済みウォーターマークは無関係）
 // 2. 同じrootFolderIdでinitialScanCompletedAtが無い（初期化未完了）場合：新規取得せず
 //    既存のstartPageTokenを使い回す（複数デバイスが初期化未完了中に別々のトークンを
 //    取得し直すと、取得し直された側との間で変更が記録されず漏れるため）
 // 3. 同じrootFolderIdでinitialScanCompletedAtがある場合：引き続き既存のstartPageTokenを使う
 //    （changes.listによる実際の差分同期の消費は未実装のため、本PR時点ではこの分岐でも
 //    main.ts は従来通りフルスキャンを行う。次PR以降、差分同期を実装する際にこの値を使う）
+// 2・3のどちらでも、scanRunStartedAtが既に設定されていれば（前回の実行が完走せず中断していた
+// ことを意味する）そのまま再利用し、無ければ現在時刻を新規実行として書き込む。
 //
 // 「旧ルート配下だった行の削除（リコンサイル）」はCONCEPT.md 4.3節が新規初回スキャン完了時の
 // 仕上げとして定義しているが、本PRでは未実装（apps/dusty-jukebox/CLAUDE.md参照）。
 export async function prepareSyncForScan(
   io: SyncTabIO,
   getNewStartPageToken: () => Promise<string>,
-  requestedRootFolderId: string
+  requestedRootFolderId: string,
+  nowIso: () => string = () => new Date().toISOString()
 ): Promise<PrepareSyncResult> {
   const rows = await io.readAllRows();
   const state = parseSyncState(rows);
 
   if (state.rootFolderId !== requestedRootFolderId) {
     const newToken = await getNewStartPageToken();
+    const scanRunStartedAt = nowIso();
     await writeSyncEntries(io, rows, {
       rootFolderId: requestedRootFolderId,
       startPageToken: newToken,
       initialScanCompletedAt: "",
+      scanRunStartedAt,
     });
-    return { startPageToken: newToken };
+    return { startPageToken: newToken, scanRunStartedAt };
   }
 
   if (state.startPageToken) {
-    return { startPageToken: state.startPageToken };
+    if (state.scanRunStartedAt) {
+      return { startPageToken: state.startPageToken, scanRunStartedAt: state.scanRunStartedAt };
+    }
+    const scanRunStartedAt = nowIso();
+    await writeSyncEntries(io, rows, { scanRunStartedAt });
+    return { startPageToken: state.startPageToken, scanRunStartedAt };
   }
 
   // rootFolderIdは記録済みだがstartPageTokenが無い異常系（書き込み途中の中断等）への
   // フォールバック。通常はrootFolderId書き込みと同時にstartPageTokenも書かれるため
   // 起こらないはずだが、安全のため新規取得して補う。
   const newToken = await getNewStartPageToken();
-  await writeSyncEntries(io, rows, { startPageToken: newToken });
-  return { startPageToken: newToken };
+  const scanRunStartedAt = state.scanRunStartedAt || nowIso();
+  await writeSyncEntries(io, rows, { startPageToken: newToken, scanRunStartedAt });
+  return { startPageToken: newToken, scanRunStartedAt };
+}
+
+// 1回のスキャン実行（全バッチ）が最後まで完走した後にmain.tsから呼ぶ。scanRunStartedAtを
+// クリアすることで、次回のスキャンクリックを新しい実行として扱う（＝新しいウォーターマークで
+// 全ファイルを対象にする）。markInitialScanCompletedと同様、直前に現在のsync状態と照合し
+// 一致する場合のみ書き込む（長時間のスキャン中に別デバイスがルートを切り替えていた場合、
+// この実行とは無関係になったウォーターマードを誤ってクリアしないため）。
+export async function clearScanRunStartedAt(io: SyncTabIO, expected: { rootFolderId: string; startPageToken: string }): Promise<void> {
+  const rows = await io.readAllRows();
+  const state = parseSyncState(rows);
+  if (state.rootFolderId !== expected.rootFolderId || state.startPageToken !== expected.startPageToken) {
+    return;
+  }
+  if (!state.scanRunStartedAt) return;
+  await writeSyncEntries(io, rows, { scanRunStartedAt: "" });
 }
 
 // 初回スキャン（ページングによる一覧構築＋その後のchanges.list再生、CONCEPT.md 5節）が

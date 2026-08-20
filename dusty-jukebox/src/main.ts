@@ -19,6 +19,7 @@ import {
 import { extractAndBuildIndexEntries } from "./tagExtraction";
 import {
   createSheetsIndexIO,
+  indexRowsLastScannedAt,
   isValidIndexHeader,
   mergeDuplicateIndexRows,
   upsertIndexRows,
@@ -27,7 +28,15 @@ import {
   INDEX_SHEET_NAME,
 } from "./sheets";
 import { ensureIndexAndSyncTabsExist, ensureValidHeader, createSpreadsheetSetupIO, migrateLegacyIndexHeaderV1 } from "./sheetsSetup";
-import { createSyncTabIO, isValidSyncHeader, markInitialScanCompleted, prepareSyncForScan, SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
+import {
+  clearScanRunStartedAt,
+  createSyncTabIO,
+  isValidSyncHeader,
+  markInitialScanCompleted,
+  prepareSyncForScan,
+  SYNC_SHEET_NAME,
+  SYNC_TAB_HEADER,
+} from "./sync";
 
 // drive.tsのisAuthError()（AuthError・DriveHttpError(401)）に加え、main.tsではSheets側の
 // 401（書き込み先検証・upsert時）も同じ「トークンはもう使えない」判定に含める必要がある
@@ -174,7 +183,14 @@ async function handleScan(): Promise<void> {
     // 変更トークンの取得順序（CONCEPT.md 5節）：初回一覧の構築を始める前にstartPageTokenを
     // 確保しておく。ルート変更時は新規取得、初期化未完了中の再開時は既存トークンを使い回す
     // （sync.tsのprepareSyncForScan参照）。changes.listによる実際の差分再生は次PR以降。
-    const { startPageToken } = await prepareSyncForScan(syncIO, createGetStartPageTokenFn(() => auth.ensureAccessToken(), driveId), folderId);
+    // scanRunStartedAtは着手順の目安5（バッチ処理・中断再開）のウォーターマーク：前回の実行が
+    // 完走せず中断していた場合はその開始時刻を再利用し、以降で「今回の実行で既に処理済みの
+    // ファイル」を判定するのに使う。
+    const { startPageToken, scanRunStartedAt } = await prepareSyncForScan(
+      syncIO,
+      createGetStartPageTokenFn(() => auth.ensureAccessToken(), driveId),
+      folderId
+    );
 
     setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
     const listFn = createDriveListFn(() => auth.ensureAccessToken());
@@ -182,15 +198,48 @@ async function handleScan(): Promise<void> {
     const entries = await listAudioFilesRecursive(listFn, folderId, "", failedFolders);
     renderResults(entries, failedFolders);
 
-    setStatus(`タグを抽出中...（0/${entries.length}件）`);
-    const upsertEntries = await extractAndBuildIndexEntries(
-      entries,
-      (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
-      (done, total) => setStatus(`タグを抽出中...（${done}/${total}件）`)
-    );
+    // 前回の実行（このscanRunStartedAt）で既に処理済み（lastScannedAt >= scanRunStartedAt）の
+    // ファイルはスキップする。中断・再開時にタグ抽出（重い処理）をやり直さないための判定
+    // （着手順の目安5）。この読み取り結果（existingRowsSnapshot）は後続の各バッチの
+    // upsertIndexRowsにもそのまま渡し、バッチのたびに全件（10235行規模）を読み直さない
+    // （バッチは互いに素なfileId集合を担当するため、使い回しても安全。sheets.tsの
+    // upsertIndexRowsのコメント参照）。
+    setStatus("進捗を確認中...");
+    const existingRowsSnapshot = await sheetsIO.listExistingRows();
+    const lastScannedAtByFileId = indexRowsLastScannedAt(existingRowsSnapshot);
+    const pendingEntries = entries.filter((entry) => {
+      const lastScannedAt = lastScannedAtByFileId.get(entry.file.id);
+      return !lastScannedAt || lastScannedAt < scanRunStartedAt;
+    });
+    const alreadyDoneCount = entries.length - pendingEntries.length;
 
-    setStatus("スプレッドシートへ書き込み中...");
-    await upsertIndexRows(sheetsIO, upsertEntries);
+    // 中断・再開可能なバッチ処理（CONCEPT.md 5節）：全件をまとめて抽出・1回だけ書き込む
+    // のではなく、一定件数ごとにタグ抽出→索引への書き込みを行う。ブラウザのタブを閉じる・
+    // 通信が長時間切れる等でスキャンが中断しても、既に書き込み済みのバッチはスプレッドシート側に
+    // 残るため、再開時（次のスキャンクリック）はscanRunStartedAtのウォーターマークで
+    // 既に処理済みのファイルをスキップし、残りのバッチから再開できる。
+    const BATCH_SIZE = 200;
+    let processedCount = 0;
+    for (let i = 0; i < pendingEntries.length; i += BATCH_SIZE) {
+      const batch = pendingEntries.slice(i, i + BATCH_SIZE);
+      const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(pendingEntries.length / BATCH_SIZE);
+      setStatus(
+        `タグを抽出中...（バッチ ${batchNumber}/${totalBatches}、${processedCount + alreadyDoneCount}/${entries.length}件${
+          alreadyDoneCount > 0 ? `、前回実行分${alreadyDoneCount}件はスキップ済み` : ""
+        }）`
+      );
+      const upsertEntries = await extractAndBuildIndexEntries(
+        batch,
+        (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
+        (done) =>
+          setStatus(
+            `タグを抽出中...（バッチ ${batchNumber}/${totalBatches}、${processedCount + alreadyDoneCount + done}/${entries.length}件）`
+          )
+      );
+      await upsertIndexRows(sheetsIO, upsertEntries, existingRowsSnapshot);
+      processedCount += batch.length;
+    }
 
     // 索引upsertの重複行マージ（CONCEPT.md 4.3節）。複数デバイスがほぼ同時にスキャンした場合、
     // 片方が「まだ無い」と判断した新規fileIdを両方が別行として追記してしまう競合が起こりうる。
@@ -219,7 +268,18 @@ async function handleScan(): Promise<void> {
       await markInitialScanCompleted(syncIO, new Date().toISOString(), { rootFolderId: folderId, startPageToken });
     }
 
-    setStatus(`スキャン完了（${entries.length}件を索引に反映${failedFolders.length > 0 ? `、取得失敗フォルダ: ${failedFolders.length}件` : ""}）`);
+    // 全バッチが最後まで完走した（=ここに到達した）ので、このスキャン実行のウォーターマークは
+    // 役目を終えた。クリアしておくことで、次回のスキャンクリックは新しい実行として扱われ、
+    // 今回処理済みのファイルも次のscanRunStartedAt以降で改めて対象になる（着手順の目安5）。
+    // failedFolders自体はinitialScanCompletedAtとは独立に、常にクリアしてよい（フォルダ一覧の
+    // 取得失敗は別の問題であり、見つかった全ファイルに対するタグ抽出・書き込みは完走している）。
+    await clearScanRunStartedAt(syncIO, { rootFolderId: folderId, startPageToken });
+
+    setStatus(
+      `スキャン完了（${entries.length}件を索引に反映${alreadyDoneCount > 0 ? `、前回実行分${alreadyDoneCount}件はスキップ` : ""}${
+        failedFolders.length > 0 ? `、取得失敗フォルダ: ${failedFolders.length}件` : ""
+      }）`
+    );
   } catch (err) {
     // 401（トークン取り消し等）は、ローカルのexpiresAtがまだ有効に見えていても
     // Drive APIに拒否されたことを意味する。キャッシュを残したままだと次回の
