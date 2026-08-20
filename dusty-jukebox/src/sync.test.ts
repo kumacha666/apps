@@ -157,12 +157,12 @@ describe("prepareSyncForScan", () => {
 });
 
 describe("markInitialScanCompleted", () => {
-  test("initialScanCompletedAtが未設定なら追記する", async () => {
+  test("initialScanCompletedAtが未設定なら追記する（現在のsync状態が準備時のroot/tokenと一致する場合）", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
     ]);
-    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z");
+    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0" });
     expect(io.appendCalls).toEqual([[["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"]]]);
   });
 
@@ -172,8 +172,28 @@ describe("markInitialScanCompleted", () => {
       ["rootFolderId", "root1"],
       ["initialScanCompletedAt", "2026-08-19T00:00:00.000Z"],
     ]);
-    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z");
+    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0" });
     expect(io.updateCalls).toEqual([[{ rowNumber: 4, row: ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"] }]]);
+  });
+
+  test("準備時と現在のrootFolderIdが異なる場合は書き込まない（2026-08-20 Codexレビュー指摘：長時間のスキャン中に別デバイスがルートを切り替えていた場合、無関係なルートを誤って完了扱いにしないため）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T-new"],
+      ["rootFolderId", "root-B"], // 別デバイスがrootAからrootBへ切り替え済み
+    ]);
+    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root-A", startPageToken: "T-old" });
+    expect(io.appendCalls).toEqual([]);
+    expect(io.updateCalls).toEqual([]);
+  });
+
+  test("rootFolderIdは一致するがstartPageTokenが異なる場合も書き込まない", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T-changed"],
+      ["rootFolderId", "root1"],
+    ]);
+    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T-original" });
+    expect(io.appendCalls).toEqual([]);
+    expect(io.updateCalls).toEqual([]);
   });
 });
 

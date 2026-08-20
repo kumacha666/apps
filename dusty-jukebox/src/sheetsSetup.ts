@@ -72,13 +72,6 @@ export async function ensureIndexAndSyncTabsExist(io: SpreadsheetSetupIO): Promi
   await ensureTabExists(io, SYNC_SHEET_NAME, SYNC_TAB_HEADER, titles);
 }
 
-// isTabEmpty()が「空タブか」を確認する際に見る行数の上限。Sheets APIの既定の新規タブ行数
-// （1000行）に合わせた値：自分たちが作成したばかりの空タブは確実にこの範囲に収まる一方、
-// 完全に無限の範囲を毎回スキャンするコストは避ける（2026-08-20 Codexレビュー指摘：元々A1:Z5の
-// 固定範囲だったため、5行より下や既定を超える列にデータがある既存タブを誤って「空」と
-// 判定しヘッダーで上書きしてしまう恐れがあった）。
-const IS_TAB_EMPTY_ROW_SCAN_LIMIT = 1000;
-
 function columnLetter(colNumber: number): string {
   let n = colNumber;
   let result = "";
@@ -119,11 +112,14 @@ export function createSpreadsheetSetupIO(spreadsheetId: string, getAccessToken: 
       });
     },
     async isTabEmpty(sheetName, columnCount) {
-      // ヘッダー幅（columnCount）と十分な行数（IS_TAB_EMPTY_ROW_SCAN_LIMIT）の両方をカバーする
-      // 範囲を見て「本当に何も無いか」を確認する。values.getは対象範囲が実際のグリッドより
-      // 広くてもエラーにならない（書き込みと違い範囲外は単に無視される）ため、広めに取っても安全。
+      // ヘッダー幅（columnCount）の列全体を行数の上限を付けずに確認する（A1記法の開いた範囲
+      // 'sheet'!A:<lastCol>は列全体・全行を指す）。固定の行数上限（例：1000行）だと、それより
+      // 下の行にしかデータが無い既存タブを誤って「空」と判定してしまう（2026-08-20 Codexレビュー
+      // 指摘：新規タブの既定行数=1000という前提は、既存タブの実際の行数を何ら保証しない）。
+      // values.getは対象範囲が実際のグリッドより広くてもエラーにならない（書き込みと違い
+      // 範囲外は単に無視される）ため、上限を付けなくても安全。
       const lastCol = columnLetter(columnCount);
-      const range = `'${sheetName.replace(/'/g, "''")}'!A1:${lastCol}${IS_TAB_EMPTY_ROW_SCAN_LIMIT}`;
+      const range = `'${sheetName.replace(/'/g, "''")}'!A:${lastCol}`;
       const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range)}`);
       const data = (await res.json()) as { values?: unknown[][] };
       return !data.values || data.values.length === 0;

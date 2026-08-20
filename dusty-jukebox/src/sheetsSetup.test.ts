@@ -194,14 +194,14 @@ describe("createSpreadsheetSetupIO", () => {
     expect(body).toEqual({ values: [["key", "value"]] });
   });
 
-  test("isTabEmptyはcolumnCount列×1000行の範囲を見て、値が無ければtrueを返す（2026-08-20 Codexレビュー指摘：固定のA1:Z5だと27列目や6行目以降のデータを見逃す）", async () => {
+  test("isTabEmptyはcolumnCount列の開いた範囲（行数上限なし）を見て、値が無ければtrueを返す（2026-08-20 Codexレビュー指摘：固定の行数上限だと、それより下の行にしかデータが無い既存タブを見逃す）", async () => {
     const fetchMock = vi.fn(async () => fakeResponse(200, {}));
     vi.stubGlobal("fetch", fetchMock);
 
     const io = createSpreadsheetSetupIO("sheet1", async () => "token");
     await expect(io.isTabEmpty("index", 27)).resolves.toBe(true);
     const [url] = fetchMock.mock.calls[0] as unknown as [string];
-    expect(decodeURIComponent(url)).toContain("'index'!A1:AA1000");
+    expect(decodeURIComponent(url)).toContain("/values/'index'!A:AA");
   });
 
   test("isTabEmptyは何らかの値があればfalseを返す", async () => {

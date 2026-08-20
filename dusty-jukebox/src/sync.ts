@@ -138,8 +138,24 @@ export async function prepareSyncForScan(
 // 最後まで完了した時点でmain.tsから呼ぶ。本PRのスキャンはchanges.list再生を行わない
 // 「1回で最後まで処理する」実装のままのため、実際にはフルスキャン＋索引書き込みの成功をもって
 // 完了とみなす（次PR以降、バッチ処理・中断再開を実装する際にこの呼び出しタイミングを見直す）。
-export async function markInitialScanCompleted(io: SyncTabIO, completedAtIso: string): Promise<void> {
+//
+// expected: このスキャンを開始する際にprepareSyncForScanから得たrootFolderId/startPageToken。
+// 完了記録の直前に現在のsync状態と照合し、一致する場合のみ書き込む（2026-08-20 Codexレビュー
+// 指摘）：長時間のスキャン中に別デバイスがrootFolderIdを切り替えた場合、無条件に書き込むと
+// このスキャンとは無関係な（切り替え後の）ルートを誤って「完了」扱いにしてしまう。切り替え後の
+// ルートは実際には誰もスキャンしていないため、この誤記録によって将来の差分同期がそのルート配下の
+// 未索引ファイルを恒久的に取りこぼす。不一致の場合は書き込みをスキップする（このスキャンの結果は
+// 索引タブへは既に反映済みのため無駄にはならないが、sync状態としての「完了」記録だけは見送られる）。
+export async function markInitialScanCompleted(
+  io: SyncTabIO,
+  completedAtIso: string,
+  expected: { rootFolderId: string; startPageToken: string }
+): Promise<void> {
   const rows = await io.readAllRows();
+  const state = parseSyncState(rows);
+  if (state.rootFolderId !== expected.rootFolderId || state.startPageToken !== expected.startPageToken) {
+    return;
+  }
   await writeSyncEntries(io, rows, { initialScanCompletedAt: completedAtIso });
 }
 

@@ -164,7 +164,7 @@ async function handleScan(): Promise<void> {
     // 変更トークンの取得順序（CONCEPT.md 5節）：初回一覧の構築を始める前にstartPageTokenを
     // 確保しておく。ルート変更時は新規取得、初期化未完了中の再開時は既存トークンを使い回す
     // （sync.tsのprepareSyncForScan参照）。changes.listによる実際の差分再生は次PR以降。
-    await prepareSyncForScan(syncIO, createGetStartPageTokenFn(() => auth.ensureAccessToken(), driveId), folderId);
+    const { startPageToken } = await prepareSyncForScan(syncIO, createGetStartPageTokenFn(() => auth.ensureAccessToken(), driveId), folderId);
 
     setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
     const listFn = createDriveListFn(() => auth.ensureAccessToken());
@@ -189,7 +189,10 @@ async function handleScan(): Promise<void> {
     // 差分同期（changes.list、未実装）が開始トークン以降の変更しか拾わない性質上、恒久的に
     // 索引から漏れてしまう。取得失敗があった場合は完了とみなさず、次回のスキャンでの再挑戦に委ねる）。
     if (failedFolders.length === 0) {
-      await markInitialScanCompleted(syncIO, new Date().toISOString());
+      // 準備時に確保したrootFolderId/startPageTokenと照合してから書く（sync.tsのmarkInitialScanCompleted
+      // 参照）。長時間のスキャン中に別デバイスがルートを切り替えていた場合、無関係になった
+      // ルートを誤って完了扱いにしないため。
+      await markInitialScanCompleted(syncIO, new Date().toISOString(), { rootFolderId: folderId, startPageToken });
     }
 
     setStatus(`スキャン完了（${entries.length}件を索引に反映${failedFolders.length > 0 ? `、取得失敗フォルダ: ${failedFolders.length}件` : ""}）`);
