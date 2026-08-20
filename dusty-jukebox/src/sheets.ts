@@ -206,21 +206,53 @@ export async function upsertIndexRows(io: SheetsIndexIO, entries: UpsertIndexEnt
 // スコープはauth.tsのSPREADSHEETS_SCOPE（音源そのものにアクセスするdrive.readonlyとは別スコープ、
 // CONCEPT.md 2節・4.1節）。書き込み先はユーザー自身のGoogleドライブ内のスプレッドシート
 // （spreadsheetId）のindexタブのみで、音源ファイルには一切触れない。
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// drive.tsのRETRYABLE_403_REASONS/isRetryableErrorと同じ方針。Sheets APIも書き込みクォータ超過を
+// 429だけでなくreasonが"rateLimitExceeded"等の403でも返しうるため、同じ判定ロジックを踏襲する。
+const RETRYABLE_403_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded"]);
+
+function isRetryableError(status: number, bodyText: string): boolean {
+  if (status === 429) return true;
+  if (status >= 500 && status < 600) return true;
+  if (status === 403) {
+    try {
+      const body = JSON.parse(bodyText) as { error?: { errors?: { reason?: string }[] } };
+      return (body.error?.errors ?? []).some((e) => RETRYABLE_403_REASONS.has(e.reason ?? ""));
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () => Promise<string>): SheetsIndexIO {
   const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}`;
   const lastCol = columnLetter(INDEX_SHEET_HEADER.length);
 
+  // drive.tsのfetchDriveApiWithRetryと同じ方針：429/5xx・クォータ超過理由の403は指数バックオフで
+  // 数回リトライする（2026-08-20 /code-review指摘：リトライが無いと10235件規模の再スキャンで
+  // 単発の429/5xxがバッチ全体を巻き込んで失敗させてしまい、batchUpdateでまとめた意味が薄れる）。
+  // Content-Typeはbodyを送るリクエスト（PUT/POST）にのみ付与し、GET（listExistingRows）には
+  // 付けない。GETに非simpleヘッダーを付けるとブラウザがCORSプリフライトを発行してしまうため
+  // （2026-08-20 /code-review指摘）。
   async function sheetsFetch(url: string, init?: RequestInit): Promise<Response> {
-    const accessToken = await getAccessToken();
-    const res = await fetch(url, {
-      ...init,
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", ...init?.headers },
-    });
-    if (!res.ok) {
+    const maxRetries = 3;
+    let lastError: SheetsHttpError | null = null;
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      const accessToken = await getAccessToken();
+      const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
+      if (init?.body !== undefined) headers["Content-Type"] = "application/json";
+      const res = await fetch(url, { ...init, headers: { ...headers, ...init?.headers } });
+      if (res.ok) return res;
       const bodyText = await res.text();
-      throw new SheetsHttpError(res.status, `Sheets API request failed: ${res.status} ${bodyText}`);
+      lastError = new SheetsHttpError(res.status, `Sheets API request failed: ${res.status} ${bodyText}`);
+      if (attempt >= maxRetries || !isRetryableError(res.status, bodyText)) throw lastError;
+      await sleep(500 * 2 ** attempt);
     }
-    return res;
+    throw lastError ?? new Error("unreachable");
   }
 
   return {
