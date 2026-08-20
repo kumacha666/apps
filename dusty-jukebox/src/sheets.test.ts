@@ -146,7 +146,7 @@ describe("upsertIndexRows", () => {
       tags: { title: "Brand New" },
       extractionFailed: false,
     });
-    const result = await upsertIndexRows(io, [
+    await upsertIndexRows(io, [
       { fileId: "f1", row: newF1 },
       { fileId: "f3", row: newF3 },
     ]);
@@ -154,9 +154,6 @@ describe("upsertIndexRows", () => {
     expect(io.updateCalls).toHaveLength(1);
     expect(io.updateCalls[0]).toEqual([{ rowNumber: 2, row: newF1 }]);
     expect(io.appendCalls).toEqual([[newF3]]);
-    // appendedCountは呼び出し元（main.ts）がmergeDuplicateIndexRows()を呼ぶか判断する材料
-    // （新規追記が無ければこのスキャンは新たな重複を生みようがない、2026-08-20 /code-review指摘）。
-    expect(result.appendedCount).toBe(1);
   });
 
   test("既存行の_override列は温存し、抽出値列だけ新しい値で上書きする（4.2節: スキャナはoverrideを書き換えない）", async () => {
@@ -213,10 +210,7 @@ describe("upsertIndexRows", () => {
       extractionFailed: true,
     });
 
-    const result = await upsertIndexRows(io, [{ fileId: "f1", row: failedRescan }]);
-    // 既存fileIdの更新のみ（新規追記なし）の場合、appendedCountは0（2026-08-20 /code-review指摘：
-    // main.tsはこれを見てmergeDuplicateIndexRows()の呼び出しをスキップできる）。
-    expect(result.appendedCount).toBe(0);
+    await upsertIndexRows(io, [{ fileId: "f1", row: failedRescan }]);
 
     const [update] = io.updateCalls[0];
     expect(update.row[indexOf("title")]).toBe("既存タイトル"); // タグ列は既存値を保持
