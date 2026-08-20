@@ -9,11 +9,11 @@ function makeFakeIO(
 ): SpreadsheetSetupIO & {
   addCalls: { title: string; columnCount: number }[];
   headerCalls: { sheetName: string; header: readonly (string | number)[] }[];
-  isTabEmptyCalls: { sheetName: string; columnCount: number }[];
+  isTabEmptyCalls: string[];
 } {
   const addCalls: { title: string; columnCount: number }[] = [];
   const headerCalls: { sheetName: string; header: readonly (string | number)[] }[] = [];
-  const isTabEmptyCalls: { sheetName: string; columnCount: number }[] = [];
+  const isTabEmptyCalls: string[] = [];
   const titles = [...existingTitles];
   const empty = new Set(emptyTitles);
   return {
@@ -32,8 +32,8 @@ function makeFakeIO(
       headerCalls.push({ sheetName, header });
       empty.delete(sheetName); // ヘッダーを書いたので以後は「空」ではない
     },
-    async isTabEmpty(sheetName, columnCount) {
-      isTabEmptyCalls.push({ sheetName, columnCount });
+    async isTabEmpty(sheetName) {
+      isTabEmptyCalls.push(sheetName);
       return empty.has(sheetName);
     },
   };
@@ -207,14 +207,15 @@ describe("createSpreadsheetSetupIO", () => {
     expect(body).toEqual({ values: [["key", "value"]] });
   });
 
-  test("isTabEmptyはcolumnCount列の開いた範囲（行数上限なし）を見て、値が無ければtrueを返す（2026-08-20 Codexレビュー指摘：固定の行数上限だと、それより下の行にしかデータが無い既存タブを見逃す）", async () => {
+  test("isTabEmptyはシート名のみを範囲として指定し（列・行どちらの上限も付けない）、値が無ければtrueを返す（2026-08-20 Codexレビュー指摘：呼び出し元のヘッダー幅に列範囲を限定していたため、それを超える列にしかデータが無い既存タブを見逃していた）", async () => {
     const fetchMock = vi.fn(async () => fakeResponse(200, {}));
     vi.stubGlobal("fetch", fetchMock);
 
     const io = createSpreadsheetSetupIO("sheet1", async () => "token");
-    await expect(io.isTabEmpty("index", 27)).resolves.toBe(true);
+    await expect(io.isTabEmpty("index")).resolves.toBe(true);
     const [url] = fetchMock.mock.calls[0] as unknown as [string];
-    expect(decodeURIComponent(url)).toContain("/values/'index'!A:AA");
+    expect(decodeURIComponent(url)).toContain("/values/'index'");
+    expect(decodeURIComponent(url)).not.toContain("!"); // セル参照を付けていないこと
   });
 
   test("isTabEmptyは何らかの値があればfalseを返す", async () => {
@@ -222,6 +223,6 @@ describe("createSpreadsheetSetupIO", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const io = createSpreadsheetSetupIO("sheet1", async () => "token");
-    await expect(io.isTabEmpty("sync", 2)).resolves.toBe(false);
+    await expect(io.isTabEmpty("sync")).resolves.toBe(false);
   });
 });

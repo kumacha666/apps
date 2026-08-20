@@ -34,13 +34,15 @@ export interface SpreadsheetSetupIO {
   // 初回自動セットアップが永久に失敗し続ける（2026-08-20 Codexレビュー指摘）。
   addSheetTab(title: string, columnCount: number): Promise<void>;
   writeHeaderRow(sheetName: string, header: readonly (string | number)[]): Promise<void>;
-  // タブの管理対象範囲（columnCount列 × 全行）にまったく値が無いかを確認する。
-  // 「自分たちが作ったが初期化未完了のタブ」と「既にデータが入っている無関係なタブ」を
-  // 区別するための安全確認。columnCountはこのタブに書く予定のヘッダー幅（呼び出し元の
-  // header.length）を渡す：狭い固定範囲だけを見ると、ヘッダー幅を超えた列にあるデータを
-  // 見逃して「空」と誤判定してしまう（2026-08-20 Codexレビュー指摘）。呼び出しコストが
-  // 比較的重いため、`ensureValidHeader`のフォールバック経路でのみ呼ばれる（上記コメント参照）。
-  isTabEmpty(sheetName: string, columnCount: number): Promise<boolean>;
+  // タブ全体（全列・全行）にまったく値が無いかを確認する。「自分たちが作ったが初期化未完了の
+  // タブ」と「既にデータが入っている無関係なタブ」を区別するための安全確認。以前は呼び出し元の
+  // ヘッダー幅（例：indexなら27列）に限定した範囲しか見ていなかったため、無関係な既存タブの
+  // データがその列範囲より外（例：indexならAB列以降、syncならC列以降）にしか無い場合、
+  // 誤って「空」と判定してアプリのヘッダーで上書きしてしまう恐れがあった（2026-08-20
+  // Codexレビュー指摘：行数上限の修正では列幅の限定は解消されていなかった）。列範囲を
+  // 限定せずタブ全体を確認するよう修正。呼び出しコストが比較的重いため、`ensureValidHeader`の
+  // フォールバック経路でのみ呼ばれる（上記コメント参照）。
+  isTabEmpty(sheetName: string): Promise<boolean>;
 }
 
 async function ensureTabExists(io: SpreadsheetSetupIO, title: string, header: readonly (string | number)[], titles: Set<string>): Promise<void> {
@@ -82,7 +84,7 @@ export async function ensureValidHeader(
   isValid: (header: (string | number)[]) => boolean
 ): Promise<void> {
   let header = await headerIO.readHeaderRow();
-  if (!isValid(header) && (await setupIO.isTabEmpty(sheetName, expectedHeader.length))) {
+  if (!isValid(header) && (await setupIO.isTabEmpty(sheetName))) {
     await setupIO.writeHeaderRow(sheetName, expectedHeader);
     header = await headerIO.readHeaderRow();
   }
@@ -121,15 +123,13 @@ export function createSpreadsheetSetupIO(spreadsheetId: string, getAccessToken: 
         body: JSON.stringify({ values: [header] }),
       });
     },
-    async isTabEmpty(sheetName, columnCount) {
-      // ヘッダー幅（columnCount）の列全体を行数の上限を付けずに確認する（A1記法の開いた範囲
-      // 'sheet'!A:<lastCol>は列全体・全行を指す）。固定の行数上限（例：1000行）だと、それより
-      // 下の行にしかデータが無い既存タブを誤って「空」と判定してしまう（2026-08-20 Codexレビュー
-      // 指摘：新規タブの既定行数=1000という前提は、既存タブの実際の行数を何ら保証しない）。
-      // values.getは対象範囲が実際のグリッドより広くてもエラーにならない（書き込みと違い
-      // 範囲外は単に無視される）ため、上限を付けなくても安全。
-      const lastCol = columnLetter(columnCount);
-      const range = `'${sheetName.replace(/'/g, "''")}'!A:${lastCol}`;
+    async isTabEmpty(sheetName) {
+      // 列・行どちらの上限も付けず、シート名だけを範囲として指定する（Sheets APIの仕様として、
+      // セル参照を付けずシート名のみを渡すとそのタブの全データを返す）。以前は呼び出し元の
+      // ヘッダー幅（例：indexなら27列）に列範囲を限定していたが、無関係な既存タブのデータが
+      // その範囲より外の列にしか無い場合に誤って「空」と判定してしまう恐れがあった
+      // （2026-08-20 Codexレビュー指摘）。
+      const range = `'${sheetName.replace(/'/g, "''")}'`;
       const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range)}`);
       const data = (await res.json()) as { values?: unknown[][] };
       return !data.values || data.values.length === 0;
