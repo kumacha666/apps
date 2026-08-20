@@ -1,19 +1,28 @@
-// エントリポイント。Phase 1着手順1: OAuth認証（トークンモデル）＋drive.readonlyでのファイル一覧取得のみ実装。
-// 索引Sheets書き込み・実Rangeフェッチ・絞り込み/再生UIは未着手（dusty-jukebox/CLAUDE.md参照）。
+// エントリポイント。Phase 1着手順3の一部: 実DriveでのRangeフェッチ＋タグ抽出をスキャンUIと
+// Sheets索引upsertに結線した。sync タブ管理（startPageToken/rootFolderId/initialScanCompletedAt）・
+// 初回スキャンのバッチ処理・中断再開・絞り込み/再生UIは未着手（dusty-jukebox/CLAUDE.md参照）。
+// このPRのスキャンは「見つかった全ファイルを1回で最後まで処理する」素朴な実装で、途中で
+// タブを閉じる／通信が長時間切れる等での中断・再開には対応しない。
 import { AuthError, DriveAuth } from "./auth";
 import {
+  createDriveCapabilitiesGetFn,
+  createDriveFetchRange,
   createDriveGetFn,
   createDriveListFn,
   listAudioFilesRecursive,
   validateRootFolder,
-  DriveHttpError,
+  isAuthError,
   type AudioFileEntry,
 } from "./drive";
+import { extractAndBuildIndexEntries } from "./tagExtraction";
+import { createSheetsIndexIO, isValidIndexHeader, upsertIndexRows, SheetsHttpError, INDEX_SHEET_NAME } from "./sheets";
 
-// Drive APIが直接401を返したケース・GISのサイレント再取得自体が失敗したケースのどちらも、
-// 「今キャッシュされているトークンはもう使えない」ことを意味する
+// drive.tsのisAuthError()（AuthError・DriveHttpError(401)）に加え、main.tsではSheets側の
+// 401（書き込み先検証・upsert時）も同じ「トークンはもう使えない」判定に含める必要がある
+// （2026-08-20 /code-review指摘：この判定が複数ファイルに独立コピーされていたため、
+// Drive/Auth関連の判定はdrive.tsのisAuthError()を唯一の情報源として合成する）
 function isAuthFailure(err: unknown): boolean {
-  return err instanceof AuthError || (err instanceof DriveHttpError && err.status === 401);
+  return isAuthError(err) || (err instanceof SheetsHttpError && err.status === 401);
 }
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
@@ -38,8 +47,12 @@ function render(): void {
         <span>スキャン対象フォルダID</span>
         <input id="folder-id" type="text" placeholder="Google DriveのフォルダURLの末尾" />
       </label>
+      <label class="field">
+        <span>索引スプレッドシートID（indexタブ＋ヘッダー行を事前に作成済みのもの）</span>
+        <input id="spreadsheet-id" type="text" placeholder="スプレッドシートURLの末尾" />
+      </label>
       <button id="login-btn" type="button">Googleドライブ（読み取り専用）＋スプレッドシートへログイン</button>
-      <button id="scan-btn" type="button" disabled>フォルダ内の音楽ファイルを数える</button>
+      <button id="scan-btn" type="button" disabled>音楽ファイルをスキャンして索引に反映する</button>
       <p id="status" class="status"></p>
       <ul id="result-list" class="result-list"></ul>
     `
@@ -79,8 +92,13 @@ function renderResults(entries: AudioFileEntry[], failedFolders: string[]): void
 
 async function handleScan(): Promise<void> {
   const folderId = el<HTMLInputElement>("folder-id").value.trim();
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
   if (!folderId) {
     setStatus("フォルダIDを入力してください", true);
+    return;
+  }
+  if (!spreadsheetId) {
+    setStatus("索引スプレッドシートIDを入力してください", true);
     return;
   }
   const scanBtn = el<HTMLButtonElement>("scan-btn");
@@ -97,12 +115,47 @@ async function handleScan(): Promise<void> {
     // （2026-08-19 Codexレビュー指摘）
     await validateRootFolder(getFn, folderId);
 
+    // スプレッドシートIDのタイプミス・アクセス権不足・indexタブ未作成／ヘッダー行未作成は、
+    // 抽出開始前に検出したい。1万件規模のタグ抽出（フォルダ走査より遥かに時間がかかる）を
+    // すべて実行してから失敗すると、中断・再開機能が無いため最初からやり直しになってしまう
+    // （2026-08-20 Codexレビュー指摘）。フォルダ検証と同様にここで先に検証する。
+    // listExistingRows()（A2以降のみ）だけではヘッダー行（1行目）自体の有無・列順を検証
+    // できず、空/誤ったヘッダーのまま抽出を進めると初回のappendRows()がA1（本来ヘッダーが
+    // あるべき行）に曲データを書き込んでしまい、次回スキャンがそれをヘッダーとして読み飛ばして
+    // 重複行を生む（2026-08-20 Codexレビュー指摘）。readHeaderRow()で実際のヘッダー内容を検証する
+    setStatus("書き込み先スプレッドシートを確認中...");
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    const header = await sheetsIO.readHeaderRow();
+    if (!isValidIndexHeader(header)) {
+      throw new Error(`索引スプレッドシートの「${INDEX_SHEET_NAME}」タブのヘッダー行が想定と一致しません。ヘッダー行（1行目）を事前に作成してください。`);
+    }
+    // readHeaderRow()はGET（Sheets values.get）のみのため、閲覧専用で共有されたスプレッドシートを
+    // 指定した場合でも正常に通過してしまう。書き込み権限自体は抽出完了後のupdateRows()/appendRows()の
+    // 403で初めて判明していた（2026-08-20 Codexレビュー指摘）。スプレッドシートもDriveファイルの
+    // 一種であるため、Sheets APIを呼ばずにDrive APIのcapabilities.canEditで先に確認する
+    const capabilitiesGetFn = createDriveCapabilitiesGetFn(() => auth.ensureAccessToken());
+    const { canEdit } = await capabilitiesGetFn(spreadsheetId);
+    if (!canEdit) {
+      throw new Error("索引スプレッドシートへの編集権限がありません。共有設定（編集者権限）をご確認ください。");
+    }
+
     setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
     const listFn = createDriveListFn(() => auth.ensureAccessToken());
     const failedFolders: string[] = [];
     const entries = await listAudioFilesRecursive(listFn, folderId, "", failedFolders);
     renderResults(entries, failedFolders);
-    setStatus("スキャン完了");
+
+    setStatus(`タグを抽出中...（0/${entries.length}件）`);
+    const upsertEntries = await extractAndBuildIndexEntries(
+      entries,
+      (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
+      (done, total) => setStatus(`タグを抽出中...（${done}/${total}件）`)
+    );
+
+    setStatus("スプレッドシートへ書き込み中...");
+    await upsertIndexRows(sheetsIO, upsertEntries);
+
+    setStatus(`スキャン完了（${entries.length}件を索引に反映${failedFolders.length > 0 ? `、取得失敗フォルダ: ${failedFolders.length}件` : ""}）`);
   } catch (err) {
     // 401（トークン取り消し等）は、ローカルのexpiresAtがまだ有効に見えていても
     // Drive APIに拒否されたことを意味する。キャッシュを残したままだと次回の

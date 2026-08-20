@@ -6,12 +6,16 @@
 
 import { isAudioFile } from "./lib";
 import { AuthError } from "./auth";
+import type { FetchRangeFn } from "./rangeTokenizer";
 
 export interface DriveFile {
   id: string;
   name: string;
   mimeType: string;
   size?: string;
+  // タグ抽出結果のindexタブへのupsert（sheets.ts）でdriveModifiedTime列に使う。差分同期
+  // （CONCEPT.md 5節のchanges.list）の実装時にも参照する想定。
+  modifiedTime?: string;
   parents?: string[];
   // フォルダショートカット（3.1節のフォルダ構成の実データには無かったが、Drive一般では
   // 存在しうる）解決用。files.list/files.getのfieldsに含めた場合のみ埋まる。
@@ -49,7 +53,12 @@ export class DriveHttpError extends Error {
 // エラー」として扱う（2026-08-19 Codexレビュー指摘：後者がDriveHttpErrorではないため
 // 子フォルダの一時的な失敗として握りつぶされ、走査が中断されずに無効なトークンで
 // 続行してしまっていた）。
-function isAuthError(err: unknown): boolean {
+// tagExtraction.ts/main.tsからも同じ判定が必要になったため、Drive/Auth関連の「トークンは
+// もう使えない」の唯一の判定箇所としてexportする（2026-08-20 /code-review指摘：
+// 同じ判定ロジックがファイルごとに独立コピーされ、将来どれか1つを更新し忘れると
+// 「無効なトークンでAPIを叩き続ける」バグが特定の経路だけで再発しうる）。main.tsは
+// これに加えてSheetsHttpError(401)も判定する必要があるため、そちらは独自に合成する。
+export function isAuthError(err: unknown): boolean {
   return (err instanceof DriveHttpError && err.status === 401) || err instanceof AuthError;
 }
 
@@ -243,6 +252,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// fetchDriveApiWithRetry/fetchRangeWithBodyRetry共通の指数バックオフ（2026-08-20 /code-review
+// 指摘：同じ式が本ファイル内で複数回コピーされていた。sheets.tsのsheetsFetchも同じ式を使うが、
+// Drive/Sheetsでバックオフ方針を将来別々に調整する可能性を考慮し、ファイルをまたいだ共有はしない）
+function backoffDelayMs(attempt: number): number {
+  return 500 * 2 ** attempt;
+}
+
 // Drive APIはクォータ超過を429だけでなく、reasonが"rateLimitExceeded"/"userRateLimitExceeded"の
 // HTTP 403でも返すことがある（2026-08-19 Codexレビュー指摘）。403を一律リトライ対象にはできない
 // （権限無し等の恒久的な403もあるため）ので、レスポンス本文のerror reasonを見て判定する。
@@ -273,7 +289,8 @@ function isRetryableError(status: number, bodyText: string): boolean {
 async function fetchDriveApiWithRetry(
   url: string,
   getAccessToken: () => Promise<string>,
-  extraHeaders?: Record<string, string>
+  extraHeaders?: Record<string, string>,
+  signal?: AbortSignal
 ): Promise<Response> {
   const maxRetries = 3;
   let lastError: Error | null = null;
@@ -281,18 +298,22 @@ async function fetchDriveApiWithRetry(
     const accessToken = await getAccessToken();
     let res: Response;
     try {
-      res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}`, ...extraHeaders } });
+      res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}`, ...extraHeaders }, signal });
     } catch (networkErr) {
+      // 呼び出し元（タグ抽出のタイムアウト等）が意図的にsignalをabortしたケースはリトライ対象の
+      // 一時的な通信断ではないため、そのまま呼び出し元に伝える（extractTags側のPromise.raceが
+      // 既にタイムアウトを検知しており、ここでリトライ待ちしても無駄になる）。
+      if (networkErr instanceof Error && networkErr.name === "AbortError") throw networkErr;
       lastError = networkErr instanceof Error ? networkErr : new Error(String(networkErr));
       if (attempt >= maxRetries) throw lastError;
-      await sleep(500 * 2 ** attempt);
+      await sleep(backoffDelayMs(attempt));
       continue;
     }
     if (res.ok) return res;
     const bodyText = await res.text();
     lastError = new DriveHttpError(res.status, `Drive API request failed: ${res.status} ${bodyText}`);
     if (attempt >= maxRetries || !isRetryableError(res.status, bodyText)) throw lastError;
-    await sleep(500 * 2 ** attempt);
+    await sleep(backoffDelayMs(attempt));
   }
   // ループは必ずreturn/throwで終わるが、TypeScriptの制御フロー解析のために明示しておく
   throw lastError ?? new Error("unreachable");
@@ -311,7 +332,7 @@ export function createDriveListFn(getAccessToken: () => Promise<string>): DriveL
   return async (folderId, pageToken, resourceKey) => {
     const params = new URLSearchParams({
       q: `'${folderId}' in parents and trashed = false`,
-      fields: "nextPageToken, files(id, name, mimeType, size, parents, shortcutDetails)",
+      fields: "nextPageToken, files(id, name, mimeType, size, modifiedTime, parents, shortcutDetails)",
       pageSize: "1000",
       supportsAllDrives: "true",
       includeItemsFromAllDrives: "true",
@@ -334,5 +355,76 @@ export function createDriveGetFn(getAccessToken: () => Promise<string>): DriveGe
     const res = await fetchDriveApiWithRetry(url, getAccessToken);
     const data = (await res.json()) as { mimeType: string };
     return { mimeType: data.mimeType };
+  };
+}
+
+// Googleスプレッドシート自体もDriveファイルの一種であるため、Sheets APIを一切呼ばずとも
+// Drive API（drive.readonlyスコープのみで十分）のcapabilities.canEditで書き込み権限の
+// 有無を確認できる。indexタブへの事前検証（readHeaderRow、GETのみ）は「読める」ことしか
+// 確認しておらず、閲覧専用で共有されたスプレッドシートを指定した場合、1万件規模のタグ抽出が
+// すべて終わった後になって初めてupdateRows()/appendRows()が403で失敗してしまう
+// （2026-08-20 Codexレビュー指摘）。main.tsのhandleScan()から抽出開始前に呼ぶ。
+export type DriveCapabilitiesGetFn = (fileId: string) => Promise<{ canEdit: boolean }>;
+
+export function createDriveCapabilitiesGetFn(getAccessToken: () => Promise<string>): DriveCapabilitiesGetFn {
+  return async (fileId) => {
+    const params = new URLSearchParams({ fields: "capabilities(canEdit)", supportsAllDrives: "true" });
+    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`;
+    const res = await fetchDriveApiWithRetry(url, getAccessToken);
+    const data = (await res.json()) as { capabilities?: { canEdit?: boolean } };
+    return { canEdit: data.capabilities?.canEdit ?? false };
+  };
+}
+
+// rangeTokenizer.tsのFetchRangeFnの実実装（CONCEPT.md 5節: タグ抽出はRangeリクエストによる
+// 部分取得で行い、10235件規模のライブラリをフルダウンロードしない）。alt=mediaで音源本体の
+// バイト列を取得する。書き込み系エンドポイントではないためdrive.readonlyスコープのままで良い。
+// signalはタグ抽出側（tagExtraction.ts）のタイムアウト処理から渡され、タイムアウト時に
+// 発行中のRangeリクエストを実際に中断する（catalog-scriptのverify-range.jsと同じ方針）。
+// fetchDriveApiWithRetry()はfetch()自体（ヘッダー受信まで）のみをリトライ対象にしており、
+// レスポンス受信後・本文（arrayBuffer）ダウンロード中に接続が切れた場合はカバーしない
+// （2026-08-20 Codexレビュー指摘）。本文読み取りが失敗した場合は、fetchDriveApiWithRetry()を
+// 最初からやり直す（ヘッダー受信済みのストリームを再開する手段は無いため、リクエスト自体を
+// 再送する）。401等の非リトライ対象エラーはfetchDriveApiWithRetry()が即座に投げるため、
+// ここでの追加リトライは発生しない。
+// fetchDriveApiWithRetry自体も内部でリトライするため、最悪ケースでは両方の再試行が重なりうる
+// （2026-08-20 /code-review指摘）が、呼び出し元のextractTags()がファイル単位の
+// タイムアウト（computeTagExtractionTimeoutMs、既定30秒〜上限180秒）でPromise.raceして
+// おり、両者が積み重なった場合でも最終的にはそちらで頭打ちになる。ここでの再試行回数は
+// その安全網を前提に控えめ（2回）にとどめる。
+async function fetchRangeWithBodyRetry(
+  url: string,
+  getAccessToken: () => Promise<string>,
+  extraHeaders: Record<string, string> | undefined,
+  signal: AbortSignal | undefined
+): Promise<Uint8Array> {
+  const maxBodyRetries = 2;
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxBodyRetries; attempt += 1) {
+    const res = await fetchDriveApiWithRetry(url, getAccessToken, extraHeaders, signal);
+    try {
+      const buf = await res.arrayBuffer();
+      return new Uint8Array(buf);
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt >= maxBodyRetries) throw lastError;
+      await sleep(backoffDelayMs(attempt));
+    }
+  }
+  throw lastError ?? new Error("unreachable");
+}
+
+export function createDriveFetchRange(
+  fileId: string,
+  getAccessToken: () => Promise<string>,
+  options?: { resourceKey?: string; signal?: AbortSignal }
+): FetchRangeFn {
+  return async (startByte, endByteInclusive) => {
+    const params = new URLSearchParams({ alt: "media", supportsAllDrives: "true" });
+    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`;
+    const extraHeaders: Record<string, string> = { Range: `bytes=${startByte}-${endByteInclusive}` };
+    if (options?.resourceKey) extraHeaders["X-Goog-Drive-Resource-Keys"] = `${fileId}/${options.resourceKey}`;
+    return fetchRangeWithBodyRetry(url, getAccessToken, extraHeaders, options?.signal);
   };
 }

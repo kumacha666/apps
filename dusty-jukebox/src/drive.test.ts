@@ -4,6 +4,8 @@ import {
   listFolderChildren,
   createDriveListFn,
   createDriveGetFn,
+  createDriveCapabilitiesGetFn,
+  createDriveFetchRange,
   validateRootFolder,
   ConcurrencyLimiter,
   DriveHttpError,
@@ -461,5 +463,155 @@ describe("createDriveGetFn", () => {
     const getFile = createDriveGetFn(async () => "token");
     await expect(getFile("does-not-exist")).rejects.toMatchObject({ status: 404 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createDriveCapabilitiesGetFn", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("canEdit=trueの場合はtrueを返す（2026-08-20 Codexレビュー指摘: タグ抽出前の書き込み権限事前検証用）", async () => {
+    const response = fakeResponse(200, { capabilities: { canEdit: true } });
+    const fetchMock = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getCapabilities = createDriveCapabilitiesGetFn(async () => "token");
+    await expect(getCapabilities("sheet-1")).resolves.toEqual({ canEdit: true });
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(decodeURIComponent(url)).toContain("capabilities(canEdit)");
+  });
+
+  test("閲覧専用で共有されている場合（canEdit=false）はfalseを返す", async () => {
+    const response = fakeResponse(200, { capabilities: { canEdit: false } });
+    vi.stubGlobal("fetch", vi.fn(async () => response));
+
+    const getCapabilities = createDriveCapabilitiesGetFn(async () => "token");
+    await expect(getCapabilities("sheet-1")).resolves.toEqual({ canEdit: false });
+  });
+
+  test("capabilitiesフィールド自体が欠けている場合は安全側のfalseを返す", async () => {
+    const response = fakeResponse(200, {});
+    vi.stubGlobal("fetch", vi.fn(async () => response));
+
+    const getCapabilities = createDriveCapabilitiesGetFn(async () => "token");
+    await expect(getCapabilities("sheet-1")).resolves.toEqual({ canEdit: false });
+  });
+});
+
+function fakeBinaryResponse(status: number, bytes: Uint8Array): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => "",
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+  } as unknown as Response;
+}
+
+describe("createDriveFetchRange", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  test("Rangeヘッダーを指定してalt=mediaで取得し、Uint8Arrayを返す", async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const fetchMock = vi.fn(async () => fakeBinaryResponse(206, bytes));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fetchRange = createDriveFetchRange("file-1", async () => "token");
+    const result = await fetchRange(10, 13);
+
+    expect(result).toEqual(bytes);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("alt=media");
+    expect(url).toContain(encodeURIComponent("file-1"));
+    expect((init.headers as Record<string, string>)["Range"]).toBe("bytes=10-13");
+  });
+
+  test("resourceKeyが指定された場合はX-Goog-Drive-Resource-Keysヘッダーを付与する", async () => {
+    const fetchMock = vi.fn(async () => fakeBinaryResponse(206, new Uint8Array(0)));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fetchRange = createDriveFetchRange("file-1", async () => "token", { resourceKey: "rk-1" });
+    await fetchRange(0, 0);
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["X-Goog-Drive-Resource-Keys"]).toBe("file-1/rk-1");
+  });
+
+  test("429は指数バックオフでリトライし、最終的に成功する", async () => {
+    vi.useFakeTimers();
+    const bytes = new Uint8Array([9, 9]);
+    const responses = [fakeResponse(429, { error: { errors: [{ reason: "rateLimitExceeded" }] } }), fakeBinaryResponse(206, bytes)];
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => responses[call++]));
+
+    const fetchRange = createDriveFetchRange("file-1", async () => "token");
+    const promise = fetchRange(0, 1);
+    await vi.runAllTimersAsync();
+    expect(await promise).toEqual(bytes);
+  });
+
+  test("signalが渡されタイムアウト等でabortされた場合はAbortErrorをリトライせずそのまま伝える（タグ抽出タイムアウトとの結線用）", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async () => {
+      controller.abort();
+      const err = new Error("The operation was aborted");
+      err.name = "AbortError";
+      throw err;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fetchRange = createDriveFetchRange("file-1", async () => "token", { signal: controller.signal });
+    await expect(fetchRange(0, 1)).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // リトライしていないことを確認
+  });
+
+  test("本文（arrayBuffer）読み取り中の通信断はリクエスト自体をやり直してリトライする（2026-08-20 Codexレビュー指摘: fetch()自体は成功済みのためfetchDriveApiWithRetryのリトライだけではカバーされない）", async () => {
+    vi.useFakeTimers();
+    const bytes = new Uint8Array([5, 6, 7]);
+    let call = 0;
+    const fetchMock = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        // ヘッダー受信（fetch自体）は成功するが、本文ダウンロード中に接続が切れたケースを模す
+        return {
+          ok: true,
+          status: 206,
+          text: async () => "",
+          arrayBuffer: async () => {
+            throw new TypeError("Failed to fetch");
+          },
+        } as unknown as Response;
+      }
+      return fakeBinaryResponse(206, bytes);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fetchRange = createDriveFetchRange("file-1", async () => "token");
+    const promise = fetchRange(0, 2);
+    await vi.runAllTimersAsync();
+    expect(await promise).toEqual(bytes);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // fetch自体をもう一度やり直している
+  });
+
+  test("本文読み取りのリトライがすべて失敗した場合は最後の例外を投げる", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 206,
+      text: async () => "",
+      arrayBuffer: async () => {
+        throw new TypeError("Failed to fetch");
+      },
+    })) as unknown as () => Promise<Response>;
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fetchRange = createDriveFetchRange("file-1", async () => "token");
+    const promise = fetchRange(0, 2);
+    promise.catch(() => {});
+    await vi.runAllTimersAsync();
+    await expect(promise).rejects.toBeInstanceOf(TypeError);
   });
 });

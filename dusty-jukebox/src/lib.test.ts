@@ -1,5 +1,16 @@
 import { describe, expect, test } from "vitest";
-import { isAudioFile, getExtension, detectGarbled, buildRow, guessMimeType, sheetRange, SHEET_HEADER, diffTagRows } from "./lib";
+import {
+  isAudioFile,
+  getExtension,
+  detectGarbled,
+  buildRow,
+  guessMimeType,
+  sheetRange,
+  SHEET_HEADER,
+  diffTagRows,
+  deriveFallbackTitle,
+  parseFileSizeBytes,
+} from "./lib";
 
 describe("lib", () => {
   test("isAudioFile: 拡張子ベースで判定する（mimeTypeは見ない）", () => {
@@ -14,6 +25,21 @@ describe("lib", () => {
     expect(getExtension("Track01.MP3")).toBe("mp3");
     expect(getExtension("archive.tar.gz")).toBe("gz");
     expect(getExtension("no-extension")).toBe("");
+  });
+
+  test("parseFileSizeBytes: 0バイトを正しく0として扱う（falsy-zero対策、2026-08-20 /code-review指摘）", () => {
+    expect(parseFileSizeBytes("0")).toBe(0);
+    expect(parseFileSizeBytes("12345")).toBe(12345);
+    expect(parseFileSizeBytes(undefined)).toBeUndefined();
+    expect(parseFileSizeBytes("not-a-number")).toBeUndefined();
+  });
+
+  test("deriveFallbackTitle: 拡張子を除いたファイル名を返す（タイトルタグ欠落時のフォールバック用）", () => {
+    expect(deriveFallbackTitle("Belinda Carlisle - Heaven Is A Place On Earth.mp3")).toBe(
+      "Belinda Carlisle - Heaven Is A Place On Earth"
+    );
+    expect(deriveFallbackTitle("archive.tar.gz")).toBe("archive.tar");
+    expect(deriveFallbackTitle("no-extension")).toBe("no-extension");
   });
 
   test("detectGarbled: 正常な日本語・英語タイトルは化けていないと判定する", () => {

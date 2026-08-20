@@ -164,11 +164,23 @@ export interface SheetsIndexIO {
   // fileId自体はrow[0]に含まれる。既存の_override列を読み取って温存するために全列必要
   // （fileId列だけを読む設計だと、更新のたびにユーザーの手動補正が消えてしまう。後述）。
   listExistingRows(): Promise<(string | number)[][]>;
+  // ヘッダー行（1行目、A1:<lastCol>1）をそのまま返す。indexタブ自体は存在するがヘッダー行が
+  // 無い・列順が異なる場合を検出するための専用メソッド（validateIndexHeader参照）。
+  readHeaderRow(): Promise<(string | number)[]>;
   // 複数行の更新を1回のAPI呼び出しにまとめて書き込む（10235件規模でも逐次PUTにしない。
   // 2026-08-20 Codexレビュー指摘）。空配列ならAPIを呼ばない。
   updateRows(updates: { rowNumber: number; row: (string | number)[] }[]): Promise<void>;
   // 複数行をシート末尾に追記する。空配列ならAPIを呼ばない。
   appendRows(rows: (string | number)[][]): Promise<void>;
+}
+
+// listExistingRows()はA2以降しか読まないため、indexタブは存在するがヘッダー行（1行目）が
+// 空・列順が異なる場合を検出できない。その状態でappendRows()するとA1（＝本来ヘッダーが
+// あるべき行）に最初の曲データが書き込まれ、次回のlistExistingRows()はその行をヘッダーとして
+// 読み飛ばしてしまい、同じ曲が再度追記され続けて索引が重複する（2026-08-20 Codexレビュー指摘）。
+// 抽出開始前にヘッダー行がINDEX_SHEET_HEADERと完全一致することを確認する。
+export function isValidIndexHeader(header: (string | number)[]): boolean {
+  return header.length === INDEX_SHEET_HEADER.length && header.every((v, i) => v === INDEX_SHEET_HEADER[i]);
 }
 
 export interface UpsertIndexEntry {
@@ -296,6 +308,12 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
       const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range)}`);
       const data = (await res.json()) as { values?: (string | number)[][] };
       return data.values ?? [];
+    },
+    async readHeaderRow() {
+      const range = sheetRange(INDEX_SHEET_NAME, `A1:${lastCol}1`);
+      const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range)}`);
+      const data = (await res.json()) as { values?: (string | number)[][] };
+      return data.values?.[0] ?? [];
     },
     async updateRows(updates) {
       if (updates.length === 0) return;
