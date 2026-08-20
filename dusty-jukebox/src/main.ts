@@ -38,7 +38,7 @@ function render(): void {
         <span>スキャン対象フォルダID</span>
         <input id="folder-id" type="text" placeholder="Google DriveのフォルダURLの末尾" />
       </label>
-      <button id="login-btn" type="button">Googleドライブへログイン（読み取り専用）</button>
+      <button id="login-btn" type="button">Googleドライブ（読み取り専用）＋スプレッドシートへログイン</button>
       <button id="scan-btn" type="button" disabled>フォルダ内の音楽ファイルを数える</button>
       <p id="status" class="status"></p>
       <ul id="result-list" class="result-list"></ul>
