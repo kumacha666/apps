@@ -116,8 +116,9 @@ async function handleScan(): Promise<void> {
     // files.listは'<folderId>' in parentsのクエリで、folderId自体の存在・種別・権限は
     // 検証しない（誤ったIDでも単に空の子一覧を返しうる）。「フォルダが空」と
     // 「そもそも無効なID」を区別するため、スキャン開始前にフォルダ自身を検証する
-    // （2026-08-19 Codexレビュー指摘）
-    await validateRootFolder(getFn, folderId);
+    // （2026-08-19 Codexレビュー指摘）。共有ドライブ配下のルートの場合はdriveIdが返る
+    // （changes.getStartPageTokenのスコープ指定に必要、2026-08-20 Codexレビュー指摘）
+    const { driveId } = await validateRootFolder(getFn, folderId);
 
     // 書き込み権限自体は、抽出完了後のupdateRows()/appendRows()の403で初めて判明すると
     // 1万件規模のタグ抽出をやり直すことになる（2026-08-20 Codexレビュー指摘）ため先に検証する。
@@ -163,7 +164,7 @@ async function handleScan(): Promise<void> {
     // 変更トークンの取得順序（CONCEPT.md 5節）：初回一覧の構築を始める前にstartPageTokenを
     // 確保しておく。ルート変更時は新規取得、初期化未完了中の再開時は既存トークンを使い回す
     // （sync.tsのprepareSyncForScan参照）。changes.listによる実際の差分再生は次PR以降。
-    await prepareSyncForScan(syncIO, createGetStartPageTokenFn(() => auth.ensureAccessToken()), folderId);
+    await prepareSyncForScan(syncIO, createGetStartPageTokenFn(() => auth.ensureAccessToken(), driveId), folderId);
 
     setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
     const listFn = createDriveListFn(() => auth.ensureAccessToken());

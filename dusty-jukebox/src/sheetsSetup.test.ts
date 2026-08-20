@@ -6,8 +6,11 @@ import { SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 function makeFakeIO(
   existingTitles: string[],
   emptyTitles: string[] = []
-): SpreadsheetSetupIO & { addCalls: string[]; headerCalls: { sheetName: string; header: readonly (string | number)[] }[] } {
-  const addCalls: string[] = [];
+): SpreadsheetSetupIO & {
+  addCalls: { title: string; columnCount: number }[];
+  headerCalls: { sheetName: string; header: readonly (string | number)[] }[];
+} {
+  const addCalls: { title: string; columnCount: number }[] = [];
   const headerCalls: { sheetName: string; header: readonly (string | number)[] }[] = [];
   const titles = [...existingTitles];
   const empty = new Set(emptyTitles);
@@ -17,8 +20,8 @@ function makeFakeIO(
     async listSheetTitles() {
       return [...titles];
     },
-    async addSheetTab(title) {
-      addCalls.push(title);
+    async addSheetTab(title, columnCount) {
+      addCalls.push({ title, columnCount });
       titles.push(title);
       empty.add(title); // 新規作成直後のタブは空
     },
@@ -33,11 +36,14 @@ function makeFakeIO(
 }
 
 describe("ensureIndexAndSyncTabsExist", () => {
-  test("両タブとも存在しない場合、両方作成しヘッダー行を書く", async () => {
+  test("両タブとも存在しない場合、両方作成しヘッダー行を書く。indexタブは27列（AAまで）分のcolumnCountで作成する（2026-08-20 Codexレビュー指摘：既定26列だとINDEX_SHEET_HEADERが入らずグリッド超過エラーになる）", async () => {
     const io = makeFakeIO([]);
     await ensureIndexAndSyncTabsExist(io);
 
-    expect(io.addCalls).toEqual([INDEX_SHEET_NAME, SYNC_SHEET_NAME]);
+    expect(io.addCalls).toEqual([
+      { title: INDEX_SHEET_NAME, columnCount: INDEX_SHEET_HEADER.length },
+      { title: SYNC_SHEET_NAME, columnCount: SYNC_TAB_HEADER.length },
+    ]);
     expect(io.headerCalls).toEqual([
       { sheetName: INDEX_SHEET_NAME, header: INDEX_SHEET_HEADER },
       { sheetName: SYNC_SHEET_NAME, header: SYNC_TAB_HEADER },
@@ -63,11 +69,27 @@ describe("ensureIndexAndSyncTabsExist", () => {
     ]);
   });
 
+  test("isTabEmptyにはそのタブのヘッダー幅（columnCount）を渡す", async () => {
+    const io = makeFakeIO([INDEX_SHEET_NAME, SYNC_SHEET_NAME], [INDEX_SHEET_NAME, SYNC_SHEET_NAME]);
+    const isTabEmptyCalls: { sheetName: string; columnCount: number }[] = [];
+    io.isTabEmpty = async (sheetName, columnCount) => {
+      isTabEmptyCalls.push({ sheetName, columnCount });
+      return true;
+    };
+
+    await ensureIndexAndSyncTabsExist(io);
+
+    expect(isTabEmptyCalls).toEqual([
+      { sheetName: INDEX_SHEET_NAME, columnCount: INDEX_SHEET_HEADER.length },
+      { sheetName: SYNC_SHEET_NAME, columnCount: SYNC_TAB_HEADER.length },
+    ]);
+  });
+
   test("indexタブのみ存在する場合、syncタブだけ作成する", async () => {
     const io = makeFakeIO([INDEX_SHEET_NAME], []);
     await ensureIndexAndSyncTabsExist(io);
 
-    expect(io.addCalls).toEqual([SYNC_SHEET_NAME]);
+    expect(io.addCalls).toEqual([{ title: SYNC_SHEET_NAME, columnCount: SYNC_TAB_HEADER.length }]);
     expect(io.headerCalls).toEqual([{ sheetName: SYNC_SHEET_NAME, header: SYNC_TAB_HEADER }]);
   });
 
@@ -145,17 +167,17 @@ describe("createSpreadsheetSetupIO", () => {
     expect(titles).toEqual(["index", "playlists"]);
   });
 
-  test("addSheetTabはbatchUpdateでaddSheetリクエストを送る", async () => {
+  test("addSheetTabはbatchUpdateでgridProperties.columnCountを指定したaddSheetリクエストを送る（2026-08-20 Codexレビュー指摘：既定26列だと27列のindexヘッダーが入らない）", async () => {
     const fetchMock = vi.fn(async () => fakeResponse(200, {}));
     vi.stubGlobal("fetch", fetchMock);
 
     const io = createSpreadsheetSetupIO("sheet1", async () => "token");
-    await io.addSheetTab("sync");
+    await io.addSheetTab("index", 27);
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toContain(":batchUpdate");
     const body = JSON.parse(init.body as string);
-    expect(body).toEqual({ requests: [{ addSheet: { properties: { title: "sync" } } }] });
+    expect(body).toEqual({ requests: [{ addSheet: { properties: { title: "index", gridProperties: { columnCount: 27 } } } }] });
   });
 
   test("writeHeaderRowはA1:<lastCol>1へPUTする", async () => {
@@ -172,14 +194,14 @@ describe("createSpreadsheetSetupIO", () => {
     expect(body).toEqual({ values: [["key", "value"]] });
   });
 
-  test("isTabEmptyはA1:Z5に値が無ければtrueを返す", async () => {
+  test("isTabEmptyはcolumnCount列×1000行の範囲を見て、値が無ければtrueを返す（2026-08-20 Codexレビュー指摘：固定のA1:Z5だと27列目や6行目以降のデータを見逃す）", async () => {
     const fetchMock = vi.fn(async () => fakeResponse(200, {}));
     vi.stubGlobal("fetch", fetchMock);
 
     const io = createSpreadsheetSetupIO("sheet1", async () => "token");
-    await expect(io.isTabEmpty("sync")).resolves.toBe(true);
+    await expect(io.isTabEmpty("index", 27)).resolves.toBe(true);
     const [url] = fetchMock.mock.calls[0] as unknown as [string];
-    expect(decodeURIComponent(url)).toContain("'sync'!A1:Z5");
+    expect(decodeURIComponent(url)).toContain("'index'!A1:AA1000");
   });
 
   test("isTabEmptyは何らかの値があればfalseを返す", async () => {
@@ -187,6 +209,6 @@ describe("createSpreadsheetSetupIO", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const io = createSpreadsheetSetupIO("sheet1", async () => "token");
-    await expect(io.isTabEmpty("sync")).resolves.toBe(false);
+    await expect(io.isTabEmpty("sync", 2)).resolves.toBe(false);
   });
 });

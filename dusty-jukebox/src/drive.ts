@@ -74,13 +74,18 @@ const SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut";
 // folderId自体を検証せず、存在しない/権限が無いIDに対しても単に空の子一覧（200応答）を返しうるため、
 // 「フォルダが空」と「そもそも無効なID」を区別できない（2026-08-19 Codexレビュー指摘）。
 // 呼び出し元（main.ts）はlistAudioFilesRecursiveの前にこれを呼び、失敗時のエラー表示に使う。
-export type DriveGetFn = (fileId: string) => Promise<{ mimeType: string }>;
+// driveId：ルートフォルダが共有ドライブ配下にある場合、そのドライブのID（マイドライブ配下なら
+// フィールド自体が省略される）。change.getStartPageTokenのスコープ指定（2026-08-20 Codexレビュー
+// 指摘、下記createGetStartPageTokenFn参照）に必要なため、validateRootFolderの結果として
+// 呼び出し元（main.ts）に返す。
+export type DriveGetFn = (fileId: string) => Promise<{ mimeType: string; driveId?: string }>;
 
-export async function validateRootFolder(getFile: DriveGetFn, folderId: string): Promise<void> {
+export async function validateRootFolder(getFile: DriveGetFn, folderId: string): Promise<{ driveId?: string }> {
   const meta = await getFile(folderId);
   if (meta.mimeType !== FOLDER_MIME_TYPE) {
     throw new Error(`指定されたIDはフォルダではありません（mimeType: ${meta.mimeType}）`);
   }
+  return { driveId: meta.driveId };
 }
 
 export async function listFolderChildren(list: DriveListFn, folderId: string, resourceKey?: string): Promise<DriveFile[]> {
@@ -348,13 +353,15 @@ export function createDriveListFn(getAccessToken: () => Promise<string>): DriveL
 }
 
 // DriveGetFnの実実装。validateRootFolder()（ルートフォルダの存在・種別検証）専用。
+// driveIdもfieldsに含める：ルートが共有ドライブ配下の場合、changes.getStartPageTokenの
+// スコープ指定（createGetStartPageTokenFn参照）に必要なため。
 export function createDriveGetFn(getAccessToken: () => Promise<string>): DriveGetFn {
   return async (fileId) => {
-    const params = new URLSearchParams({ fields: "id,mimeType", supportsAllDrives: "true" });
+    const params = new URLSearchParams({ fields: "id,mimeType,driveId", supportsAllDrives: "true" });
     const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`;
     const res = await fetchDriveApiWithRetry(url, getAccessToken);
-    const data = (await res.json()) as { mimeType: string };
-    return { mimeType: data.mimeType };
+    const data = (await res.json()) as { mimeType: string; driveId?: string };
+    return { mimeType: data.mimeType, driveId: data.driveId };
   };
 }
 
@@ -381,11 +388,19 @@ export function createDriveCapabilitiesGetFn(getAccessToken: () => Promise<strin
 // 変更を再生する（差分再生自体は次PR以降、changes.list呼び出しは未実装のまま）。
 // スキャンしてからトークンを取る順序だと、スキャン中に発生した追加・更新・削除を
 // 取りこぼす同期ギャップが生じるため、順序が重要。
+// driveId：ルートフォルダが共有ドライブ配下にある場合、そのドライブのIDを渡す
+// （main.tsがvalidateRootFolder()の戻り値から取得しcreateGetStartPageTokenFn呼び出し時に
+// 渡す）。`supportsAllDrives`だけでは対象の変更ログを共有ドライブ側に切り替えられず、
+// 省略するとマイドライブのユーザー変更ログのトークンを取得してしまい、共有ドライブ配下の
+// 変更を追跡できなくなる（2026-08-20 Codexレビュー指摘）。ただし本PR時点ではこのトークンを
+// 実際に消費するchanges.list自体が未実装のため、実害はまだ顕在化しない。差分同期
+// （changes.list呼び出し）を実装する際は、そちらにも同じdriveIdを渡す必要がある。
 export type GetStartPageTokenFn = () => Promise<string>;
 
-export function createGetStartPageTokenFn(getAccessToken: () => Promise<string>): GetStartPageTokenFn {
+export function createGetStartPageTokenFn(getAccessToken: () => Promise<string>, driveId?: string): GetStartPageTokenFn {
   return async () => {
     const params = new URLSearchParams({ supportsAllDrives: "true" });
+    if (driveId) params.set("driveId", driveId);
     const url = `https://www.googleapis.com/drive/v3/changes/startPageToken?${params.toString()}`;
     const res = await fetchDriveApiWithRetry(url, getAccessToken);
     const data = (await res.json()) as { startPageToken?: string };

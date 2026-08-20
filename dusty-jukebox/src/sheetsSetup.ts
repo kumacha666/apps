@@ -25,12 +25,18 @@ export interface SpreadsheetSetupIO {
   // （複数デバイスからの同時初回アクセス）、Sheets APIは重複タイトルをエラーとして拒否する。
   // 呼び出し元（ensureIndexAndSyncTabsExist）はこの例外を捕捉し、その時点のタブ一覧を再確認して
   // 対応する（CONCEPT.md 4.3節「複数デバイスからの同時編集」と同じ、事前防止ではなく事後確認の方針）。
-  addSheetTab(title: string): Promise<void>;
+  // columnCount: 新規タブの列数を明示的に指定する。Sheets APIは`gridProperties`省略時に
+  // 既定26列（A〜Z）でタブを作成するため、27列（AAまで）の`INDEX_SHEET_HEADER`を後続の
+  // writeHeaderRowでそのまま書こうとすると「範囲がグリッドを超える」エラーになり、
+  // 初回自動セットアップが永久に失敗し続ける（2026-08-20 Codexレビュー指摘）。
+  addSheetTab(title: string, columnCount: number): Promise<void>;
   writeHeaderRow(sheetName: string, header: readonly (string | number)[]): Promise<void>;
-  // タブの先頭付近（ヘッダー行・データ行を含む範囲）にまったく値が無いかを確認する。
+  // タブの管理対象範囲（columnCount列 × 十分な行数）にまったく値が無いかを確認する。
   // 「自分たちが作ったが初期化未完了のタブ」と「既にデータが入っている無関係なタブ」を
-  // 区別するための安全確認（上記コメント参照）。
-  isTabEmpty(sheetName: string): Promise<boolean>;
+  // 区別するための安全確認（上記コメント参照）。columnCountはこのタブに書く予定のヘッダー幅
+  // （呼び出し元のheader.length）を渡す：狭い固定範囲だけを見ると、ヘッダー幅を超えた列や
+  // 数行より下にあるデータを見逃して「空」と誤判定してしまう（2026-08-20 Codexレビュー指摘）。
+  isTabEmpty(sheetName: string, columnCount: number): Promise<boolean>;
 }
 
 async function ensureTabExists(
@@ -40,18 +46,18 @@ async function ensureTabExists(
   titles: Set<string>
 ): Promise<void> {
   if (titles.has(title)) {
-    if (await io.isTabEmpty(title)) await io.writeHeaderRow(title, header);
+    if (await io.isTabEmpty(title, header.length)) await io.writeHeaderRow(title, header);
     return;
   }
   try {
-    await io.addSheetTab(title);
+    await io.addSheetTab(title, header.length);
   } catch (err) {
     // 他クライアントが同時に同名タブを作成した可能性がある。最新のタブ一覧を再確認し、
     // 既に存在していれば（かつまだ空であれば）ヘッダーを書く。他クライアント側の
     // writeHeaderRowが既に完了していれば（空でなければ）上書きしない。
     const latestTitles = await io.listSheetTitles();
     if (latestTitles.includes(title)) {
-      if (await io.isTabEmpty(title)) await io.writeHeaderRow(title, header);
+      if (await io.isTabEmpty(title, header.length)) await io.writeHeaderRow(title, header);
       return;
     }
     throw err;
@@ -65,6 +71,13 @@ export async function ensureIndexAndSyncTabsExist(io: SpreadsheetSetupIO): Promi
   await ensureTabExists(io, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, titles);
   await ensureTabExists(io, SYNC_SHEET_NAME, SYNC_TAB_HEADER, titles);
 }
+
+// isTabEmpty()が「空タブか」を確認する際に見る行数の上限。Sheets APIの既定の新規タブ行数
+// （1000行）に合わせた値：自分たちが作成したばかりの空タブは確実にこの範囲に収まる一方、
+// 完全に無限の範囲を毎回スキャンするコストは避ける（2026-08-20 Codexレビュー指摘：元々A1:Z5の
+// 固定範囲だったため、5行より下や既定を超える列にデータがある既存タブを誤って「空」と
+// 判定しヘッダーで上書きしてしまう恐れがあった）。
+const IS_TAB_EMPTY_ROW_SCAN_LIMIT = 1000;
 
 function columnLetter(colNumber: number): string {
   let n = colNumber;
@@ -88,10 +101,13 @@ export function createSpreadsheetSetupIO(spreadsheetId: string, getAccessToken: 
       const data = (await res.json()) as { sheets?: { properties?: { title?: string } }[] };
       return (data.sheets ?? []).map((s) => s.properties?.title).filter((t): t is string => Boolean(t));
     },
-    async addSheetTab(title) {
+    async addSheetTab(title, columnCount) {
       await sheetsFetch(`${base}:batchUpdate`, {
         method: "POST",
-        body: JSON.stringify({ requests: [{ addSheet: { properties: { title } } }] }),
+        body: JSON.stringify({
+          // gridProperties.columnCountを明示する（既定26列だと27列のindexヘッダーが入らない）。
+          requests: [{ addSheet: { properties: { title, gridProperties: { columnCount } } } }],
+        }),
       });
     },
     async writeHeaderRow(sheetName, header) {
@@ -102,10 +118,12 @@ export function createSpreadsheetSetupIO(spreadsheetId: string, getAccessToken: 
         body: JSON.stringify({ values: [header] }),
       });
     },
-    async isTabEmpty(sheetName) {
-      // A1:Z5：index（27列=AAまで）/sync（2列=Bまで）のどちらのヘッダー幅もカバーしつつ、
-      // ヘッダー行だけでなく最初の数データ行まで見て「本当に何も無いか」を確認する。
-      const range = `'${sheetName.replace(/'/g, "''")}'!A1:Z5`;
+    async isTabEmpty(sheetName, columnCount) {
+      // ヘッダー幅（columnCount）と十分な行数（IS_TAB_EMPTY_ROW_SCAN_LIMIT）の両方をカバーする
+      // 範囲を見て「本当に何も無いか」を確認する。values.getは対象範囲が実際のグリッドより
+      // 広くてもエラーにならない（書き込みと違い範囲外は単に無視される）ため、広めに取っても安全。
+      const lastCol = columnLetter(columnCount);
+      const range = `'${sheetName.replace(/'/g, "''")}'!A1:${lastCol}${IS_TAB_EMPTY_ROW_SCAN_LIMIT}`;
       const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range)}`);
       const data = (await res.json()) as { values?: unknown[][] };
       return !data.values || data.values.length === 0;
