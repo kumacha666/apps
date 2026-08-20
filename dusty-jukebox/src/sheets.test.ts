@@ -354,4 +354,30 @@ describe("createSheetsIndexIO", () => {
     await expect(io.appendRows([["f1"]])).rejects.toBeInstanceOf(TypeError);
     expect(fetchMock).toHaveBeenCalledTimes(1); // リトライしていないことを確認
   });
+
+  test("appendRowsは500等のHTTPエラー応答でもリトライせず即座に例外を伝える（2026-08-20 Codexレビュー指摘：通信例外だけでなくHTTPエラー経路もガードが必要だった）", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(500, { error: { errors: [{ reason: "backendError" }] } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSheetsIndexIO("sheet1", async () => "token");
+    await expect(io.appendRows([["f1"]])).rejects.toThrow(/500/);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // リトライしていないことを確認
+  });
+
+  test("updateRowsは500等のHTTPエラー応答をリトライする（PUT/batchUpdateは冪等なため）", async () => {
+    vi.useFakeTimers();
+    let call = 0;
+    const fetchMock = vi.fn(async () => {
+      call += 1;
+      if (call === 1) return fakeResponse(500, { error: { errors: [{ reason: "backendError" }] } });
+      return fakeResponse(200, {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSheetsIndexIO("sheet1", async () => "token");
+    const promise = io.updateRows([{ rowNumber: 2, row: ["f1"] }]);
+    await vi.runAllTimersAsync();
+    await promise;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

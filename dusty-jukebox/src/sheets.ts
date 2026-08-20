@@ -257,13 +257,15 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
   // Content-Typeはbodyを送るリクエスト（PUT/POST）にのみ付与し、GET（listExistingRows）には
   // 付けない。GETに非simpleヘッダーを付けるとブラウザがCORSプリフライトを発行してしまうため
   // （2026-08-20 /code-review指摘）。
-  // retryNetworkErrors: fetch()自体が例外を投げた場合（HTTPレスポンスが一切返らなかった場合）に
+  // allowRetry: 通信例外（fetch()自体が投げるTypeError等）・HTTPエラー（429/5xx等）のどちらも
   // リトライしてよいかどうか。GET・PUT（batchUpdate、既存行の上書き）は冪等なので安全にリトライできるが、
-  // POST（append）は非冪等：サーバー側では書き込みが成功していたのに応答受信時だけ通信が切れた場合、
-  // そのまま再試行すると同じ行が二重に追記されてしまう（未実装の重複行マージが導入されるまでは
-  // 索引が壊れる。2026-08-20 Codexレビュー指摘）。appendを呼ぶ側はfalseを渡し、通信例外時は
-  // リトライせず呼び出し元に例外をそのまま伝える。
-  async function sheetsFetch(url: string, init?: RequestInit, retryNetworkErrors = true): Promise<Response> {
+  // POST（append）は非冪等：サーバー側では書き込みが成功していたのに応答受信時だけ通信が切れた場合や、
+  // 処理自体は完了したが5xxを返した場合、そのまま再試行すると同じ行が二重に追記されてしまう
+  // （未実装の重複行マージが導入されるまでは索引が壊れる。2026-08-20 Codexレビュー指摘：
+  // 当初は通信例外のみをガードしており、HTTPエラー応答経由のリトライ経路がこのフラグを
+  // 見ていなかったため、5xx/429時には依然として二重追記が起こりえた）。appendを呼ぶ側はfalseを渡し、
+  // 通信例外・HTTPエラーのどちらでもリトライせず呼び出し元に例外をそのまま伝える。
+  async function sheetsFetch(url: string, init?: RequestInit, allowRetry = true): Promise<Response> {
     const maxRetries = 3;
     let lastError: Error | null = null;
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -275,14 +277,14 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
         res = await fetch(url, { ...init, headers: { ...headers, ...init?.headers } });
       } catch (networkErr) {
         lastError = networkErr instanceof Error ? networkErr : new Error(String(networkErr));
-        if (!retryNetworkErrors || attempt >= maxRetries) throw lastError;
+        if (!allowRetry || attempt >= maxRetries) throw lastError;
         await sleep(500 * 2 ** attempt);
         continue;
       }
       if (res.ok) return res;
       const bodyText = await res.text();
       lastError = new SheetsHttpError(res.status, `Sheets API request failed: ${res.status} ${bodyText}`);
-      if (attempt >= maxRetries || !isRetryableError(res.status, bodyText)) throw lastError;
+      if (!allowRetry || attempt >= maxRetries || !isRetryableError(res.status, bodyText)) throw lastError;
       await sleep(500 * 2 ** attempt);
     }
     throw lastError ?? new Error("unreachable");
@@ -314,7 +316,7 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
     async appendRows(rows) {
       if (rows.length === 0) return;
       const range = sheetRange(INDEX_SHEET_NAME, "A1");
-      // appendは非冪等のため通信例外時はリトライしない（retryNetworkErrors=false、上記sheetsFetch参照）。
+      // appendは非冪等のため通信例外・HTTPエラーのどちらでもリトライしない（allowRetry=false、上記sheetsFetch参照）。
       await sheetsFetch(
         `${base}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
         {

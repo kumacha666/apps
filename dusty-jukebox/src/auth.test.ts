@@ -2,8 +2,12 @@ import { describe, expect, test } from "vitest";
 import {
   computeExpiresAt,
   isTokenValid,
+  hasAllRequiredScopes,
   DriveAuth,
   AuthError,
+  DRIVE_READONLY_SCOPE,
+  SPREADSHEETS_SCOPE,
+  OAUTH_SCOPES,
   type GisAccounts,
   type GisTokenErrorResponse,
   type GisTokenResponse,
@@ -95,7 +99,7 @@ describe("auth", () => {
     const first = auth.requestAccessToken({ prompt: "consent" });
     await expect(auth.requestAccessToken({ prompt: "consent" })).rejects.toBeInstanceOf(AuthError);
 
-    gis.emitToken({ access_token: "token-1", expires_in: 3600 });
+    gis.emitToken({ access_token: "token-1", expires_in: 3600, scope: OAUTH_SCOPES });
     const state = await first;
     expect(state.accessToken).toBe("token-1");
   });
@@ -107,7 +111,7 @@ describe("auth", () => {
 
     // 兄弟フォルダの並行走査から同時にensureAccessToken()が呼ばれる状況を再現する
     const results = Promise.all([auth.ensureAccessToken(), auth.ensureAccessToken(), auth.ensureAccessToken()]);
-    gis.emitToken({ access_token: "shared-token", expires_in: 3600 });
+    gis.emitToken({ access_token: "shared-token", expires_in: 3600, scope: OAUTH_SCOPES });
 
     expect(await results).toEqual(["shared-token", "shared-token", "shared-token"]);
     // requestAccessToken()（GISへの実際の要求）は1回しか呼ばれていない
@@ -120,11 +124,37 @@ describe("auth", () => {
     auth.init("dummy-client-id");
 
     const pending = auth.requestAccessToken({ prompt: "consent" });
-    gis.emitToken({ access_token: "revoked-token", expires_in: 3600 });
+    gis.emitToken({ access_token: "revoked-token", expires_in: 3600, scope: OAUTH_SCOPES });
     await pending;
     expect(auth.getAccessToken()).toBe("revoked-token");
 
     auth.clearToken();
     expect(auth.getAccessToken()).toBeNull();
+  });
+
+  test("hasAllRequiredScopes: 要求スコープが全て付与されていればtrue", () => {
+    expect(hasAllRequiredScopes(OAUTH_SCOPES, OAUTH_SCOPES)).toBe(true);
+  });
+
+  test("hasAllRequiredScopes: 一部スコープが欠けていればfalse", () => {
+    expect(hasAllRequiredScopes(DRIVE_READONLY_SCOPE, OAUTH_SCOPES)).toBe(false);
+    expect(hasAllRequiredScopes(SPREADSHEETS_SCOPE, OAUTH_SCOPES)).toBe(false);
+  });
+
+  test("hasAllRequiredScopes: scopeが無い（undefined）場合はfalse", () => {
+    expect(hasAllRequiredScopes(undefined, OAUTH_SCOPES)).toBe(false);
+  });
+
+  test("DriveAuth: 詳細同意画面で一部スコープだけ許可された場合、requestAccessToken()はAuthErrorでrejectされる（2026-08-20 Codexレビュー指摘：access_tokenがあってもDrive/Sheetsの片方だけ許可された場合を検知できていなかった）", async () => {
+    const gis = installFakeGis();
+    const auth = new DriveAuth();
+    auth.init("dummy-client-id");
+
+    const pending = auth.requestAccessToken({ prompt: "consent" });
+    // Drive権限だけ許可され、Sheets権限は拒否されたケースを模す
+    gis.emitToken({ access_token: "partial-token", expires_in: 3600, scope: DRIVE_READONLY_SCOPE });
+
+    await expect(pending).rejects.toBeInstanceOf(AuthError);
+    expect(auth.getAccessToken()).toBeNull(); // 部分許可のトークンはstateに保存されない
   });
 });

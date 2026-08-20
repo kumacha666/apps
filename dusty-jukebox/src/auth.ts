@@ -36,8 +36,21 @@ export function isTokenValid(state: TokenState | null | undefined, now: number =
 export interface GisTokenResponse {
   access_token?: string;
   expires_in?: number;
+  // 実際に付与されたスコープ（スペース区切り）。Googleの詳細同意画面ではユーザーが要求スコープの
+  // 一部だけを許可できるため、access_tokenがあっても要求した全スコープが付与された保証はない
+  // （2026-08-20 Codexレビュー指摘）。
+  scope?: string;
   error?: string;
   error_description?: string;
+}
+
+// resp.scope（スペース区切り）にrequiredScopes（OAUTH_SCOPES由来）が全て含まれるか確認する。
+// Drive権限だけ外された場合はログイン直後のスキャンが403に、Sheets権限だけ外された場合は
+// 索引処理が失敗する。どちらも「ログインには成功したのに機能が謎に失敗する」という分かりにくい
+// 挙動になるため、ログイン時点で検知して再同意を促せるようにする。
+export function hasAllRequiredScopes(grantedScope: string | undefined, requiredScopes: string): boolean {
+  const granted = new Set((grantedScope ?? "").split(" ").filter(Boolean));
+  return requiredScopes.split(" ").every((scope) => granted.has(scope));
 }
 
 // GISはトークン取得の失敗をcallbackではなくerror_callbackで通知する場合がある
@@ -132,6 +145,13 @@ export class DriveAuth {
         this.pendingReject = null;
         if (resp.error || !resp.access_token) {
           reject(new AuthError(resp.error_description ?? resp.error ?? "アクセストークン取得に失敗しました"));
+          return;
+        }
+        // 詳細同意画面で要求スコープの一部だけを許可された場合、access_tokenは取得できてしまうが
+        // Drive/Sheetsのどちらかの機能が後になって謎に失敗する（2026-08-20 Codexレビュー指摘）。
+        // ログイン時点で不足を検知し、再同意（prompt: "consent"）を促す。
+        if (!hasAllRequiredScopes(resp.scope, OAUTH_SCOPES)) {
+          reject(new AuthError("一部の権限が許可されませんでした。再度ログインし、Googleドライブとスプレッドシートの両方への権限を許可してください。"));
           return;
         }
         const state: TokenState = {
