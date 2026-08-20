@@ -1,7 +1,8 @@
-// エントリポイント。Phase 1着手順3の一部: 実DriveでのRangeフェッチ＋タグ抽出をスキャンUIと
-// Sheets索引upsertに結線した。sync タブ管理（startPageToken/rootFolderId/initialScanCompletedAt）・
-// 初回スキャンのバッチ処理・中断再開・絞り込み/再生UIは未着手（dusty-jukebox/CLAUDE.md参照）。
-// このPRのスキャンは「見つかった全ファイルを1回で最後まで処理する」素朴な実装で、途中で
+// エントリポイント。着手順の目安4の一部: sync タブ基盤（startPageToken/rootFolderId/
+// initialScanCompletedAt）とindexタブ／syncタブの初回自動作成を結線した。初回スキャンの
+// バッチ処理・中断再開（ページ単位の進捗保存）・changes.listによる実際の差分同期・
+// 索引upsertの重複行マージ・絞り込み/再生UIは引き続き未着手（dusty-jukebox/CLAUDE.md参照）。
+// このPRのスキャンは引き続き「見つかった全ファイルを1回で最後まで処理する」素朴な実装で、途中で
 // タブを閉じる／通信が長時間切れる等での中断・再開には対応しない。
 import { AuthError, DriveAuth } from "./auth";
 import {
@@ -9,13 +10,16 @@ import {
   createDriveFetchRange,
   createDriveGetFn,
   createDriveListFn,
+  createGetStartPageTokenFn,
   listAudioFilesRecursive,
   validateRootFolder,
   isAuthError,
   type AudioFileEntry,
 } from "./drive";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
-import { createSheetsIndexIO, isValidIndexHeader, upsertIndexRows, SheetsHttpError, INDEX_SHEET_NAME } from "./sheets";
+import { createSheetsIndexIO, isValidIndexHeader, upsertIndexRows, SheetsHttpError, INDEX_SHEET_HEADER, INDEX_SHEET_NAME } from "./sheets";
+import { ensureIndexAndSyncTabsExist, ensureValidHeader, createSpreadsheetSetupIO } from "./sheetsSetup";
+import { createSyncTabIO, isValidSyncHeader, markInitialScanCompleted, prepareSyncForScan, SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 
 // drive.tsのisAuthError()（AuthError・DriveHttpError(401)）に加え、main.tsではSheets側の
 // 401（書き込み先検証・upsert時）も同じ「トークンはもう使えない」判定に含める必要がある
@@ -112,32 +116,50 @@ async function handleScan(): Promise<void> {
     // files.listは'<folderId>' in parentsのクエリで、folderId自体の存在・種別・権限は
     // 検証しない（誤ったIDでも単に空の子一覧を返しうる）。「フォルダが空」と
     // 「そもそも無効なID」を区別するため、スキャン開始前にフォルダ自身を検証する
-    // （2026-08-19 Codexレビュー指摘）
-    await validateRootFolder(getFn, folderId);
+    // （2026-08-19 Codexレビュー指摘）。共有ドライブ配下のルートの場合はdriveIdが返る
+    // （changes.getStartPageTokenのスコープ指定に必要、2026-08-20 Codexレビュー指摘）
+    const { driveId } = await validateRootFolder(getFn, folderId);
 
-    // スプレッドシートIDのタイプミス・アクセス権不足・indexタブ未作成／ヘッダー行未作成は、
-    // 抽出開始前に検出したい。1万件規模のタグ抽出（フォルダ走査より遥かに時間がかかる）を
-    // すべて実行してから失敗すると、中断・再開機能が無いため最初からやり直しになってしまう
-    // （2026-08-20 Codexレビュー指摘）。フォルダ検証と同様にここで先に検証する。
-    // listExistingRows()（A2以降のみ）だけではヘッダー行（1行目）自体の有無・列順を検証
-    // できず、空/誤ったヘッダーのまま抽出を進めると初回のappendRows()がA1（本来ヘッダーが
-    // あるべき行）に曲データを書き込んでしまい、次回スキャンがそれをヘッダーとして読み飛ばして
-    // 重複行を生む（2026-08-20 Codexレビュー指摘）。readHeaderRow()で実際のヘッダー内容を検証する
+    // 書き込み権限自体は、抽出完了後のupdateRows()/appendRows()の403で初めて判明すると
+    // 1万件規模のタグ抽出をやり直すことになる（2026-08-20 Codexレビュー指摘）ため先に検証する。
+    // タブ自動作成（addSheet）にも書き込み権限が要るため、タブ作成より前に確認する必要がある。
+    // スプレッドシートもDriveファイルの一種であるため、Sheets APIを呼ばずにDrive APIの
+    // capabilities.canEditで確認できる
     setStatus("書き込み先スプレッドシートを確認中...");
-    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    const header = await sheetsIO.readHeaderRow();
-    if (!isValidIndexHeader(header)) {
-      throw new Error(`索引スプレッドシートの「${INDEX_SHEET_NAME}」タブのヘッダー行が想定と一致しません。ヘッダー行（1行目）を事前に作成してください。`);
-    }
-    // readHeaderRow()はGET（Sheets values.get）のみのため、閲覧専用で共有されたスプレッドシートを
-    // 指定した場合でも正常に通過してしまう。書き込み権限自体は抽出完了後のupdateRows()/appendRows()の
-    // 403で初めて判明していた（2026-08-20 Codexレビュー指摘）。スプレッドシートもDriveファイルの
-    // 一種であるため、Sheets APIを呼ばずにDrive APIのcapabilities.canEditで先に確認する
     const capabilitiesGetFn = createDriveCapabilitiesGetFn(() => auth.ensureAccessToken());
     const { canEdit } = await capabilitiesGetFn(spreadsheetId);
     if (!canEdit) {
       throw new Error("索引スプレッドシートへの編集権限がありません。共有設定（編集者権限）をご確認ください。");
     }
+
+    // index/syncタブが無ければ自動作成する（着手順の目安4）。既に存在するタブには一切触れない
+    // ため、想定と異なる内容の既存タブへの対応は次のreadHeaderRow()検証に委ねる。
+    setStatus("索引タブを確認中...");
+    const setupIO = createSpreadsheetSetupIO(spreadsheetId, () => auth.ensureAccessToken());
+    await ensureIndexAndSyncTabsExist(setupIO);
+
+    // スプレッドシートIDのタイプミス等で、index/syncタブ以外の想定外のスプレッドシートを
+    // 指しているケース、または既存index/syncタブのヘッダー行が想定と異なるケースをここで検出する。
+    // A2以降のみを読む後続の索引読み書き・sync状態読み書きだけではヘッダー行（1行目）自体の
+    // 有無・列順を検証できず、空/誤ったヘッダーのまま進めると重複行やデータ破損につながる
+    // （2026-08-20 Codexレビュー指摘）。ensureValidHeader()がヘッダー検証・失敗時の回復
+    // （タブが真に空なら書き直して再検証）・それでも無効な場合のエラーをまとめて行う
+    // （index/syncで同じ検証ロジックが重複していたのを共通化、2026-08-20 /code-review指摘）
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    await ensureValidHeader(sheetsIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, isValidIndexHeader);
+
+    // syncタブについてもindexタブと同じ理由でヘッダー行を検証する（2026-08-20 Codexレビュー指摘）：
+    // ensureIndexAndSyncTabsExistは既存タブに一切触れないため、「sync」という名前の無関係な
+    // 既存タブが指定スプレッドシートにあった場合、検証無しでは prepareSyncForScan がそのA2:Bを
+    // アプリの同期状態として誤って読み書きしてしまう（無関係な行の上書き・データ破損につながる）。
+    setStatus("同期状態を確認中...");
+    const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
+    await ensureValidHeader(syncIO, setupIO, SYNC_SHEET_NAME, SYNC_TAB_HEADER, isValidSyncHeader);
+
+    // 変更トークンの取得順序（CONCEPT.md 5節）：初回一覧の構築を始める前にstartPageTokenを
+    // 確保しておく。ルート変更時は新規取得、初期化未完了中の再開時は既存トークンを使い回す
+    // （sync.tsのprepareSyncForScan参照）。changes.listによる実際の差分再生は次PR以降。
+    const { startPageToken } = await prepareSyncForScan(syncIO, createGetStartPageTokenFn(() => auth.ensureAccessToken(), driveId), folderId);
 
     setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
     const listFn = createDriveListFn(() => auth.ensureAccessToken());
@@ -154,6 +176,19 @@ async function handleScan(): Promise<void> {
 
     setStatus("スプレッドシートへ書き込み中...");
     await upsertIndexRows(sheetsIO, upsertEntries);
+
+    // 取得失敗フォルダ（failedFolders）が1件でもある場合、初回一覧の構築は完了していない
+    // （2026-08-20 Codexレビュー指摘：listAudioFilesRecursiveは子フォルダ単位の一時的な失敗を
+    // 例外にせずfailedFoldersへ積んで継続するため、部分的な結果のままここへ到達しうる。
+    // それをinitialScanCompletedAtとして記録すると、取得できなかったサブツリー配下のファイルは
+    // 差分同期（changes.list、未実装）が開始トークン以降の変更しか拾わない性質上、恒久的に
+    // 索引から漏れてしまう。取得失敗があった場合は完了とみなさず、次回のスキャンでの再挑戦に委ねる）。
+    if (failedFolders.length === 0) {
+      // 準備時に確保したrootFolderId/startPageTokenと照合してから書く（sync.tsのmarkInitialScanCompleted
+      // 参照）。長時間のスキャン中に別デバイスがルートを切り替えていた場合、無関係になった
+      // ルートを誤って完了扱いにしないため。
+      await markInitialScanCompleted(syncIO, new Date().toISOString(), { rootFolderId: folderId, startPageToken });
+    }
 
     setStatus(`スキャン完了（${entries.length}件を索引に反映${failedFolders.length > 0 ? `、取得失敗フォルダ: ${failedFolders.length}件` : ""}）`);
   } catch (err) {

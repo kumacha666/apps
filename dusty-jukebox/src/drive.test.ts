@@ -5,6 +5,7 @@ import {
   createDriveListFn,
   createDriveGetFn,
   createDriveCapabilitiesGetFn,
+  createGetStartPageTokenFn,
   createDriveFetchRange,
   validateRootFolder,
   ConcurrencyLimiter,
@@ -424,9 +425,14 @@ describe("createDriveListFn", () => {
 });
 
 describe("validateRootFolder", () => {
-  test("フォルダとして取得できれば何もしない（例外を投げない）", async () => {
+  test("フォルダとして取得できれば何もしない（例外を投げない）。マイドライブ配下ならdriveIdは無い", async () => {
     const getFile: DriveGetFn = async () => ({ mimeType: "application/vnd.google-apps.folder" });
-    await expect(validateRootFolder(getFile, "some-folder-id")).resolves.toBeUndefined();
+    await expect(validateRootFolder(getFile, "some-folder-id")).resolves.toEqual({ driveId: undefined });
+  });
+
+  test("共有ドライブ配下の場合はdriveIdを返す（2026-08-20 Codexレビュー指摘：changes.getStartPageTokenのスコープ指定に必要）", async () => {
+    const getFile: DriveGetFn = async () => ({ mimeType: "application/vnd.google-apps.folder", driveId: "shared-drive-1" });
+    await expect(validateRootFolder(getFile, "some-folder-id")).resolves.toEqual({ driveId: "shared-drive-1" });
   });
 
   test("フォルダ以外（例: 通常ファイル）の場合はエラーを投げる", async () => {
@@ -453,6 +459,17 @@ describe("createDriveGetFn", () => {
 
     const getFile = createDriveGetFn(async () => "token");
     await expect(getFile("abc")).resolves.toEqual({ mimeType: "application/vnd.google-apps.folder" });
+  });
+
+  test("共有ドライブ配下の場合はdriveIdも返す。fieldsパラメータにdriveIdを含める（2026-08-20 Codexレビュー指摘）", async () => {
+    const response = fakeResponse(200, { id: "abc", mimeType: "application/vnd.google-apps.folder", driveId: "shared-drive-1" });
+    const fetchMock = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getFile = createDriveGetFn(async () => "token");
+    await expect(getFile("abc")).resolves.toEqual({ mimeType: "application/vnd.google-apps.folder", driveId: "shared-drive-1" });
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(decodeURIComponent(url)).toContain("fields=id,mimeType,driveId");
   });
 
   test("404はDriveHttpErrorとして即座に投げる", async () => {
@@ -496,6 +513,53 @@ describe("createDriveCapabilitiesGetFn", () => {
 
     const getCapabilities = createDriveCapabilitiesGetFn(async () => "token");
     await expect(getCapabilities("sheet-1")).resolves.toEqual({ canEdit: false });
+  });
+});
+
+describe("createGetStartPageTokenFn", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("startPageTokenを返す（CONCEPT.md 5節: 初回スキャン開始前に取得・永続化する）", async () => {
+    const response = fakeResponse(200, { startPageToken: "T0" });
+    const fetchMock = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getStartPageToken = createGetStartPageTokenFn(async () => "token");
+    await expect(getStartPageToken()).resolves.toBe("T0");
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url).toContain("changes/startPageToken");
+  });
+
+  test("応答にstartPageTokenが含まれない場合はエラーを投げる", async () => {
+    const response = fakeResponse(200, {});
+    vi.stubGlobal("fetch", vi.fn(async () => response));
+
+    const getStartPageToken = createGetStartPageTokenFn(async () => "token");
+    await expect(getStartPageToken()).rejects.toThrow(/startPageToken/);
+  });
+
+  test("driveIdを渡すとリクエストパラメータに含める（2026-08-20 Codexレビュー指摘：共有ドライブ配下のルートではsupportsAllDrivesだけでは対象の変更ログをスコープできない）", async () => {
+    const response = fakeResponse(200, { startPageToken: "T0" });
+    const fetchMock = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getStartPageToken = createGetStartPageTokenFn(async () => "token", "shared-drive-1");
+    await getStartPageToken();
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url).toContain("driveId=shared-drive-1");
+  });
+
+  test("driveId未指定の場合はdriveIdパラメータを付けない（マイドライブ配下）", async () => {
+    const response = fakeResponse(200, { startPageToken: "T0" });
+    const fetchMock = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getStartPageToken = createGetStartPageTokenFn(async () => "token");
+    await getStartPageToken();
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url).not.toContain("driveId");
   });
 });
 
