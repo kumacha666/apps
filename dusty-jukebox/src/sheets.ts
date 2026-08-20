@@ -5,8 +5,11 @@
 //
 // このPRの範囲（着手順の目安2、最小基盤）: スキーマ定義＋fileId起点upsertのみ。
 // sync タブ（startPageToken/rootFolderId/initialScanCompletedAt）の管理・indexタブ自体の
-// 初回作成（ヘッダー書き込み含む）、重複行のマージ、_override列の競合検知（CONCEPT.md 4.3節）は
-// 後続PRで実装する。ユーザーが事前にindex タブ＋ヘッダー行を作成済みであることを前提とする。
+// 初回作成（ヘッダー書き込み含む）は後続PRで実装する。ユーザーが事前にindex タブ＋ヘッダー行を
+// 作成済みであることを前提とする。
+//
+// 2026-08-20、索引upsertの重複行マージ（CONCEPT.md 4.3節、mergeDuplicateIndexRows）を追加。
+// 詳細はmergeDuplicateIndexRowsのコメント参照。
 
 import { detectGarbled, getExtension, sheetRange } from "./lib";
 
@@ -42,6 +45,41 @@ export const INDEX_SHEET_HEADER = [
   "garbledSuspect",
   "garbledResolved",
   "extractionFailed",
+  // 2026-08-20追加（重複行マージ、CONCEPT.md 4.3節「`_override`同士が競合した場合は片方を
+  // 捨てず両方を保持する」）。既存列の並び替え・削除は既存シートとの互換性を壊すため、
+  // 追加は必ず末尾に行う。各_override列に対応する競合候補・競合フラグのペア。
+  "title_conflictCandidate",
+  "title_hasConflict",
+  "artist_conflictCandidate",
+  "artist_hasConflict",
+  "albumArtist_conflictCandidate",
+  "albumArtist_hasConflict",
+  "album_conflictCandidate",
+  "album_hasConflict",
+  "composer_conflictCandidate",
+  "composer_hasConflict",
+  "releaseYear_conflictCandidate",
+  "releaseYear_hasConflict",
+  "releaseType_conflictCandidate",
+  "releaseType_hasConflict",
+  "vocalGender_conflictCandidate",
+  "vocalGender_hasConflict",
+  "providerNote_conflictCandidate",
+  "providerNote_hasConflict",
+] as const;
+
+// mergeDuplicateIndexRowsが対象にする_override列のベース名（列名から末尾"_override"を除いたもの）。
+// 上記ヘッダーの並びと対応するconflictCandidate/hasConflict列を導出するために使う。
+const OVERRIDE_FIELD_NAMES = [
+  "title",
+  "artist",
+  "albumArtist",
+  "album",
+  "composer",
+  "releaseYear",
+  "releaseType",
+  "vocalGender",
+  "providerNote",
 ] as const;
 
 // スキャナが絶対に書き換えてはならない列（4.2節）。upsert時、既存行に対してはこれらの列を
@@ -50,17 +88,29 @@ const OVERRIDE_COLUMN_INDEXES = new Set(
   INDEX_SHEET_HEADER.map((name, i) => (name.endsWith("_override") ? i : -1)).filter((i) => i >= 0)
 );
 
+// 重複行マージ（mergeDuplicateIndexRows）専用の列。_override列と同様、通常のfileId起点upsert
+// （通常のスキャン・再スキャン）では絶対に書き換えてはならない。ここに含めないと、成功した
+// 再スキャンのたびにbuildIndexRowの初期値（""/"FALSE"）で上書きされ、mergeDuplicateIndexRowsが
+// 記録した競合状態が毎回消えてしまう。
+const CONFLICT_META_COLUMN_INDEXES = new Set(
+  INDEX_SHEET_HEADER.map((name, i) => (name.endsWith("_conflictCandidate") || name.endsWith("_hasConflict") ? i : -1)).filter(
+    (i) => i >= 0
+  )
+);
+
 // タグ抽出由来の列（識別子・タイムスタンプ・extractionFailed自体を除く）。再スキャンで
 // タグ抽出に失敗した場合（5節：巨大ファイルのタイムアウト等）、これらの列は新しい行の
 // 空値で上書きせず既存行の値を保持する（2026-08-20 Codexレビュー指摘：失敗するたびに
 // 一度正常に索引化できていたタイトル・アーティスト等が消えてしまっていた）。
 const NON_TAG_COLUMN_NAMES = new Set(["fileId", "extension", "parentId", "driveModifiedTime", "lastScannedAt", "extractionFailed"]);
 const TAG_COLUMN_INDEXES = new Set(
-  INDEX_SHEET_HEADER.map((name, i) => (!OVERRIDE_COLUMN_INDEXES.has(i) && !NON_TAG_COLUMN_NAMES.has(name) ? i : -1)).filter(
-    (i) => i >= 0
-  )
+  INDEX_SHEET_HEADER.map((name, i) =>
+    !OVERRIDE_COLUMN_INDEXES.has(i) && !CONFLICT_META_COLUMN_INDEXES.has(i) && !NON_TAG_COLUMN_NAMES.has(name) ? i : -1
+  ).filter((i) => i >= 0)
 );
 const EXTRACTION_FAILED_INDEX = INDEX_SHEET_HEADER.indexOf("extractionFailed");
+const LAST_SCANNED_AT_INDEX = INDEX_SHEET_HEADER.indexOf("lastScannedAt");
+const FILE_ID_INDEX = INDEX_SHEET_HEADER.indexOf("fileId");
 
 // 抽出タグとfileId起点upsertに必要な最小限の入力。_override列は4.2節の方針通り、
 // スキャナは絶対に書き込まない（新規行では空欄のまま作成する）。文字化け自動修復（4.4節）・
@@ -141,6 +191,9 @@ export function buildIndexRow({
     garbledSuspect ? "TRUE" : "FALSE",
     "FALSE", // garbledResolved（自動修復は後続PR）
     extractionFailed ? "TRUE" : "FALSE",
+    // 2026-08-20追加：競合候補・競合フラグ列（mergeDuplicateIndexRows専用）。通常のスキャンは
+    // 常に「競合なし」として新規行を作成する（これらの列を埋めるのはmergeDuplicateIndexRowsのみ）。
+    ...OVERRIDE_FIELD_NAMES.flatMap(() => ["", "FALSE"]),
   ];
 }
 
@@ -195,7 +248,7 @@ export interface UpsertIndexEntry {
 function mergeWithExisting(existingRow: (string | number)[], newRow: (string | number)[]): (string | number)[] {
   const extractionFailed = newRow[EXTRACTION_FAILED_INDEX] === "TRUE";
   return newRow.map((value, i) => {
-    if (OVERRIDE_COLUMN_INDEXES.has(i)) return existingRow[i] ?? "";
+    if (OVERRIDE_COLUMN_INDEXES.has(i) || CONFLICT_META_COLUMN_INDEXES.has(i)) return existingRow[i] ?? "";
     if (extractionFailed && TAG_COLUMN_INDEXES.has(i)) return existingRow[i] ?? value;
     return value;
   });
@@ -231,6 +284,135 @@ export async function upsertIndexRows(io: SheetsIndexIO, entries: UpsertIndexEnt
   }
   if (updates.length > 0) await io.updateRows(updates);
   if (toAppend.length > 0) await io.appendRows(toAppend);
+}
+
+// 2台のデバイスがほぼ同時に同じ新規fileIdの行を追記した場合、片方が「まだ無い」と判断した
+// 時点で両方が別行として追記してしまい索引に重複行が生じうる（CONCEPT.md 4.3節「索引upsertの
+// 重複行対策」、Sheetsに一意制約が無くlast-write-winsでも解消しないため）。事前に完全には
+// 防げないため、事後の整合として索引全体をfileId列でスキャンし、重複が見つかれば1行に
+// マージする。呼び出しは差分同期完了時または起動時を想定（CONCEPT.md同節）。
+
+// どちらの行を「勝者」として抽出値・メタデータ列（_override/競合列を除く）の採用元にするかを
+// 決める。extractionFailed=falseの行を常に優先し（失敗した抽出が正常な抽出結果を上書きしない
+// ため）、両方が同じ成否の場合のみlastScannedAtが新しい方を採用する二次基準として使う
+// （CONCEPT.md 4.3節）。
+function chooseWinner(a: (string | number)[], b: (string | number)[]): (string | number)[] {
+  const aFailed = a[EXTRACTION_FAILED_INDEX] === "TRUE";
+  const bFailed = b[EXTRACTION_FAILED_INDEX] === "TRUE";
+  if (aFailed !== bFailed) return aFailed ? b : a;
+  return String(a[LAST_SCANNED_AT_INDEX] ?? "") >= String(b[LAST_SCANNED_AT_INDEX] ?? "") ? a : b;
+}
+
+// _override列1つ分のマージ。単純に「新しい方/古い方」を優先すると、ユーザーがどちらか片方の
+// 重複行にだけ手動補正を入れていた場合にその補正が消えてしまうため、値が入っている方を優先する。
+// 両方に異なる値が入っていた場合は片方を捨てず、<field>_conflictCandidate/<field>_hasConflict
+// 列に採用しなかった側の値と競合フラグを保持する（CONCEPT.md 4.3節「`_override`同士が競合した
+// 場合は片方を捨てず両方を保持する」）。
+function mergeOverrideField(
+  merged: (string | number)[],
+  a: (string | number)[],
+  b: (string | number)[],
+  field: (typeof OVERRIDE_FIELD_NAMES)[number]
+): void {
+  const overrideIdx = INDEX_SHEET_HEADER.indexOf(`${field}_override` as (typeof INDEX_SHEET_HEADER)[number]);
+  const candidateIdx = INDEX_SHEET_HEADER.indexOf(`${field}_conflictCandidate` as (typeof INDEX_SHEET_HEADER)[number]);
+  const hasConflictIdx = INDEX_SHEET_HEADER.indexOf(`${field}_hasConflict` as (typeof INDEX_SHEET_HEADER)[number]);
+
+  const aVal = String(a[overrideIdx] ?? "");
+  const bVal = String(b[overrideIdx] ?? "");
+  const aHasConflict = a[hasConflictIdx] === "TRUE";
+  const bHasConflict = b[hasConflictIdx] === "TRUE";
+
+  if (aVal === bVal) {
+    // 両方空、または両方が同じ値（同じ"(none)"を含む）。どちらかに既存の未解決競合が
+    // 残っていれば（3行以上のマージ途中で生じた競合等）そのまま引き継ぐ。
+    merged[overrideIdx] = aVal;
+    if (aHasConflict || bHasConflict) {
+      merged[hasConflictIdx] = "TRUE";
+      merged[candidateIdx] = aHasConflict ? a[candidateIdx] : b[candidateIdx];
+    } else {
+      merged[hasConflictIdx] = "FALSE";
+      merged[candidateIdx] = "";
+    }
+    return;
+  }
+  if (aVal === "") {
+    merged[overrideIdx] = bVal;
+    merged[hasConflictIdx] = bHasConflict ? "TRUE" : "FALSE";
+    merged[candidateIdx] = bHasConflict ? b[candidateIdx] : "";
+    return;
+  }
+  if (bVal === "") {
+    merged[overrideIdx] = aVal;
+    merged[hasConflictIdx] = aHasConflict ? "TRUE" : "FALSE";
+    merged[candidateIdx] = aHasConflict ? a[candidateIdx] : "";
+    return;
+  }
+  // 両方に異なる値が入っている＝新規の競合。片方をoverrideとして採用しつつ、
+  // もう片方をconflictCandidateとして保持する（どちらを採用するかは任意で、ユーザーが
+  // カタログ補正機能で確認・解決するまでの暫定値にすぎない）。
+  merged[overrideIdx] = aVal;
+  merged[hasConflictIdx] = "TRUE";
+  merged[candidateIdx] = bVal;
+}
+
+// 同一fileIdの2行を1行にマージする。fileId自体はそのまま、抽出値・その他メタデータ列は
+// chooseWinner()が選んだ行の値を、_override列と競合メタ列はmergeOverrideField()の結果を採用する。
+// 3行以上の重複がある場合はArray.reduce()で2行ずつ畳み込んで使う想定（可換ではあるが、
+// 3行以上での多段競合は「最後に競合した相手の値のみ」がconflictCandidateに残る点は既知の限界）。
+function mergeTwoRows(a: (string | number)[], b: (string | number)[]): (string | number)[] {
+  const winner = chooseWinner(a, b);
+  const merged = new Array(INDEX_SHEET_HEADER.length).fill("") as (string | number)[];
+  merged[FILE_ID_INDEX] = a[FILE_ID_INDEX] || b[FILE_ID_INDEX];
+  INDEX_SHEET_HEADER.forEach((_name, i) => {
+    if (i === FILE_ID_INDEX || OVERRIDE_COLUMN_INDEXES.has(i) || CONFLICT_META_COLUMN_INDEXES.has(i)) return;
+    merged[i] = winner[i] ?? "";
+  });
+  for (const field of OVERRIDE_FIELD_NAMES) mergeOverrideField(merged, a, b, field);
+  return merged;
+}
+
+export interface MergeDuplicateIndexRowsResult {
+  // 重複が見つかったユニークfileIdの件数
+  mergedGroups: number;
+  // 空欄化した（削除相当の）重複行の件数
+  rowsCleared: number;
+}
+
+// indexタブ全体をfileId列でスキャンし、重複行が見つかれば1行にマージして残りは空欄化する
+// （Sheets APIには行削除に必要なnumericなsheetIdを持たない設計上、削除の代わりに全列を
+// 空欄にする。空欄行のfileIdは空のためlistExistingRows()の以降の呼び出しでは無視され、
+// 通常のupsertが誤ってこの行を再利用することもない）。重複が無ければAPIを呼ばない。
+export async function mergeDuplicateIndexRows(io: SheetsIndexIO): Promise<MergeDuplicateIndexRowsResult> {
+  const rows = await io.listExistingRows();
+  const rowsByFileId = new Map<string, { rowNumber: number; row: (string | number)[] }[]>();
+  rows.forEach((row, i) => {
+    const fileId = row[FILE_ID_INDEX];
+    if (!fileId) return;
+    const key = String(fileId);
+    const list = rowsByFileId.get(key) ?? [];
+    list.push({ rowNumber: i + 2, row });
+    rowsByFileId.set(key, list);
+  });
+
+  const updates: { rowNumber: number; row: (string | number)[] }[] = [];
+  let mergedGroups = 0;
+  let rowsCleared = 0;
+  const blankRow = new Array(INDEX_SHEET_HEADER.length).fill("") as (string | number)[];
+  for (const entries of rowsByFileId.values()) {
+    if (entries.length < 2) continue;
+    mergedGroups += 1;
+    const sorted = [...entries].sort((x, y) => x.rowNumber - y.rowNumber);
+    const merged = sorted.map((e) => e.row).reduce((acc, row) => mergeTwoRows(acc, row));
+    const [keep, ...duplicates] = sorted;
+    updates.push({ rowNumber: keep.rowNumber, row: merged });
+    for (const dup of duplicates) {
+      updates.push({ rowNumber: dup.rowNumber, row: blankRow });
+      rowsCleared += 1;
+    }
+  }
+  if (updates.length > 0) await io.updateRows(updates);
+  return { mergedGroups, rowsCleared };
 }
 
 // SheetsIndexIOの実実装。ensureAccessTokenで取得したアクセストークンをAuthorizationヘッダーに載せる。
