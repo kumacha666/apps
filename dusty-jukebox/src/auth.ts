@@ -8,6 +8,12 @@
 // 別スコープとして索引実装時に追加する）。
 export const DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 
+// 索引・保存済みプレイリストの読み書き用（CONCEPT.md 4.1節）。drive.readonlyとは別スコープにし、
+// 音源アクセスのスコープレベルでの書き込み拒否保証（2節）に影響しないようにする。
+export const SPREADSHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+
+export const OAUTH_SCOPES = [DRIVE_READONLY_SCOPE, SPREADSHEETS_SCOPE].join(" ");
+
 export interface TokenState {
   accessToken: string;
   expiresAt: number; // epoch ms
@@ -85,7 +91,7 @@ export class DriveAuth {
     }
     this.tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: clientId,
-      scope: DRIVE_READONLY_SCOPE,
+      scope: OAUTH_SCOPES,
       callback: () => {}, // requestAccessToken()の都度差し替える
       error_callback: (err) => {
         // ポップアップを閉じた・ブロックされた等、callbackが一度も呼ばれないまま終わるケース。
