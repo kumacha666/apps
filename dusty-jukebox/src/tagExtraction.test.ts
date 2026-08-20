@@ -200,6 +200,43 @@ describe("extractAndBuildIndexEntries", () => {
     expect(calledFileIds.length).toBeLessThan(6);
   });
 
+  test("認証エラー発生時、既に実行中だった（キュー待機ではなく並行実行枠を使用中の）他のファイルの抽出もabortする（2026-08-20 Codexレビュー指摘: キュー未着手タスクの打ち切りだけでは実行中のRange取得は止まらず、handleScan()がトークンをクリアした後もバックグラウンドで動き続けてしまっていた）", async () => {
+    parseFromTokenizerMock.mockImplementation(async (tokenizer: DriveRangeTokenizer) => {
+      await tokenizer.readBuffer(new Uint8Array(1), { position: 0, length: 1 });
+      return { common: { title: "ok" } };
+    });
+    const { extractAndBuildIndexEntries } = await import("./tagExtraction");
+
+    const authError = new DriveHttpError(401, "invalid_token");
+    const entries = makeEntries(6);
+    let capturedF1Signal: AbortSignal | undefined;
+    const createFetchRangeForFile = (fileId: string, signal: AbortSignal) => {
+      if (fileId === "f1") capturedF1Signal = signal;
+      return (): Promise<Uint8Array> => {
+        if (fileId === "f0") return Promise.reject(authError);
+        if (fileId === "f1") {
+          // f0の認証エラーが起きるまで自力では解決しない、実行中のRange取得を模す。
+          // abortされて初めて（signalのabortイベント経由で）rejectする
+          return new Promise((_, reject) => {
+            signal.addEventListener("abort", () => {
+              const err = new Error("aborted");
+              err.name = "AbortError";
+              reject(err);
+            });
+          });
+        }
+        return Promise.resolve(new Uint8Array(1));
+      };
+    };
+
+    await expect(extractAndBuildIndexEntries(entries, createFetchRangeForFile, () => {})).rejects.toBe(authError);
+
+    // f1は同時実行枠を使って既に開始済み（f0と同時にconcurrency内で走っていた）。
+    // キュー未着手タスクの打ち切りだけでは影響を受けないはずだが、externalSignalの伝播により
+    // f1自身のfetchRangeに渡ったsignalもabortされている
+    expect(capturedF1Signal?.aborted).toBe(true);
+  });
+
   test("認証エラーが無ければ全ファイル分のUpsertIndexEntryを返す", async () => {
     parseFromTokenizerMock.mockImplementation(async (tokenizer: DriveRangeTokenizer) => {
       await tokenizer.readBuffer(new Uint8Array(1), { position: 0, length: 1 });

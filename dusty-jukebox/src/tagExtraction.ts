@@ -75,11 +75,20 @@ export type CreateFetchRangeFn = (signal: AbortSignal) => FetchRangeFn;
 // 1ファイル分のタグ抽出。タイムアウト・パースエラーはどちらもextractionFailed=trueとして
 // 呼び出し元に返す（5節: ファイル単位の失敗でスキャン全体を止めない。ファイル名フォールバックや
 // extractionFailedの記録はsheets.ts/main.ts側の責務）。
+// externalSignal: 呼び出し元（extractAndBuildIndexEntries）が複数ファイルを並行抽出する際、
+// 他のファイルの認証エラーで全体を打ち切りたい場合に渡す。ConcurrencyLimiterのキューで
+// 未着手のタスクを止めるだけでは、既に実行中の他のRange取得は止まらない
+// （2026-08-20 Codexレビュー指摘）ため、実行中のfetchRangeにもこのsignalのabortを伝播させる。
 export async function extractTags(
   file: { id: string; name: string; size?: number },
-  createFetchRange: CreateFetchRangeFn
+  createFetchRange: CreateFetchRangeFn,
+  externalSignal?: AbortSignal
 ): Promise<ExtractTagsResult> {
   const abortController = new AbortController();
+  if (externalSignal) {
+    if (externalSignal.aborted) abortController.abort();
+    else externalSignal.addEventListener("abort", () => abortController.abort(), { once: true });
+  }
   const baseFetchRange = createFetchRange(abortController.signal);
   // music-metadataはtokenizerが投げたI/Oエラーを内部で独自の例外型にラップすることがあるため、
   // parseFromTokenizer()側の例外だけを見ていると認証エラー（DriveHttpError/AuthError）の
@@ -137,6 +146,10 @@ const MAX_CONCURRENT_EXTRACTIONS = 4;
 // 打ち切りシグナルが無く動き続けるため、呼び出し元がトークンをクリアした後もバックグラウンドで
 // 無効なトークンのままAPIを叩き続けてしまっていた。既に発行済みのHTTPリクエストまでは
 // 止められない点はdrive.tsのlistAudioFilesRecursiveと同じ既知の限界）。
+// さらに、この打ち切りシグナルはextractTags()のexternalSignalとしても渡し、既に実行中だった
+// （キュー待機ではなく並行実行枠を使用中の）他のファイルの抽出も止める（2026-08-20
+// Codexレビュー指摘: キュー未着手タスクの打ち切りだけでは、実行中の他のRange取得が
+// 止まらず、handleScan()がトークンをクリアした後もバックグラウンドで動き続けてしまっていた）。
 export async function extractAndBuildIndexEntries(
   entries: AudioFileEntry[],
   createFetchRangeForFile: (fileId: string, signal: AbortSignal) => FetchRangeFn,
@@ -152,8 +165,10 @@ export async function extractAndBuildIndexEntries(
         if (controller.signal.aborted) return null;
         let extraction: ExtractTagsResult;
         try {
-          extraction = await extractTags({ id: file.id, name: file.name, size: parseFileSizeBytes(file.size) }, (signal) =>
-            createFetchRangeForFile(file.id, signal)
+          extraction = await extractTags(
+            { id: file.id, name: file.name, size: parseFileSizeBytes(file.size) },
+            (signal) => createFetchRangeForFile(file.id, signal),
+            controller.signal
           );
         } catch (err) {
           // 認証エラーだけ打ち切りシグナルを立てる。それ以外（このcatchに来ることは通常無い。
@@ -162,6 +177,11 @@ export async function extractAndBuildIndexEntries(
           if (isAuthError(err)) controller.abort();
           throw err;
         }
+        // 打ち切り後に完了した実行中タスク（打ち切りシグナルが伝わる前に開始済みだったもの）は、
+        // 進捗表示・索引行の組み立てを行わない（2026-08-20 Codexレビュー指摘: 打ち切り後も
+        // onProgress()がエラー表示を上書きしてしまわないようにする）。この行の結果自体は
+        // Promise.allが既にrejectを確定させているため使われないが、副作用だけは止める。
+        if (controller.signal.aborted) return null;
         done += 1;
         onProgress(done, entries.length);
         const { tags, extractionFailed } = extraction;
