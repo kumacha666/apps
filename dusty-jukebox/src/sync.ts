@@ -196,7 +196,12 @@ export function createSyncTabIO(spreadsheetId: string, getAccessToken: () => Pro
       return data.values ?? [];
     },
     async readHeaderRow() {
-      const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range(`A1:${lastCol}1`))}`);
+      // 列範囲を明示しない行全体記法（`1:1`）を使う。sheets.tsのSheetsIndexIO.readHeaderRowと
+      // 同じ理由：列範囲をSYNC_TAB_HEADER.length分に固定すると、対象タブの実際のグリッド列数が
+      // それより狭い場合にSheets APIの「範囲がグリッドを超える」エラーになる。現時点では
+      // SYNC_TAB_HEADERが2列固定のため（Sheets既定の26列を下回り）実際には起きないが、
+      // indexタブと同じ脆さのクラスを将来また踏まないよう揃えておく（2026-08-20 /code-review指摘）。
+      const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range("1:1"))}`);
       const data = (await res.json()) as { values?: (string | number)[][] };
       return data.values?.[0] ?? [];
     },

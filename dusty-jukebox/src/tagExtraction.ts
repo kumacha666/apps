@@ -103,25 +103,31 @@ export async function extractTags(
       throw err;
     }
   };
-  const tokenizer = new DriveRangeTokenizer(fetchRange, { size: file.size, mimeType: guessMimeType(file.name) });
-  const timeoutMs = computeTagExtractionTimeoutMs(file.size);
-
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      abortController.abort();
-      reject(new Error(`タグ抽出タイムアウト（${file.name}）`));
-    }, timeoutMs);
-  });
-
-  // 負けた側（タイムアウト時のparseFromTokenizer、正常終了時のtimeout）が未処理の
-  // rejectionとしてプロセスに警告を出さないよう、Promise.raceとは別に必ずcatchしておく
-  // （catalog-script/src/verify-range.jsと同じ方針）
-  const parsePromise = parseFromTokenizer(tokenizer, { skipCovers: true, duration: false });
-  parsePromise.catch(() => {});
-  timeout.catch(() => {});
-
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    // DriveRangeTokenizerの構築（strtok3のAbstractTokenizerコンストラクタ含む）をtryの外に
+    // 置いていると、万一同期的に例外を投げた場合、この関数が「あらゆる失敗をextractionFailed=true
+    // として1ファイル単位に閉じ込める」という前提を素通りして呼び出し元（extractAndBuildIndexEntries
+    // のPromise.all）へそのまま伝播し、スキャン全体を落としてしまう（2026-08-20 /code-review指摘）。
+    // タイムアウト計算・タイマー設定・パース開始まで含めてtryの中に収め、確実に1ファイル単位の
+    // 失敗として扱われるようにする。
+    const tokenizer = new DriveRangeTokenizer(fetchRange, { size: file.size, mimeType: guessMimeType(file.name) });
+    const timeoutMs = computeTagExtractionTimeoutMs(file.size);
+
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        abortController.abort();
+        reject(new Error(`タグ抽出タイムアウト（${file.name}）`));
+      }, timeoutMs);
+    });
+
+    // 負けた側（タイムアウト時のparseFromTokenizer、正常終了時のtimeout）が未処理の
+    // rejectionとしてプロセスに警告を出さないよう、Promise.raceとは別に必ずcatchしておく
+    // （catalog-script/src/verify-range.jsと同じ方針）
+    const parsePromise = parseFromTokenizer(tokenizer, { skipCovers: true, duration: false });
+    parsePromise.catch(() => {});
+    timeout.catch(() => {});
+
     const metadata = await Promise.race([parsePromise, timeout]);
     return { tags: toIndexTags(metadata.common), extractionFailed: false };
   } catch {
@@ -130,7 +136,7 @@ export async function extractTags(
     if (capturedAuthError) throw capturedAuthError;
     return { tags: null, extractionFailed: true };
   } finally {
-    clearTimeout(timer!);
+    if (timer) clearTimeout(timer);
   }
 }
 

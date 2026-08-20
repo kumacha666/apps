@@ -224,14 +224,18 @@ describe("createSyncTabIO", () => {
     vi.useRealTimers();
   });
 
-  test("readHeaderRowはA1:B1をそのまま返す", async () => {
+  test("readHeaderRowは1行目全体（列範囲を指定しない`1:1`記法）をそのまま返す", async () => {
     const fetchMock = vi.fn(async () => fakeResponse(200, { values: [[...SYNC_TAB_HEADER]] }));
     vi.stubGlobal("fetch", fetchMock);
 
     const io = createSyncTabIO("sheet1", async () => "token");
     await expect(io.readHeaderRow()).resolves.toEqual([...SYNC_TAB_HEADER]);
     const [url] = fetchMock.mock.calls[0] as unknown as [string];
-    expect(decodeURIComponent(url)).toContain("'sync'!A1:B1");
+    // 列範囲（A1:B1等）を明示しない。sheets.tsのSheetsIndexIO.readHeaderRowと同じ理由
+    // （2026-08-20 /code-review指摘：狭いグリッドに対する範囲超過エラーの同種バグを避ける）。
+    const decoded = decodeURIComponent(url);
+    expect(decoded).toContain("'sync'!1:1");
+    expect(decoded).not.toMatch(/![A-Z]+\d*:[A-Z]/);
   });
 
   test("readHeaderRowはヘッダー行が空の場合は空配列を返す", async () => {

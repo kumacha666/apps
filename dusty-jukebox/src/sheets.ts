@@ -269,10 +269,20 @@ function mergeWithExisting(existingRow: (string | number)[], newRow: (string | n
   });
 }
 
+export interface UpsertIndexRowsResult {
+  // 新規追記した行数。0件なら今回のスキャンで新しいfileIdは1つも増えていないことを意味し、
+  // 呼び出し元（main.ts）はmergeDuplicateIndexRows()をスキップしてよい判断材料にする
+  // （索引upsertの重複行は「2台のデバイスがほぼ同時に同じ新規fileIdを別行として追記する」
+  // ことでしか生じないため、追記が無かったスキャンでは新たな重複は発生し得ない。
+  // 2026-08-20 /code-review指摘：mergeDuplicateIndexRowsが直後に同じ1万件規模の
+  // listExistingRows()をもう一度呼んでおり、追記が無かった場合は完全に無駄な二重読み取りだった）。
+  appendedCount: number;
+}
+
 // fileIdを一意キーとしたupsert（CONCEPT.md 5節）。既存行があれば_override列を温存したうえで
 // 抽出値列だけを更新し、無ければ末尾に追記する。
-export async function upsertIndexRows(io: SheetsIndexIO, entries: UpsertIndexEntry[]): Promise<void> {
-  if (entries.length === 0) return;
+export async function upsertIndexRows(io: SheetsIndexIO, entries: UpsertIndexEntry[]): Promise<UpsertIndexRowsResult> {
+  if (entries.length === 0) return { appendedCount: 0 };
 
   // 同一バッチ内に同じfileIdが複数含まれる場合は最後のものを採用する（挿入順を保つためMapを使う）
   // （2026-08-20 Codexレビュー指摘：dedupeせずに素通しすると、未登録のfileIdが複数回来た際に
@@ -299,6 +309,7 @@ export async function upsertIndexRows(io: SheetsIndexIO, entries: UpsertIndexEnt
   }
   if (updates.length > 0) await io.updateRows(updates);
   if (toAppend.length > 0) await io.appendRows(toAppend);
+  return { appendedCount: toAppend.length };
 }
 
 // 2台のデバイスがほぼ同時に同じ新規fileIdの行を追記した場合、片方が「まだ無い」と判断した

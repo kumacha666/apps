@@ -147,6 +147,28 @@ describe("ensureValidHeader", () => {
     expect(setupIO.headerCalls).toEqual([{ sheetName: INDEX_SHEET_NAME, header: INDEX_SHEET_HEADER }]);
   });
 
+  test("タブが真に空で回復する際、writeHeaderRowの前にグリッドをexpectedHeader.length分へ拡張する（2026-08-20 /code-review指摘：ユーザーが手作業で作った既定26列の空タブ等、writeHeaderRowが範囲超過エラーになるケースの回避。migrateLegacyIndexHeaderV1と同じ扱いをisTabEmptyフォールバックにも揃える）", async () => {
+    let currentHeader: (string | number)[] = [];
+    const headerIO = { readHeaderRow: async () => currentHeader };
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], [INDEX_SHEET_NAME]);
+    const originalWrite = setupIO.writeHeaderRow.bind(setupIO);
+    const callOrder: string[] = [];
+    setupIO.expandColumnCount = async (sheetName, columnCount) => {
+      callOrder.push("expand");
+      setupIO.expandColumnCountCalls.push({ sheetName, columnCount });
+    };
+    setupIO.writeHeaderRow = async (sheetName, header) => {
+      callOrder.push("write");
+      await originalWrite(sheetName, header);
+      currentHeader = [...header];
+    };
+
+    await ensureValidHeader(headerIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, (h) => h.join() === INDEX_SHEET_HEADER.join());
+
+    expect(setupIO.expandColumnCountCalls).toEqual([{ sheetName: INDEX_SHEET_NAME, columnCount: INDEX_SHEET_HEADER.length }]);
+    expect(callOrder).toEqual(["expand", "write"]);
+  });
+
   test("ヘッダーが無効でタブに中身がある場合は上書きせずエラーを投げる（無関係な既存タブの誤検出）", async () => {
     const headerIO = fakeHeaderIO(["foo", "bar"]);
     const setupIO = makeFakeIO([INDEX_SHEET_NAME], []); // 空ではない

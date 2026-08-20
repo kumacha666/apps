@@ -190,15 +190,21 @@ async function handleScan(): Promise<void> {
     );
 
     setStatus("スプレッドシートへ書き込み中...");
-    await upsertIndexRows(sheetsIO, upsertEntries);
+    const { appendedCount } = await upsertIndexRows(sheetsIO, upsertEntries);
 
     // 索引upsertの重複行マージ（CONCEPT.md 4.3節）。複数デバイスがほぼ同時にスキャンした場合、
     // 片方が「まだ無い」と判断した新規fileIdを両方が別行として追記してしまう競合が起こりうる。
     // changes.listによる実際の差分同期はまだ実装していないため、本来の「差分同期完了時」の
     // 代わりに毎回のフルスキャン完了時にこのチェックを行う（CONCEPT.md同節「事前防止ではなく
-    // 事後の整合」の方針通り）。
-    setStatus("重複行を確認中...");
-    await mergeDuplicateIndexRows(sheetsIO);
+    // 事後の整合」の方針通り）。新規追記が1件も無かったスキャンでは、このスキャン自体が
+    // 新たな重複を生みようがない（重複は「別デバイスが同じ新規fileIdを別行として追記する」
+    // ことでしか発生しない）ため、1万件規模で重いlistExistingRows()の再読み込みをスキップする
+    // （2026-08-20 /code-review指摘：無条件に呼ぶとupsertIndexRowsと同じ全件読み取りを
+    // 毎回二重に払っていた）。
+    if (appendedCount > 0) {
+      setStatus("重複行を確認中...");
+      await mergeDuplicateIndexRows(sheetsIO);
+    }
 
     // 取得失敗フォルダ（failedFolders）が1件でもある場合、初回一覧の構築は完了していない
     // （2026-08-20 Codexレビュー指摘：listAudioFilesRecursiveは子フォルダ単位の一時的な失敗を

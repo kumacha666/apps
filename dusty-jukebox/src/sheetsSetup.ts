@@ -98,6 +98,13 @@ export async function ensureValidHeader(
     header = await headerIO.readHeaderRow();
   }
   if (!isValid(header) && (await setupIO.isTabEmpty(sheetName))) {
+    // writeHeaderRowはexpectedHeader.length分の列範囲（例：indexなら A1:AS1）へPUTするため、
+    // タブのグリッドがそれより狭い（例：ユーザーが手作業で作った既定26列の空タブ、または
+    // 他デバイスが今回のexpectedHeaderより古いバージョンのcolumnCountで作成した空タブ）場合、
+    // 「範囲がグリッドを超える」エラーになる。migrateLegacyIndexHeaderV1が旧ヘッダー移行の
+    // 際に行っているのと同じグリッド拡張をここでも先に行う必要がある（2026-08-20
+    // /code-review指摘：readHeaderRowの同種バグ修正がこちらの回復経路には波及していなかった）。
+    await setupIO.expandColumnCount(sheetName, expectedHeader.length);
     await setupIO.writeHeaderRow(sheetName, expectedHeader);
     header = await headerIO.readHeaderRow();
   }
