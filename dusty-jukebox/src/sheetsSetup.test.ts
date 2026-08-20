@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { ensureIndexAndSyncTabsExist, ensureValidHeader, createSpreadsheetSetupIO, type SpreadsheetSetupIO } from "./sheetsSetup";
-import { INDEX_SHEET_HEADER, INDEX_SHEET_NAME } from "./sheets";
+import {
+  ensureIndexAndSyncTabsExist,
+  ensureValidHeader,
+  createSpreadsheetSetupIO,
+  migrateLegacyIndexHeaderV1,
+  type SpreadsheetSetupIO,
+} from "./sheetsSetup";
+import { INDEX_SHEET_HEADER, INDEX_SHEET_NAME, LEGACY_INDEX_SHEET_HEADER_V1 } from "./sheets";
 import { SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 
 function makeFakeIO(
@@ -10,16 +16,19 @@ function makeFakeIO(
   addCalls: { title: string; columnCount: number }[];
   headerCalls: { sheetName: string; header: readonly (string | number)[] }[];
   isTabEmptyCalls: string[];
+  expandColumnCountCalls: { sheetName: string; columnCount: number }[];
 } {
   const addCalls: { title: string; columnCount: number }[] = [];
   const headerCalls: { sheetName: string; header: readonly (string | number)[] }[] = [];
   const isTabEmptyCalls: string[] = [];
+  const expandColumnCountCalls: { sheetName: string; columnCount: number }[] = [];
   const titles = [...existingTitles];
   const empty = new Set(emptyTitles);
   return {
     addCalls,
     headerCalls,
     isTabEmptyCalls,
+    expandColumnCountCalls,
     async listSheetTitles() {
       return [...titles];
     },
@@ -35,6 +44,9 @@ function makeFakeIO(
     async isTabEmpty(sheetName) {
       isTabEmptyCalls.push(sheetName);
       return empty.has(sheetName);
+    },
+    async expandColumnCount(sheetName, columnCount) {
+      expandColumnCountCalls.push({ sheetName, columnCount });
     },
   };
 }
@@ -135,6 +147,28 @@ describe("ensureValidHeader", () => {
     expect(setupIO.headerCalls).toEqual([{ sheetName: INDEX_SHEET_NAME, header: INDEX_SHEET_HEADER }]);
   });
 
+  test("タブが真に空で回復する際、writeHeaderRowの前にグリッドをexpectedHeader.length分へ拡張する（2026-08-20 /code-review指摘：ユーザーが手作業で作った既定26列の空タブ等、writeHeaderRowが範囲超過エラーになるケースの回避。migrateLegacyIndexHeaderV1と同じ扱いをisTabEmptyフォールバックにも揃える）", async () => {
+    let currentHeader: (string | number)[] = [];
+    const headerIO = { readHeaderRow: async () => currentHeader };
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], [INDEX_SHEET_NAME]);
+    const originalWrite = setupIO.writeHeaderRow.bind(setupIO);
+    const callOrder: string[] = [];
+    setupIO.expandColumnCount = async (sheetName, columnCount) => {
+      callOrder.push("expand");
+      setupIO.expandColumnCountCalls.push({ sheetName, columnCount });
+    };
+    setupIO.writeHeaderRow = async (sheetName, header) => {
+      callOrder.push("write");
+      await originalWrite(sheetName, header);
+      currentHeader = [...header];
+    };
+
+    await ensureValidHeader(headerIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, (h) => h.join() === INDEX_SHEET_HEADER.join());
+
+    expect(setupIO.expandColumnCountCalls).toEqual([{ sheetName: INDEX_SHEET_NAME, columnCount: INDEX_SHEET_HEADER.length }]);
+    expect(callOrder).toEqual(["expand", "write"]);
+  });
+
   test("ヘッダーが無効でタブに中身がある場合は上書きせずエラーを投げる（無関係な既存タブの誤検出）", async () => {
     const headerIO = fakeHeaderIO(["foo", "bar"]);
     const setupIO = makeFakeIO([INDEX_SHEET_NAME], []); // 空ではない
@@ -152,6 +186,67 @@ describe("ensureValidHeader", () => {
     await expect(
       ensureValidHeader(headerIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, (h) => h.join() === INDEX_SHEET_HEADER.join())
     ).rejects.toThrow(/ヘッダー行が想定と一致しません/);
+  });
+
+  test("migrateLegacyコールバックが移行できた場合、isTabEmptyのフォールバックは呼ばずに再検証する（2026-08-20 Codexレビュー指摘：旧27列indexタブのマイグレーション）", async () => {
+    let currentHeader: (string | number)[] = [...LEGACY_INDEX_SHEET_HEADER_V1];
+    const headerIO = { readHeaderRow: async () => currentHeader };
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], []); // データが入っている（空ではない）タブ想定
+    const migrateLegacy = vi.fn(async (header: (string | number)[]) => {
+      if (header.join() !== LEGACY_INDEX_SHEET_HEADER_V1.join()) return false;
+      currentHeader = [...INDEX_SHEET_HEADER];
+      return true;
+    });
+
+    await ensureValidHeader(headerIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, (h) => h.join() === INDEX_SHEET_HEADER.join(), migrateLegacy);
+
+    expect(migrateLegacy).toHaveBeenCalledTimes(1);
+    expect(setupIO.isTabEmptyCalls).toEqual([]); // 移行に成功したのでisTabEmptyのフォールバックは呼ばれない
+  });
+
+  test("migrateLegacyコールバックが移行できなかった場合（旧ヘッダーでもない）、通常のisTabEmptyフォールバックに進む", async () => {
+    const headerIO = fakeHeaderIO(["foo", "bar"]);
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], []); // 空ではない
+    const migrateLegacy = vi.fn(async () => false);
+
+    await expect(
+      ensureValidHeader(
+        headerIO,
+        setupIO,
+        INDEX_SHEET_NAME,
+        INDEX_SHEET_HEADER,
+        (h) => h.join() === INDEX_SHEET_HEADER.join(),
+        migrateLegacy
+      )
+    ).rejects.toThrow(/ヘッダー行が想定と一致しません/);
+    expect(migrateLegacy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("migrateLegacyIndexHeaderV1", () => {
+  test("旧27列ヘッダーの場合、グリッドを拡張してから新ヘッダーを書き込みtrueを返す", async () => {
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], []);
+    const migrated = await migrateLegacyIndexHeaderV1(setupIO, [...LEGACY_INDEX_SHEET_HEADER_V1]);
+
+    expect(migrated).toBe(true);
+    expect(setupIO.expandColumnCountCalls).toEqual([{ sheetName: INDEX_SHEET_NAME, columnCount: INDEX_SHEET_HEADER.length }]);
+    expect(setupIO.headerCalls).toEqual([{ sheetName: INDEX_SHEET_NAME, header: INDEX_SHEET_HEADER }]);
+  });
+
+  test("旧27列ヘッダーと一致しない場合は何もせずfalseを返す", async () => {
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], []);
+    const migrated = await migrateLegacyIndexHeaderV1(setupIO, ["foo", "bar"]);
+
+    expect(migrated).toBe(false);
+    expect(setupIO.expandColumnCountCalls).toEqual([]);
+    expect(setupIO.headerCalls).toEqual([]);
+  });
+
+  test("既に新ヘッダー（45列）の場合はfalseを返す（isValidIndexHeader側で既に有効と判定されるはずだが、念のため旧ヘッダーとは一致しないことを確認）", async () => {
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], []);
+    const migrated = await migrateLegacyIndexHeaderV1(setupIO, [...INDEX_SHEET_HEADER]);
+
+    expect(migrated).toBe(false);
   });
 });
 
@@ -224,5 +319,46 @@ describe("createSpreadsheetSetupIO", () => {
 
     const io = createSpreadsheetSetupIO("sheet1", async () => "token");
     await expect(io.isTabEmpty("sync")).resolves.toBe(false);
+  });
+
+  test("expandColumnCountは現在の列数が不足している場合、sheetIdを取得してからupdateSheetPropertiesでgridProperties.columnCountを拡張する", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("fields=")) {
+        return fakeResponse(200, { sheets: [{ properties: { sheetId: 42, title: "index", gridProperties: { columnCount: 27 } } }] });
+      }
+      return fakeResponse(200, {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSpreadsheetSetupIO("sheet1", async () => "token");
+    await io.expandColumnCount("index", 45);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [batchUrl, batchInit] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    expect(batchUrl).toContain(":batchUpdate");
+    const body = JSON.parse(batchInit.body as string);
+    expect(body).toEqual({
+      requests: [{ updateSheetProperties: { properties: { sheetId: 42, gridProperties: { columnCount: 45 } }, fields: "gridProperties.columnCount" } }],
+    });
+  });
+
+  test("expandColumnCountは既に列数が十分な場合はbatchUpdateを呼ばない", async () => {
+    const fetchMock = vi.fn(async () =>
+      fakeResponse(200, { sheets: [{ properties: { sheetId: 42, title: "index", gridProperties: { columnCount: 45 } } }] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSpreadsheetSetupIO("sheet1", async () => "token");
+    await io.expandColumnCount("index", 45);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1); // sheetId取得のみ、batchUpdateは呼ばれない
+  });
+
+  test("expandColumnCountは対象タブが見つからない場合エラーを投げる", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(200, { sheets: [{ properties: { sheetId: 1, title: "other" } }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSpreadsheetSetupIO("sheet1", async () => "token");
+    await expect(io.expandColumnCount("index", 45)).rejects.toThrow(/見つかりません/);
   });
 });

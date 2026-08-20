@@ -17,8 +17,16 @@ import {
   type AudioFileEntry,
 } from "./drive";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
-import { createSheetsIndexIO, isValidIndexHeader, upsertIndexRows, SheetsHttpError, INDEX_SHEET_HEADER, INDEX_SHEET_NAME } from "./sheets";
-import { ensureIndexAndSyncTabsExist, ensureValidHeader, createSpreadsheetSetupIO } from "./sheetsSetup";
+import {
+  createSheetsIndexIO,
+  isValidIndexHeader,
+  mergeDuplicateIndexRows,
+  upsertIndexRows,
+  SheetsHttpError,
+  INDEX_SHEET_HEADER,
+  INDEX_SHEET_NAME,
+} from "./sheets";
+import { ensureIndexAndSyncTabsExist, ensureValidHeader, createSpreadsheetSetupIO, migrateLegacyIndexHeaderV1 } from "./sheetsSetup";
 import { createSyncTabIO, isValidSyncHeader, markInitialScanCompleted, prepareSyncForScan, SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 
 // drive.tsのisAuthError()（AuthError・DriveHttpError(401)）に加え、main.tsではSheets側の
@@ -145,8 +153,15 @@ async function handleScan(): Promise<void> {
     // （2026-08-20 Codexレビュー指摘）。ensureValidHeader()がヘッダー検証・失敗時の回復
     // （タブが真に空なら書き直して再検証）・それでも無効な場合のエラーをまとめて行う
     // （index/syncで同じ検証ロジックが重複していたのを共通化、2026-08-20 /code-review指摘）
+    // 旧バージョン（27列、2026-08-20の重複行マージ実装より前）のindexタブヘッダーを使っている
+    // 既存ユーザーは、新スキーマ（45列）とのisValidIndexHeader不一致でここに来る。
+    // migrateLegacyIndexHeaderV1がこの旧ヘッダーを検出した場合のみグリッド拡張＋ヘッダー
+    // 書き換えを行う（2026-08-20 Codexレビュー指摘：この移行が無いと既存の27列indexタブが
+    // 永久にヘッダー不一致エラーでブロックされ続けてしまっていた）。
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    await ensureValidHeader(sheetsIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, isValidIndexHeader);
+    await ensureValidHeader(sheetsIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, isValidIndexHeader, (header) =>
+      migrateLegacyIndexHeaderV1(setupIO, header)
+    );
 
     // syncタブについてもindexタブと同じ理由でヘッダー行を検証する（2026-08-20 Codexレビュー指摘）：
     // ensureIndexAndSyncTabsExistは既存タブに一切触れないため、「sync」という名前の無関係な
@@ -176,6 +191,20 @@ async function handleScan(): Promise<void> {
 
     setStatus("スプレッドシートへ書き込み中...");
     await upsertIndexRows(sheetsIO, upsertEntries);
+
+    // 索引upsertの重複行マージ（CONCEPT.md 4.3節）。複数デバイスがほぼ同時にスキャンした場合、
+    // 片方が「まだ無い」と判断した新規fileIdを両方が別行として追記してしまう競合が起こりうる。
+    // changes.listによる実際の差分同期はまだ実装していないため、本来の「差分同期完了時」の
+    // 代わりに毎回のフルスキャン完了時にこのチェックを行う（CONCEPT.md同節「事前防止ではなく
+    // 事後の整合」の方針通り）。無条件に毎回呼ぶ：一時的に「新規追記が無ければ今回は重複が
+    // 増えようがないので呼ばなくてよい」という最適化を入れていたが、直前のスキャンで追記直後に
+    // タブを閉じる／mergeDuplicateIndexRows自体が通信エラーで失敗する等により重複行が
+    // 残った場合、そのfileIdは次回以降「既存」扱いになり新規追記が二度と発生しないため、
+    // 事後整合による回復手段がこの呼び出し以外に無いのに永久にスキップされ続けてしまう
+    // （2026-08-20 Codexレビュー指摘：P2。パフォーマンスよりも「唯一の回復経路を塞がない」
+    // ことを優先し、無条件呼び出しに戻した）。
+    setStatus("重複行を確認中...");
+    await mergeDuplicateIndexRows(sheetsIO);
 
     // 取得失敗フォルダ（failedFolders）が1件でもある場合、初回一覧の構築は完了していない
     // （2026-08-20 Codexレビュー指摘：listAudioFilesRecursiveは子フォルダ単位の一時的な失敗を

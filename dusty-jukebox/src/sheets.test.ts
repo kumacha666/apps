@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { buildIndexRow, createSheetsIndexIO, INDEX_SHEET_HEADER, isValidIndexHeader, upsertIndexRows, type SheetsIndexIO } from "./sheets";
+import {
+  buildIndexRow,
+  createSheetsIndexIO,
+  INDEX_SHEET_HEADER,
+  INDEX_SHEET_NAME,
+  isLegacyIndexHeaderV1,
+  isValidIndexHeader,
+  LEGACY_INDEX_SHEET_HEADER_V1,
+  mergeDuplicateIndexRows,
+  upsertIndexRows,
+  type SheetsIndexIO,
+} from "./sheets";
 
 function makeFakeIO(
   existingRows: (string | number)[][]
@@ -282,6 +293,258 @@ describe("upsertIndexRows", () => {
   });
 });
 
+describe("mergeDuplicateIndexRows", () => {
+  test("重複が無ければ何もしない（updateRowsを呼ばない）", async () => {
+    const rowF1 = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const io = makeFakeIO([rowF1]);
+    const result = await mergeDuplicateIndexRows(io);
+    expect(result).toEqual({ mergedGroups: 0, rowsCleared: 0 });
+    expect(io.updateCalls).toEqual([]);
+  });
+
+  test("extractionFailed=falseの行を常に優先する（失敗した抽出が成功した抽出結果を上書きしない）", async () => {
+    const success = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z", // より古い
+      tags: { title: "成功した抽出結果" },
+      extractionFailed: false,
+    });
+    const failed = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-20T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-20T00:00:00.000Z", // より新しいが失敗
+      tags: null,
+      extractionFailed: true,
+    });
+    const io = makeFakeIO([success, failed]);
+    const result = await mergeDuplicateIndexRows(io);
+    expect(result).toEqual({ mergedGroups: 1, rowsCleared: 1 });
+
+    const updates = io.updateCalls[0];
+    const kept = updates.find((u) => u.rowNumber === 2)!;
+    const cleared = updates.find((u) => u.rowNumber === 3)!;
+    expect(kept.row[indexOf("title")]).toBe("成功した抽出結果");
+    expect(kept.row[indexOf("extractionFailed")]).toBe("FALSE");
+    expect(cleared.row.every((v) => v === "")).toBe(true);
+  });
+
+  test("両方とも成否が同じ場合はlastScannedAtが新しい方を採用する", async () => {
+    const older = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: { title: "旧タイトル" },
+      extractionFailed: false,
+    });
+    const newer = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-20T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-20T00:00:00.000Z",
+      tags: { title: "新タイトル" },
+      extractionFailed: false,
+    });
+    const io = makeFakeIO([older, newer]);
+    await mergeDuplicateIndexRows(io);
+    const kept = io.updateCalls[0].find((u) => u.rowNumber === 2)!;
+    expect(kept.row[indexOf("title")]).toBe("新タイトル");
+  });
+
+  test("_override列は値が入っている方を優先する（片方だけ手動補正済み）", async () => {
+    const rowA = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    rowA[indexOf("title_override")] = "ユーザー補正";
+    const rowB = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-20T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-20T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const io = makeFakeIO([rowA, rowB]);
+    await mergeDuplicateIndexRows(io);
+    const kept = io.updateCalls[0].find((u) => u.rowNumber === 2)!;
+    expect(kept.row[indexOf("title_override")]).toBe("ユーザー補正");
+    expect(kept.row[indexOf("title_hasConflict")]).toBe("FALSE");
+  });
+
+  test("_override同士が異なる値で競合した場合、両方を保持しconflictCandidate/hasConflictを立てる", async () => {
+    const rowA = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    rowA[indexOf("artist_override")] = "デバイスAの補正";
+    const rowB = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-20T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-20T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    rowB[indexOf("artist_override")] = "デバイスBの補正";
+    const io = makeFakeIO([rowA, rowB]);
+    await mergeDuplicateIndexRows(io);
+    const kept = io.updateCalls[0].find((u) => u.rowNumber === 2)!;
+    expect(kept.row[indexOf("artist_hasConflict")]).toBe("TRUE");
+    // 採用しなかった側の値がconflictCandidateに残る
+    const candidateAndOverride = [kept.row[indexOf("artist_override")], kept.row[indexOf("artist_conflictCandidate")]];
+    expect(candidateAndOverride).toContain("デバイスAの補正");
+    expect(candidateAndOverride).toContain("デバイスBの補正");
+  });
+
+  test("同じ_override値なら競合とみなさない（両方とも同じ値を書いていた）", async () => {
+    const rowA = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    rowA[indexOf("album_override")] = "同じ補正値";
+    const rowB = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-20T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-20T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    rowB[indexOf("album_override")] = "同じ補正値";
+    const io = makeFakeIO([rowA, rowB]);
+    await mergeDuplicateIndexRows(io);
+    const kept = io.updateCalls[0].find((u) => u.rowNumber === 2)!;
+    expect(kept.row[indexOf("album_override")]).toBe("同じ補正値");
+    expect(kept.row[indexOf("album_hasConflict")]).toBe("FALSE");
+  });
+
+  test("3行以上の重複も1行にマージし、残りは全列空欄化する", async () => {
+    const rows = [
+      buildIndexRow({
+        fileId: "f1",
+        fileName: "a.mp3",
+        parentId: "p",
+        driveModifiedTime: "2026-08-01T00:00:00.000Z",
+        lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+        tags: { title: "1つ目" },
+        extractionFailed: false,
+      }),
+      buildIndexRow({
+        fileId: "f1",
+        fileName: "a.mp3",
+        parentId: "p",
+        driveModifiedTime: "2026-08-10T00:00:00.000Z",
+        lastScannedAtIso: "2026-08-10T00:00:00.000Z",
+        tags: { title: "2つ目" },
+        extractionFailed: false,
+      }),
+      buildIndexRow({
+        fileId: "f1",
+        fileName: "a.mp3",
+        parentId: "p",
+        driveModifiedTime: "2026-08-20T00:00:00.000Z",
+        lastScannedAtIso: "2026-08-20T00:00:00.000Z",
+        tags: { title: "3つ目（最新）" },
+        extractionFailed: false,
+      }),
+    ];
+    const io = makeFakeIO(rows);
+    const result = await mergeDuplicateIndexRows(io);
+    expect(result).toEqual({ mergedGroups: 1, rowsCleared: 2 });
+    const updates = io.updateCalls[0];
+    expect(updates).toHaveLength(3);
+    const kept = updates.find((u) => u.rowNumber === 2)!;
+    expect(kept.row[indexOf("title")]).toBe("3つ目（最新）");
+    expect(updates.find((u) => u.rowNumber === 3)!.row.every((v) => v === "")).toBe(true);
+    expect(updates.find((u) => u.rowNumber === 4)!.row.every((v) => v === "")).toBe(true);
+  });
+
+  test("異なるfileIdの重複グループが複数ある場合、それぞれ独立してマージする", async () => {
+    const f1a = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const f1b = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-20T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-20T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const f2 = buildIndexRow({
+      fileId: "f2",
+      fileName: "b.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const f3a = buildIndexRow({
+      fileId: "f3",
+      fileName: "c.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const f3b = buildIndexRow({
+      fileId: "f3",
+      fileName: "c.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-20T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-20T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const io = makeFakeIO([f1a, f1b, f2, f3a, f3b]);
+    const result = await mergeDuplicateIndexRows(io);
+    expect(result).toEqual({ mergedGroups: 2, rowsCleared: 2 });
+  });
+});
+
 describe("isValidIndexHeader", () => {
   test("INDEX_SHEET_HEADERと完全一致する場合はtrue", () => {
     expect(isValidIndexHeader([...INDEX_SHEET_HEADER])).toBe(true);
@@ -294,6 +557,20 @@ describe("isValidIndexHeader", () => {
 
   test("ヘッダー行が空（indexタブは存在するがヘッダー未作成）の場合はfalse", () => {
     expect(isValidIndexHeader([])).toBe(false);
+  });
+});
+
+describe("isLegacyIndexHeaderV1", () => {
+  test("2026-08-20の重複行マージ実装より前の旧27列ヘッダーと完全一致する場合はtrue", () => {
+    expect(isLegacyIndexHeaderV1([...LEGACY_INDEX_SHEET_HEADER_V1])).toBe(true);
+  });
+
+  test("現行の45列ヘッダーはfalse（旧ヘッダーではない）", () => {
+    expect(isLegacyIndexHeaderV1([...INDEX_SHEET_HEADER])).toBe(false);
+  });
+
+  test("無関係なヘッダーはfalse", () => {
+    expect(isLegacyIndexHeaderV1(["foo", "bar"])).toBe(false);
   });
 });
 
@@ -343,7 +620,7 @@ describe("createSheetsIndexIO", () => {
     await expect(promise).rejects.toBeInstanceOf(TypeError);
   });
 
-  test("readHeaderRowはA1:<lastCol>1の1行目をそのまま返す", async () => {
+  test("readHeaderRowは1行目全体（列範囲を指定しない`1:1`記法）をそのまま返す", async () => {
     const fetchMock = vi.fn(async () => fakeResponse(200, { values: [[...INDEX_SHEET_HEADER]] }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -351,7 +628,13 @@ describe("createSheetsIndexIO", () => {
     const header = await io.readHeaderRow();
     expect(header).toEqual([...INDEX_SHEET_HEADER]);
     const [url] = fetchMock.mock.calls[0] as unknown as [string];
-    expect(decodeURIComponent(url)).toContain("A1:AA1"); // INDEX_SHEET_HEADERは27列=AA
+    // 列範囲（A1:AS1等）を明示しない。旧27列のままのグリッド（マイグレーション前）に対して
+    // 現行45列分の列範囲を指定すると「範囲がグリッドを超える」エラーになり、移行コールバックに
+    // 到達する前に例外で落ちてしまう（2026-08-20 Codexレビュー指摘）。行全体を指す`1:1`記法は
+    // 対象タブの実際のグリッド列数に自動的にクリップされるため、27列・45列どちらでも成功する。
+    const decoded = decodeURIComponent(url);
+    expect(decoded).toContain(`${INDEX_SHEET_NAME}'!1:1`);
+    expect(decoded).not.toMatch(/![A-Z]+\d*:[A-Z]/);
   });
 
   test("readHeaderRowはヘッダー行が空の場合は空配列を返す（indexタブは存在するがヘッダー未作成のケース）", async () => {
