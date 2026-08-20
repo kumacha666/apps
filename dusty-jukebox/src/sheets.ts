@@ -259,25 +259,22 @@ function isRetryableError(status: number, bodyText: string): boolean {
   return false;
 }
 
-export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () => Promise<string>): SheetsIndexIO {
-  const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}`;
-  const lastCol = columnLetter(INDEX_SHEET_HEADER.length);
-
-  // drive.tsのfetchDriveApiWithRetryと同じ方針：429/5xx・クォータ超過理由の403は指数バックオフで
-  // 数回リトライする（2026-08-20 /code-review指摘：リトライが無いと10235件規模の再スキャンで
-  // 単発の429/5xxがバッチ全体を巻き込んで失敗させてしまい、batchUpdateでまとめた意味が薄れる）。
-  // Content-Typeはbodyを送るリクエスト（PUT/POST）にのみ付与し、GET（listExistingRows）には
-  // 付けない。GETに非simpleヘッダーを付けるとブラウザがCORSプリフライトを発行してしまうため
-  // （2026-08-20 /code-review指摘）。
-  // allowRetry: 通信例外（fetch()自体が投げるTypeError等）・HTTPエラー（429/5xx等）のどちらも
-  // リトライしてよいかどうか。GET・PUT（batchUpdate、既存行の上書き）は冪等なので安全にリトライできるが、
-  // POST（append）は非冪等：サーバー側では書き込みが成功していたのに応答受信時だけ通信が切れた場合や、
-  // 処理自体は完了したが5xxを返した場合、そのまま再試行すると同じ行が二重に追記されてしまう
-  // （未実装の重複行マージが導入されるまでは索引が壊れる。2026-08-20 Codexレビュー指摘：
-  // 当初は通信例外のみをガードしており、HTTPエラー応答経由のリトライ経路がこのフラグを
-  // 見ていなかったため、5xx/429時には依然として二重追記が起こりえた）。appendを呼ぶ側はfalseを渡し、
-  // 通信例外・HTTPエラーのどちらでもリトライせず呼び出し元に例外をそのまま伝える。
-  async function sheetsFetch(url: string, init?: RequestInit, allowRetry = true): Promise<Response> {
+// スプレッドシート単位のリトライ付きfetch。drive.tsのfetchDriveApiWithRetryと同じ方針：
+// 429/5xx・クォータ超過理由の403は指数バックオフで数回リトライする（2026-08-20 /code-review指摘：
+// リトライが無いと10235件規模の再スキャンで単発の429/5xxがバッチ全体を巻き込んで失敗させてしまい、
+// batchUpdateでまとめた意味が薄れる）。Content-Typeはbodyを送るリクエスト（PUT/POST）にのみ付与し、
+// GETには付けない（非simpleヘッダーによる不要なCORSプリフライトを避けるため）。
+// allowRetry: 通信例外（fetch()自体が投げるTypeError等）・HTTPエラー（429/5xx等）のどちらも
+// リトライしてよいかどうか。GET・PUT（batchUpdate、既存行の上書き）は冪等なので安全にリトライできるが、
+// POST（append）は非冪等：サーバー側では書き込みが成功していたのに応答受信時だけ通信が切れた場合や、
+// 処理自体は完了したが5xxを返した場合、そのまま再試行すると同じ行が二重に追記されてしまう
+// （2026-08-20 Codexレビュー指摘）。appendを呼ぶ側はfalseを渡す。
+// indexタブのupsert・syncタブの読み書き・スプレッドシートのタブ初回作成のいずれも同じ
+// スプレッドシートへの同じ認証方式のHTTP呼び出しのため、この関数をSheets API呼び出し全体で共有する
+// （2026-08-20時点はcreateSheetsIndexIOにのみ埋め込まれていたが、sync.ts/sheetsSetup.tsの追加に伴い
+// 複製を避けるため関数として切り出した。振る舞いは変更していない）。
+export function createSheetsFetch(spreadsheetId: string, getAccessToken: () => Promise<string>) {
+  return async function sheetsFetch(url: string, init?: RequestInit, allowRetry = true): Promise<Response> {
     const maxRetries = 3;
     let lastError: Error | null = null;
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -295,12 +292,18 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
       }
       if (res.ok) return res;
       const bodyText = await res.text();
-      lastError = new SheetsHttpError(res.status, `Sheets API request failed: ${res.status} ${bodyText}`);
+      lastError = new SheetsHttpError(res.status, `Sheets API request failed: ${res.status} ${bodyText} (spreadsheet: ${spreadsheetId})`);
       if (!allowRetry || attempt >= maxRetries || !isRetryableError(res.status, bodyText)) throw lastError;
       await sleep(500 * 2 ** attempt);
     }
     throw lastError ?? new Error("unreachable");
-  }
+  };
+}
+
+export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () => Promise<string>): SheetsIndexIO {
+  const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}`;
+  const lastCol = columnLetter(INDEX_SHEET_HEADER.length);
+  const sheetsFetch = createSheetsFetch(spreadsheetId, getAccessToken);
 
   return {
     async listExistingRows() {

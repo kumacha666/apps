@@ -5,6 +5,7 @@ import {
   createDriveListFn,
   createDriveGetFn,
   createDriveCapabilitiesGetFn,
+  createGetStartPageTokenFn,
   createDriveFetchRange,
   validateRootFolder,
   ConcurrencyLimiter,
@@ -496,6 +497,31 @@ describe("createDriveCapabilitiesGetFn", () => {
 
     const getCapabilities = createDriveCapabilitiesGetFn(async () => "token");
     await expect(getCapabilities("sheet-1")).resolves.toEqual({ canEdit: false });
+  });
+});
+
+describe("createGetStartPageTokenFn", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("startPageTokenを返す（CONCEPT.md 5節: 初回スキャン開始前に取得・永続化する）", async () => {
+    const response = fakeResponse(200, { startPageToken: "T0" });
+    const fetchMock = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getStartPageToken = createGetStartPageTokenFn(async () => "token");
+    await expect(getStartPageToken()).resolves.toBe("T0");
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url).toContain("changes/startPageToken");
+  });
+
+  test("応答にstartPageTokenが含まれない場合はエラーを投げる", async () => {
+    const response = fakeResponse(200, {});
+    vi.stubGlobal("fetch", vi.fn(async () => response));
+
+    const getStartPageToken = createGetStartPageTokenFn(async () => "token");
+    await expect(getStartPageToken()).rejects.toThrow(/startPageToken/);
   });
 });
 

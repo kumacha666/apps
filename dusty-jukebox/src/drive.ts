@@ -376,6 +376,24 @@ export function createDriveCapabilitiesGetFn(getAccessToken: () => Promise<strin
   };
 }
 
+// Drive変更トークンの取得（CONCEPT.md 5節「変更トークンの取得順序」）。初回スキャン開始前に
+// 取得・sync タブへ永続化しておき、初回一覧の構築完了後にこのトークンからchanges.listで
+// 変更を再生する（差分再生自体は次PR以降、changes.list呼び出しは未実装のまま）。
+// スキャンしてからトークンを取る順序だと、スキャン中に発生した追加・更新・削除を
+// 取りこぼす同期ギャップが生じるため、順序が重要。
+export type GetStartPageTokenFn = () => Promise<string>;
+
+export function createGetStartPageTokenFn(getAccessToken: () => Promise<string>): GetStartPageTokenFn {
+  return async () => {
+    const params = new URLSearchParams({ supportsAllDrives: "true" });
+    const url = `https://www.googleapis.com/drive/v3/changes/startPageToken?${params.toString()}`;
+    const res = await fetchDriveApiWithRetry(url, getAccessToken);
+    const data = (await res.json()) as { startPageToken?: string };
+    if (!data.startPageToken) throw new Error("startPageTokenの取得に失敗しました（Drive APIの応答にstartPageTokenが含まれていません）");
+    return data.startPageToken;
+  };
+}
+
 // rangeTokenizer.tsのFetchRangeFnの実実装（CONCEPT.md 5節: タグ抽出はRangeリクエストによる
 // 部分取得で行い、10235件規模のライブラリをフルダウンロードしない）。alt=mediaで音源本体の
 // バイト列を取得する。書き込み系エンドポイントではないためdrive.readonlyスコープのままで良い。
