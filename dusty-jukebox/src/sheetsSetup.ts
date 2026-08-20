@@ -3,10 +3,16 @@
 // ヘッダー行含む）を事前に手作業で用意していることが前提だった。このファイルはその手作業を
 // 自動化する：スプレッドシート内の既存タブ一覧を確認し、無いタブだけを追加してヘッダー行を書く。
 //
-// 安全のため、既に存在するタブには一切書き込まない（ヘッダー行の有無・内容も見ない）。
-// 「index」という名前の無関係なタブが偶然存在するケース等で、ユーザーのデータを上書きする
-// リスクを避けるため。ヘッダー行が想定と異なる既存タブへの対応は、main.tsの
-// isValidIndexHeader()によるエラー表示（従来通り）に委ねる。
+// 安全のため、内容が入っているタブには一切書き込まない（ヘッダー行・データ行のどちらかでも
+// 値があれば「既存タブ」として扱う）。「index」という名前の無関係なタブが偶然存在するケース等で、
+// ユーザーのデータを上書きするリスクを避けるため。ヘッダー行が想定と異なる既存タブへの対応は、
+// main.tsのisValidIndexHeader()/isValidSyncHeader()によるエラー表示（従来通り）に委ねる。
+//
+// 例外：タブは存在するが完全に空（ヘッダー行・データ行のどちらも無い）の場合は、そのタブへの
+// ヘッダー書き込みを試みる。addSheetTabは成功したがその直後のwriteHeaderRowが通信断等で
+// 失敗した場合（2026-08-20 Codexレビュー指摘）、次回の起動時にタブが「存在するがヘッダー未設定」
+// のまま永続し、以降のスキャンが毎回ヘッダー検証エラーで失敗し続けてしまう。空タブへの
+// ヘッダー書き込みはデータ損失が起こりようがないため、この回復だけは安全に自動化できる。
 
 import { createSheetsFetch, INDEX_SHEET_HEADER, INDEX_SHEET_NAME } from "./sheets";
 import { SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
@@ -21,6 +27,10 @@ export interface SpreadsheetSetupIO {
   // 対応する（CONCEPT.md 4.3節「複数デバイスからの同時編集」と同じ、事前防止ではなく事後確認の方針）。
   addSheetTab(title: string): Promise<void>;
   writeHeaderRow(sheetName: string, header: readonly (string | number)[]): Promise<void>;
+  // タブの先頭付近（ヘッダー行・データ行を含む範囲）にまったく値が無いかを確認する。
+  // 「自分たちが作ったが初期化未完了のタブ」と「既にデータが入っている無関係なタブ」を
+  // 区別するための安全確認（上記コメント参照）。
+  isTabEmpty(sheetName: string): Promise<boolean>;
 }
 
 async function ensureTabExists(
@@ -29,15 +39,21 @@ async function ensureTabExists(
   header: readonly (string | number)[],
   titles: Set<string>
 ): Promise<void> {
-  if (titles.has(title)) return;
+  if (titles.has(title)) {
+    if (await io.isTabEmpty(title)) await io.writeHeaderRow(title, header);
+    return;
+  }
   try {
     await io.addSheetTab(title);
   } catch (err) {
     // 他クライアントが同時に同名タブを作成した可能性がある。最新のタブ一覧を再確認し、
-    // 既に存在していればヘッダー書き込みを譲って何もしない（そちらが書いたヘッダーを
-    // 上書きしない）。存在しなければ元のエラーをそのまま伝える。
+    // 既に存在していれば（かつまだ空であれば）ヘッダーを書く。他クライアント側の
+    // writeHeaderRowが既に完了していれば（空でなければ）上書きしない。
     const latestTitles = await io.listSheetTitles();
-    if (latestTitles.includes(title)) return;
+    if (latestTitles.includes(title)) {
+      if (await io.isTabEmpty(title)) await io.writeHeaderRow(title, header);
+      return;
+    }
     throw err;
   }
   await io.writeHeaderRow(title, header);
@@ -85,6 +101,14 @@ export function createSpreadsheetSetupIO(spreadsheetId: string, getAccessToken: 
         method: "PUT",
         body: JSON.stringify({ values: [header] }),
       });
+    },
+    async isTabEmpty(sheetName) {
+      // A1:Z5：index（27列=AAまで）/sync（2列=Bまで）のどちらのヘッダー幅もカバーしつつ、
+      // ヘッダー行だけでなく最初の数データ行まで見て「本当に何も無いか」を確認する。
+      const range = `'${sheetName.replace(/'/g, "''")}'!A1:Z5`;
+      const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range)}`);
+      const data = (await res.json()) as { values?: unknown[][] };
+      return !data.values || data.values.length === 0;
     },
   };
 }

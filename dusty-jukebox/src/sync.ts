@@ -29,8 +29,19 @@ export interface SyncState {
 // （sheets.tsのSheetsIndexIOと同じ規約）。
 export interface SyncTabIO {
   readAllRows(): Promise<(string | number)[][]>;
+  // ヘッダー行（1行目、A1:B1）をそのまま返す。sheets.tsのSheetsIndexIO.readHeaderRowと同じ理由：
+  // 「syncという名前の無関係な既存タブ」をアプリの状態として誤って読み書きしてしまうのを防ぐため、
+  // 呼び出し元（main.ts）は書き込み前にisValidSyncHeaderで検証する（2026-08-20 Codexレビュー指摘：
+  // ensureIndexAndSyncTabsExistは既存タブに触れない設計だが、prepareSyncForScan自体はヘッダーを
+  // 検証せずA2:Bをそのままアプリ状態として解釈・上書きしてしまっていた）。
+  readHeaderRow(): Promise<(string | number)[]>;
   // 空配列（updates/appendsともに）ならAPIを呼ばない。
   writeRows(updates: { rowNumber: number; row: [string, string] }[], appends: [string, string][]): Promise<void>;
+}
+
+// sheets.tsのisValidIndexHeaderと同じ方針：ヘッダー行がSYNC_TAB_HEADERと完全一致することを確認する。
+export function isValidSyncHeader(header: (string | number)[]): boolean {
+  return header.length === SYNC_TAB_HEADER.length && header.every((v, i) => v === SYNC_TAB_HEADER[i]);
 }
 
 // rows（A2以降、[key, value]）をSyncStateへ変換する。空文字列は「未設定」として扱う
@@ -143,6 +154,11 @@ export function createSyncTabIO(spreadsheetId: string, getAccessToken: () => Pro
       const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range("A2:B"))}`);
       const data = (await res.json()) as { values?: (string | number)[][] };
       return data.values ?? [];
+    },
+    async readHeaderRow() {
+      const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range("A1:B1"))}`);
+      const data = (await res.json()) as { values?: (string | number)[][] };
+      return data.values?.[0] ?? [];
     },
     async writeRows(updates, appends) {
       if (updates.length > 0) {

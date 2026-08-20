@@ -19,7 +19,7 @@ import {
 import { extractAndBuildIndexEntries } from "./tagExtraction";
 import { createSheetsIndexIO, isValidIndexHeader, upsertIndexRows, SheetsHttpError, INDEX_SHEET_NAME } from "./sheets";
 import { ensureIndexAndSyncTabsExist, createSpreadsheetSetupIO } from "./sheetsSetup";
-import { createSyncTabIO, markInitialScanCompleted, prepareSyncForScan } from "./sync";
+import { createSyncTabIO, isValidSyncHeader, markInitialScanCompleted, prepareSyncForScan, SYNC_SHEET_NAME } from "./sync";
 
 // drive.tsのisAuthError()（AuthError・DriveHttpError(401)）に加え、main.tsではSheets側の
 // 401（書き込み先検証・upsert時）も同じ「トークンはもう使えない」判定に含める必要がある
@@ -149,11 +149,20 @@ async function handleScan(): Promise<void> {
       throw new Error(`索引スプレッドシートの「${INDEX_SHEET_NAME}」タブのヘッダー行が想定と一致しません。ヘッダー行（1行目）を事前に作成してください。`);
     }
 
+    // syncタブについてもindexタブと同じ理由でヘッダー行を検証する（2026-08-20 Codexレビュー指摘）：
+    // ensureIndexAndSyncTabsExistは既存タブに一切触れないため、「sync」という名前の無関係な
+    // 既存タブが指定スプレッドシートにあった場合、検証無しでは prepareSyncForScan がそのA2:Bを
+    // アプリの同期状態として誤って読み書きしてしまう（無関係な行の上書き・データ破損につながる）。
+    setStatus("同期状態を確認中...");
+    const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
+    const syncHeader = await syncIO.readHeaderRow();
+    if (!isValidSyncHeader(syncHeader)) {
+      throw new Error(`索引スプレッドシートの「${SYNC_SHEET_NAME}」タブのヘッダー行が想定と一致しません。無関係なタブが同名で存在していないかご確認ください。`);
+    }
+
     // 変更トークンの取得順序（CONCEPT.md 5節）：初回一覧の構築を始める前にstartPageTokenを
     // 確保しておく。ルート変更時は新規取得、初期化未完了中の再開時は既存トークンを使い回す
     // （sync.tsのprepareSyncForScan参照）。changes.listによる実際の差分再生は次PR以降。
-    setStatus("同期状態を確認中...");
-    const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
     await prepareSyncForScan(syncIO, createGetStartPageTokenFn(() => auth.ensureAccessToken()), folderId);
 
     setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
@@ -172,10 +181,15 @@ async function handleScan(): Promise<void> {
     setStatus("スプレッドシートへ書き込み中...");
     await upsertIndexRows(sheetsIO, upsertEntries);
 
-    // 本PRのスキャンは「見つかった全ファイルを1回で最後まで処理する」実装のため、ここまで
-    // 到達すれば初回一覧の構築（CONCEPT.md 5節）は完了とみなせる。バッチ処理・中断再開を
-    // 導入する際は、この呼び出しタイミングを「全バッチ完了後」に見直す必要がある。
-    await markInitialScanCompleted(syncIO, new Date().toISOString());
+    // 取得失敗フォルダ（failedFolders）が1件でもある場合、初回一覧の構築は完了していない
+    // （2026-08-20 Codexレビュー指摘：listAudioFilesRecursiveは子フォルダ単位の一時的な失敗を
+    // 例外にせずfailedFoldersへ積んで継続するため、部分的な結果のままここへ到達しうる。
+    // それをinitialScanCompletedAtとして記録すると、取得できなかったサブツリー配下のファイルは
+    // 差分同期（changes.list、未実装）が開始トークン以降の変更しか拾わない性質上、恒久的に
+    // 索引から漏れてしまう。取得失敗があった場合は完了とみなさず、次回のスキャンでの再挑戦に委ねる）。
+    if (failedFolders.length === 0) {
+      await markInitialScanCompleted(syncIO, new Date().toISOString());
+    }
 
     setStatus(`スキャン完了（${entries.length}件を索引に反映${failedFolders.length > 0 ? `、取得失敗フォルダ: ${failedFolders.length}件` : ""}）`);
   } catch (err) {

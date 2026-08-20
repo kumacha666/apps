@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { createSyncTabIO, markInitialScanCompleted, parseSyncState, prepareSyncForScan, type SyncTabIO } from "./sync";
+import {
+  createSyncTabIO,
+  isValidSyncHeader,
+  markInitialScanCompleted,
+  parseSyncState,
+  prepareSyncForScan,
+  SYNC_TAB_HEADER,
+  type SyncTabIO,
+} from "./sync";
 
 function makeFakeIO(
   existingRows: (string | number)[][]
@@ -12,6 +20,9 @@ function makeFakeIO(
     appendCalls,
     async readAllRows() {
       return rows;
+    },
+    async readHeaderRow() {
+      return [...SYNC_TAB_HEADER];
     },
     async writeRows(updates, appends) {
       if (updates.length > 0) {
@@ -166,6 +177,18 @@ describe("markInitialScanCompleted", () => {
   });
 });
 
+describe("isValidSyncHeader", () => {
+  test("SYNC_TAB_HEADERと完全一致する場合はtrue", () => {
+    expect(isValidSyncHeader([...SYNC_TAB_HEADER])).toBe(true);
+  });
+
+  test("無関係な既存タブ等でヘッダーが異なる・空の場合はfalse（2026-08-20 Codexレビュー指摘：無検証のままsyncタブとして読み書きするとデータ破損の恐れがあった）", () => {
+    expect(isValidSyncHeader([])).toBe(false);
+    expect(isValidSyncHeader(["foo", "bar"])).toBe(false);
+    expect(isValidSyncHeader(["key"])).toBe(false);
+  });
+});
+
 function fakeResponse(status: number, body: unknown): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -179,6 +202,24 @@ describe("createSyncTabIO", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  test("readHeaderRowはA1:B1をそのまま返す", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(200, { values: [[...SYNC_TAB_HEADER]] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSyncTabIO("sheet1", async () => "token");
+    await expect(io.readHeaderRow()).resolves.toEqual([...SYNC_TAB_HEADER]);
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(decodeURIComponent(url)).toContain("'sync'!A1:B1");
+  });
+
+  test("readHeaderRowはヘッダー行が空の場合は空配列を返す", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(200, { values: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSyncTabIO("sheet1", async () => "token");
+    await expect(io.readHeaderRow()).resolves.toEqual([]);
   });
 
   test("readAllRowsはA2:B以降を読む", async () => {
