@@ -5,16 +5,19 @@
 //
 // 安全のため、内容が入っているタブには一切書き込まない（ヘッダー行・データ行のどちらかでも
 // 値があれば「既存タブ」として扱う）。「index」という名前の無関係なタブが偶然存在するケース等で、
-// ユーザーのデータを上書きするリスクを避けるため。ヘッダー行が想定と異なる既存タブへの対応は、
-// main.tsのisValidIndexHeader()/isValidSyncHeader()によるエラー表示（従来通り）に委ねる。
+// ユーザーのデータを上書きするリスクを避けるため。
 //
-// 例外：タブは存在するが完全に空（ヘッダー行・データ行のどちらも無い）の場合は、そのタブへの
-// ヘッダー書き込みを試みる。addSheetTabは成功したがその直後のwriteHeaderRowが通信断等で
-// 失敗した場合（2026-08-20 Codexレビュー指摘）、次回の起動時にタブが「存在するがヘッダー未設定」
-// のまま永続し、以降のスキャンが毎回ヘッダー検証エラーで失敗し続けてしまう。空タブへの
-// ヘッダー書き込みはデータ損失が起こりようがないため、この回復だけは安全に自動化できる。
+// タブが既に存在する場合、ここでは中身を一切検査しない（`isTabEmpty`は呼ばない）。中身の検査は
+// `values.get`で対象範囲全体（indexタブなら最大10235行規模、CLAUDE.md参照）を読む比較的重い
+// 呼び出しのため、以前はこの関数内で「既存タブなら毎回空かどうか確認する」実装にしていたが、
+// それだと定常状態（両タブとも既に有効な内容を持つ）のスキャンのたびに、後続の`readHeaderRow`
+// （ヘッダー行1行だけを読む軽い呼び出し）で十分なはずの検証に加えて、この重い呼び出しを
+// 無条件に払うことになっていた（2026-08-20 /code-review指摘）。
+// タブが存在するが空（addSheetTab成功後にwriteHeaderRowだけ失敗して中断したケース等）の回復は
+// `ensureValidHeader`（下記）が、`main.ts`側のヘッダー検証が実際に失敗した場合にのみ行う
+// フォールバックとして引き受ける。定常状態のスキャンでは一切呼ばれない。
 
-import { createSheetsFetch, INDEX_SHEET_HEADER, INDEX_SHEET_NAME } from "./sheets";
+import { columnLetter, createSheetsFetch, INDEX_SHEET_HEADER, INDEX_SHEET_NAME } from "./sheets";
 import { SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 
 // スプレッドシートのタブ一覧確認・タブ追加・ヘッダー行書き込みをDIするインターフェース
@@ -31,35 +34,25 @@ export interface SpreadsheetSetupIO {
   // 初回自動セットアップが永久に失敗し続ける（2026-08-20 Codexレビュー指摘）。
   addSheetTab(title: string, columnCount: number): Promise<void>;
   writeHeaderRow(sheetName: string, header: readonly (string | number)[]): Promise<void>;
-  // タブの管理対象範囲（columnCount列 × 十分な行数）にまったく値が無いかを確認する。
+  // タブの管理対象範囲（columnCount列 × 全行）にまったく値が無いかを確認する。
   // 「自分たちが作ったが初期化未完了のタブ」と「既にデータが入っている無関係なタブ」を
-  // 区別するための安全確認（上記コメント参照）。columnCountはこのタブに書く予定のヘッダー幅
-  // （呼び出し元のheader.length）を渡す：狭い固定範囲だけを見ると、ヘッダー幅を超えた列や
-  // 数行より下にあるデータを見逃して「空」と誤判定してしまう（2026-08-20 Codexレビュー指摘）。
+  // 区別するための安全確認。columnCountはこのタブに書く予定のヘッダー幅（呼び出し元の
+  // header.length）を渡す：狭い固定範囲だけを見ると、ヘッダー幅を超えた列にあるデータを
+  // 見逃して「空」と誤判定してしまう（2026-08-20 Codexレビュー指摘）。呼び出しコストが
+  // 比較的重いため、`ensureValidHeader`のフォールバック経路でのみ呼ばれる（上記コメント参照）。
   isTabEmpty(sheetName: string, columnCount: number): Promise<boolean>;
 }
 
-async function ensureTabExists(
-  io: SpreadsheetSetupIO,
-  title: string,
-  header: readonly (string | number)[],
-  titles: Set<string>
-): Promise<void> {
-  if (titles.has(title)) {
-    if (await io.isTabEmpty(title, header.length)) await io.writeHeaderRow(title, header);
-    return;
-  }
+async function ensureTabExists(io: SpreadsheetSetupIO, title: string, header: readonly (string | number)[], titles: Set<string>): Promise<void> {
+  if (titles.has(title)) return; // 既存タブには一切触れない（中身の検証・回復はensureValidHeaderに委ねる）
   try {
     await io.addSheetTab(title, header.length);
   } catch (err) {
     // 他クライアントが同時に同名タブを作成した可能性がある。最新のタブ一覧を再確認し、
-    // 既に存在していれば（かつまだ空であれば）ヘッダーを書く。他クライアント側の
-    // writeHeaderRowが既に完了していれば（空でなければ）上書きしない。
+    // 既に存在していればヘッダー書き込みを譲って何もしない（そちらが書いたヘッダーを
+    // 上書きしない。ヘッダーがまだ書かれていない場合の回復もensureValidHeaderに委ねる）。
     const latestTitles = await io.listSheetTitles();
-    if (latestTitles.includes(title)) {
-      if (await io.isTabEmpty(title, header.length)) await io.writeHeaderRow(title, header);
-      return;
-    }
+    if (latestTitles.includes(title)) return;
     throw err;
   }
   await io.writeHeaderRow(title, header);
@@ -72,15 +65,32 @@ export async function ensureIndexAndSyncTabsExist(io: SpreadsheetSetupIO): Promi
   await ensureTabExists(io, SYNC_SHEET_NAME, SYNC_TAB_HEADER, titles);
 }
 
-function columnLetter(colNumber: number): string {
-  let n = colNumber;
-  let result = "";
-  while (n > 0) {
-    const rem = (n - 1) % 26;
-    result = String.fromCharCode(65 + rem) + result;
-    n = Math.floor((n - 1) / 26);
+// ヘッダー行を読んで検証する、というensureIndexAndSyncTabsExist呼び出し後にindex/syncタブ
+// それぞれで必要になる処理（旧handleScan()に2回ほぼ同じ形で書かれていた、2026-08-20
+// /code-review指摘）を1つにまとめたもの。無効だった場合、そのタブが完全に空（addSheetTab
+// 成功後にwriteHeaderRowが失敗して中断した、または他クライアントが同時に作成したがヘッダーは
+// まだ書いていない）ならヘッダーを書いて回復を試み、再検証する。それでも無効なら例外を投げる。
+export interface HeaderCheckIO {
+  readHeaderRow(): Promise<(string | number)[]>;
+}
+
+export async function ensureValidHeader(
+  headerIO: HeaderCheckIO,
+  setupIO: SpreadsheetSetupIO,
+  sheetName: string,
+  expectedHeader: readonly (string | number)[],
+  isValid: (header: (string | number)[]) => boolean
+): Promise<void> {
+  let header = await headerIO.readHeaderRow();
+  if (!isValid(header) && (await setupIO.isTabEmpty(sheetName, expectedHeader.length))) {
+    await setupIO.writeHeaderRow(sheetName, expectedHeader);
+    header = await headerIO.readHeaderRow();
   }
-  return result;
+  if (!isValid(header)) {
+    throw new Error(
+      `索引スプレッドシートの「${sheetName}」タブのヘッダー行が想定と一致しません。スプレッドシートIDが正しいか、無関係な「${sheetName}」タブが既に存在していないかご確認ください。`
+    );
+  }
 }
 
 // SpreadsheetSetupIOの実実装。sheets.tsのcreateSheetsFetch（認証・リトライ共通）を再利用する。

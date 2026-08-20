@@ -17,9 +17,9 @@ import {
   type AudioFileEntry,
 } from "./drive";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
-import { createSheetsIndexIO, isValidIndexHeader, upsertIndexRows, SheetsHttpError, INDEX_SHEET_NAME } from "./sheets";
-import { ensureIndexAndSyncTabsExist, createSpreadsheetSetupIO } from "./sheetsSetup";
-import { createSyncTabIO, isValidSyncHeader, markInitialScanCompleted, prepareSyncForScan, SYNC_SHEET_NAME } from "./sync";
+import { createSheetsIndexIO, isValidIndexHeader, upsertIndexRows, SheetsHttpError, INDEX_SHEET_HEADER, INDEX_SHEET_NAME } from "./sheets";
+import { ensureIndexAndSyncTabsExist, ensureValidHeader, createSpreadsheetSetupIO } from "./sheetsSetup";
+import { createSyncTabIO, isValidSyncHeader, markInitialScanCompleted, prepareSyncForScan, SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 
 // drive.tsのisAuthError()（AuthError・DriveHttpError(401)）に加え、main.tsではSheets側の
 // 401（書き込み先検証・upsert時）も同じ「トークンはもう使えない」判定に含める必要がある
@@ -139,16 +139,14 @@ async function handleScan(): Promise<void> {
     await ensureIndexAndSyncTabsExist(setupIO);
 
     // スプレッドシートIDのタイプミス等で、index/syncタブ以外の想定外のスプレッドシートを
-    // 指しているケース、または既存indexタブのヘッダー行が想定と異なるケースをここで検出する。
-    // listExistingRows()（A2以降のみ）だけではヘッダー行（1行目）自体の有無・列順を検証
-    // できず、空/誤ったヘッダーのまま抽出を進めると初回のappendRows()がA1（本来ヘッダーが
-    // あるべき行）に曲データを書き込んでしまい、次回スキャンがそれをヘッダーとして読み飛ばして
-    // 重複行を生む（2026-08-20 Codexレビュー指摘）。readHeaderRow()で実際のヘッダー内容を検証する
+    // 指しているケース、または既存index/syncタブのヘッダー行が想定と異なるケースをここで検出する。
+    // A2以降のみを読む後続の索引読み書き・sync状態読み書きだけではヘッダー行（1行目）自体の
+    // 有無・列順を検証できず、空/誤ったヘッダーのまま進めると重複行やデータ破損につながる
+    // （2026-08-20 Codexレビュー指摘）。ensureValidHeader()がヘッダー検証・失敗時の回復
+    // （タブが真に空なら書き直して再検証）・それでも無効な場合のエラーをまとめて行う
+    // （index/syncで同じ検証ロジックが重複していたのを共通化、2026-08-20 /code-review指摘）
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    const header = await sheetsIO.readHeaderRow();
-    if (!isValidIndexHeader(header)) {
-      throw new Error(`索引スプレッドシートの「${INDEX_SHEET_NAME}」タブのヘッダー行が想定と一致しません。ヘッダー行（1行目）を事前に作成してください。`);
-    }
+    await ensureValidHeader(sheetsIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, isValidIndexHeader);
 
     // syncタブについてもindexタブと同じ理由でヘッダー行を検証する（2026-08-20 Codexレビュー指摘）：
     // ensureIndexAndSyncTabsExistは既存タブに一切触れないため、「sync」という名前の無関係な
@@ -156,10 +154,7 @@ async function handleScan(): Promise<void> {
     // アプリの同期状態として誤って読み書きしてしまう（無関係な行の上書き・データ破損につながる）。
     setStatus("同期状態を確認中...");
     const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
-    const syncHeader = await syncIO.readHeaderRow();
-    if (!isValidSyncHeader(syncHeader)) {
-      throw new Error(`索引スプレッドシートの「${SYNC_SHEET_NAME}」タブのヘッダー行が想定と一致しません。無関係なタブが同名で存在していないかご確認ください。`);
-    }
+    await ensureValidHeader(syncIO, setupIO, SYNC_SHEET_NAME, SYNC_TAB_HEADER, isValidSyncHeader);
 
     // 変更トークンの取得順序（CONCEPT.md 5節）：初回一覧の構築を始める前にstartPageTokenを
     // 確保しておく。ルート変更時は新規取得、初期化未完了中の再開時は既存トークンを使い回す

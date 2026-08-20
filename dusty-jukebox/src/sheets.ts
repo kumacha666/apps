@@ -351,8 +351,11 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
 }
 
 // 1-indexed列番号をA1記法の列文字に変換する（27列目=AA等）。INDEX_SHEET_HEADERは27列のためAAで足りるが、
-// 将来列が増えても壊れないよう汎用的に実装しておく。
-function columnLetter(colNumber: number): string {
+// 将来列が増えても壊れないよう汎用的に実装しておく。sheetsSetup.ts/sync.tsもこの実装を共有する
+// （2026-08-20 /code-review指摘：sheetsSetup.tsに同じ実装が複製されており、修正が片方にしか
+// 反映されない恐れがあった。sync.tsは列数を"B"に固定していたが、これもSYNC_TAB_HEADER.lengthから
+// 動的に導出するよう合わせて修正した）。
+export function columnLetter(colNumber: number): string {
   let n = colNumber;
   let result = "";
   while (n > 0) {

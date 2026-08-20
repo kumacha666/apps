@@ -10,7 +10,7 @@
 // 中断再開（ページ単位の進捗保存）、ルート変更後の旧ルート配下行の削除（リコンサイル）は
 // 未実装のまま残す（apps/dusty-jukebox/CLAUDE.md参照）。
 
-import { createSheetsFetch } from "./sheets";
+import { columnLetter, createSheetsFetch } from "./sheets";
 
 export const SYNC_SHEET_NAME = "sync";
 export const SYNC_TAB_HEADER = ["key", "value"] as const;
@@ -47,15 +47,38 @@ export function isValidSyncHeader(header: (string | number)[]): boolean {
 // rows（A2以降、[key, value]）をSyncStateへ変換する。空文字列は「未設定」として扱う
 // （writeSyncEntriesでrootFolderId変更時にstartPageToken/initialScanCompletedAtを
 // 空文字列で「クリア」する際、読み取り側もそれをundefined相当として扱う必要があるため）。
+//
+// SYNC_KEYSに対してswitch+default: neverで網羅性を保証する（AI開発ルール4）。以前はif/else if
+// チェーンで個々のキー名をハードコードしており、SYNC_KEYSに新しいキーを追加してもコンパイル
+// エラーにならず、この関数だけ更新を忘れてもビルドが通ってしまっていた（2026-08-20 /code-review
+// 指摘：writeSyncEntriesはSYNC_KEYSを反復するため網羅的だが、この関数だけ非対称だった）。
 export function parseSyncState(rows: (string | number)[][]): SyncState {
-  const state: SyncState = {};
+  const byKey = new Map<string, string>();
   for (const row of rows) {
     const key = String(row[0] ?? "");
     const value = row[1] !== undefined && row[1] !== null ? String(row[1]) : "";
-    if (!value) continue;
-    if (key === "startPageToken") state.startPageToken = value;
-    else if (key === "rootFolderId") state.rootFolderId = value;
-    else if (key === "initialScanCompletedAt") state.initialScanCompletedAt = value;
+    if (key && value) byKey.set(key, value);
+  }
+
+  const state: SyncState = {};
+  for (const key of SYNC_KEYS) {
+    const value = byKey.get(key);
+    if (value === undefined) continue;
+    switch (key) {
+      case "startPageToken":
+        state.startPageToken = value;
+        break;
+      case "rootFolderId":
+        state.rootFolderId = value;
+        break;
+      case "initialScanCompletedAt":
+        state.initialScanCompletedAt = value;
+        break;
+      default: {
+        const _exhaustive: never = key;
+        throw new Error(`unknown sync key: ${String(_exhaustive)}`);
+      }
+    }
   }
   return state;
 }
@@ -87,9 +110,6 @@ async function writeSyncEntries(io: SyncTabIO, rows: (string | number)[][], entr
 
 export interface PrepareSyncResult {
   startPageToken: string;
-  // ルート変更（または初回のルート指定）を検知し、新しいstartPageTokenを取得・初期化状態を
-  // クリアした場合true。main.ts側で「これは新しい初回スキャンである」ことの判定に使う。
-  isNewRoot: boolean;
 }
 
 // スキャン開始前に呼ぶ。CONCEPT.md 4.3節の3つのルールを実装する：
@@ -119,11 +139,11 @@ export async function prepareSyncForScan(
       startPageToken: newToken,
       initialScanCompletedAt: "",
     });
-    return { startPageToken: newToken, isNewRoot: true };
+    return { startPageToken: newToken };
   }
 
   if (state.startPageToken) {
-    return { startPageToken: state.startPageToken, isNewRoot: false };
+    return { startPageToken: state.startPageToken };
   }
 
   // rootFolderIdは記録済みだがstartPageTokenが無い異常系（書き込み途中の中断等）への
@@ -131,7 +151,7 @@ export async function prepareSyncForScan(
   // 起こらないはずだが、安全のため新規取得して補う。
   const newToken = await getNewStartPageToken();
   await writeSyncEntries(io, rows, { startPageToken: newToken });
-  return { startPageToken: newToken, isNewRoot: false };
+  return { startPageToken: newToken };
 }
 
 // 初回スキャン（ページングによる一覧構築＋その後のchanges.list再生、CONCEPT.md 5節）が
@@ -164,15 +184,19 @@ export function createSyncTabIO(spreadsheetId: string, getAccessToken: () => Pro
   const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}`;
   const sheetsFetch = createSheetsFetch(spreadsheetId, getAccessToken);
   const range = (cell: string) => `'${SYNC_SHEET_NAME.replace(/'/g, "''")}'!${cell}`;
+  // 列境界をSYNC_TAB_HEADER.lengthから動的に導出する（2026-08-20 /code-review指摘：以前は
+  // "B"固定だったため、将来SYNC_TAB_HEADERに列が増えた場合、増えた列だけ静かに読み書きされなくなる
+  // 潜在的な脆さがあった。sheets.ts/sheetsSetup.tsのindexタブと同じ方針に揃える）。
+  const lastCol = columnLetter(SYNC_TAB_HEADER.length);
 
   return {
     async readAllRows() {
-      const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range("A2:B"))}`);
+      const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range(`A2:${lastCol}`))}`);
       const data = (await res.json()) as { values?: (string | number)[][] };
       return data.values ?? [];
     },
     async readHeaderRow() {
-      const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range("A1:B1"))}`);
+      const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range(`A1:${lastCol}1`))}`);
       const data = (await res.json()) as { values?: (string | number)[][] };
       return data.values?.[0] ?? [];
     },
@@ -183,7 +207,7 @@ export function createSyncTabIO(spreadsheetId: string, getAccessToken: () => Pro
           body: JSON.stringify({
             valueInputOption: "RAW",
             data: updates.map(({ rowNumber, row }) => ({
-              range: range(`A${rowNumber}:B${rowNumber}`),
+              range: range(`A${rowNumber}:${lastCol}${rowNumber}`),
               values: [row],
             })),
           }),

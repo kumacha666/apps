@@ -81,7 +81,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1");
 
-    expect(result).toEqual({ startPageToken: "T-new", isNewRoot: true });
+    expect(result).toEqual({ startPageToken: "T-new" });
     expect(getNewToken).toHaveBeenCalledTimes(1);
     expect(io.appendCalls).toEqual([
       [
@@ -103,7 +103,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root-new");
 
-    expect(result).toEqual({ startPageToken: "T-new", isNewRoot: true });
+    expect(result).toEqual({ startPageToken: "T-new" });
     expect(getNewToken).toHaveBeenCalledTimes(1);
     expect(io.updateCalls).toEqual([
       [
@@ -124,7 +124,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1");
 
-    expect(result).toEqual({ startPageToken: "T-existing", isNewRoot: false });
+    expect(result).toEqual({ startPageToken: "T-existing" });
     expect(getNewToken).not.toHaveBeenCalled();
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
@@ -140,7 +140,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1");
 
-    expect(result).toEqual({ startPageToken: "T-existing", isNewRoot: false });
+    expect(result).toEqual({ startPageToken: "T-existing" });
     expect(getNewToken).not.toHaveBeenCalled();
   });
 
@@ -150,7 +150,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1");
 
-    expect(result).toEqual({ startPageToken: "T-recovered", isNewRoot: false });
+    expect(result).toEqual({ startPageToken: "T-recovered" });
     expect(getNewToken).toHaveBeenCalledTimes(1);
     expect(io.appendCalls).toEqual([[["startPageToken", "T-recovered"]]]);
   });

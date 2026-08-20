@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { ensureIndexAndSyncTabsExist, createSpreadsheetSetupIO, type SpreadsheetSetupIO } from "./sheetsSetup";
+import { ensureIndexAndSyncTabsExist, ensureValidHeader, createSpreadsheetSetupIO, type SpreadsheetSetupIO } from "./sheetsSetup";
 import { INDEX_SHEET_HEADER, INDEX_SHEET_NAME } from "./sheets";
 import { SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 
@@ -9,14 +9,17 @@ function makeFakeIO(
 ): SpreadsheetSetupIO & {
   addCalls: { title: string; columnCount: number }[];
   headerCalls: { sheetName: string; header: readonly (string | number)[] }[];
+  isTabEmptyCalls: { sheetName: string; columnCount: number }[];
 } {
   const addCalls: { title: string; columnCount: number }[] = [];
   const headerCalls: { sheetName: string; header: readonly (string | number)[] }[] = [];
+  const isTabEmptyCalls: { sheetName: string; columnCount: number }[] = [];
   const titles = [...existingTitles];
   const empty = new Set(emptyTitles);
   return {
     addCalls,
     headerCalls,
+    isTabEmptyCalls,
     async listSheetTitles() {
       return [...titles];
     },
@@ -29,7 +32,8 @@ function makeFakeIO(
       headerCalls.push({ sheetName, header });
       empty.delete(sheetName); // ヘッダーを書いたので以後は「空」ではない
     },
-    async isTabEmpty(sheetName) {
+    async isTabEmpty(sheetName, columnCount) {
+      isTabEmptyCalls.push({ sheetName, columnCount });
       return empty.has(sheetName);
     },
   };
@@ -50,39 +54,13 @@ describe("ensureIndexAndSyncTabsExist", () => {
     ]);
   });
 
-  test("両タブとも既に存在し、かつ中身がある場合は何もしない（既存データには一切触れない）", async () => {
-    const io = makeFakeIO([INDEX_SHEET_NAME, SYNC_SHEET_NAME], []); // emptyTitlesを空にする=どちらも中身あり扱い
+  test("両タブとも既に存在する場合は何もしない（既存タブには一切触れない。中身の検証・回復はensureValidHeaderに委ねる、2026-08-20 /code-review指摘）", async () => {
+    const io = makeFakeIO([INDEX_SHEET_NAME, SYNC_SHEET_NAME], []);
     await ensureIndexAndSyncTabsExist(io);
 
     expect(io.addCalls).toEqual([]);
     expect(io.headerCalls).toEqual([]);
-  });
-
-  test("タブは存在するが完全に空の場合、ヘッダー行を書いて回復する（2026-08-20 Codexレビュー指摘：addSheetTab成功後にwriteHeaderRowだけ失敗して中断したケースの復旧）", async () => {
-    const io = makeFakeIO([INDEX_SHEET_NAME, SYNC_SHEET_NAME], [INDEX_SHEET_NAME, SYNC_SHEET_NAME]);
-    await ensureIndexAndSyncTabsExist(io);
-
-    expect(io.addCalls).toEqual([]); // タブ自体は既に存在するため追加はしない
-    expect(io.headerCalls).toEqual([
-      { sheetName: INDEX_SHEET_NAME, header: INDEX_SHEET_HEADER },
-      { sheetName: SYNC_SHEET_NAME, header: SYNC_TAB_HEADER },
-    ]);
-  });
-
-  test("isTabEmptyにはそのタブのヘッダー幅（columnCount）を渡す", async () => {
-    const io = makeFakeIO([INDEX_SHEET_NAME, SYNC_SHEET_NAME], [INDEX_SHEET_NAME, SYNC_SHEET_NAME]);
-    const isTabEmptyCalls: { sheetName: string; columnCount: number }[] = [];
-    io.isTabEmpty = async (sheetName, columnCount) => {
-      isTabEmptyCalls.push({ sheetName, columnCount });
-      return true;
-    };
-
-    await ensureIndexAndSyncTabsExist(io);
-
-    expect(isTabEmptyCalls).toEqual([
-      { sheetName: INDEX_SHEET_NAME, columnCount: INDEX_SHEET_HEADER.length },
-      { sheetName: SYNC_SHEET_NAME, columnCount: SYNC_TAB_HEADER.length },
-    ]);
+    expect(io.isTabEmptyCalls).toEqual([]); // 既存タブに対してisTabEmptyの重い呼び出しを行わない
   });
 
   test("indexタブのみ存在する場合、syncタブだけ作成する", async () => {
@@ -93,7 +71,7 @@ describe("ensureIndexAndSyncTabsExist", () => {
     expect(io.headerCalls).toEqual([{ sheetName: SYNC_SHEET_NAME, header: SYNC_TAB_HEADER }]);
   });
 
-  test("addSheetTabが失敗しても、その後の一覧確認でタブが既に存在し空であればヘッダーを書く（他デバイスが同時作成したがヘッダーはまだ書いていないケース）", async () => {
+  test("addSheetTabが失敗しても、その後の一覧確認でタブが既に存在すればエラーにしない（他デバイスが同時作成したケース）。ヘッダーの有無に関わらずここでは書き込まない（回復はensureValidHeaderに委ねる）", async () => {
     const io = makeFakeIO([], []);
     let addCallCount = 0;
     io.addSheetTab = async (title) => {
@@ -109,28 +87,13 @@ describe("ensureIndexAndSyncTabsExist", () => {
       listCallCount += 1;
       return listCallCount === 1 ? [] : [INDEX_SHEET_NAME];
     };
-    io.isTabEmpty = async () => true; // 他クライアントはタブ作成のみでヘッダーはまだ書いていない
 
     await expect(ensureIndexAndSyncTabsExist(io)).resolves.toBeUndefined();
     expect(addCallCount).toBeGreaterThan(0);
-    expect(io.headerCalls.some((c) => c.sheetName === INDEX_SHEET_NAME)).toBe(true);
-    expect(io.headerCalls.some((c) => c.sheetName === SYNC_SHEET_NAME)).toBe(true);
-  });
-
-  test("addSheetTabが失敗し、他クライアントが既にヘッダーまで書いていた場合は上書きしない", async () => {
-    const io = makeFakeIO([], []);
-    io.addSheetTab = async () => {
-      throw new Error('A sheet with the name "index" already exists');
-    };
-    let listCallCount = 0;
-    io.listSheetTitles = async () => {
-      listCallCount += 1;
-      return listCallCount === 1 ? [] : [INDEX_SHEET_NAME, SYNC_SHEET_NAME];
-    };
-    io.isTabEmpty = async () => false; // 他クライアントが既にヘッダーを書き終えている
-
-    await ensureIndexAndSyncTabsExist(io);
-    expect(io.headerCalls.some((c) => c.sheetName === INDEX_SHEET_NAME)).toBe(false);
+    // indexタブ側は競合再確認の経路を通るためヘッダーは書かない。syncタブ側は通常通り
+    // 新規作成されるため、そちらのヘッダーは書かれる。
+    expect(io.headerCalls).toEqual([{ sheetName: SYNC_SHEET_NAME, header: SYNC_TAB_HEADER }]);
+    expect(io.isTabEmptyCalls).toEqual([]);
   });
 
   test("addSheetTabが失敗し、再確認でも存在しない場合は例外をそのまま伝える", async () => {
@@ -139,6 +102,56 @@ describe("ensureIndexAndSyncTabsExist", () => {
       throw new Error("permission denied");
     };
     await expect(ensureIndexAndSyncTabsExist(io)).rejects.toThrow("permission denied");
+  });
+});
+
+describe("ensureValidHeader", () => {
+  function fakeHeaderIO(header: (string | number)[]) {
+    return { readHeaderRow: async () => header };
+  }
+
+  test("ヘッダーが既に有効な場合は何もしない（isTabEmptyの重い呼び出しを避ける、2026-08-20 /code-review指摘：以前はensureIndexAndSyncTabsExistが既存タブに対して毎回isTabEmptyを呼んでいた）", async () => {
+    const headerIO = fakeHeaderIO([...INDEX_SHEET_HEADER]);
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME]);
+
+    await ensureValidHeader(headerIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, (h) => h.join() === INDEX_SHEET_HEADER.join());
+
+    expect(setupIO.isTabEmptyCalls).toEqual([]);
+    expect(setupIO.headerCalls).toEqual([]);
+  });
+
+  test("ヘッダーが無効かつタブが真に空の場合、ヘッダーを書いて回復する（addSheetTab成功後にwriteHeaderRowだけ失敗して中断したケースの復旧）", async () => {
+    let currentHeader: (string | number)[] = [];
+    const headerIO = { readHeaderRow: async () => currentHeader };
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], [INDEX_SHEET_NAME]);
+    const originalWrite = setupIO.writeHeaderRow.bind(setupIO);
+    setupIO.writeHeaderRow = async (sheetName, header) => {
+      await originalWrite(sheetName, header);
+      currentHeader = [...header];
+    };
+
+    await ensureValidHeader(headerIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, (h) => h.join() === INDEX_SHEET_HEADER.join());
+
+    expect(setupIO.headerCalls).toEqual([{ sheetName: INDEX_SHEET_NAME, header: INDEX_SHEET_HEADER }]);
+  });
+
+  test("ヘッダーが無効でタブに中身がある場合は上書きせずエラーを投げる（無関係な既存タブの誤検出）", async () => {
+    const headerIO = fakeHeaderIO(["foo", "bar"]);
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], []); // 空ではない
+
+    await expect(
+      ensureValidHeader(headerIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, (h) => h.join() === INDEX_SHEET_HEADER.join())
+    ).rejects.toThrow(/ヘッダー行が想定と一致しません/);
+    expect(setupIO.headerCalls).toEqual([]);
+  });
+
+  test("回復を試みても依然として無効な場合はエラーを投げる", async () => {
+    const headerIO = fakeHeaderIO([]); // writeHeaderRow後もfakeHeaderIOは固定値を返すため無効なまま
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], [INDEX_SHEET_NAME]);
+
+    await expect(
+      ensureValidHeader(headerIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, (h) => h.join() === INDEX_SHEET_HEADER.join())
+    ).rejects.toThrow(/ヘッダー行が想定と一致しません/);
   });
 });
 
