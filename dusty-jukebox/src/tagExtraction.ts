@@ -5,9 +5,9 @@
 
 import { parseFromTokenizer } from "music-metadata";
 import { DriveRangeTokenizer, type FetchRangeFn } from "./rangeTokenizer";
-import { guessMimeType } from "./lib";
-import type { IndexTagsLike } from "./sheets";
-import { DriveHttpError } from "./drive";
+import { deriveFallbackTitle, guessMimeType } from "./lib";
+import { buildIndexRow, type IndexTagsLike, type UpsertIndexEntry } from "./sheets";
+import { ConcurrencyLimiter, DriveHttpError, type AudioFileEntry } from "./drive";
 import { AuthError } from "./auth";
 
 // drive.tsのisAuthError()と同じ判定（401・GISのサイレント再取得失敗）。長時間のスキャン中に
@@ -15,7 +15,7 @@ import { AuthError } from "./auth";
 // main.ts側のisAuthFailure()に到達せず、残り全ファイルが同じ無効なトークンで失敗し続けてしまう
 // （2026-08-20 Codexレビュー指摘）。呼び出し元がトークンをクリアし再ログインを促せるよう、
 // このエラーだけは呼び出し元へそのまま再throwする。
-function isAuthFailure(err: unknown): boolean {
+export function isAuthFailure(err: unknown): boolean {
   return err instanceof AuthError || (err instanceof DriveHttpError && err.status === 401);
 }
 
@@ -133,4 +133,66 @@ export async function extractTags(
   } finally {
     clearTimeout(timer!);
   }
+}
+
+// タグ抽出は1ファイルあたり複数回のRangeリクエスト＋パース処理を伴い、フォルダ一覧取得より
+// 重い。drive.tsのフォルダ走査と同じ暫定値（DEFAULT_MAX_CONCURRENT_LISTS=6）よりやや控えめにする。
+const MAX_CONCURRENT_EXTRACTIONS = 4;
+
+// 見つかった音楽ファイル全件のタグを抽出し、sheets.tsのupsertIndexRowsへ渡せる形に組み立てる。
+// 1ファイルの抽出失敗（タイムアウト等）はextractionFailed=trueとして記録するだけでスキャン全体は
+// 止めない（CONCEPT.md 5節）。認証エラーが起きた場合は、drive.tsのlistAudioFilesRecursiveと
+// 同じ方針で、ConcurrencyLimiterのキューに残っている未着手タスクを打ち切る（2026-08-20
+// Codexレビュー指摘: Promise.all自体は最初のrejectで即座に確定するが、キュー済みタスクには
+// 打ち切りシグナルが無く動き続けるため、呼び出し元がトークンをクリアした後もバックグラウンドで
+// 無効なトークンのままAPIを叩き続けてしまっていた。既に発行済みのHTTPリクエストまでは
+// 止められない点はdrive.tsのlistAudioFilesRecursiveと同じ既知の限界）。
+export async function extractAndBuildIndexEntries(
+  entries: AudioFileEntry[],
+  createFetchRangeForFile: (fileId: string, signal: AbortSignal) => FetchRangeFn,
+  onProgress: (done: number, total: number) => void
+): Promise<UpsertIndexEntry[]> {
+  const limiter = new ConcurrencyLimiter(MAX_CONCURRENT_EXTRACTIONS);
+  const controller = new AbortController();
+  const lastScannedAtIso = new Date().toISOString();
+  let done = 0;
+  const results = await Promise.all(
+    entries.map(({ file }) =>
+      limiter.run(async (): Promise<UpsertIndexEntry | null> => {
+        if (controller.signal.aborted) return null;
+        let extraction: ExtractTagsResult;
+        try {
+          extraction = await extractTags({ id: file.id, name: file.name, size: Number(file.size) || undefined }, (signal) =>
+            createFetchRangeForFile(file.id, signal)
+          );
+        } catch (err) {
+          // 認証エラーだけ打ち切りシグナルを立てる。それ以外（このcatchに来ることは通常無い。
+          // extractTagsは認証エラー以外を投げない設計だが、想定外のバグでスキャン全体が
+          // 完全に停止するのを避けるため、認証エラー以外はそのままこのファイルの失敗として伝播させる）
+          if (isAuthFailure(err)) controller.abort();
+          throw err;
+        }
+        done += 1;
+        onProgress(done, entries.length);
+        const { tags, extractionFailed } = extraction;
+        // indexスキーマには元のファイル名を保存する列が無いため、タイトルタグが無い
+        // （抽出失敗、またはtitleタグ自体が空）行はfileId以外で識別できなくなる
+        // （2026-08-20 Codexレビュー指摘）。ファイル名（拡張子除く）を暫定タイトルとして補う。
+        // 既存行の再スキャンで抽出に失敗した場合は、この値はsheets.tsのmergeWithExistingが
+        // 既存の抽出値を優先するため使われない（新規ファイルの初回スキャンでのみ効く）。
+        const effectiveTags = { ...(tags ?? {}), title: tags?.title || deriveFallbackTitle(file.name) };
+        const row = buildIndexRow({
+          fileId: file.id,
+          fileName: file.name,
+          parentId: file.parents?.[0] ?? "",
+          driveModifiedTime: file.modifiedTime ?? "",
+          lastScannedAtIso,
+          tags: effectiveTags,
+          extractionFailed,
+        });
+        return { fileId: file.id, row };
+      })
+    )
+  );
+  return results.filter((r): r is UpsertIndexEntry => r !== null);
 }

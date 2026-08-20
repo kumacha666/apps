@@ -351,6 +351,32 @@ export function createDriveGetFn(getAccessToken: () => Promise<string>): DriveGe
 // バイト列を取得する。書き込み系エンドポイントではないためdrive.readonlyスコープのままで良い。
 // signalはタグ抽出側（tagExtraction.ts）のタイムアウト処理から渡され、タイムアウト時に
 // 発行中のRangeリクエストを実際に中断する（catalog-scriptのverify-range.jsと同じ方針）。
+// fetchDriveApiWithRetry()はfetch()自体（ヘッダー受信まで）のみをリトライ対象にしており、
+// レスポンス受信後・本文（arrayBuffer）ダウンロード中に接続が切れた場合はカバーしない
+// （2026-08-20 Codexレビュー指摘）。本文読み取りが失敗した場合は、fetchDriveApiWithRetry()を
+// 最初からやり直す（ヘッダー受信済みのストリームを再開する手段は無いため、リクエスト自体を
+// 再送する）。401等の非リトライ対象エラーはfetchDriveApiWithRetry()が即座に投げるため、
+// ここでの追加リトライは発生しない。
+async function fetchRangeWithBodyRetry(
+  url: string,
+  getAccessToken: () => Promise<string>,
+  extraHeaders: Record<string, string> | undefined,
+  signal: AbortSignal | undefined
+): Promise<Uint8Array> {
+  const maxBodyRetries = 3;
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await fetchDriveApiWithRetry(url, getAccessToken, extraHeaders, signal);
+    try {
+      const buf = await res.arrayBuffer();
+      return new Uint8Array(buf);
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      if (attempt >= maxBodyRetries) throw err instanceof Error ? err : new Error(String(err));
+      await sleep(500 * 2 ** attempt);
+    }
+  }
+}
+
 export function createDriveFetchRange(
   fileId: string,
   getAccessToken: () => Promise<string>,
@@ -361,8 +387,6 @@ export function createDriveFetchRange(
     const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`;
     const extraHeaders: Record<string, string> = { Range: `bytes=${startByte}-${endByteInclusive}` };
     if (options?.resourceKey) extraHeaders["X-Goog-Drive-Resource-Keys"] = `${fileId}/${options.resourceKey}`;
-    const res = await fetchDriveApiWithRetry(url, getAccessToken, extraHeaders, options?.signal);
-    const buf = await res.arrayBuffer();
-    return new Uint8Array(buf);
+    return fetchRangeWithBodyRetry(url, getAccessToken, extraHeaders, options?.signal);
   };
 }

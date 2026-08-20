@@ -158,3 +158,65 @@ describe("extractTags", () => {
     expect(result).toEqual({ tags: null, extractionFailed: true });
   });
 });
+
+describe("extractAndBuildIndexEntries", () => {
+  afterEach(() => {
+    parseFromTokenizerMock.mockReset();
+  });
+
+  function makeEntries(count: number) {
+    return Array.from({ length: count }, (_, i) => ({
+      file: { id: `f${i}`, name: `song${i}.mp3`, mimeType: "audio/mpeg", size: "10" },
+      folderPath: "",
+    }));
+  }
+
+  test("認証エラー発生時、ConcurrencyLimiterのキューに残っていた未着手ファイルの抽出を打ち切る（2026-08-20 Codexレビュー指摘: Promise.all自体は最初のrejectで確定するが、main.tsがトークンをクリアした後もキュー済みタスクがバックグラウンドで無効なトークンのままAPIを叩き続けないようにする）", async () => {
+    parseFromTokenizerMock.mockImplementation(async (tokenizer: DriveRangeTokenizer) => {
+      await tokenizer.readBuffer(new Uint8Array(1), { position: 0, length: 1 });
+      return { common: { title: "ok" } };
+    });
+    const { extractAndBuildIndexEntries } = await import("./tagExtraction");
+
+    const authError = new DriveHttpError(401, "invalid_token");
+    // 内部の同時実行数(MAX_CONCURRENT_EXTRACTIONS=4)より多いファイル数にして、
+    // 少なくとも1件はConcurrencyLimiterのキューで待機する状況を作る
+    const entries = makeEntries(6);
+    const calledFileIds: string[] = [];
+    const createFetchRangeForFile = (fileId: string) => {
+      calledFileIds.push(fileId);
+      return async (): Promise<Uint8Array> => {
+        if (fileId === "f0") throw authError;
+        return new Uint8Array(1);
+      };
+    };
+
+    await expect(extractAndBuildIndexEntries(entries, createFetchRangeForFile, () => {})).rejects.toBe(authError);
+
+    // 同時実行数の枠内で既に開始済みだったファイルは呼ばれるが、キューに並んでいた最後尾の
+    // ファイルは打ち切りシグナルにより一度もfetchRangeファクトリを呼ばれない
+    expect(calledFileIds).toContain("f0");
+    expect(calledFileIds).not.toContain("f5");
+    expect(calledFileIds.length).toBeLessThan(6);
+  });
+
+  test("認証エラーが無ければ全ファイル分のUpsertIndexEntryを返す", async () => {
+    parseFromTokenizerMock.mockImplementation(async (tokenizer: DriveRangeTokenizer) => {
+      await tokenizer.readBuffer(new Uint8Array(1), { position: 0, length: 1 });
+      return { common: { title: "ok" } };
+    });
+    const { extractAndBuildIndexEntries } = await import("./tagExtraction");
+
+    const entries = makeEntries(3);
+    const progressCalls: [number, number][] = [];
+    const results = await extractAndBuildIndexEntries(
+      entries,
+      () => async () => new Uint8Array(1),
+      (done, total) => progressCalls.push([done, total])
+    );
+
+    expect(results.map((r) => r.fileId).sort()).toEqual(["f0", "f1", "f2"]);
+    expect(progressCalls).toHaveLength(3);
+    expect(progressCalls[2]).toEqual([3, 3]);
+  });
+});

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { buildIndexRow, createSheetsIndexIO, INDEX_SHEET_HEADER, upsertIndexRows, type SheetsIndexIO } from "./sheets";
+import { buildIndexRow, createSheetsIndexIO, INDEX_SHEET_HEADER, isValidIndexHeader, upsertIndexRows, type SheetsIndexIO } from "./sheets";
 
 function makeFakeIO(
   existingRows: (string | number)[][]
@@ -11,6 +11,9 @@ function makeFakeIO(
     appendCalls,
     async listExistingRows() {
       return existingRows;
+    },
+    async readHeaderRow() {
+      return [...INDEX_SHEET_HEADER];
     },
     async updateRows(updates) {
       updateCalls.push(updates);
@@ -240,6 +243,9 @@ describe("upsertIndexRows", () => {
         listCalled = true;
         return [];
       },
+      async readHeaderRow() {
+        return [...INDEX_SHEET_HEADER];
+      },
       async updateRows() {},
       async appendRows() {},
     };
@@ -273,6 +279,21 @@ describe("upsertIndexRows", () => {
     ]);
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([[rowF1, rowF2]]);
+  });
+});
+
+describe("isValidIndexHeader", () => {
+  test("INDEX_SHEET_HEADERと完全一致する場合はtrue", () => {
+    expect(isValidIndexHeader([...INDEX_SHEET_HEADER])).toBe(true);
+  });
+
+  test("列が欠けている・列順が異なる場合はfalse", () => {
+    expect(isValidIndexHeader(INDEX_SHEET_HEADER.slice(0, -1) as unknown as string[])).toBe(false);
+    expect(isValidIndexHeader(["fileId", "parentId", "extension", ...INDEX_SHEET_HEADER.slice(3)])).toBe(false);
+  });
+
+  test("ヘッダー行が空（indexタブは存在するがヘッダー未作成）の場合はfalse", () => {
+    expect(isValidIndexHeader([])).toBe(false);
   });
 });
 
@@ -320,6 +341,25 @@ describe("createSheetsIndexIO", () => {
     promise.catch(() => {}); // unhandled rejection警告を避ける（下のexpectで実際にawaitして検証する）
     await vi.runAllTimersAsync();
     await expect(promise).rejects.toBeInstanceOf(TypeError);
+  });
+
+  test("readHeaderRowはA1:<lastCol>1の1行目をそのまま返す", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(200, { values: [[...INDEX_SHEET_HEADER]] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSheetsIndexIO("sheet1", async () => "token");
+    const header = await io.readHeaderRow();
+    expect(header).toEqual([...INDEX_SHEET_HEADER]);
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(decodeURIComponent(url)).toContain("A1:AA1"); // INDEX_SHEET_HEADERは27列=AA
+  });
+
+  test("readHeaderRowはヘッダー行が空の場合は空配列を返す（indexタブは存在するがヘッダー未作成のケース）", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(200, { values: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSheetsIndexIO("sheet1", async () => "token");
+    await expect(io.readHeaderRow()).resolves.toEqual([]);
   });
 
   test("GETリクエスト（listExistingRows）にはContent-Typeヘッダーを付けない（不要なCORSプリフライトを避ける）", async () => {

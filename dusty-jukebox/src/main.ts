@@ -10,13 +10,11 @@ import {
   createDriveListFn,
   listAudioFilesRecursive,
   validateRootFolder,
-  ConcurrencyLimiter,
   DriveHttpError,
   type AudioFileEntry,
 } from "./drive";
-import { extractTags } from "./tagExtraction";
-import { buildIndexRow, createSheetsIndexIO, upsertIndexRows, SheetsHttpError, type UpsertIndexEntry } from "./sheets";
-import { deriveFallbackTitle } from "./lib";
+import { extractAndBuildIndexEntries } from "./tagExtraction";
+import { createSheetsIndexIO, isValidIndexHeader, upsertIndexRows, SheetsHttpError, INDEX_SHEET_NAME } from "./sheets";
 
 // Drive/Sheets双方が直接401を返したケース・GISのサイレント再取得自体が失敗したケースのどれも、
 // 「今キャッシュされているトークンはもう使えない」ことを意味する
@@ -26,51 +24,6 @@ function isAuthFailure(err: unknown): boolean {
     (err instanceof DriveHttpError && err.status === 401) ||
     (err instanceof SheetsHttpError && err.status === 401)
   );
-}
-
-// タグ抽出は1ファイルあたり複数回のRangeリクエスト＋パース処理を伴い、フォルダ一覧取得より
-// 重い。drive.tsのフォルダ走査と同じ暫定値（DEFAULT_MAX_CONCURRENT_LISTS=6）よりやや控えめにする。
-const MAX_CONCURRENT_EXTRACTIONS = 4;
-
-// 見つかった音楽ファイル全件のタグを抽出し、sheets.tsのupsertIndexRowsへ渡せる形に組み立てる。
-// 1ファイルの抽出失敗（タイムアウト等）はextractionFailed=trueとして記録するだけでスキャン全体は
-// 止めない（CONCEPT.md 5節）。
-async function extractAndBuildEntries(
-  entries: AudioFileEntry[],
-  getAccessToken: () => Promise<string>,
-  onProgress: (done: number, total: number) => void
-): Promise<UpsertIndexEntry[]> {
-  const limiter = new ConcurrencyLimiter(MAX_CONCURRENT_EXTRACTIONS);
-  const lastScannedAtIso = new Date().toISOString();
-  let done = 0;
-  const results = await Promise.all(
-    entries.map(({ file }) =>
-      limiter.run(async () => {
-        const { tags, extractionFailed } = await extractTags({ id: file.id, name: file.name, size: Number(file.size) || undefined }, (signal) =>
-          createDriveFetchRange(file.id, getAccessToken, { signal })
-        );
-        done += 1;
-        onProgress(done, entries.length);
-        // indexスキーマには元のファイル名を保存する列が無いため、タイトルタグが無い
-        // （抽出失敗、またはtitleタグ自体が空）行はfileId以外で識別できなくなる
-        // （2026-08-20 Codexレビュー指摘）。ファイル名（拡張子除く）を暫定タイトルとして補う。
-        // 既存行の再スキャンで抽出に失敗した場合は、この値はsheets.tsのmergeWithExistingが
-        // 既存の抽出値を優先するため使われない（新規ファイルの初回スキャンでのみ効く）。
-        const effectiveTags = { ...(tags ?? {}), title: tags?.title || deriveFallbackTitle(file.name) };
-        const row = buildIndexRow({
-          fileId: file.id,
-          fileName: file.name,
-          parentId: file.parents?.[0] ?? "",
-          driveModifiedTime: file.modifiedTime ?? "",
-          lastScannedAtIso,
-          tags: effectiveTags,
-          extractionFailed,
-        });
-        return { fileId: file.id, row };
-      })
-    )
-  );
-  return results;
 }
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
@@ -163,13 +116,20 @@ async function handleScan(): Promise<void> {
     // （2026-08-19 Codexレビュー指摘）
     await validateRootFolder(getFn, folderId);
 
-    // スプレッドシートIDのタイプミス・アクセス権不足・indexタブ未作成は、抽出開始前に
-    // 検出したい。1万件規模のタグ抽出（フォルダ走査より遥かに時間がかかる）をすべて
-    // 実行してから失敗すると、中断・再開機能が無いため最初からやり直しになってしまう
-    // （2026-08-20 Codexレビュー指摘）。フォルダ検証と同様にここで先に検証する
+    // スプレッドシートIDのタイプミス・アクセス権不足・indexタブ未作成／ヘッダー行未作成は、
+    // 抽出開始前に検出したい。1万件規模のタグ抽出（フォルダ走査より遥かに時間がかかる）を
+    // すべて実行してから失敗すると、中断・再開機能が無いため最初からやり直しになってしまう
+    // （2026-08-20 Codexレビュー指摘）。フォルダ検証と同様にここで先に検証する。
+    // listExistingRows()（A2以降のみ）だけではヘッダー行（1行目）自体の有無・列順を検証
+    // できず、空/誤ったヘッダーのまま抽出を進めると初回のappendRows()がA1（本来ヘッダーが
+    // あるべき行）に曲データを書き込んでしまい、次回スキャンがそれをヘッダーとして読み飛ばして
+    // 重複行を生む（2026-08-20 Codexレビュー指摘）。readHeaderRow()で実際のヘッダー内容を検証する
     setStatus("書き込み先スプレッドシートを確認中...");
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    await sheetsIO.listExistingRows();
+    const header = await sheetsIO.readHeaderRow();
+    if (!isValidIndexHeader(header)) {
+      throw new Error(`索引スプレッドシートの「${INDEX_SHEET_NAME}」タブのヘッダー行が想定と一致しません。ヘッダー行（1行目）を事前に作成してください。`);
+    }
 
     setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
     const listFn = createDriveListFn(() => auth.ensureAccessToken());
@@ -178,8 +138,10 @@ async function handleScan(): Promise<void> {
     renderResults(entries, failedFolders);
 
     setStatus(`タグを抽出中...（0/${entries.length}件）`);
-    const upsertEntries = await extractAndBuildEntries(entries, () => auth.ensureAccessToken(), (done, total) =>
-      setStatus(`タグを抽出中...（${done}/${total}件）`)
+    const upsertEntries = await extractAndBuildIndexEntries(
+      entries,
+      (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
+      (done, total) => setStatus(`タグを抽出中...（${done}/${total}件）`)
     );
 
     setStatus("スプレッドシートへ書き込み中...");

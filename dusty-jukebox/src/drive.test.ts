@@ -533,4 +533,51 @@ describe("createDriveFetchRange", () => {
     await expect(fetchRange(0, 1)).rejects.toMatchObject({ name: "AbortError" });
     expect(fetchMock).toHaveBeenCalledTimes(1); // リトライしていないことを確認
   });
+
+  test("本文（arrayBuffer）読み取り中の通信断はリクエスト自体をやり直してリトライする（2026-08-20 Codexレビュー指摘: fetch()自体は成功済みのためfetchDriveApiWithRetryのリトライだけではカバーされない）", async () => {
+    vi.useFakeTimers();
+    const bytes = new Uint8Array([5, 6, 7]);
+    let call = 0;
+    const fetchMock = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        // ヘッダー受信（fetch自体）は成功するが、本文ダウンロード中に接続が切れたケースを模す
+        return {
+          ok: true,
+          status: 206,
+          text: async () => "",
+          arrayBuffer: async () => {
+            throw new TypeError("Failed to fetch");
+          },
+        } as unknown as Response;
+      }
+      return fakeBinaryResponse(206, bytes);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fetchRange = createDriveFetchRange("file-1", async () => "token");
+    const promise = fetchRange(0, 2);
+    await vi.runAllTimersAsync();
+    expect(await promise).toEqual(bytes);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // fetch自体をもう一度やり直している
+  });
+
+  test("本文読み取りのリトライがすべて失敗した場合は最後の例外を投げる", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 206,
+      text: async () => "",
+      arrayBuffer: async () => {
+        throw new TypeError("Failed to fetch");
+      },
+    })) as unknown as () => Promise<Response>;
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fetchRange = createDriveFetchRange("file-1", async () => "token");
+    const promise = fetchRange(0, 2);
+    promise.catch(() => {});
+    await vi.runAllTimersAsync();
+    await expect(promise).rejects.toBeInstanceOf(TypeError);
+  });
 });
