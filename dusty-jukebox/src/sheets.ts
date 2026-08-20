@@ -257,7 +257,13 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
   // Content-Typeはbodyを送るリクエスト（PUT/POST）にのみ付与し、GET（listExistingRows）には
   // 付けない。GETに非simpleヘッダーを付けるとブラウザがCORSプリフライトを発行してしまうため
   // （2026-08-20 /code-review指摘）。
-  async function sheetsFetch(url: string, init?: RequestInit): Promise<Response> {
+  // retryNetworkErrors: fetch()自体が例外を投げた場合（HTTPレスポンスが一切返らなかった場合）に
+  // リトライしてよいかどうか。GET・PUT（batchUpdate、既存行の上書き）は冪等なので安全にリトライできるが、
+  // POST（append）は非冪等：サーバー側では書き込みが成功していたのに応答受信時だけ通信が切れた場合、
+  // そのまま再試行すると同じ行が二重に追記されてしまう（未実装の重複行マージが導入されるまでは
+  // 索引が壊れる。2026-08-20 Codexレビュー指摘）。appendを呼ぶ側はfalseを渡し、通信例外時は
+  // リトライせず呼び出し元に例外をそのまま伝える。
+  async function sheetsFetch(url: string, init?: RequestInit, retryNetworkErrors = true): Promise<Response> {
     const maxRetries = 3;
     let lastError: Error | null = null;
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -268,11 +274,8 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
       try {
         res = await fetch(url, { ...init, headers: { ...headers, ...init?.headers } });
       } catch (networkErr) {
-        // fetch()自体が例外を投げるケース（一時的な切断・DNS障害等のTypeError、HTTPレスポンスすら
-        // 返ってこない）も同じリトライ予算で扱う（2026-08-20 Codexレビュー指摘。drive.tsの
-        // fetchDriveApiWithRetryと同じ方針）
         lastError = networkErr instanceof Error ? networkErr : new Error(String(networkErr));
-        if (attempt >= maxRetries) throw lastError;
+        if (!retryNetworkErrors || attempt >= maxRetries) throw lastError;
         await sleep(500 * 2 ** attempt);
         continue;
       }
@@ -311,10 +314,15 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
     async appendRows(rows) {
       if (rows.length === 0) return;
       const range = sheetRange(INDEX_SHEET_NAME, "A1");
-      await sheetsFetch(`${base}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
-        method: "POST",
-        body: JSON.stringify({ values: rows }),
-      });
+      // appendは非冪等のため通信例外時はリトライしない（retryNetworkErrors=false、上記sheetsFetch参照）。
+      await sheetsFetch(
+        `${base}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+        {
+          method: "POST",
+          body: JSON.stringify({ values: rows }),
+        },
+        false
+      );
     },
   };
 }

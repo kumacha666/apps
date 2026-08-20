@@ -343,4 +343,15 @@ describe("createSheetsIndexIO", () => {
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
   });
+
+  test("appendRowsは通信例外が起きた場合リトライせず即座に例外を伝える（2026-08-20 Codexレビュー指摘：appendは非冪等なため）", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSheetsIndexIO("sheet1", async () => "token");
+    await expect(io.appendRows([["f1"]])).rejects.toBeInstanceOf(TypeError);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // リトライしていないことを確認
+  });
 });
