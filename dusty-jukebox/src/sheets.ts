@@ -522,7 +522,15 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
       return data.values ?? [];
     },
     async readHeaderRow() {
-      const range = sheetRange(INDEX_SHEET_NAME, `A1:${lastCol}1`);
+      // 列範囲を現行ヘッダー幅（lastCol）に固定すると、旧バージョンが作成した27列のままの
+      // グリッド（migrateLegacyIndexHeaderV1で拡張する前の状態）に対してA1:AS1（45列分）を
+      // 指定した瞬間にSheets APIが「範囲がグリッドを超える」エラーを返し、移行コールバックに
+      // 到達する前に例外で落ちてしまう（2026-08-20 Codexレビュー指摘：migrateLegacyIndexHeaderV1
+      // 自体はensureValidHeaderの中でこのreadHeaderRowの後に呼ばれるため、最初の読み取りが
+      // 落ちると移行処理へ辿り着けない）。行全体を指定する記法（`'index'!1:1`）は対象タブの
+      // 実際のグリッド列数に自動的にクリップされ、列範囲を明示しないため、グリッドの実際の
+      // 列数が27・45のどちらであっても常に成功する。
+      const range = sheetRange(INDEX_SHEET_NAME, "1:1");
       const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range)}`);
       const data = (await res.json()) as { values?: (string | number)[][] };
       return data.values?.[0] ?? [];

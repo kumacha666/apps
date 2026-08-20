@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   buildIndexRow,
-  columnLetter,
   createSheetsIndexIO,
   INDEX_SHEET_HEADER,
+  INDEX_SHEET_NAME,
   isLegacyIndexHeaderV1,
   isValidIndexHeader,
   LEGACY_INDEX_SHEET_HEADER_V1,
@@ -620,7 +620,7 @@ describe("createSheetsIndexIO", () => {
     await expect(promise).rejects.toBeInstanceOf(TypeError);
   });
 
-  test("readHeaderRowはA1:<lastCol>1の1行目をそのまま返す", async () => {
+  test("readHeaderRowは1行目全体（列範囲を指定しない`1:1`記法）をそのまま返す", async () => {
     const fetchMock = vi.fn(async () => fakeResponse(200, { values: [[...INDEX_SHEET_HEADER]] }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -628,7 +628,13 @@ describe("createSheetsIndexIO", () => {
     const header = await io.readHeaderRow();
     expect(header).toEqual([...INDEX_SHEET_HEADER]);
     const [url] = fetchMock.mock.calls[0] as unknown as [string];
-    expect(decodeURIComponent(url)).toContain(`A1:${columnLetter(INDEX_SHEET_HEADER.length)}1`);
+    // 列範囲（A1:AS1等）を明示しない。旧27列のままのグリッド（マイグレーション前）に対して
+    // 現行45列分の列範囲を指定すると「範囲がグリッドを超える」エラーになり、移行コールバックに
+    // 到達する前に例外で落ちてしまう（2026-08-20 Codexレビュー指摘）。行全体を指す`1:1`記法は
+    // 対象タブの実際のグリッド列数に自動的にクリップされるため、27列・45列どちらでも成功する。
+    const decoded = decodeURIComponent(url);
+    expect(decoded).toContain(`${INDEX_SHEET_NAME}'!1:1`);
+    expect(decoded).not.toMatch(/![A-Z]+\d*:[A-Z]/);
   });
 
   test("readHeaderRowはヘッダー行が空の場合は空配列を返す（indexタブは存在するがヘッダー未作成のケース）", async () => {
