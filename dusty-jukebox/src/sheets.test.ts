@@ -1,5 +1,5 @@
-import { describe, expect, test } from "vitest";
-import { buildIndexRow, INDEX_SHEET_HEADER, upsertIndexRows, type SheetsIndexIO } from "./sheets";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { buildIndexRow, createSheetsIndexIO, INDEX_SHEET_HEADER, upsertIndexRows, type SheetsIndexIO } from "./sheets";
 
 function makeFakeIO(
   existingRows: (string | number)[][]
@@ -175,6 +175,37 @@ describe("upsertIndexRows", () => {
     expect(update.row[indexOf("artist_override")]).toBe("ユーザー補正アーティスト");
   });
 
+  test("再スキャンでタグ抽出に失敗した場合、既存のタグ列を保持しextractionFailedだけ更新する（5節: 巨大ファイルのタイムアウト等）", async () => {
+    const existing = buildIndexRow({
+      fileId: "f1",
+      fileName: "huge-concert.flac",
+      parentId: "orchestra",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: { title: "既存タイトル", artist: "既存アーティスト", releaseYear: 1994 },
+      extractionFailed: false,
+    });
+    const io = makeFakeIO([existing]);
+    const failedRescan = buildIndexRow({
+      fileId: "f1",
+      fileName: "huge-concert.flac",
+      parentId: "orchestra",
+      driveModifiedTime: "2026-08-20T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-20T00:00:00.000Z",
+      tags: null, // タイムアウトでタグが取れなかった
+      extractionFailed: true,
+    });
+
+    await upsertIndexRows(io, [{ fileId: "f1", row: failedRescan }]);
+
+    const [update] = io.updateCalls[0];
+    expect(update.row[indexOf("title")]).toBe("既存タイトル"); // タグ列は既存値を保持
+    expect(update.row[indexOf("artist")]).toBe("既存アーティスト");
+    expect(update.row[indexOf("releaseYear")]).toBe(1994);
+    expect(update.row[indexOf("extractionFailed")]).toBe("TRUE"); // 失敗フラグ自体は更新される
+    expect(update.row[indexOf("lastScannedAt")]).toBe("2026-08-20T00:00:00.000Z"); // 走査時刻も更新される
+  });
+
   test("同一バッチ内に同じ新規fileIdが複数含まれる場合、重複行を作らず最後の値を採用する", async () => {
     const io = makeFakeIO([]);
     const first = buildIndexRow({
@@ -242,5 +273,74 @@ describe("upsertIndexRows", () => {
     ]);
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([[rowF1, rowF2]]);
+  });
+});
+
+function fakeResponse(status: number, body: unknown): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => JSON.stringify(body),
+    json: async () => body,
+  } as unknown as Response;
+}
+
+describe("createSheetsIndexIO", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  test("fetch()自体が例外を投げる一時的な通信断もリトライし、最終的に成功する（2026-08-20 Codexレビュー指摘）", async () => {
+    vi.useFakeTimers();
+    let call = 0;
+    const fetchMock = vi.fn(async () => {
+      call += 1;
+      if (call === 1) throw new TypeError("Failed to fetch");
+      return fakeResponse(200, { values: [["f1"]] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSheetsIndexIO("sheet1", async () => "token");
+    const promise = io.listExistingRows();
+    await vi.runAllTimersAsync();
+    const rows = await promise;
+    expect(rows).toEqual([["f1"]]);
+  });
+
+  test("通信断がリトライ上限まで続いた場合は最後の例外をそのまま投げる", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSheetsIndexIO("sheet1", async () => "token");
+    const promise = io.listExistingRows();
+    promise.catch(() => {}); // unhandled rejection警告を避ける（下のexpectで実際にawaitして検証する）
+    await vi.runAllTimersAsync();
+    await expect(promise).rejects.toBeInstanceOf(TypeError);
+  });
+
+  test("GETリクエスト（listExistingRows）にはContent-Typeヘッダーを付けない（不要なCORSプリフライトを避ける）", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(200, { values: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSheetsIndexIO("sheet1", async () => "token");
+    await io.listExistingRows();
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBeUndefined();
+  });
+
+  test("POSTリクエスト（appendRows）にはContent-Typeヘッダーを付ける", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(200, {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const io = createSheetsIndexIO("sheet1", async () => "token");
+    await io.appendRows([["f1"]]);
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
   });
 });

@@ -50,6 +50,18 @@ const OVERRIDE_COLUMN_INDEXES = new Set(
   INDEX_SHEET_HEADER.map((name, i) => (name.endsWith("_override") ? i : -1)).filter((i) => i >= 0)
 );
 
+// タグ抽出由来の列（識別子・タイムスタンプ・extractionFailed自体を除く）。再スキャンで
+// タグ抽出に失敗した場合（5節：巨大ファイルのタイムアウト等）、これらの列は新しい行の
+// 空値で上書きせず既存行の値を保持する（2026-08-20 Codexレビュー指摘：失敗するたびに
+// 一度正常に索引化できていたタイトル・アーティスト等が消えてしまっていた）。
+const NON_TAG_COLUMN_NAMES = new Set(["fileId", "extension", "parentId", "driveModifiedTime", "lastScannedAt", "extractionFailed"]);
+const TAG_COLUMN_INDEXES = new Set(
+  INDEX_SHEET_HEADER.map((name, i) => (!OVERRIDE_COLUMN_INDEXES.has(i) && !NON_TAG_COLUMN_NAMES.has(name) ? i : -1)).filter(
+    (i) => i >= 0
+  )
+);
+const EXTRACTION_FAILED_INDEX = INDEX_SHEET_HEADER.indexOf("extractionFailed");
+
 // 抽出タグとfileId起点upsertに必要な最小限の入力。_override列は4.2節の方針通り、
 // スキャナは絶対に書き込まない（新規行では空欄のまま作成する）。文字化け自動修復（4.4節）・
 // 巨大ファイルのタイムアウト救済（5節）はこのPRの範囲外で、garbledResolved/extractionFailedは
@@ -164,10 +176,17 @@ export interface UpsertIndexEntry {
   row: (string | number)[];
 }
 
-// 既存行のうち、スキャナが絶対に書き換えてはならない_override列（4.2節）だけを温存し、
-// それ以外の抽出値列は新しい行の値で上書きした行を作る。
-function mergeWithExistingOverrides(existingRow: (string | number)[], newRow: (string | number)[]): (string | number)[] {
-  return newRow.map((value, i) => (OVERRIDE_COLUMN_INDEXES.has(i) ? (existingRow[i] ?? "") : value));
+// 既存行のうち、スキャナが絶対に書き換えてはならない_override列（4.2節）は常に温存する。
+// 今回の抽出が失敗（extractionFailed=TRUE）だった場合は、タグ抽出由来の列（title/artist等）も
+// 空値で上書きせず既存値を保持する（失敗行は「今回読めなかった」ことを記録するだけで、
+// 過去に読めていた情報を消してはならない）。
+function mergeWithExisting(existingRow: (string | number)[], newRow: (string | number)[]): (string | number)[] {
+  const extractionFailed = newRow[EXTRACTION_FAILED_INDEX] === "TRUE";
+  return newRow.map((value, i) => {
+    if (OVERRIDE_COLUMN_INDEXES.has(i)) return existingRow[i] ?? "";
+    if (extractionFailed && TAG_COLUMN_INDEXES.has(i)) return existingRow[i] ?? value;
+    return value;
+  });
 }
 
 // fileIdを一意キーとしたupsert（CONCEPT.md 5節）。既存行があれば_override列を温存したうえで
@@ -193,7 +212,7 @@ export async function upsertIndexRows(io: SheetsIndexIO, entries: UpsertIndexEnt
   for (const [fileId, row] of dedupedEntries) {
     const existing = existingRowByFileId.get(fileId);
     if (existing) {
-      updates.push({ rowNumber: existing.rowNumber, row: mergeWithExistingOverrides(existing.row, row) });
+      updates.push({ rowNumber: existing.rowNumber, row: mergeWithExisting(existing.row, row) });
     } else {
       toAppend.push(row);
     }
@@ -240,12 +259,23 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
   // （2026-08-20 /code-review指摘）。
   async function sheetsFetch(url: string, init?: RequestInit): Promise<Response> {
     const maxRetries = 3;
-    let lastError: SheetsHttpError | null = null;
+    let lastError: Error | null = null;
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
       const accessToken = await getAccessToken();
       const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
       if (init?.body !== undefined) headers["Content-Type"] = "application/json";
-      const res = await fetch(url, { ...init, headers: { ...headers, ...init?.headers } });
+      let res: Response;
+      try {
+        res = await fetch(url, { ...init, headers: { ...headers, ...init?.headers } });
+      } catch (networkErr) {
+        // fetch()自体が例外を投げるケース（一時的な切断・DNS障害等のTypeError、HTTPレスポンスすら
+        // 返ってこない）も同じリトライ予算で扱う（2026-08-20 Codexレビュー指摘。drive.tsの
+        // fetchDriveApiWithRetryと同じ方針）
+        lastError = networkErr instanceof Error ? networkErr : new Error(String(networkErr));
+        if (attempt >= maxRetries) throw lastError;
+        await sleep(500 * 2 ** attempt);
+        continue;
+      }
       if (res.ok) return res;
       const bodyText = await res.text();
       lastError = new SheetsHttpError(res.status, `Sheets API request failed: ${res.status} ${bodyText}`);
