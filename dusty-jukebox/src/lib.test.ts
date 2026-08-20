@@ -9,6 +9,7 @@ import {
   SHEET_HEADER,
   diffTagRows,
   deriveFallbackTitle,
+  parseFileSizeBytes,
 } from "./lib";
 
 describe("lib", () => {
@@ -24,6 +25,13 @@ describe("lib", () => {
     expect(getExtension("Track01.MP3")).toBe("mp3");
     expect(getExtension("archive.tar.gz")).toBe("gz");
     expect(getExtension("no-extension")).toBe("");
+  });
+
+  test("parseFileSizeBytes: 0バイトを正しく0として扱う（falsy-zero対策、2026-08-20 /code-review指摘）", () => {
+    expect(parseFileSizeBytes("0")).toBe(0);
+    expect(parseFileSizeBytes("12345")).toBe(12345);
+    expect(parseFileSizeBytes(undefined)).toBeUndefined();
+    expect(parseFileSizeBytes("not-a-number")).toBeUndefined();
   });
 
   test("deriveFallbackTitle: 拡張子を除いたファイル名を返す（タイトルタグ欠落時のフォールバック用）", () => {

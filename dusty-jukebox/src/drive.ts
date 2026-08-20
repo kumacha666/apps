@@ -53,7 +53,12 @@ export class DriveHttpError extends Error {
 // エラー」として扱う（2026-08-19 Codexレビュー指摘：後者がDriveHttpErrorではないため
 // 子フォルダの一時的な失敗として握りつぶされ、走査が中断されずに無効なトークンで
 // 続行してしまっていた）。
-function isAuthError(err: unknown): boolean {
+// tagExtraction.ts/main.tsからも同じ判定が必要になったため、Drive/Auth関連の「トークンは
+// もう使えない」の唯一の判定箇所としてexportする（2026-08-20 /code-review指摘：
+// 同じ判定ロジックがファイルごとに独立コピーされ、将来どれか1つを更新し忘れると
+// 「無効なトークンでAPIを叩き続ける」バグが特定の経路だけで再発しうる）。main.tsは
+// これに加えてSheetsHttpError(401)も判定する必要があるため、そちらは独自に合成する。
+export function isAuthError(err: unknown): boolean {
   return (err instanceof DriveHttpError && err.status === 401) || err instanceof AuthError;
 }
 
@@ -247,6 +252,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// fetchDriveApiWithRetry/fetchRangeWithBodyRetry共通の指数バックオフ（2026-08-20 /code-review
+// 指摘：同じ式が本ファイル内で複数回コピーされていた。sheets.tsのsheetsFetchも同じ式を使うが、
+// Drive/Sheetsでバックオフ方針を将来別々に調整する可能性を考慮し、ファイルをまたいだ共有はしない）
+function backoffDelayMs(attempt: number): number {
+  return 500 * 2 ** attempt;
+}
+
 // Drive APIはクォータ超過を429だけでなく、reasonが"rateLimitExceeded"/"userRateLimitExceeded"の
 // HTTP 403でも返すことがある（2026-08-19 Codexレビュー指摘）。403を一律リトライ対象にはできない
 // （権限無し等の恒久的な403もあるため）ので、レスポンス本文のerror reasonを見て判定する。
@@ -294,14 +306,14 @@ async function fetchDriveApiWithRetry(
       if (networkErr instanceof Error && networkErr.name === "AbortError") throw networkErr;
       lastError = networkErr instanceof Error ? networkErr : new Error(String(networkErr));
       if (attempt >= maxRetries) throw lastError;
-      await sleep(500 * 2 ** attempt);
+      await sleep(backoffDelayMs(attempt));
       continue;
     }
     if (res.ok) return res;
     const bodyText = await res.text();
     lastError = new DriveHttpError(res.status, `Drive API request failed: ${res.status} ${bodyText}`);
     if (attempt >= maxRetries || !isRetryableError(res.status, bodyText)) throw lastError;
-    await sleep(500 * 2 ** attempt);
+    await sleep(backoffDelayMs(attempt));
   }
   // ループは必ずreturn/throwで終わるが、TypeScriptの制御フロー解析のために明示しておく
   throw lastError ?? new Error("unreachable");
@@ -357,24 +369,32 @@ export function createDriveGetFn(getAccessToken: () => Promise<string>): DriveGe
 // 最初からやり直す（ヘッダー受信済みのストリームを再開する手段は無いため、リクエスト自体を
 // 再送する）。401等の非リトライ対象エラーはfetchDriveApiWithRetry()が即座に投げるため、
 // ここでの追加リトライは発生しない。
+// fetchDriveApiWithRetry自体も内部でリトライするため、最悪ケースでは両方の再試行が重なりうる
+// （2026-08-20 /code-review指摘）が、呼び出し元のextractTags()がファイル単位の
+// タイムアウト（computeTagExtractionTimeoutMs、既定30秒〜上限180秒）でPromise.raceして
+// おり、両者が積み重なった場合でも最終的にはそちらで頭打ちになる。ここでの再試行回数は
+// その安全網を前提に控えめ（2回）にとどめる。
 async function fetchRangeWithBodyRetry(
   url: string,
   getAccessToken: () => Promise<string>,
   extraHeaders: Record<string, string> | undefined,
   signal: AbortSignal | undefined
 ): Promise<Uint8Array> {
-  const maxBodyRetries = 3;
-  for (let attempt = 0; ; attempt += 1) {
+  const maxBodyRetries = 2;
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxBodyRetries; attempt += 1) {
     const res = await fetchDriveApiWithRetry(url, getAccessToken, extraHeaders, signal);
     try {
       const buf = await res.arrayBuffer();
       return new Uint8Array(buf);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") throw err;
-      if (attempt >= maxBodyRetries) throw err instanceof Error ? err : new Error(String(err));
-      await sleep(500 * 2 ** attempt);
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt >= maxBodyRetries) throw lastError;
+      await sleep(backoffDelayMs(attempt));
     }
   }
+  throw lastError ?? new Error("unreachable");
 }
 
 export function createDriveFetchRange(

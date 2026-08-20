@@ -10,20 +10,18 @@ import {
   createDriveListFn,
   listAudioFilesRecursive,
   validateRootFolder,
-  DriveHttpError,
+  isAuthError,
   type AudioFileEntry,
 } from "./drive";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
 import { createSheetsIndexIO, isValidIndexHeader, upsertIndexRows, SheetsHttpError, INDEX_SHEET_NAME } from "./sheets";
 
-// Drive/Sheets双方が直接401を返したケース・GISのサイレント再取得自体が失敗したケースのどれも、
-// 「今キャッシュされているトークンはもう使えない」ことを意味する
+// drive.tsのisAuthError()（AuthError・DriveHttpError(401)）に加え、main.tsではSheets側の
+// 401（書き込み先検証・upsert時）も同じ「トークンはもう使えない」判定に含める必要がある
+// （2026-08-20 /code-review指摘：この判定が複数ファイルに独立コピーされていたため、
+// Drive/Auth関連の判定はdrive.tsのisAuthError()を唯一の情報源として合成する）
 function isAuthFailure(err: unknown): boolean {
-  return (
-    err instanceof AuthError ||
-    (err instanceof DriveHttpError && err.status === 401) ||
-    (err instanceof SheetsHttpError && err.status === 401)
-  );
+  return isAuthError(err) || (err instanceof SheetsHttpError && err.status === 401);
 }
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;

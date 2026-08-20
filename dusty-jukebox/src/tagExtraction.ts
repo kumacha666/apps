@@ -5,19 +5,9 @@
 
 import { parseFromTokenizer } from "music-metadata";
 import { DriveRangeTokenizer, type FetchRangeFn } from "./rangeTokenizer";
-import { deriveFallbackTitle, guessMimeType } from "./lib";
+import { deriveFallbackTitle, guessMimeType, parseFileSizeBytes } from "./lib";
 import { buildIndexRow, type IndexTagsLike, type UpsertIndexEntry } from "./sheets";
-import { ConcurrencyLimiter, DriveHttpError, type AudioFileEntry } from "./drive";
-import { AuthError } from "./auth";
-
-// drive.tsのisAuthError()と同じ判定（401・GISのサイレント再取得失敗）。長時間のスキャン中に
-// トークンが失効した場合、これをファイル単位の失敗（extractionFailed）として握りつぶすと、
-// main.ts側のisAuthFailure()に到達せず、残り全ファイルが同じ無効なトークンで失敗し続けてしまう
-// （2026-08-20 Codexレビュー指摘）。呼び出し元がトークンをクリアし再ログインを促せるよう、
-// このエラーだけは呼び出し元へそのまま再throwする。
-export function isAuthFailure(err: unknown): boolean {
-  return err instanceof AuthError || (err instanceof DriveHttpError && err.status === 401);
-}
+import { ConcurrencyLimiter, isAuthError, type AudioFileEntry } from "./drive";
 
 // 巨大ファイル（数百MB級）向けのタイムアウト方針（CONCEPT.md 5節、2026-08-18確定）:
 // 基本30秒＋ファイルサイズが100MBを超える分は10MBごとに+3秒を加算、上限180秒。
@@ -100,7 +90,7 @@ export async function extractTags(
     try {
       return await baseFetchRange(start, endInclusive);
     } catch (err) {
-      if (isAuthFailure(err)) capturedAuthError = err;
+      if (isAuthError(err)) capturedAuthError = err;
       throw err;
     }
   };
@@ -127,7 +117,7 @@ export async function extractTags(
     return { tags: toIndexTags(metadata.common), extractionFailed: false };
   } catch {
     // 認証エラーはファイル単位の失敗として握りつぶさず、呼び出し元（main.ts）へ再throwする。
-    // 呼び出し元のisAuthFailure()がこれを検知してスキャン全体を中断し、トークンをクリアできる。
+    // 呼び出し元のisAuthError()判定を介して検知しスキャン全体を中断し、トークンをクリアできる。
     if (capturedAuthError) throw capturedAuthError;
     return { tags: null, extractionFailed: true };
   } finally {
@@ -162,14 +152,14 @@ export async function extractAndBuildIndexEntries(
         if (controller.signal.aborted) return null;
         let extraction: ExtractTagsResult;
         try {
-          extraction = await extractTags({ id: file.id, name: file.name, size: Number(file.size) || undefined }, (signal) =>
+          extraction = await extractTags({ id: file.id, name: file.name, size: parseFileSizeBytes(file.size) }, (signal) =>
             createFetchRangeForFile(file.id, signal)
           );
         } catch (err) {
           // 認証エラーだけ打ち切りシグナルを立てる。それ以外（このcatchに来ることは通常無い。
           // extractTagsは認証エラー以外を投げない設計だが、想定外のバグでスキャン全体が
           // 完全に停止するのを避けるため、認証エラー以外はそのままこのファイルの失敗として伝播させる）
-          if (isAuthFailure(err)) controller.abort();
+          if (isAuthError(err)) controller.abort();
           throw err;
         }
         done += 1;
