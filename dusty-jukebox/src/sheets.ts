@@ -4,8 +4,9 @@
 // upsertロジックだけを担当する（ユニットテストではフェイクのSheetsIndexIOを渡す）。
 //
 // このPRの範囲（着手順の目安2、最小基盤）: スキーマ定義＋fileId起点upsertのみ。
-// sync タブ（startPageToken/rootFolderId/initialScanCompletedAt）の管理、重複行のマージ、
-// _override列の競合検知（CONCEPT.md 4.3節）は後続PRで実装する。
+// sync タブ（startPageToken/rootFolderId/initialScanCompletedAt）の管理・indexタブ自体の
+// 初回作成（ヘッダー書き込み含む）、重複行のマージ、_override列の競合検知（CONCEPT.md 4.3節）は
+// 後続PRで実装する。ユーザーが事前にindex タブ＋ヘッダー行を作成済みであることを前提とする。
 
 import { detectGarbled, getExtension, sheetRange } from "./lib";
 
@@ -42,6 +43,12 @@ export const INDEX_SHEET_HEADER = [
   "garbledResolved",
   "extractionFailed",
 ] as const;
+
+// スキャナが絶対に書き換えてはならない列（4.2節）。upsert時、既存行に対してはこれらの列を
+// 常に温存し、新規行に対してのみ空欄（オーバーライド無し）で作成する。
+const OVERRIDE_COLUMN_INDEXES = new Set(
+  INDEX_SHEET_HEADER.map((name, i) => (name.endsWith("_override") ? i : -1)).filter((i) => i >= 0)
+);
 
 // 抽出タグとfileId起点upsertに必要な最小限の入力。_override列は4.2節の方針通り、
 // スキャナは絶対に書き込まない（新規行では空欄のまま作成する）。文字化け自動修復（4.4節）・
@@ -125,14 +132,30 @@ export function buildIndexRow({
   ];
 }
 
+// HTTPステータスを保持したエラー。drive.tsのDriveHttpErrorと同じ方針：401（トークン失効・拒否）は
+// 呼び出し元（将来main.tsに結線した際）がDriveAuth.clearToken()を呼ぶ判断材料として必要になる
+// （2026-08-20 Codexレビュー指摘：ステータスを持たない素のErrorに変換すると、Sheets側の401が
+// 走査/同期の中断や再ログイン誘導に一切つながらなくなる）。
+export class SheetsHttpError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
 // indexタブへの実際の読み書きをDIするインターフェース（drive.tsのDriveListFnと同じ方針）。
 export interface SheetsIndexIO {
-  // A列（fileId）を上から順に返す。戻り値のインデックスiはシートの行番号 i+2 に対応する
-  // （1行目はヘッダー固定のため）。
-  listFileIds(): Promise<string[]>;
-  // 1-indexedの行番号（ヘッダーの次が2）を指定して1行分を上書きする。
-  updateRow(rowNumber: number, row: (string | number)[]): Promise<void>;
-  // 複数行をシート末尾に追記する。
+  // ヘッダー行を除く全行（A2以降）を、INDEX_SHEET_HEADERと同じ列順でそのまま返す。
+  // 戻り値のインデックスiはシートの行番号 i+2 に対応する（1行目はヘッダー固定のため）。
+  // fileId自体はrow[0]に含まれる。既存の_override列を読み取って温存するために全列必要
+  // （fileId列だけを読む設計だと、更新のたびにユーザーの手動補正が消えてしまう。後述）。
+  listExistingRows(): Promise<(string | number)[][]>;
+  // 複数行の更新を1回のAPI呼び出しにまとめて書き込む（10235件規模でも逐次PUTにしない。
+  // 2026-08-20 Codexレビュー指摘）。空配列ならAPIを呼ばない。
+  updateRows(updates: { rowNumber: number; row: (string | number)[] }[]): Promise<void>;
+  // 複数行をシート末尾に追記する。空配列ならAPIを呼ばない。
   appendRows(rows: (string | number)[][]): Promise<void>;
 }
 
@@ -141,26 +164,41 @@ export interface UpsertIndexEntry {
   row: (string | number)[];
 }
 
-// fileIdを一意キーとしたupsert（CONCEPT.md 5節）。既存行があれば該当行を丸ごと上書き、
-// 無ければ末尾に追記する。同一バッチ内に同じfileIdが複数含まれる場合は最後のものを採用する
-// （呼び出し元が同一fileIdを重複して渡すこと自体を想定しないが、安全側の挙動として明記）。
+// 既存行のうち、スキャナが絶対に書き換えてはならない_override列（4.2節）だけを温存し、
+// それ以外の抽出値列は新しい行の値で上書きした行を作る。
+function mergeWithExistingOverrides(existingRow: (string | number)[], newRow: (string | number)[]): (string | number)[] {
+  return newRow.map((value, i) => (OVERRIDE_COLUMN_INDEXES.has(i) ? (existingRow[i] ?? "") : value));
+}
+
+// fileIdを一意キーとしたupsert（CONCEPT.md 5節）。既存行があれば_override列を温存したうえで
+// 抽出値列だけを更新し、無ければ末尾に追記する。
 export async function upsertIndexRows(io: SheetsIndexIO, entries: UpsertIndexEntry[]): Promise<void> {
   if (entries.length === 0) return;
-  const existingIds = await io.listFileIds();
-  const rowNumberByFileId = new Map<string, number>();
-  existingIds.forEach((fileId, i) => {
-    if (fileId) rowNumberByFileId.set(fileId, i + 2);
+
+  // 同一バッチ内に同じfileIdが複数含まれる場合は最後のものを採用する（挿入順を保つためMapを使う）
+  // （2026-08-20 Codexレビュー指摘：dedupeせずに素通しすると、未登録のfileIdが複数回来た際に
+  // toAppendへ重複してすべて積まれ、同じ曲の行が複数できてしまっていた）。
+  const dedupedEntries = new Map<string, (string | number)[]>();
+  for (const { fileId, row } of entries) dedupedEntries.set(fileId, row);
+
+  const existingRows = await io.listExistingRows();
+  const existingRowByFileId = new Map<string, { rowNumber: number; row: (string | number)[] }>();
+  existingRows.forEach((row, i) => {
+    const fileId = row[0];
+    if (fileId) existingRowByFileId.set(String(fileId), { rowNumber: i + 2, row });
   });
 
+  const updates: { rowNumber: number; row: (string | number)[] }[] = [];
   const toAppend: (string | number)[][] = [];
-  for (const { fileId, row } of entries) {
-    const rowNumber = rowNumberByFileId.get(fileId);
-    if (rowNumber) {
-      await io.updateRow(rowNumber, row);
+  for (const [fileId, row] of dedupedEntries) {
+    const existing = existingRowByFileId.get(fileId);
+    if (existing) {
+      updates.push({ rowNumber: existing.rowNumber, row: mergeWithExistingOverrides(existing.row, row) });
     } else {
       toAppend.push(row);
     }
   }
+  if (updates.length > 0) await io.updateRows(updates);
   if (toAppend.length > 0) await io.appendRows(toAppend);
 }
 
@@ -169,7 +207,8 @@ export async function upsertIndexRows(io: SheetsIndexIO, entries: UpsertIndexEnt
 // CONCEPT.md 2節・4.1節）。書き込み先はユーザー自身のGoogleドライブ内のスプレッドシート
 // （spreadsheetId）のindexタブのみで、音源ファイルには一切触れない。
 export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () => Promise<string>): SheetsIndexIO {
-  const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values`;
+  const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}`;
+  const lastCol = columnLetter(INDEX_SHEET_HEADER.length);
 
   async function sheetsFetch(url: string, init?: RequestInit): Promise<Response> {
     const accessToken = await getAccessToken();
@@ -179,29 +218,38 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
     });
     if (!res.ok) {
       const bodyText = await res.text();
-      throw new Error(`Sheets API request failed: ${res.status} ${bodyText}`);
+      throw new SheetsHttpError(res.status, `Sheets API request failed: ${res.status} ${bodyText}`);
     }
     return res;
   }
 
   return {
-    async listFileIds() {
-      const range = sheetRange(INDEX_SHEET_NAME, "A2:A");
-      const res = await sheetsFetch(`${base}/${encodeURIComponent(range)}`);
-      const data = (await res.json()) as { values?: string[][] };
-      return (data.values ?? []).map((row) => row[0] ?? "");
+    async listExistingRows() {
+      const range = sheetRange(INDEX_SHEET_NAME, `A2:${lastCol}`);
+      const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range)}`);
+      const data = (await res.json()) as { values?: (string | number)[][] };
+      return data.values ?? [];
     },
-    async updateRow(rowNumber, row) {
-      const lastCol = columnLetter(INDEX_SHEET_HEADER.length);
-      const range = sheetRange(INDEX_SHEET_NAME, `A${rowNumber}:${lastCol}${rowNumber}`);
-      await sheetsFetch(`${base}/${encodeURIComponent(range)}?valueInputOption=RAW`, {
-        method: "PUT",
-        body: JSON.stringify({ range, values: [row] }),
+    async updateRows(updates) {
+      if (updates.length === 0) return;
+      // 複数行をvalues:batchUpdateで1回のHTTP呼び出しにまとめる（逐次PUTだと10235件規模で
+      // 同数のリクエストが直列発行され、時間がかかるうえ書き込みクォータで途中失敗しやすい。
+      // 2026-08-20 Codexレビュー指摘）。
+      await sheetsFetch(`${base}/values:batchUpdate`, {
+        method: "POST",
+        body: JSON.stringify({
+          valueInputOption: "RAW",
+          data: updates.map(({ rowNumber, row }) => ({
+            range: sheetRange(INDEX_SHEET_NAME, `A${rowNumber}:${lastCol}${rowNumber}`),
+            values: [row],
+          })),
+        }),
       });
     },
     async appendRows(rows) {
+      if (rows.length === 0) return;
       const range = sheetRange(INDEX_SHEET_NAME, "A1");
-      await sheetsFetch(`${base}/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+      await sheetsFetch(`${base}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
         method: "POST",
         body: JSON.stringify({ values: rows }),
       });

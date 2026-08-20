@@ -15,8 +15,13 @@
   - **OAuthクライアントID未作成（2026-08-19時点）**：Google Cloud Consoleで「ウェブアプリケーション」種別のクライアントIDを新規作成し（`catalog-script`の「デスクトップアプリ」用とは別物）、承認済みJavaScript生成元に`https://honeypawlab.com`・`http://localhost:5173`を追加する必要がある。取得した値は`.env`の`VITE_GOOGLE_CLIENT_ID`に設定する（`.env.example`参照、`.gitignore`済み）。**未設定のままビルドすると、ログイン系コードはVite側のdead code eliminationでバンドルから丸ごと除去され、画面には「未設定」メッセージのみが表示される**（`dist/app.js`が数百バイトのみになるのはこのため。異常ではない）
 - **PWA未対応**（`manifest.json`/`sw.js`なし）。Phase 1の認証付きストリーミング設計ではService WorkerをDriveストリーミングプロキシとして使う想定のため、PWA化とSW導入は同時に行う
 - **2026-08-20、Sheets索引upsertの最小基盤を実装**（`src/sheets.ts`）。`CONCEPT.md` 4.3節のindexタブスキーマ（27列、`_override`列を含む）に合わせた`INDEX_SHEET_HEADER`/`buildIndexRow`と、fileId起点のupsert（`upsertIndexRows`：既存行があれば上書き・無ければ末尾に追記）を実装。Sheets APIへの実際のHTTP呼び出しは`SheetsIndexIO`としてDIし（`drive.ts`のDIと同じ方針）、`createSheetsIndexIO`が実実装を提供する。`auth.ts`に`SPREADSHEETS_SCOPE`を追加し、要求スコープを`drive.readonly`と`spreadsheets`の両方（`OAUTH_SCOPES`）にした
-  - **このPRの範囲は最小基盤のみ**：`sync`タブ（`startPageToken`/`rootFolderId`/`initialScanCompletedAt`）の管理、重複行のマージ（4.3節）、文字化けの自動修復（`garbledSuspect`は検出するが`garbledResolved`は常にFALSE、4.4節）、巨大ファイルのタイムアウト救済（`extractionFailed`列は用意したが可変タイムアウト自体は未実装、5節）は未着手。`main.ts`のスキャンUIともまだ結線していない（テストデータでの検証のみ）
-  - 次のステップ（`rangeTokenizer.ts`用の実Drive `fetchRange`実装、初回スキャンのバッチ処理・中断再開、`sync`タブ管理）に進む前に、実際のフォルダスキャン結果を`buildIndexRow`に渡して`main.ts`から呼び出す配線が必要
+  - **このPRの範囲は最小基盤のみ**：`sync`タブ（`startPageToken`/`rootFolderId`/`initialScanCompletedAt`）の管理、重複行のマージ（4.3節、複数デバイスが同時に新規行を追記した場合の事後統合）、文字化けの自動修復（`garbledSuspect`は検出するが`garbledResolved`は常にFALSE、4.4節）、巨大ファイルのタイムアウト救済（`extractionFailed`列は用意したが可変タイムアウト自体は未実装、5節）は未着手。`main.ts`のスキャンUIともまだ結線していない（テストデータでの検証のみ）
+  - **`index`タブ自体の初回作成（ヘッダー行の書き込み）は未実装**：`SheetsIndexIO`はユーザーが`index`タブ＋ヘッダー行を事前に用意済みであることを前提にする（2026-08-20 Codexレビュー指摘。タブ作成・ヘッダー初期化は`sync`タブ管理と合わせて後続PRで実装する想定）
+  - **既存行の更新は`_override`列を温存する**（2026-08-20 Codexレビュー指摘・修正済み）：`upsertIndexRows`は既存行の全列を`buildIndexRow`の結果で丸ごと上書きするのではなく、`_override`で終わる列だけは既存値をそのまま残し、それ以外の抽出値列だけを新しい値で置き換える。同一バッチ内に同じ新規`fileId`が複数含まれる場合も重複行を作らず最後の値を採用する
+  - **`updateRows`は複数行を1回のSheets API呼び出し（`values:batchUpdate`）にまとめる**（2026-08-20 Codexレビュー指摘・修正済み）：10235件規模の再スキャンで同数のPUTを逐次発行すると時間がかかるうえ書き込みクォータで途中失敗しやすいため
+  - **`SheetsHttpError`でHTTPステータスを保持する**（2026-08-20 Codexレビュー指摘・修正済み）：Sheets APIが401（トークン失効・拒否）を返した場合に、`drive.ts`の`DriveHttpError`と同様、呼び出し元が`DriveAuth.clearToken()`を判断できるようにする。ただし`main.ts`との結線がまだ無いため、実際に401を検知して再ログインを促す配線自体は次PR以降
+  - **ビルド成果物（`dist/app.js`のコピー）はこのPRでは更新していない**：`.env`の`VITE_GOOGLE_CLIENT_ID`は2026-08-19に実際の値が設定され本番ビルドされたが（コミット`729bc18`）、その値自体は`.gitignore`済みでリポジトリには含まれないため、`.env`未設定のセッションで`npm run deploy`すると本番の実クライアントIDが「未設定」ビルドに巻き戻り、ログイン機能ごと消えてしまう。このため今回のPRでは`src/`のみ変更しコミット済みの`app.js`はそのまま残した。**`OAUTH_SCOPES`（`spreadsheets`スコープ追加）はソースには反映済みだが、実際にデプロイされているビルドにはまだ含まれない**。実クライアントIDを持つ環境で次回`npm run deploy`する際に反映される
+  - 次のステップ（`rangeTokenizer.ts`用の実Drive `fetchRange`実装、初回スキャンのバッチ処理・中断再開、`sync`タブ管理、`index`タブの初回作成）に進む前に、実際のフォルダスキャン結果を`buildIndexRow`に渡して`main.ts`から呼び出す配線が必要
 
 ## 移植元
 
