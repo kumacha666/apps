@@ -358,6 +358,24 @@ export function createDriveGetFn(getAccessToken: () => Promise<string>): DriveGe
   };
 }
 
+// Googleスプレッドシート自体もDriveファイルの一種であるため、Sheets APIを一切呼ばずとも
+// Drive API（drive.readonlyスコープのみで十分）のcapabilities.canEditで書き込み権限の
+// 有無を確認できる。indexタブへの事前検証（readHeaderRow、GETのみ）は「読める」ことしか
+// 確認しておらず、閲覧専用で共有されたスプレッドシートを指定した場合、1万件規模のタグ抽出が
+// すべて終わった後になって初めてupdateRows()/appendRows()が403で失敗してしまう
+// （2026-08-20 Codexレビュー指摘）。main.tsのhandleScan()から抽出開始前に呼ぶ。
+export type DriveCapabilitiesGetFn = (fileId: string) => Promise<{ canEdit: boolean }>;
+
+export function createDriveCapabilitiesGetFn(getAccessToken: () => Promise<string>): DriveCapabilitiesGetFn {
+  return async (fileId) => {
+    const params = new URLSearchParams({ fields: "capabilities(canEdit)", supportsAllDrives: "true" });
+    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`;
+    const res = await fetchDriveApiWithRetry(url, getAccessToken);
+    const data = (await res.json()) as { capabilities?: { canEdit?: boolean } };
+    return { canEdit: data.capabilities?.canEdit ?? false };
+  };
+}
+
 // rangeTokenizer.tsのFetchRangeFnの実実装（CONCEPT.md 5節: タグ抽出はRangeリクエストによる
 // 部分取得で行い、10235件規模のライブラリをフルダウンロードしない）。alt=mediaで音源本体の
 // バイト列を取得する。書き込み系エンドポイントではないためdrive.readonlyスコープのままで良い。

@@ -4,6 +4,7 @@ import {
   listFolderChildren,
   createDriveListFn,
   createDriveGetFn,
+  createDriveCapabilitiesGetFn,
   createDriveFetchRange,
   validateRootFolder,
   ConcurrencyLimiter,
@@ -462,6 +463,39 @@ describe("createDriveGetFn", () => {
     const getFile = createDriveGetFn(async () => "token");
     await expect(getFile("does-not-exist")).rejects.toMatchObject({ status: 404 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createDriveCapabilitiesGetFn", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("canEdit=trueの場合はtrueを返す（2026-08-20 Codexレビュー指摘: タグ抽出前の書き込み権限事前検証用）", async () => {
+    const response = fakeResponse(200, { capabilities: { canEdit: true } });
+    const fetchMock = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const getCapabilities = createDriveCapabilitiesGetFn(async () => "token");
+    await expect(getCapabilities("sheet-1")).resolves.toEqual({ canEdit: true });
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(decodeURIComponent(url)).toContain("capabilities(canEdit)");
+  });
+
+  test("閲覧専用で共有されている場合（canEdit=false）はfalseを返す", async () => {
+    const response = fakeResponse(200, { capabilities: { canEdit: false } });
+    vi.stubGlobal("fetch", vi.fn(async () => response));
+
+    const getCapabilities = createDriveCapabilitiesGetFn(async () => "token");
+    await expect(getCapabilities("sheet-1")).resolves.toEqual({ canEdit: false });
+  });
+
+  test("capabilitiesフィールド自体が欠けている場合は安全側のfalseを返す", async () => {
+    const response = fakeResponse(200, {});
+    vi.stubGlobal("fetch", vi.fn(async () => response));
+
+    const getCapabilities = createDriveCapabilitiesGetFn(async () => "token");
+    await expect(getCapabilities("sheet-1")).resolves.toEqual({ canEdit: false });
   });
 });
 

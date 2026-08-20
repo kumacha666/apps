@@ -5,6 +5,7 @@
 // タブを閉じる／通信が長時間切れる等での中断・再開には対応しない。
 import { AuthError, DriveAuth } from "./auth";
 import {
+  createDriveCapabilitiesGetFn,
   createDriveFetchRange,
   createDriveGetFn,
   createDriveListFn,
@@ -127,6 +128,15 @@ async function handleScan(): Promise<void> {
     const header = await sheetsIO.readHeaderRow();
     if (!isValidIndexHeader(header)) {
       throw new Error(`索引スプレッドシートの「${INDEX_SHEET_NAME}」タブのヘッダー行が想定と一致しません。ヘッダー行（1行目）を事前に作成してください。`);
+    }
+    // readHeaderRow()はGET（Sheets values.get）のみのため、閲覧専用で共有されたスプレッドシートを
+    // 指定した場合でも正常に通過してしまう。書き込み権限自体は抽出完了後のupdateRows()/appendRows()の
+    // 403で初めて判明していた（2026-08-20 Codexレビュー指摘）。スプレッドシートもDriveファイルの
+    // 一種であるため、Sheets APIを呼ばずにDrive APIのcapabilities.canEditで先に確認する
+    const capabilitiesGetFn = createDriveCapabilitiesGetFn(() => auth.ensureAccessToken());
+    const { canEdit } = await capabilitiesGetFn(spreadsheetId);
+    if (!canEdit) {
+      throw new Error("索引スプレッドシートへの編集権限がありません。共有設定（編集者権限）をご確認ください。");
     }
 
     setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
