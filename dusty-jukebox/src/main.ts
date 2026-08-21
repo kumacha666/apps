@@ -339,34 +339,46 @@ async function runDifferentialSync(
     // リンク共有のセキュリティ更新が適用されたショートカット参照先の解決に必要
     // （2026-08-21 Codexレビュー指摘：P2。渡さないとfiles.listが404になり、このフォルダ変更
     // イベントを毎回再試行し続けてしまう）。
-    listSubtree: (targetFolderId, resourceKey) => listAudioFilesRecursive(listFn, targetFolderId, "", failedFolders, 3, undefined, resourceKey),
+    // extraRootFolderIdsをそのままshortcutTargetFolderIds出力引数として渡す：サブツリー内に
+    // さらに別のショートカットが含まれる場合、その参照先も同じ集合に追加され、以降の
+    // isDescendantOfRoot判定・最終的なpersistShortcutRootFolderIdsに反映される
+    // （2026-08-21 Codexレビュー指摘：P1。以前は捨てていた第6引数を省略していたため、
+    // ネストしたショートカットの参照先が発見されても集合に反映されず、直後のリコンサイルで
+    // その配下のアップサート結果が誤って削除されていた）。
+    listSubtree: (targetFolderId, resourceKey) =>
+      listAudioFilesRecursive(listFn, targetFolderId, "", failedFolders, 3, extraRootFolderIds, resourceKey),
     existingScanState: scanStateByFileId,
   });
 
-  // 破壊的・追加的な書き込み（アップサート・削除・リコンサイル）の前に、差分同期を開始した
-  // 時点のroot/tokenがまだ現在のsync状態と一致するかを再確認する（2026-08-21 Codexレビュー
-  // 指摘：P1、以前はこの確認がアップサートより後にあったため、別デバイスが既にルートを
-  // 切り替えていた場合でも旧ルートの曲を新ルートの索引へ書き込んでしまっていた）。長時間の
-  // 差分同期の実行中に別デバイスがrootFolderIdを切り替えて新しいフルスキャンを完了させていた
-  // 場合、それに気づかず処理を続けると、別デバイスが追加した新ルートの行を汚染・削除しうる
-  // （advanceStartPageTokenのTOCTOU対策はトークンの書き込みしか防げず、既に実行してしまった
-  // 索引の書き込みは取り消せないため、実行前に確認する）。Sheets APIには行単位のロックが無く
-  // 完全な排他はできないため、この確認は競合の窓を狭める緩和策であって根本解消ではない
-  // （sync.ts全体の「事前防止ではなく事後の整合」という既知の限界と同じ扱い）。
+  // タグ抽出（数十秒以上かかりうる）の後、破壊的・追加的な書き込み（アップサート・削除・
+  // リコンサイル）の直前に、差分同期を開始した時点のroot/tokenがまだ現在のsync状態と
+  // 一致するかを確認する（2026-08-21 Codexレビュー指摘：P1。以前はプラン計算の直後・
+  // タグ抽出の前にこの確認を1回行うだけだったため、確認からタグ抽出完了までの間に
+  // 別デバイスがルートを切り替えていた場合、それに気づかないまま書き込みへ進んでいた）。
+  // 長時間の差分同期の実行中に別デバイスがrootFolderIdを切り替えて新しいフルスキャンを
+  // 完了させていた場合、それに気づかず処理を続けると、別デバイスが追加した新ルートの行を
+  // 汚染・削除しうる（advanceStartPageTokenのTOCTOU対策はトークンの書き込みしか防げず、
+  // 既に実行してしまった索引の書き込みは取り消せないため、実行前に確認する）。Sheets APIには
+  // 行単位のロックが無く完全な排他はできないため、この確認は競合の窓を狭める緩和策であって
+  // 根本解消ではない（sync.ts全体の「事前防止ではなく事後の整合」という既知の限界と同じ扱い）。
+  let upsertEntries: Awaited<ReturnType<typeof extractAndBuildIndexEntries>> = [];
+  if (plan.entriesToProcess.length > 0) {
+    setStatus(`タグを抽出中...（差分 ${plan.entriesToProcess.length}件）`);
+    upsertEntries = await extractAndBuildIndexEntries(
+      plan.entriesToProcess,
+      (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
+      (done) => setStatus(`タグを抽出中...（差分 ${done}/${plan.entriesToProcess.length}件）`),
+      ""
+    );
+  }
+
   const stillCurrent = await isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken });
   if (!stillCurrent) {
     setStatus("別のデバイスがルート設定を変更したため、今回の差分同期は見送りました。次回の同期で改めて反映されます。", true);
     return;
   }
 
-  if (plan.entriesToProcess.length > 0) {
-    setStatus(`タグを抽出中...（差分 ${plan.entriesToProcess.length}件）`);
-    const upsertEntries = await extractAndBuildIndexEntries(
-      plan.entriesToProcess,
-      (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
-      (done) => setStatus(`タグを抽出中...（差分 ${done}/${plan.entriesToProcess.length}件）`),
-      ""
-    );
+  if (upsertEntries.length > 0) {
     await upsertIndexRows(sheetsIO, upsertEntries);
   }
 

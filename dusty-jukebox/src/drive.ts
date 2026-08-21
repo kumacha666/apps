@@ -582,7 +582,13 @@ async function folderReachesRoot(
   visiting: Set<string>,
   extraRootIds: Set<string>
 ): Promise<boolean> {
-  if (folderId === rootFolderId || extraRootIds.has(folderId)) return true;
+  // rootFolderId自体だけは即座にtrueを返す（ルート自身のゴミ箱状態はスキャン開始前の
+  // validateRootFolderの検証範囲外・既知の限界として別途扱う）。extraRootIds（ショートカット
+  // 参照先）はrootFolderIdと違い、差分同期中にゴミ箱へ移動されうる実在のフォルダのため、
+  // 一致するだけで即trueにはせず、下のtrashed確認を必ず通す（2026-08-21 Codexレビュー
+  // 指摘：P1。以前はここで早期returnしていたため、ショートカット参照先自体がゴミ箱へ
+  // 移動された場合でもtrashedを確認せず到達済み扱いのままになっていた）。
+  if (folderId === rootFolderId) return true;
   const cached = cache.get(folderId);
   if (cached !== undefined) return cached;
   if (visiting.has(folderId)) return false;
@@ -593,10 +599,14 @@ async function folderReachesRoot(
   // parentsは保持され続けるため、これを見ないと祖先チェーンの途中にあるゴミ箱内フォルダを
   // 素通りしてrootFolderIdに到達してしまう（2026-08-21 Codexレビュー指摘：P1）。
   if (meta && !meta.trashed) {
-    for (const parentId of meta.parents ?? []) {
-      if (await folderReachesRoot(getParents, parentId, rootFolderId, cache, visiting, extraRootIds)) {
-        result = true;
-        break;
+    if (extraRootIds.has(folderId)) {
+      result = true;
+    } else {
+      for (const parentId of meta.parents ?? []) {
+        if (await folderReachesRoot(getParents, parentId, rootFolderId, cache, visiting, extraRootIds)) {
+          result = true;
+          break;
+        }
       }
     }
   }

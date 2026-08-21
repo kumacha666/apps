@@ -226,6 +226,41 @@ describe("planDifferentialSync", () => {
     });
     expect(plan.entriesToProcess.map((e) => e.file.id)).toEqual(["f1"]);
   });
+
+  test("同一fileIdのフォルダ変更が「更新」の後に「完全削除」で来た場合、削除後の状態のみを処理し、既に消えたフォルダへ再帰走査を行わない（2026-08-21 Codexレビュー指摘：P1。以前は更新イベント処理時点でlistSubtreeを呼んでしまい、404等の例外で後続の削除イベントへ到達できず、changes.list全体の処理が失敗し続けていた）", async () => {
+    const changes: DriveChange[] = [folderChange("folder1"), { fileId: "folder1", removed: true }];
+    const listSubtree = vi.fn(async () => {
+      throw new Error("既に存在しないフォルダへのfiles.listは404になるはず（呼ばれてはならない）");
+    });
+    const plan = await planDifferentialSync(changes, {
+      isDescendantOfRoot: async () => true,
+      listSubtree,
+      existingScanState: new Map(),
+    });
+    expect(listSubtree).not.toHaveBeenCalled();
+    expect(plan.needsReconcile).toBe(true);
+    expect(plan.removedFileIds).toEqual(["folder1"]);
+  });
+
+  test("サブツリー再走査で見つかったファイルは、同じfileIdの直接変更イベントが既に指定したskipIfUnchanged=falseを弱めない（2026-08-21 Codexレビュー指摘：P1）", async () => {
+    // f1自身の直接の変更イベント（常に処理、skipIfUnchanged=false）の後に、
+    // 同じf1を含む別フォルダのサブツリー再走査結果（skipIfUnchanged=trueが既定）が来ても、
+    // f1は既存索引と同じdriveModifiedTimeを理由にスキップされてはならない。
+    const changes: DriveChange[] = [
+      { fileId: "f1", removed: false, file: audioFile("f1", "a.mp3", "2026-08-01T00:00:00.000Z") },
+      folderChange("folder1"),
+    ];
+    const subtreeEntry: AudioFileEntry = { file: audioFile("f1", "a.mp3", "2026-08-01T00:00:00.000Z"), folderPath: "" };
+    const existingScanState = new Map<string, IndexRowScanState>([
+      ["f1", { scanRunId: "", driveModifiedTime: "2026-08-01T00:00:00.000Z" }], // driveModifiedTime一致
+    ]);
+    const plan = await planDifferentialSync(changes, {
+      isDescendantOfRoot: async () => true,
+      listSubtree: async () => [subtreeEntry],
+      existingScanState,
+    });
+    expect(plan.entriesToProcess.map((e) => e.file.id)).toEqual(["f1"]);
+  });
 });
 
 function shortcutChange(id: string, targetId: string, opts?: { removed?: boolean; trashed?: boolean }): DriveChange {

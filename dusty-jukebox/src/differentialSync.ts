@@ -85,6 +85,16 @@ type FileOutcome =
 //   リコンサイルで削除されなくなる
 // main.tsはplanDifferentialSync呼び出し前にこれを呼び、extraRootFolderIdsを直接書き換えたうえで
 // isDescendantOfRoot・reconcileIndexAgainstRootの両方に使い回し、最後にsync タブへ永続化する。
+//
+// **既知の限界（2026-08-21 Codexレビュー指摘：P2、対応は見送り）**：extraRootFolderIdsは
+// 「参照先フォルダID」の単純なSetであり、その参照先を指すショートカットが何個あるかは
+// 持たない。rootFolderId配下に同じフォルダを指すショートカットが2個以上ある状態で片方だけが
+// 削除・ゴミ箱移動・ルート外への移動をした場合、この関数はまだ有効なもう片方のショートカットが
+// 存在するかを考慮せず参照先IDを集合から除去してしまい、直後のリコンサイルがまだ到達可能な
+// はずの配下の曲まで削除しうる。正しく解決するには「参照先ID→それを指す現在有効な
+// ショートカットIDの集合」という参照カウント付きの構造へ拡張する必要があり、sync タブの
+// 永続化スキーマ・関連するテストの変更を伴う。同じフォルダを複数のショートカットで参照する
+// 構成は稀なケースと想定し、次PR以降の対応とする（直近のフルスキャンで自己修復する）。
 export async function applyShortcutChangesToExtraRootFolderIds(
   changes: DriveChange[],
   extraRootFolderIds: Set<string>,
@@ -111,10 +121,23 @@ export async function applyShortcutChangesToExtraRootFolderIds(
 }
 
 export async function planDifferentialSync(changes: DriveChange[], deps: DifferentialSyncDeps): Promise<DifferentialSyncPlan> {
+  // 同一fileId（Driveオブジェクト単位）の変更が複数回来た場合、最後の状態のみを処理する。
+  // これはentriesToProcess/removedFileIdsの結果を「最後の状態が勝つ」ようにするためだけでなく、
+  // 副作用を伴う処理（listSubtreeの実際のDrive再帰走査）を実行する前に済ませる必要がある
+  // （2026-08-21 Codexレビュー指摘：P1）。以前は生のchanges配列をそのまま順に処理していたため、
+  // 同じフォルダが「更新」された直後に「完全削除」されたことを示す変更が同じ区間に含まれていても、
+  // 更新イベントの処理時点でまだ削除されたことを知らずに（既に存在しない）フォルダへ
+  // listSubtreeの再帰走査を実行してしまい、files.list自体の404がルート走査の例外として
+  // 呼び出し元まで伝播し（drive.tsのlistAudioFilesRecursiveはルート自体の取得失敗を例外にする
+  // 設計）、後続の削除イベントへ到達する前にこの関数全体が失敗していた。事前に最後の状態だけへ
+  // 集約することで、既に削除されたと分かっているフォルダへは最初から走査しない。
+  const lastChangeByFileId = new Map<string, DriveChange>();
+  for (const change of changes) lastChangeByFileId.set(change.fileId, change);
+
   const outcomes = new Map<string, FileOutcome>();
   let needsReconcile = false;
 
-  for (const change of changes) {
+  for (const change of lastChangeByFileId.values()) {
     const file = change.file;
 
     if (change.removed || file?.trashed) {
@@ -144,7 +167,15 @@ export async function planDifferentialSync(changes: DriveChange[], deps: Differe
       if (!stillUnderRoot) continue;
       const subtreeEntries = await deps.listSubtree(target.id, target.resourceKey);
       for (const entry of subtreeEntries) {
-        outcomes.set(entry.file.id, { action: "process", entry, skipIfUnchanged: true });
+        // 同じ同期区間内で、この曲自身の直接の変更イベント（Driveが個別に通知したもの）が
+        // 既にskipIfUnchanged=false（常に処理）を指定していた場合、サブツリー走査の結果で
+        // それをskipIfUnchanged=trueへ弱めてはならない（2026-08-21 Codexレビュー指摘：P1）。
+        // 弱めてしまうと、ルート内での純粋な移動（driveModifiedTimeが変わらないことがある）が
+        // 「変化なし」としてスキップされ、索引のparentIdが古いまま（ルート外を指す等）残り、
+        // 後続のリコンサイルが現在ルート内にある曲を誤って削除しうる。
+        const existing = outcomes.get(entry.file.id);
+        const forcedByDirectChange = existing?.action === "process" && !existing.skipIfUnchanged;
+        outcomes.set(entry.file.id, { action: "process", entry, skipIfUnchanged: !forcedByDirectChange });
       }
       continue;
     }

@@ -750,10 +750,19 @@ describe("isDescendantOfRoot", () => {
   });
 
   test("extraRootIdsはフォルダID自体だけでなく、その配下の祖先チェーンの途中に現れても到達済みと判定する", async () => {
-    const getParents = makeGetParents({ childOfShortcutTarget: ["physicalTarget"] });
+    // extraRootIds一致時もtrashed確認のためgetParentsを呼ぶ（2026-08-21 Codexレビュー指摘：
+    // P1）ため、physicalTargetにも到達可能なメタデータ（trashedでない）を用意する。
+    const getParents = makeGetParents({ childOfShortcutTarget: ["physicalTarget"], physicalTarget: [] });
     await expect(
       isDescendantOfRoot(getParents, ["childOfShortcutTarget"], "root", new Map(), new Set(["physicalTarget"]))
     ).resolves.toBe(true);
+  });
+
+  test("extraRootIdsに一致してもゴミ箱に入れられていれば到達済みと判定しない（ショートカット参照先自体がゴミ箱へ移動された場合、2026-08-21 Codexレビュー指摘：P1）", async () => {
+    const getParents: DriveParentsGetFn = async (id) => (id === "physicalTarget" ? { parents: [], trashed: true } : null);
+    await expect(
+      isDescendantOfRoot(getParents, ["physicalTarget"], "root", new Map(), new Set(["physicalTarget"]))
+    ).resolves.toBe(false);
   });
 });
 
