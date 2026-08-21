@@ -16,7 +16,7 @@ import { columnLetter, createSheetsFetch, type IndexRowScanState } from "./sheet
 export const SYNC_SHEET_NAME = "sync";
 export const SYNC_TAB_HEADER = ["key", "value"] as const;
 
-const SYNC_KEYS = ["startPageToken", "rootFolderId", "initialScanCompletedAt", "scanRunId"] as const;
+const SYNC_KEYS = ["startPageToken", "rootFolderId", "initialScanCompletedAt", "scanRunId", "shortcutRootFolderIds"] as const;
 export type SyncKey = (typeof SYNC_KEYS)[number];
 
 export interface SyncState {
@@ -32,6 +32,25 @@ export interface SyncState {
   // 完了したらclearScanRunIdで空文字列に戻す（次回のスキャンクリックが新しい実行として
   // 扱われるようにするため）。
   scanRunId?: string;
+  // 直近の成功したフルスキャンで解決した「フォルダを指すショートカット」の参照先フォルダID
+  // （drive.tsのlistAudioFilesRecursiveのshortcutTargetFolderIds出力）をカンマ区切りで
+  // 保持する（2026-08-21 Codexレビュー指摘：P1）。ショートカットは通常のparents関係を作らず、
+  // 差分同期・リコンサイルの祖先チェーン確認（drive.tsのisDescendantOfRoot）だけでは
+  // ショートカット経由でrootFolderId配下に見える曲を発見できない。フルスキャンは既に
+  // ショートカットを解決して辿っているため、その結果をrootFolderIdと同格の「追加のルート」
+  // として永続化し、差分同期・リコンサイル側の祖先チェーン確認に補う。
+  shortcutRootFolderIds?: string;
+}
+
+// shortcutRootFolderIdsのカンマ区切り文字列⇔配列変換。フォルダIDにカンマは含まれない
+// （Drive APIのファイルIDはURL-safe base64相当の文字集合のため）。
+export function encodeFolderIdList(ids: readonly string[]): string {
+  return ids.join(",");
+}
+
+export function decodeFolderIdList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value.split(",").filter((id) => id.length > 0);
 }
 
 // syncタブへの実際の読み書きをDIするインターフェース（drive.ts/sheets.tsと同じ方針）。
@@ -95,6 +114,9 @@ export function parseSyncState(rows: (string | number)[][]): SyncState {
         break;
       case "scanRunId":
         state.scanRunId = value;
+        break;
+      case "shortcutRootFolderIds":
+        state.shortcutRootFolderIds = value;
         break;
       default: {
         const _exhaustive: never = key;
@@ -162,6 +184,10 @@ export interface PrepareSyncResult {
   // 再帰走査（フルスキャン）ではなくchanges.list消費による差分同期に進む
   // （着手順の目安4の残り、differentialSync.ts参照）。
   hasCompletedInitialScan: boolean;
+  // 直近の成功したフルスキャンが解決したショートカット参照先フォルダID（上記SyncState参照）。
+  // ルートが変わった場合は新しいルートには無関係なため空配列を返す（フルスキャン完了時に
+  // main.tsが新しく収集した値で上書き保存する）。
+  shortcutRootFolderIds: string[];
 }
 
 function defaultNewRunId(): string {
@@ -204,7 +230,7 @@ export async function prepareSyncForScan(
       initialScanCompletedAt: "",
       scanRunId,
     });
-    return { startPageToken: newToken, scanRunId, hasCompletedInitialScan: false };
+    return { startPageToken: newToken, scanRunId, hasCompletedInitialScan: false, shortcutRootFolderIds: [] };
   }
 
   if (state.startPageToken) {
@@ -212,12 +238,13 @@ export async function prepareSyncForScan(
     // 完了している。scanRunIdの有無（次の分岐）は初回スキャンのバッチ処理・中断再開専用の
     // 状態のため、差分同期に進めるかどうかの判定には関係しない。
     const hasCompletedInitialScan = Boolean(state.initialScanCompletedAt);
+    const shortcutRootFolderIds = decodeFolderIdList(state.shortcutRootFolderIds);
     if (state.scanRunId) {
-      return { startPageToken: state.startPageToken, scanRunId: state.scanRunId, hasCompletedInitialScan };
+      return { startPageToken: state.startPageToken, scanRunId: state.scanRunId, hasCompletedInitialScan, shortcutRootFolderIds };
     }
     const scanRunId = newRunId();
     await writeSyncEntries(io, rows, { scanRunId });
-    return { startPageToken: state.startPageToken, scanRunId, hasCompletedInitialScan };
+    return { startPageToken: state.startPageToken, scanRunId, hasCompletedInitialScan, shortcutRootFolderIds };
   }
 
   // rootFolderIdは記録済みだがstartPageTokenが無い異常系（書き込み途中の中断等）への
@@ -228,7 +255,7 @@ export async function prepareSyncForScan(
   const newToken = await getNewStartPageToken();
   const scanRunId = state.scanRunId || newRunId();
   await writeSyncEntries(io, rows, { startPageToken: newToken, scanRunId });
-  return { startPageToken: newToken, scanRunId, hasCompletedInitialScan: false };
+  return { startPageToken: newToken, scanRunId, hasCompletedInitialScan: false, shortcutRootFolderIds: [] };
 }
 
 // 1回のスキャン実行（全バッチ）が最後まで完走した後にmain.tsから呼ぶ。scanRunIdを
@@ -283,6 +310,57 @@ export async function markInitialScanCompleted(
     return;
   }
   await writeSyncEntries(io, rows, { initialScanCompletedAt: completedAtIso });
+}
+
+// フルスキャンが解決したショートカット参照先フォルダIDの集合を永続化する（2026-08-21
+// Codexレビュー指摘：P1、上記SyncState.shortcutRootFolderIds参照）。markInitialScanCompletedと
+// 同じタイミング・同じTOCTOU対策（直前に確保したroot/tokenと現在のsync状態が一致する場合のみ
+// 書き込む）で、フルスキャン完了時にmain.tsから呼ぶ。空配列を渡した場合も明示的に書き込む
+// （前回はショートカットがあったが今回のスキャンでは無くなった、という変化も反映するため）。
+export async function persistShortcutRootFolderIds(
+  io: SyncTabIO,
+  shortcutRootFolderIds: readonly string[],
+  expected: { rootFolderId: string; startPageToken: string }
+): Promise<void> {
+  const rows = await io.readAllRows();
+  const state = parseSyncState(rows);
+  if (state.rootFolderId !== expected.rootFolderId || state.startPageToken !== expected.startPageToken) {
+    return;
+  }
+  await writeSyncEntries(io, rows, { shortcutRootFolderIds: encodeFolderIdList(shortcutRootFolderIds) });
+}
+
+// 現在のsync状態が、差分同期を開始した時点で確保したroot/tokenのままかどうかを確認する
+// （2026-08-21 Codexレビュー指摘：P1）。差分同期の実行中に別デバイスがrootFolderIdを切り替えて
+// 新しいフルスキャンを完了させていた場合、その後にこのデバイスがreconcileIndexAgainstRoot・
+// removeIndexRowsのような破壊的な書き込みをそのまま実行すると、別デバイスが追加した新ルートの
+// 行まで誤って削除しうる（advanceStartPageTokenのTOCTOU対策はstartPageTokenの書き込みしか
+// 防げず、既に実行してしまった索引の書き込みは取り消せない）。破壊的な操作の直前に呼び、
+// falseならその操作をスキップすることで、この競合の窓を狭める（Sheets APIには行単位の
+// ロック・条件付き書き込みが無く根本解消はできないため、事前防止ではなく「直前の再確認」に
+// よる緩和である点はsync.ts全体の既知の限界＝事後の整合という方針と同じ）。
+export async function isSyncStateCurrent(io: SyncTabIO, expected: { rootFolderId: string; startPageToken: string }): Promise<boolean> {
+  const rows = await io.readAllRows();
+  const state = parseSyncState(rows);
+  return state.rootFolderId === expected.rootFolderId && state.startPageToken === expected.startPageToken;
+}
+
+// changes.listが保存済みのstartPageTokenを「古すぎる」として拒否した場合（HTTP 410 Gone、
+// Drive APIの変更履歴保持期間は無制限ではない）の復旧経路（2026-08-21 Codexレビュー指摘：P2）。
+// initialScanCompletedAtをクリアすることで、次回のスキャンクリックがprepareSyncForScanの
+// 「同じルートで初期化未完了」分岐（既存のstartPageTokenは使い回すが差分同期には進まずフルスキャン
+// からやり直す）を通るようにする。markInitialScanCompleted等と同じTOCTOU対策：直前に確保した
+// root/tokenと現在のsync状態が一致する場合のみ書き込む。
+export async function resetInitialScanCompletedAt(
+  io: SyncTabIO,
+  expected: { rootFolderId: string; startPageToken: string }
+): Promise<void> {
+  const rows = await io.readAllRows();
+  const state = parseSyncState(rows);
+  if (state.rootFolderId !== expected.rootFolderId || state.startPageToken !== expected.startPageToken) {
+    return;
+  }
+  await writeSyncEntries(io, rows, { initialScanCompletedAt: "" });
 }
 
 // 着手順の目安4の残り（changes.list消費）：差分同期がstartPageTokenから最後まで消費し終えた後に

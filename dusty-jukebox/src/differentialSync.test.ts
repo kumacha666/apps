@@ -12,7 +12,7 @@ function folderChange(id: string, name = "Folder"): DriveChange {
 }
 
 describe("planDifferentialSync", () => {
-  test("removed=trueの変更はremovedFileIdsに入る", async () => {
+  test("removed=trueの変更はremovedFileIdsに入る（種別不明のためneedsReconcileも立つ、下記の専用テスト参照）", async () => {
     const changes: DriveChange[] = [{ fileId: "f1", removed: true }];
     const plan = await planDifferentialSync(changes, {
       isDescendantOfRoot: async () => true,
@@ -21,7 +21,6 @@ describe("planDifferentialSync", () => {
     });
     expect(plan.removedFileIds).toEqual(["f1"]);
     expect(plan.entriesToProcess).toEqual([]);
-    expect(plan.needsReconcile).toBe(false);
   });
 
   test("file.trashed=trueの変更もremovedFileIdsに入る（Drive APIの仕様：ゴミ箱はremoved=falseのまま通知される）", async () => {
@@ -56,7 +55,7 @@ describe("planDifferentialSync", () => {
     expect(plan.removedFileIds).toEqual(["f1"]);
   });
 
-  test("音楽ファイル以外（拡張子非対象）の変更は無視する", async () => {
+  test("音楽ファイル以外（拡張子非対象）へリネームされた既存曲は索引から削除する（2026-08-21 Codexレビュー指摘：P1）", async () => {
     const changes: DriveChange[] = [
       { fileId: "f1", removed: false, file: { id: "f1", name: "readme.txt", mimeType: "text/plain", parents: ["parent1"] } },
     ];
@@ -66,7 +65,7 @@ describe("planDifferentialSync", () => {
       existingScanState: new Map(),
     });
     expect(plan.entriesToProcess).toEqual([]);
-    expect(plan.removedFileIds).toEqual([]);
+    expect(plan.removedFileIds).toEqual(["f1"]);
     expect(plan.needsReconcile).toBe(false);
   });
 
@@ -123,11 +122,12 @@ describe("planDifferentialSync", () => {
     expect(plan.entriesToProcess.map((e) => e.file.id)).toEqual(["f-changed"]);
   });
 
-  test("サブツリー再走査で見つかったファイルは、同じfileIdの他の変更イベントによるremovedFileIds登録を上書きする", async () => {
-    // 順序: まずrootFolderId外への移動として検出（removedFileIdsへ）、その後フォルダ変更イベント
-    // 経由のサブツリー再走査で「実は今rootFolderId配下にある」ことが判明するケース
-    // （2つの変更イベントの処理順序に依存せず、最終的にrootFolderId配下にあるファイルは
-    // 削除対象から除外されるべき）。
+  test("フォルダ変更イベントの後にサブツリー再走査で見つかったファイルは、その前に来た同じfileIdの削除判定を上書きする（イベント順で後勝ち）", async () => {
+    // 順序: まずrootFolderId外への移動として検出（削除判定）、その後フォルダ変更イベント
+    // 経由のサブツリー再走査で「実は今rootFolderId配下にある」ことが判明するケース。
+    // フォルダ自身の containment チェックは true（folder1はroot配下）、ファイル自身の直接の
+    // containment チェックは false（f1自身の変更イベント時点ではルート外と判定される）を
+    // 使い分けることで、後続のフォルダ変更イベントが先の判定を正しく上書きすることを確認する。
     const movedOutFile = audioFile("f1", "moved.mp3");
     const changes: DriveChange[] = [
       { fileId: "f1", removed: false, file: movedOutFile },
@@ -135,8 +135,8 @@ describe("planDifferentialSync", () => {
     ];
     const subtreeEntry: AudioFileEntry = { file: audioFile("f1", "moved.mp3"), folderPath: "" };
     const plan = await planDifferentialSync(changes, {
-      isDescendantOfRoot: async () => false, // f1自身の変更イベント時点ではルート外と判定される
-      listSubtree: async () => [subtreeEntry], // だが実際にはフォルダ変更後のサブツリーに存在する
+      isDescendantOfRoot: async (parentIds) => (parentIds?.includes("parent1") ? false : true),
+      listSubtree: async () => [subtreeEntry],
       existingScanState: new Map(),
     });
     expect(plan.removedFileIds).toEqual([]);
@@ -155,5 +155,69 @@ describe("planDifferentialSync", () => {
     });
     expect(plan.entriesToProcess).toHaveLength(1);
     expect(plan.entriesToProcess[0].file.modifiedTime).toBe("2026-08-21T00:00:00.000Z");
+  });
+
+  test("同一区間で更新の後に削除された場合は削除が勝つ（2026-08-21 Codexレビュー指摘：P1、イベント順序依存バグ）", async () => {
+    const changes: DriveChange[] = [
+      { fileId: "f1", removed: false, file: audioFile("f1", "a.mp3", "2026-08-01T00:00:00.000Z") },
+      { fileId: "f1", removed: true },
+    ];
+    const plan = await planDifferentialSync(changes, {
+      isDescendantOfRoot: async () => true,
+      listSubtree: async () => [],
+      existingScanState: new Map(),
+    });
+    expect(plan.entriesToProcess).toEqual([]);
+    expect(plan.removedFileIds).toEqual(["f1"]);
+  });
+
+  test("removed=trueでfile情報が無い（種別不明の削除）場合はneedsReconcileを立てる（フォルダかもしれないため安全側、2026-08-21 Codexレビュー指摘：P1）", async () => {
+    const changes: DriveChange[] = [{ fileId: "unknown1", removed: true }];
+    const plan = await planDifferentialSync(changes, {
+      isDescendantOfRoot: async () => true,
+      listSubtree: async () => [],
+      existingScanState: new Map(),
+    });
+    expect(plan.needsReconcile).toBe(true);
+    expect(plan.removedFileIds).toEqual(["unknown1"]);
+  });
+
+  test("フォルダがゴミ箱へ移動された場合（file.trashed=true）もneedsReconcileを立てる（2026-08-21 Codexレビュー指摘：P1）", async () => {
+    const changes: DriveChange[] = [
+      { fileId: "folder1", removed: false, file: { id: "folder1", name: "Folder", mimeType: "application/vnd.google-apps.folder", trashed: true } },
+    ];
+    const plan = await planDifferentialSync(changes, {
+      isDescendantOfRoot: async () => true,
+      listSubtree: async () => [],
+      existingScanState: new Map(),
+    });
+    expect(plan.needsReconcile).toBe(true);
+  });
+
+  test("フォルダの変更イベントでも、現在rootFolderId配下でなければサブツリーを再走査しない（無関係な別ライブラリの変更、2026-08-21 Codexレビュー指摘：P2）。needsReconcileは立てたままにする", async () => {
+    const changes: DriveChange[] = [folderChange("unrelatedFolder")];
+    const listSubtree = vi.fn(async () => []);
+    const plan = await planDifferentialSync(changes, {
+      isDescendantOfRoot: async () => false,
+      listSubtree,
+      existingScanState: new Map(),
+    });
+    expect(listSubtree).not.toHaveBeenCalled();
+    expect(plan.needsReconcile).toBe(true);
+    expect(plan.entriesToProcess).toEqual([]);
+  });
+
+  test("直接の音楽ファイル変更イベントは、driveModifiedTimeが既存索引と同じでも常に処理する（純粋な移動でmodifiedTimeが変わらないケースでもparentIdを更新するため、2026-08-21 Codexレビュー指摘：P1）", async () => {
+    const changed = audioFile("f1", "a.mp3", "2026-08-01T00:00:00.000Z");
+    const changes: DriveChange[] = [{ fileId: "f1", removed: false, file: changed }];
+    const existingScanState = new Map<string, IndexRowScanState>([
+      ["f1", { scanRunId: "", driveModifiedTime: "2026-08-01T00:00:00.000Z" }], // 一致しているが移動された想定
+    ]);
+    const plan = await planDifferentialSync(changes, {
+      isDescendantOfRoot: async () => true,
+      listSubtree: async () => [],
+      existingScanState,
+    });
+    expect(plan.entriesToProcess.map((e) => e.file.id)).toEqual(["f1"]);
   });
 });

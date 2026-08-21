@@ -20,6 +20,7 @@ import {
   listAudioFilesRecursive,
   validateRootFolder,
   isAuthError,
+  DriveHttpError,
   type AudioFileEntry,
 } from "./drive";
 import { planDifferentialSync } from "./differentialSync";
@@ -49,9 +50,12 @@ import {
   clearScanRunId,
   createSyncTabIO,
   isPendingForScanRun,
+  isSyncStateCurrent,
   isValidSyncHeader,
   markInitialScanCompleted,
+  persistShortcutRootFolderIds,
   prepareSyncForScan,
+  resetInitialScanCompletedAt,
   SYNC_SHEET_NAME,
   SYNC_TAB_HEADER,
   type SyncTabIO,
@@ -131,8 +135,9 @@ function renderResults(entries: AudioFileEntry[], failedFolders: string[]): void
 }
 
 // 初回スキャン（初期化未完了、またはルート変更直後）: フォルダ全体を再帰走査し、
-// バッチ処理・中断再開（着手順の目安5）で索引に書き込む。従来のhandleScan本体をそのまま
-// 切り出したもので、挙動は変えていない。
+// バッチ処理・中断再開（着手順の目安5）で索引に書き込む。完了時にリコンサイル
+// （reconcileIndexAgainstRoot）とショートカット参照先フォルダIDの永続化も行う
+// （2026-08-21 Codexレビュー指摘：P1、下記参照）。
 async function runFullScan(
   sheetsIO: SheetsIndexIO,
   syncIO: SyncTabIO,
@@ -143,7 +148,13 @@ async function runFullScan(
   setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
   const listFn = createDriveListFn(() => auth.ensureAccessToken());
   const failedFolders: string[] = [];
-  const entries = await listAudioFilesRecursive(listFn, folderId, "", failedFolders);
+  // フォルダを指すショートカットの参照先フォルダID（drive.tsのlistAudioFilesRecursive参照）。
+  // 通常のparents関係を作らないため、差分同期・リコンサイルの祖先チェーン確認だけでは
+  // 発見できない。フルスキャンが解決した結果をsyncタブへ永続化し、以降の差分同期・
+  // リコンサイルがrootFolderIdと同格の追加のルートとして扱えるようにする
+  // （2026-08-21 Codexレビュー指摘：P1）。
+  const shortcutTargetFolderIds = new Set<string>();
+  const entries = await listAudioFilesRecursive(listFn, folderId, "", failedFolders, undefined, shortcutTargetFolderIds);
   renderResults(entries, failedFolders);
 
   // 前回の実行（このscanRunId）で既に処理済み、かつDrive側で以後更新されていないファイルは
@@ -224,6 +235,23 @@ async function runFullScan(
     // 参照）。長時間のスキャン中に別デバイスがルートを切り替えていた場合、無関係になった
     // ルートを誤って完了扱いにしないため。
     await markInitialScanCompleted(syncIO, new Date().toISOString(), { rootFolderId: folderId, startPageToken });
+
+    // 「旧ルート配下だった行の削除（リコンサイル）」（CONCEPT.md 4.3節）：新しい初回スキャンが
+    // 完了した時点の仕上げとして実行する。以前はこの呼び出しが無く、ルート変更後にフルスキャンが
+    // 成功しても旧ルート配下の行が索引に残り続けていた（2026-08-21 Codexレビュー指摘：P1）。
+    // ルート変更を伴わない（中断からの再開）フルスキャン完了時に呼んでも、全行が新ルート配下の
+    // はずなので無害（isFolderUnderRootの祖先チェーン確認コストが掛かるのみ）。
+    setStatus("フォルダ構成を確認中...");
+    const getParentsFn = createDriveParentsGetFn(() => auth.ensureAccessToken());
+    const ancestryCache = new Map<string, boolean>();
+    await reconcileIndexAgainstRoot(sheetsIO, (parentId) =>
+      isDescendantOfRoot(getParentsFn, [parentId], folderId, ancestryCache, shortcutTargetFolderIds)
+    );
+
+    // 今回のフルスキャンが解決したショートカット参照先フォルダIDの集合をsyncタブへ永続化する。
+    // 前回のスキャン以降にショートカットが増減した場合も、今回発見した集合でそのまま上書きする
+    // （自己修復。持ち越さない）。
+    await persistShortcutRootFolderIds(syncIO, [...shortcutTargetFolderIds], { rootFolderId: folderId, startPageToken });
   }
 
   // 全バッチが最後まで完走した（=ここに到達した）ので、このスキャン実行のウォーターマークは
@@ -250,23 +278,42 @@ async function runDifferentialSync(
   syncIO: SyncTabIO,
   folderId: string,
   driveId: string | undefined,
-  startPageToken: string
+  startPageToken: string,
+  shortcutRootFolderIds: string[]
 ): Promise<void> {
   setStatus("前回からの変更を確認中...");
   const changesListFn = createChangesListFn(() => auth.ensureAccessToken(), driveId);
-  const { changes, newStartPageToken } = await consumeAllChanges(changesListFn, startPageToken);
+  let changes;
+  let newStartPageToken: string;
+  try {
+    ({ changes, newStartPageToken } = await consumeAllChanges(changesListFn, startPageToken));
+  } catch (err) {
+    // 保存済みのstartPageTokenが古すぎるとDrive APIは410 Goneを返す（変更履歴の保持期間切れ）。
+    // このまま失敗し続けると毎回同じ箇所で止まるため、initialScanCompletedAtをクリアして
+    // 次回のスキャンクリックがフルスキャンからやり直すようにする（2026-08-21 Codexレビュー
+    // 指摘：P2、sync.tsのresetInitialScanCompletedAt参照）。
+    if (err instanceof DriveHttpError && err.status === 410) {
+      await resetInitialScanCompletedAt(syncIO, { rootFolderId: folderId, startPageToken });
+      setStatus("変更履歴の保持期限切れのため、次回のスキャンはフルスキャンからやり直します。もう一度スキャンを実行してください。", true);
+      return;
+    }
+    throw err;
+  }
 
   const getParentsFn = createDriveParentsGetFn(() => auth.ensureAccessToken());
   // 祖先チェーンの確認結果（フォルダID→rootFolderId配下かどうか）をこの同期実行の中で
   // 使い回す（drive.tsのisDescendantOfRoot参照）。差分同期・その後のリコンサイルの両方で
-  // 同じフォルダIDへの重複した確認を避けられる。
+  // 同じフォルダIDへの重複した確認を避けられる。extraRootFolderIdsはフォルダショートカットの
+  // 参照先（直近のフルスキャンが解決し永続化した集合）を、rootFolderId自体と同格の追加の
+  // ルートとして扱う（2026-08-21 Codexレビュー指摘：P1）。
   const ancestryCache = new Map<string, boolean>();
+  const extraRootFolderIds = new Set(shortcutRootFolderIds);
   const listFn = createDriveListFn(() => auth.ensureAccessToken());
   const failedFolders: string[] = [];
 
   const scanStateByFileId = indexRowsScanState(await sheetsIO.listExistingRows());
   const plan = await planDifferentialSync(changes, {
-    isDescendantOfRoot: (parentIds) => isDescendantOfRoot(getParentsFn, parentIds, folderId, ancestryCache),
+    isDescendantOfRoot: (parentIds) => isDescendantOfRoot(getParentsFn, parentIds, folderId, ancestryCache, extraRootFolderIds),
     // フォルダ変更イベントで検知したサブツリーの再走査。フルスキャンより並行数を抑える
     // （通常は少数のフォルダのみが対象のため、ここで大きく並行実行する必要は無い）。
     listSubtree: (targetFolderId) => listAudioFilesRecursive(listFn, targetFolderId, "", failedFolders, 3),
@@ -282,6 +329,21 @@ async function runDifferentialSync(
       ""
     );
     await upsertIndexRows(sheetsIO, upsertEntries);
+  }
+
+  // 破壊的な書き込み（削除・リコンサイル）の直前に、差分同期を開始した時点のroot/tokenが
+  // まだ現在のsync状態と一致するかを再確認する（2026-08-21 Codexレビュー指摘：P1）。
+  // 長時間の差分同期の実行中に別デバイスがrootFolderIdを切り替えて新しいフルスキャンを
+  // 完了させていた場合、それに気づかず削除・リコンサイルを実行すると、別デバイスが追加した
+  // 新ルートの行まで誤って削除しうる（advanceStartPageTokenのTOCTOU対策はトークンの書き込み
+  // しか防げず、既に実行してしまった索引の書き込みは取り消せないため、実行前に確認する）。
+  // Sheets APIには行単位のロックが無く完全な排他はできないため、この確認は競合の窓を
+  // 狭める緩和策であって根本解消ではない（sync.ts全体の「事前防止ではなく事後の整合」という
+  // 既知の限界と同じ扱い）。
+  const stillCurrent = await isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken });
+  if (!stillCurrent) {
+    setStatus("別のデバイスがルート設定を変更したため、今回の削除・リコンサイルは見送りました。次回の同期で改めて反映されます。", true);
+    return;
   }
 
   if (plan.removedFileIds.length > 0) {
@@ -300,16 +362,26 @@ async function runDifferentialSync(
   // 事後確認する（sheets.tsのreconcileIndexAgainstRoot参照）。
   if (plan.needsReconcile) {
     setStatus("フォルダ構成の変更を反映中...");
-    await reconcileIndexAgainstRoot(sheetsIO, (parentId) => isDescendantOfRoot(getParentsFn, [parentId], folderId, ancestryCache));
+    await reconcileIndexAgainstRoot(sheetsIO, (parentId) =>
+      isDescendantOfRoot(getParentsFn, [parentId], folderId, ancestryCache, extraRootFolderIds)
+    );
   }
 
-  // 消費し終えたstartPageTokenを進める。差分同期の最後に行う（途中でエラーが起きた場合、
-  // 次回起動時に同じstartPageTokenから再度consumeAllChangesできるようにするため）。
-  await advanceStartPageToken(syncIO, newStartPageToken, { rootFolderId: folderId, startPageToken });
+  // フォルダ変更イベントのサブツリー再走査で子フォルダの取得に失敗した場合
+  // （listAudioFilesRecursiveは例外にせずfailedFoldersへ積んで継続する）、そのサブツリー配下は
+  // 今回取りこぼした可能性がある。startPageTokenを進めてしまうと、次回のchanges.listはこの
+  // フォルダ変更イベント自体を二度と返さない（既に消費済みのため）ため、取りこぼしたサブツリーが
+  // 恒久的に再走査されなくなる。取得失敗があった場合はトークンを進めず、次回同じ範囲を
+  // 再消費して再挑戦できるようにする（2026-08-21 Codexレビュー指摘：P1）。
+  if (failedFolders.length === 0) {
+    // 消費し終えたstartPageTokenを進める。差分同期の最後に行う（途中でエラーが起きた場合、
+    // 次回起動時に同じstartPageTokenから再度consumeAllChangesできるようにするため）。
+    await advanceStartPageToken(syncIO, newStartPageToken, { rootFolderId: folderId, startPageToken });
+  }
 
   setStatus(
     `差分同期完了（反映 ${plan.entriesToProcess.length}件、削除 ${plan.removedFileIds.length}件${
-      failedFolders.length > 0 ? `、フォルダ取得失敗: ${failedFolders.length}件` : ""
+      failedFolders.length > 0 ? `、フォルダ取得失敗: ${failedFolders.length}件（次回再試行します）` : ""
     }）`
   );
 }
@@ -400,7 +472,7 @@ async function handleScan(): Promise<void> {
     );
 
     if (prep.hasCompletedInitialScan) {
-      await runDifferentialSync(sheetsIO, syncIO, folderId, driveId, prep.startPageToken);
+      await runDifferentialSync(sheetsIO, syncIO, folderId, driveId, prep.startPageToken, prep.shortcutRootFolderIds);
     } else {
       await runFullScan(sheetsIO, syncIO, folderId, prep.startPageToken, prep.scanRunId);
     }

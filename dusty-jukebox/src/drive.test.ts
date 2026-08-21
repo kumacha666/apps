@@ -198,6 +198,27 @@ describe("listAudioFilesRecursive", () => {
     expect(found[0].folderPath).toBe("WANDS (shortcut)");
   });
 
+  test("フォルダを指すショートカットの参照先フォルダIDをshortcutTargetFolderIds出力引数に集める（2026-08-21 Codexレビュー指摘：P1、差分同期・リコンサイルの祖先チェーン確認に補うため）", async () => {
+    const tree: Record<string, DriveFile[]> = {
+      root: [
+        {
+          id: "shortcut-to-wands",
+          name: "WANDS (shortcut)",
+          mimeType: "application/vnd.google-apps.shortcut",
+          shortcutDetails: { targetId: "wands", targetMimeType: "application/vnd.google-apps.folder" },
+        },
+        { id: "various", name: "VARIOUS", mimeType: "application/vnd.google-apps.folder" },
+      ],
+      wands: [{ id: "w1", name: "01.mp3", mimeType: "audio/mpeg" }],
+      various: [{ id: "v1", name: "02.mp3", mimeType: "audio/mpeg" }],
+    };
+    const list: DriveListFn = async (folderId) => ({ files: tree[folderId] ?? [] });
+    const shortcutTargetFolderIds = new Set<string>();
+    await listAudioFilesRecursive(list, "root", "", [], undefined, shortcutTargetFolderIds);
+    // 通常のフォルダ（various）はショートカットではないため含まれない
+    expect([...shortcutTargetFolderIds]).toEqual(["wands"]);
+  });
+
   test("ファイルを指すショートカットは走査対象に含めない（フォルダショートカットのみ解決する）", async () => {
     const tree: Record<string, DriveFile[]> = {
       root: [
@@ -684,6 +705,22 @@ describe("isDescendantOfRoot", () => {
     await isDescendantOfRoot(getParentsSpy, ["shared"], "root", cache);
     await isDescendantOfRoot(getParentsSpy, ["shared"], "root", cache);
     expect(getParentsSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("extraRootIdsに含まれるフォルダIDはrootFolderId自体と同格の到達済みとして扱う（フォルダショートカットの参照先、2026-08-21 Codexレビュー指摘：P1）", async () => {
+    // ショートカット参照先フォルダ（physicalTarget）は、実体としての親チェーンをどれだけ
+    // 遡ってもrootFolderIdには到達しない（getParentsは呼ばれれば「無関係な祖先」を返す）。
+    // extraRootIdsに直接登録されている場合のみ到達済みと判定できることを確認する。
+    const getParents = makeGetParents({ physicalTarget: ["somewhereElseEntirely"], somewhereElseEntirely: undefined });
+    await expect(isDescendantOfRoot(getParents, ["physicalTarget"], "root")).resolves.toBe(false);
+    await expect(isDescendantOfRoot(getParents, ["physicalTarget"], "root", new Map(), new Set(["physicalTarget"]))).resolves.toBe(true);
+  });
+
+  test("extraRootIdsはフォルダID自体だけでなく、その配下の祖先チェーンの途中に現れても到達済みと判定する", async () => {
+    const getParents = makeGetParents({ childOfShortcutTarget: ["physicalTarget"] });
+    await expect(
+      isDescendantOfRoot(getParents, ["childOfShortcutTarget"], "root", new Map(), new Set(["physicalTarget"]))
+    ).resolves.toBe(true);
   });
 });
 

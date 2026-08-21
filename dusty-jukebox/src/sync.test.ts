@@ -3,11 +3,16 @@ import {
   advanceStartPageToken,
   clearScanRunId,
   createSyncTabIO,
+  decodeFolderIdList,
+  encodeFolderIdList,
   isPendingForScanRun,
+  isSyncStateCurrent,
   isValidSyncHeader,
   markInitialScanCompleted,
   parseSyncState,
+  persistShortcutRootFolderIds,
   prepareSyncForScan,
+  resetInitialScanCompletedAt,
   SYNC_TAB_HEADER,
   type SyncTabIO,
 } from "./sync";
@@ -142,7 +147,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-new", scanRunId: FIXED_RUN_ID, hasCompletedInitialScan: false });
+    expect(result).toEqual({ startPageToken: "T-new", scanRunId: FIXED_RUN_ID, hasCompletedInitialScan: false, shortcutRootFolderIds: [] });
     expect(getNewToken).toHaveBeenCalledTimes(1);
     expect(io.appendCalls).toEqual([
       [
@@ -166,7 +171,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root-new", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-new", scanRunId: FIXED_RUN_ID, hasCompletedInitialScan: false });
+    expect(result).toEqual({ startPageToken: "T-new", scanRunId: FIXED_RUN_ID, hasCompletedInitialScan: false, shortcutRootFolderIds: [] });
     expect(getNewToken).toHaveBeenCalledTimes(1);
     expect(io.updateCalls).toEqual([
       [
@@ -188,7 +193,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: FIXED_RUN_ID, hasCompletedInitialScan: false });
+    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: FIXED_RUN_ID, hasCompletedInitialScan: false, shortcutRootFolderIds: [] });
     expect(getNewToken).not.toHaveBeenCalled();
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([[["scanRunId", FIXED_RUN_ID]]]);
@@ -204,7 +209,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: "run-in-progress", hasCompletedInitialScan: false });
+    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: "run-in-progress", hasCompletedInitialScan: false, shortcutRootFolderIds: [] });
     expect(getNewToken).not.toHaveBeenCalled();
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
@@ -221,8 +226,22 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: "run-in-progress", hasCompletedInitialScan: true });
+    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: "run-in-progress", hasCompletedInitialScan: true, shortcutRootFolderIds: [] });
     expect(getNewToken).not.toHaveBeenCalled();
+  });
+
+  test("永続化済みのshortcutRootFolderIdsをデコードして返す（フォルダショートカット、2026-08-21 Codexレビュー指摘：P1）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T-existing"],
+      ["rootFolderId", "root1"],
+      ["initialScanCompletedAt", "2026-08-19T00:00:00.000Z"],
+      ["shortcutRootFolderIds", "folderA,folderB"],
+    ]);
+    const getNewToken = vi.fn(async () => "T-should-not-be-used");
+
+    const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
+
+    expect(result.shortcutRootFolderIds).toEqual(["folderA", "folderB"]);
   });
 
   test("rootFolderIdは記録済みだがstartPageTokenが無い異常系では新規取得して補う（scanRunIdも併せて設定する）", async () => {
@@ -231,7 +250,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-recovered", scanRunId: FIXED_RUN_ID, hasCompletedInitialScan: false });
+    expect(result).toEqual({ startPageToken: "T-recovered", scanRunId: FIXED_RUN_ID, hasCompletedInitialScan: false, shortcutRootFolderIds: [] });
     expect(getNewToken).toHaveBeenCalledTimes(1);
     expect(io.appendCalls).toEqual([
       [
@@ -365,6 +384,98 @@ describe("advanceStartPageToken", () => {
     await advanceStartPageToken(io, "T1", { rootFolderId: "root1", startPageToken: "T0" });
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
+  });
+});
+
+describe("encodeFolderIdList/decodeFolderIdList", () => {
+  test("空配列は空文字列にエンコードされ、空文字列は空配列にデコードされる", () => {
+    expect(encodeFolderIdList([])).toBe("");
+    expect(decodeFolderIdList("")).toEqual([]);
+    expect(decodeFolderIdList(undefined)).toEqual([]);
+  });
+
+  test("複数IDをカンマ区切りで往復できる", () => {
+    const ids = ["folder1", "folder2", "folder3"];
+    expect(decodeFolderIdList(encodeFolderIdList(ids))).toEqual(ids);
+  });
+});
+
+describe("persistShortcutRootFolderIds", () => {
+  test("準備時と現在のroot/tokenが一致すればカンマ区切りで書き込む", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+    ]);
+    await persistShortcutRootFolderIds(io, ["folderA", "folderB"], { rootFolderId: "root1", startPageToken: "T0" });
+    expect(io.appendCalls).toEqual([[["shortcutRootFolderIds", "folderA,folderB"]]]);
+  });
+
+  test("空配列を渡しても明示的に空文字列で書き込む（前回はショートカットがあったが今回は無くなった変化を反映するため）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["shortcutRootFolderIds", "folderA"],
+    ]);
+    await persistShortcutRootFolderIds(io, [], { rootFolderId: "root1", startPageToken: "T0" });
+    expect(io.updateCalls).toEqual([[{ rowNumber: 4, row: ["shortcutRootFolderIds", ""] }]]);
+  });
+
+  test("root/token不一致の場合は書き込まない", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T-new"],
+      ["rootFolderId", "root-B"],
+    ]);
+    await persistShortcutRootFolderIds(io, ["folderA"], { rootFolderId: "root-A", startPageToken: "T-old" });
+    expect(io.updateCalls).toEqual([]);
+    expect(io.appendCalls).toEqual([]);
+  });
+});
+
+describe("isSyncStateCurrent", () => {
+  test("root/tokenが一致すればtrue", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+    ]);
+    await expect(isSyncStateCurrent(io, { rootFolderId: "root1", startPageToken: "T0" })).resolves.toBe(true);
+  });
+
+  test("rootFolderIdが異なればfalse", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root-B"],
+    ]);
+    await expect(isSyncStateCurrent(io, { rootFolderId: "root-A", startPageToken: "T0" })).resolves.toBe(false);
+  });
+
+  test("startPageTokenが異なればfalse", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T-changed"],
+      ["rootFolderId", "root1"],
+    ]);
+    await expect(isSyncStateCurrent(io, { rootFolderId: "root1", startPageToken: "T0" })).resolves.toBe(false);
+  });
+});
+
+describe("resetInitialScanCompletedAt", () => {
+  test("準備時と現在のroot/tokenが一致すればinitialScanCompletedAtを空文字列にクリアする", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"],
+    ]);
+    await resetInitialScanCompletedAt(io, { rootFolderId: "root1", startPageToken: "T0" });
+    expect(io.updateCalls).toEqual([[{ rowNumber: 4, row: ["initialScanCompletedAt", ""] }]]);
+  });
+
+  test("root/token不一致の場合は書き込まない", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T-new"],
+      ["rootFolderId", "root-B"],
+      ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"],
+    ]);
+    await resetInitialScanCompletedAt(io, { rootFolderId: "root-A", startPageToken: "T-old" });
+    expect(io.updateCalls).toEqual([]);
   });
 });
 

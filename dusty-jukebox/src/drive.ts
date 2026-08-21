@@ -148,12 +148,20 @@ export class ConcurrencyLimiter {
 // 走査を続けさせない（2026-08-19 Codexレビュー指摘）。JS版のfetchにsignalを渡す形の
 // 厳密な中断ではなく、キュー未消化のタスクを対象にした協調的な打ち切りである点に注意
 // （既にHTTPリクエストが発行済みのタスクまでは止められない。実装の詳細はdrive.test.ts参照）。
+// shortcutTargetFolderIds: 走査中に解決した「フォルダを指すショートカット」の参照先フォルダID
+// を集める出力用引数（failedFoldersと同じ、呼び出し元が渡した配列/Setを変更する方式）。
+// 参照先フォルダは自身の実体としての親チェーンをどれだけ遡ってもrootFolderIdに到達しない
+// （ショートカットは通常のparents関係を作らないため、drive.tsのisDescendantOfRootが前提とする
+// 祖先チェーン確認では原理的に発見できない）。差分同期・リコンサイル（main.ts）がこの集合を
+// 「rootFolderId自体と同格の追加のルート」としてisDescendantOfRootに渡すことで、ショートカット
+// 経由で索引化された曲を誤ってrootFolderId外と判定しない（2026-08-21 Codexレビュー指摘：P1）。
 export async function listAudioFilesRecursive(
   list: DriveListFn,
   folderId: string,
   folderPath = "",
   failedFolders: string[] = [],
-  maxConcurrentLists = DEFAULT_MAX_CONCURRENT_LISTS
+  maxConcurrentLists = DEFAULT_MAX_CONCURRENT_LISTS,
+  shortcutTargetFolderIds: Set<string> = new Set()
 ): Promise<AudioFileEntry[]> {
   const limiter = new ConcurrencyLimiter(maxConcurrentLists);
   const controller = new AbortController();
@@ -171,7 +179,8 @@ export async function listAudioFilesRecursive(
       limiter,
       controller,
       visited,
-      undefined
+      undefined,
+      shortcutTargetFolderIds
     );
   } finally {
     // 正常終了時は既に全タスクが完了しているため実質no-opだが、想定外の経路で
@@ -189,7 +198,8 @@ async function listAudioFilesRecursiveInternal(
   limiter: ConcurrencyLimiter,
   controller: AbortController,
   visited: Set<string>,
-  resourceKey: string | undefined
+  resourceKey: string | undefined,
+  shortcutTargetFolderIds: Set<string>
 ): Promise<AudioFileEntry[]> {
   let children: DriveFile[];
   try {
@@ -229,6 +239,7 @@ async function listAudioFilesRecursiveInternal(
       // 404になる。targetResourceKeyを取得し、参照先フォルダへの一覧要求に引き継ぐ
       // （2026-08-19 Codexレビュー指摘）
       targetResourceKey = file.shortcutDetails.targetResourceKey;
+      shortcutTargetFolderIds.add(targetFolderId);
     } else if (isAudioFile(file.name)) {
       results.push({ file, folderPath });
       continue;
@@ -247,7 +258,8 @@ async function listAudioFilesRecursiveInternal(
           limiter,
           controller,
           visited,
-          targetResourceKey
+          targetResourceKey,
+          shortcutTargetFolderIds
         )
       );
     }
@@ -545,14 +557,23 @@ export function createDriveParentsGetFn(getAccessToken: () => Promise<string>): 
 // parentId（≒フォルダ数）はずっと少ないため、reconcileIndexAgainstRootでの呼び出しに対して
 // 効果が大きい）。visitingは1回の呼び出し内の循環参照ガード（通常の親子関係では循環は
 // 起きないが、フォルダショートカットは任意のフォルダを指しうるため安全のため設ける）。
+//
+// extraRootIds: rootFolderId自体に加えて「到達済み」とみなす追加のフォルダID集合
+// （listAudioFilesRecursiveのshortcutTargetFolderIds、main.tsがsync タブに永続化したものを
+// 渡す）。フォルダショートカットの参照先は、Drive上の通常のparents関係を作らない
+// （ショートカットは参照先フォルダに対して「親」ではない）ため、この祖先チェーン確認だけでは
+// ショートカット経由でrootFolderId配下に見える曲を原理的に発見できない（2026-08-21 Codex
+// レビュー指摘：P1。以前の実装ではショートカット経由で索引化された曲が、差分同期・
+// リコンサイルの初回実行で誤って「rootFolderId外」と判定され削除されてしまっていた）。
 async function folderReachesRoot(
   getParents: DriveParentsGetFn,
   folderId: string,
   rootFolderId: string,
   cache: Map<string, boolean>,
-  visiting: Set<string>
+  visiting: Set<string>,
+  extraRootIds: Set<string>
 ): Promise<boolean> {
-  if (folderId === rootFolderId) return true;
+  if (folderId === rootFolderId || extraRootIds.has(folderId)) return true;
   const cached = cache.get(folderId);
   if (cached !== undefined) return cached;
   if (visiting.has(folderId)) return false;
@@ -560,7 +581,7 @@ async function folderReachesRoot(
   let result = false;
   const meta = await getParents(folderId);
   for (const parentId of meta?.parents ?? []) {
-    if (await folderReachesRoot(getParents, parentId, rootFolderId, cache, visiting)) {
+    if (await folderReachesRoot(getParents, parentId, rootFolderId, cache, visiting, extraRootIds)) {
       result = true;
       break;
     }
@@ -572,15 +593,17 @@ async function folderReachesRoot(
 
 // ファイル（またはフォルダ）の直接の親ID群のいずれかがrootFolderIdの祖先チェーンに到達するかを
 // 判定する。cacheを呼び出し元（main.ts）が使い回すことで、同じスキャン・同期の中で同じ
-// フォルダIDへの重複した祖先チェーン確認を避けられる。
+// フォルダIDへの重複した祖先チェーン確認を避けられる。extraRootIdsは上記folderReachesRoot参照
+// （ショートカット経由の到達性を補うための追加ルート集合、省略時は空集合＝従来通りの挙動）。
 export async function isDescendantOfRoot(
   getParents: DriveParentsGetFn,
   candidateParentIds: string[] | undefined,
   rootFolderId: string,
-  cache: Map<string, boolean> = new Map()
+  cache: Map<string, boolean> = new Map(),
+  extraRootIds: Set<string> = new Set()
 ): Promise<boolean> {
   for (const parentId of candidateParentIds ?? []) {
-    if (await folderReachesRoot(getParents, parentId, rootFolderId, cache, new Set())) return true;
+    if (await folderReachesRoot(getParents, parentId, rootFolderId, cache, new Set(), extraRootIds)) return true;
   }
   return false;
 }

@@ -16,8 +16,9 @@ import type { IndexRowScanState } from "./sheets";
 import { isAudioFile } from "./lib";
 
 export interface DifferentialSyncDeps {
-  // 変更のあったファイル自身の直接の親ID群（file.parents）を渡し、rootFolderId配下かどうかを
-  // 判定する（main.tsはdrive.tsのisDescendantOfRootを束縛して渡す）。
+  // 変更のあったファイル（またはフォルダ）自身の直接の親ID群を渡し、rootFolderId配下かどうかを
+  // 判定する（main.tsはdrive.tsのisDescendantOfRootを束縛して渡す。ショートカット経由の
+  // 到達性を含めるためextraRootFolderIdsも束縛済みのクロージャを渡す想定）。
   isDescendantOfRoot: (parentIds: string[] | undefined) => Promise<boolean>;
   // フォルダ変更イベント（リネーム・移動）を検知した際、そのフォルダの現在の配下を
   // 再帰走査する（main.tsはdrive.tsのlistAudioFilesRecursiveを束縛して渡す）。
@@ -34,9 +35,11 @@ export interface DifferentialSyncPlan {
   entriesToProcess: AudioFileEntry[];
   // 索引から削除（行の空欄化）すべきfileId
   removedFileIds: string[];
-  // フォルダの変更イベントを1件以上検知した場合true。フォルダがrootFolderIdの外へ移動した
-  // ケースは、そのフォルダ自身の変更イベントだけでは配下ファイル1件1件の変更を検知できない
-  // ため（CONCEPT.md 5節）、reconcileIndexAgainstRootによる事後の整合が必要になる。
+  // フォルダの変更イベントを1件以上検知した場合true（削除・ゴミ箱移動されたファイル/フォルダの
+  // 種別が変更イベント自体からは判定できない場合も、安全側でtrueにする）。フォルダが
+  // rootFolderIdの外へ移動・削除されたケースは、そのフォルダ自身の変更イベントだけでは配下
+  // ファイル1件1件の変更を検知できないため（CONCEPT.md 5節）、reconcileIndexAgainstRootによる
+  // 事後の整合が必要になる。
   needsReconcile: boolean;
 }
 
@@ -56,46 +59,91 @@ function needsExtraction(entry: AudioFileEntry, existingScanState: Map<string, I
   return existing.driveModifiedTime !== (entry.file.modifiedTime ?? "");
 }
 
+// 1件のfileIdに対する、この差分同期での最終的な扱い。change配列を時系列（＝Drive上での
+// 発生順）に処理し、同じfileIdに対して複数の状態を後勝ち（最後の状態が勝つ）で上書きする
+// （2026-08-21 Codexレビュー指摘：P1）。以前の実装は「削除対象の集合」と「処理対象の集合」を
+// 別々に持ち、ループ終了後に「処理対象にあれば削除対象から機械的に除外する」という後処理を
+// 行っていたため、同じ同期区間内で「更新→削除」の順にイベントが来た場合、更新イベントで
+// 処理対象に入ったfileIdが、後から来た削除イベントの結果を（削除→処理対象という順で処理した
+// にも関わらず）打ち消してしまっていた。1つのMapへの逐次set()に統一し、後に処理した
+// イベントが常に勝つようにすることで、この種のイベント順序依存のバグを構造的に防ぐ。
+type FileOutcome =
+  | { action: "process"; entry: AudioFileEntry; skipIfUnchanged: boolean }
+  | { action: "remove" };
+
 export async function planDifferentialSync(changes: DriveChange[], deps: DifferentialSyncDeps): Promise<DifferentialSyncPlan> {
-  const removedFileIds = new Set<string>();
-  const entriesByFileId = new Map<string, AudioFileEntry>();
+  const outcomes = new Map<string, FileOutcome>();
   let needsReconcile = false;
 
   for (const change of changes) {
-    if (change.removed || change.file?.trashed) {
-      removedFileIds.add(change.fileId);
+    const file = change.file;
+
+    if (change.removed || file?.trashed) {
+      // フォルダ自体が削除・ゴミ箱移動された場合、配下ファイル1件1件の変更イベントは
+      // 発生しない（CONCEPT.md 5節）ため、それらは索引から取り除かれずに残ってしまう。
+      // removed=trueの場合はfile情報自体が無くフォルダか音楽ファイルかを判定できないため、
+      // 安全側（データを恒久的に取りこぼさない側）に倒してリコンサイルを実行する
+      // （2026-08-21 Codexレビュー指摘：P1）。
+      if (!file || isFolderLikeChange(file)) needsReconcile = true;
+      outcomes.set(change.fileId, { action: "remove" });
       continue;
     }
-    const file = change.file;
     if (!file) continue;
 
     if (isFolderLikeChange(file)) {
       needsReconcile = true;
       const targetId = folderTargetId(file);
       if (!targetId) continue;
+      // このフォルダが現在rootFolderId配下にある場合のみサブツリーを再走査する。changes.listは
+      // Drive全体（または共有ドライブ全体）の変更を返すため、この確認をしないとrootFolderIdと
+      // 無関係なフォルダの変更でも配下全体を走査・タグ抽出してしまう（2026-08-21 Codexレビュー
+      // 指摘：P2）。配下から外れた場合（rootFolderId内→外への移動）の索引側の後始末は、上で
+      // 立てたneedsReconcileによるreconcileIndexAgainstRootに委ねる（サブツリー走査では
+      // 「今どこにあるか」しか分からず「以前どこにあったか」は分からないため、外れたケースの
+      // 検出自体はリコンサイル側の役目）。
+      const stillUnderRoot = await deps.isDescendantOfRoot(file.parents);
+      if (!stillUnderRoot) continue;
       const subtreeEntries = await deps.listSubtree(targetId);
-      for (const entry of subtreeEntries) entriesByFileId.set(entry.file.id, entry);
+      for (const entry of subtreeEntries) {
+        outcomes.set(entry.file.id, { action: "process", entry, skipIfUnchanged: true });
+      }
       continue;
     }
 
-    if (!isAudioFile(file.name)) continue;
+    if (!isAudioFile(file.name)) {
+      // 索引済みの曲が対象外拡張子へリネームされた場合、以後このルートは差分同期のみに
+      // 進むため（フルスキャンには戻らない）、ここで削除しないと恒久的に索引へ残ってしまう
+      // （2026-08-21 Codexレビュー指摘：P1）。索引に無ければremoveIndexRowsが何もしないため、
+      // 未索引のfileIdに対して無条件に発行しても安全。
+      outcomes.set(file.id, { action: "remove" });
+      continue;
+    }
+
     const underRoot = await deps.isDescendantOfRoot(file.parents);
     if (!underRoot) {
-      // 索引に既にあれば（rootFolderId外へ移動した等）除去対象、無ければ単に無関係な
-      // 変更（removeIndexRows/reconcileIndexAgainstRootはfileIdが存在しなければ何もしない）。
-      removedFileIds.add(file.id);
+      // 索引に既にあれば（rootFolderId外へ移動した等）除去対象、無ければ単に無関係な変更。
+      outcomes.set(file.id, { action: "remove" });
       continue;
     }
-    entriesByFileId.set(file.id, { file, folderPath: "" });
+    // changes.listが個別に通知した変更なので、driveModifiedTimeが変わっていなくても常に処理する
+    // （skipIfUnchanged=false）。Driveはフォルダ間の純粋な移動だけではmodifiedTimeを更新しない
+    // ことがあり、driveModifiedTime一致を理由にスキップすると、移動後の新しいparentIdが
+    // 索引に反映されないまま残ってしまう（2026-08-21 Codexレビュー指摘：P1）。skipIfUnchangedを
+    // 使うのはフォルダのサブツリー再走査で見つかったエントリ（Driveが「このファイルが変わった」
+    // と個別に教えてくれたわけではない）だけに限定する。
+    outcomes.set(file.id, { action: "process", entry: { file, folderPath: "" }, skipIfUnchanged: false });
   }
 
-  // フォルダのサブツリー再走査、または個々のファイル変更イベントの両方でentriesByFileIdに
-  // 追加されたファイルは、rootFolderId配下に「今ある」ことが確認できているため、同じfileIdが
-  // removedFileIdsにも入っていた場合（例：一度rootFolderId外への変更イベントが来た後、
-  // 別の変更イベント経由で戻ってきた等の順序）は削除対象から除外する。
-  for (const fileId of entriesByFileId.keys()) removedFileIds.delete(fileId);
+  const removedFileIds: string[] = [];
+  const entriesToProcess: AudioFileEntry[] = [];
+  for (const outcome of outcomes.values()) {
+    if (outcome.action === "remove") continue;
+    if (outcome.skipIfUnchanged && !needsExtraction(outcome.entry, deps.existingScanState)) continue;
+    entriesToProcess.push(outcome.entry);
+  }
+  for (const [fileId, outcome] of outcomes) {
+    if (outcome.action === "remove") removedFileIds.push(fileId);
+  }
 
-  const entriesToProcess = [...entriesByFileId.values()].filter((entry) => needsExtraction(entry, deps.existingScanState));
-
-  return { entriesToProcess, removedFileIds: [...removedFileIds], needsReconcile };
+  return { entriesToProcess, removedFileIds, needsReconcile };
 }
