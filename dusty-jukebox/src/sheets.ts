@@ -583,7 +583,17 @@ export async function reconcileIndexAgainstRoot(
     const parentId = String(row[PARENT_ID_INDEX] ?? "");
     if (!reachable.get(parentId)) updates.push({ rowNumber: i + 2, row: blankRow });
   });
-  if (updates.length > 0) await io.updateRows(updates);
+  // ルート変更直後は索引のほぼ全行が空欄化対象になりうる（10235件規模、CONCEPT.md 3.4節）。
+  // 1回のvalues:batchUpdateに全行分をまとめると、大規模batchUpdateの既知の制約（本ファイルの
+  // 「大規模batchUpdateの分割は未実装」コメント参照、upsertIndexRows側はmain.tsの200件バッチで
+  // 既に回避しているが、reconcileIndexAgainstRootはindexタブ全体を一度に処理する設計のため
+  // この制約を新たに踏みうる）でリクエストサイズ・処理時間上限に抵触し、ルート変更の完了記録まで
+  // 到達できなくなりうる（2026-08-21 Codexレビュー指摘：P2）。main.tsのバッチ処理と同じ
+  // BATCH_SIZE（200）で分割して呼び出す。
+  const RECONCILE_BATCH_SIZE = 200;
+  for (let i = 0; i < updates.length; i += RECONCILE_BATCH_SIZE) {
+    await io.updateRows(updates.slice(i, i + RECONCILE_BATCH_SIZE));
+  }
   return { removedCount: updates.length };
 }
 

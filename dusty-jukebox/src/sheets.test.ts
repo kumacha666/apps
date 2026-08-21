@@ -939,4 +939,15 @@ describe("reconcileIndexAgainstRoot", () => {
     expect(isFolderUnderRoot).toHaveBeenCalledTimes(1);
     expect(isFolderUnderRoot).toHaveBeenCalledWith("root");
   });
+
+  test("空欄化対象が200件を超える場合は複数回のupdateRowsに分割する（2026-08-21 Codexレビュー指摘：P2。ルート変更直後は索引のほぼ全行が対象になりうるため、1回の大規模batchUpdateでリクエストサイズ・処理時間上限に抵触しないようにする）", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) => rowFor(`f${i}`, "oldRoot"));
+    const io = makeFakeIO(rows);
+    const isFolderUnderRoot = vi.fn(async () => false);
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(result).toEqual({ removedCount: 250 });
+    expect(io.updateCalls).toHaveLength(2);
+    expect(io.updateCalls[0]).toHaveLength(200);
+    expect(io.updateCalls[1]).toHaveLength(50);
+  });
 });

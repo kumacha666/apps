@@ -330,6 +330,14 @@ async function runDifferentialSync(
   // 逆に削除・移動されたショートカットの配下がリコンサイルで削除されなくなる
   // （2026-08-21 Codexレビュー指摘：P1）。planDifferentialSync呼び出し前に最新化する。
   await applyShortcutChangesToExtraRootFolderIds(changes, extraRootFolderIds, isUnderRoot);
+  // 上記の呼び出し自体がisUnderRoot（＝ancestryCacheを使うisDescendantOfRoot）を呼びながら
+  // extraRootFolderIdsを書き換えるため、その過程でキャッシュされた到達性判定は「更新前の
+  // extraRootFolderIds」を前提にした値のまま残っている。以降のplanDifferentialSync・
+  // reconcileIndexAgainstRootがこの古いキャッシュを再利用すると、今回追加・除去された
+  // 参照先を反映しないまま判定してしまう（2026-08-21 Codexレビュー指摘：P2）。
+  // extraRootFolderIdsの更新が完了した時点でキャッシュを破棄し、以降は新しい集合を前提に
+  // 再計算させる。
+  ancestryCache.clear();
 
   const scanStateByFileId = indexRowsScanState(await sheetsIO.listExistingRows());
   const plan = await planDifferentialSync(changes, {

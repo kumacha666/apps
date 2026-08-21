@@ -574,6 +574,20 @@ export function createDriveParentsGetFn(getAccessToken: () => Promise<string>): 
 // ショートカット経由でrootFolderId配下に見える曲を原理的に発見できない（2026-08-21 Codex
 // レビュー指摘：P1。以前の実装ではショートカット経由で索引化された曲が、差分同期・
 // リコンサイルの初回実行で誤って「rootFolderId外」と判定され削除されてしまっていた）。
+//
+// **既知の限界（2026-08-21 さらにCodexレビュー指摘：P1、対応は見送り）**：extraRootIdsは
+// フォルダIDのみのSetで、そのショートカット参照先がリンク共有のセキュリティ更新の対象で
+// あった場合に必要なresourceKeyを保持しない。そのため、下記でextraRootIds一致時に行う
+// trashed確認のためのgetParents呼び出しがresourceKeyを渡せず、resource key保護された
+// ショートカット参照先フォルダでは404になり「到達不可」と誤判定されうる（listAudioFilesRecursive
+// によるフルスキャン時の走査自体はresourceKeyを正しく引き継いでいるため、フルスキャンでの
+// 索引化自体は成功する。誤判定の影響が及ぶのはその後のtrashed確認を伴う祖先チェーン確認
+// ＝差分同期・リコンサイルの経路のみ）。正しく解決するにはextraRootIdsをid単体のSetから
+// `Map<string, string | undefined>`（フォルダID→resourceKey）へ拡張し、sync タブの
+// 永続化フォーマット・関連する複数の呼び出し元シグネチャを変更する必要がある。resource key
+// 保護されたショートカット参照先という状況自体が既存のCLAUDE.mdの「見送った2件」（ルート
+// フォルダ自体がresource key保護・ショートカットの場合は未対応）と同種の稀なケースのため、
+// 次PR以降の対応とする。
 async function folderReachesRoot(
   getParents: DriveParentsGetFn,
   folderId: string,
