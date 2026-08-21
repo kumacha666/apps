@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   clearScanRunStartedAt,
   createSyncTabIO,
+  isPendingForScanRun,
   isValidSyncHeader,
   markInitialScanCompleted,
   parseSyncState,
@@ -40,6 +41,30 @@ function makeFakeIO(
     },
   };
 }
+
+describe("isPendingForScanRun", () => {
+  const scanRunStartedAt = "2026-08-20T12:00:00.000Z";
+
+  test("lastScannedAtが未設定（初回スキャン対象）なら処理対象", () => {
+    expect(isPendingForScanRun(undefined, scanRunStartedAt)).toBe(true);
+  });
+
+  test("lastScannedAtが空文字列（既存行だが未走査扱い）でも処理対象", () => {
+    expect(isPendingForScanRun("", scanRunStartedAt)).toBe(true);
+  });
+
+  test("lastScannedAtがscanRunStartedAtより前（今回の実行では未処理）なら処理対象", () => {
+    expect(isPendingForScanRun("2026-08-20T11:59:59.999Z", scanRunStartedAt)).toBe(true);
+  });
+
+  test("lastScannedAtがscanRunStartedAtと同時刻（今回の実行で処理済み扱い）ならスキップ", () => {
+    expect(isPendingForScanRun(scanRunStartedAt, scanRunStartedAt)).toBe(false);
+  });
+
+  test("lastScannedAtがscanRunStartedAtより後（今回の実行の前のバッチで処理済み）ならスキップ", () => {
+    expect(isPendingForScanRun("2026-08-20T12:00:00.001Z", scanRunStartedAt)).toBe(false);
+  });
+});
 
 describe("parseSyncState", () => {
   test("key,value行をSyncStateへ変換する", () => {

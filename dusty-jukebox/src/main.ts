@@ -31,6 +31,7 @@ import { ensureIndexAndSyncTabsExist, ensureValidHeader, createSpreadsheetSetupI
 import {
   clearScanRunStartedAt,
   createSyncTabIO,
+  isPendingForScanRun,
   isValidSyncHeader,
   markInitialScanCompleted,
   prepareSyncForScan,
@@ -205,10 +206,7 @@ async function handleScan(): Promise<void> {
     // 処理するだけ）。
     setStatus("進捗を確認中...");
     const lastScannedAtByFileId = indexRowsLastScannedAt(await sheetsIO.listExistingRows());
-    const pendingEntries = entries.filter((entry) => {
-      const lastScannedAt = lastScannedAtByFileId.get(entry.file.id);
-      return !lastScannedAt || lastScannedAt < scanRunStartedAt;
-    });
+    const pendingEntries = entries.filter((entry) => isPendingForScanRun(lastScannedAtByFileId.get(entry.file.id), scanRunStartedAt));
     const alreadyDoneCount = entries.length - pendingEntries.length;
 
     // 中断・再開可能なバッチ処理（CONCEPT.md 5節）：全件をまとめて抽出・1回だけ書き込む

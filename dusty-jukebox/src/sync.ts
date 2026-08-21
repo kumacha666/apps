@@ -118,6 +118,15 @@ async function writeSyncEntries(io: SyncTabIO, rows: (string | number)[][], entr
   await io.writeRows(updates, appends);
 }
 
+// 着手順の目安5（初回スキャンのバッチ処理・中断再開）向け：あるファイルが今回のスキャン実行
+// （scanRunStartedAt）で既に処理済みかどうかを判定する。main.tsのpendingEntriesフィルタが
+// これに直書きされていたため、比較演算子の書き間違い（<を<=にする等）を検知するテストが
+// 存在しなかった（2026-08-20 /code-review指摘：AI開発ルール1、ビジネスロジックの変更には
+// ユニットテストが必要）。純粋関数として切り出し、main.tsからもテストからも同じ実装を使う。
+export function isPendingForScanRun(lastScannedAt: string | undefined, scanRunStartedAt: string): boolean {
+  return !lastScannedAt || lastScannedAt < scanRunStartedAt;
+}
+
 export interface PrepareSyncResult {
   startPageToken: string;
   // このスキャン実行のウォーターマーク（着手順の目安5）。新規実行なら今回設定した現在時刻、
