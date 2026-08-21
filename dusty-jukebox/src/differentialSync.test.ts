@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { planDifferentialSync } from "./differentialSync";
+import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
 import type { AudioFileEntry, DriveChange } from "./drive";
 import type { IndexRowScanState } from "./sheets";
 
@@ -80,10 +80,10 @@ describe("planDifferentialSync", () => {
     });
     expect(plan.needsReconcile).toBe(true);
     expect(plan.entriesToProcess.map((e) => e.file.id)).toEqual(["f-new"]);
-    expect(listSubtree).toHaveBeenCalledWith("folder1");
+    expect(listSubtree).toHaveBeenCalledWith("folder1", undefined);
   });
 
-  test("フォルダを指すショートカットの変更もサブツリー再走査の対象になる（targetIdを使う）", async () => {
+  test("フォルダを指すショートカットの変更もサブツリー再走査の対象になる（targetId・targetResourceKeyを使う）", async () => {
     const changes: DriveChange[] = [
       {
         fileId: "shortcut1",
@@ -92,7 +92,11 @@ describe("planDifferentialSync", () => {
           id: "shortcut1",
           name: "Shortcut",
           mimeType: "application/vnd.google-apps.shortcut",
-          shortcutDetails: { targetId: "realFolder", targetMimeType: "application/vnd.google-apps.folder" },
+          shortcutDetails: {
+            targetId: "realFolder",
+            targetMimeType: "application/vnd.google-apps.folder",
+            targetResourceKey: "rk-123",
+          },
         },
       },
     ];
@@ -103,7 +107,9 @@ describe("planDifferentialSync", () => {
       existingScanState: new Map(),
     });
     expect(plan.needsReconcile).toBe(true);
-    expect(listSubtree).toHaveBeenCalledWith("realFolder");
+    // リンク共有のセキュリティ更新が適用されたショートカット参照先は、targetResourceKeyを
+    // 引き継がないとfiles.listが404になる（2026-08-21 Codexレビュー指摘：P2）。
+    expect(listSubtree).toHaveBeenCalledWith("realFolder", "rk-123");
   });
 
   test("driveModifiedTimeが既存索引と一致するファイルは再抽出をスキップする（サブツリー再走査で拾った未変更ファイル）", async () => {
@@ -219,5 +225,70 @@ describe("planDifferentialSync", () => {
       existingScanState,
     });
     expect(plan.entriesToProcess.map((e) => e.file.id)).toEqual(["f1"]);
+  });
+});
+
+function shortcutChange(id: string, targetId: string, opts?: { removed?: boolean; trashed?: boolean }): DriveChange {
+  if (opts?.removed) return { fileId: id, removed: true };
+  return {
+    fileId: id,
+    removed: false,
+    file: {
+      id,
+      name: "Shortcut",
+      mimeType: "application/vnd.google-apps.shortcut",
+      trashed: opts?.trashed,
+      shortcutDetails: { targetId, targetMimeType: "application/vnd.google-apps.folder" },
+    },
+  };
+}
+
+describe("applyShortcutChangesToExtraRootFolderIds", () => {
+  test("新しく追加されたショートカット（現在rootFolderId配下）の参照先を追加する", async () => {
+    const extraRootFolderIds = new Set<string>();
+    await applyShortcutChangesToExtraRootFolderIds([shortcutChange("s1", "target1")], extraRootFolderIds, async () => true);
+    expect([...extraRootFolderIds]).toEqual(["target1"]);
+  });
+
+  test("rootFolderId配下でないショートカットの参照先は追加しない", async () => {
+    const extraRootFolderIds = new Set<string>();
+    await applyShortcutChangesToExtraRootFolderIds([shortcutChange("s1", "target1")], extraRootFolderIds, async () => false);
+    expect([...extraRootFolderIds]).toEqual([]);
+  });
+
+  test("removed=true（完全削除、file情報が無い）の場合はショートカットだったかどうか判定できないため何もしない。この場合の後始末はplanDifferentialSyncのneedsReconcile（種別不明の削除は安全側でリコンサイルを立てる）に委ねる", async () => {
+    const extraRootFolderIds = new Set<string>(["target1"]);
+    await applyShortcutChangesToExtraRootFolderIds(
+      [shortcutChange("s1", "target1", { removed: true })],
+      extraRootFolderIds,
+      async () => true
+    );
+    expect([...extraRootFolderIds]).toEqual(["target1"]);
+  });
+
+  test("ショートカットがゴミ箱へ移動された場合も参照先を除去する", async () => {
+    const extraRootFolderIds = new Set<string>(["target1"]);
+    await applyShortcutChangesToExtraRootFolderIds(
+      [shortcutChange("s1", "target1", { trashed: true })],
+      extraRootFolderIds,
+      async () => true
+    );
+    expect([...extraRootFolderIds]).toEqual([]);
+  });
+
+  test("ショートカットがrootFolderId外へ移動された場合も参照先を除去する", async () => {
+    const extraRootFolderIds = new Set<string>(["target1"]);
+    await applyShortcutChangesToExtraRootFolderIds([shortcutChange("s1", "target1")], extraRootFolderIds, async () => false);
+    expect([...extraRootFolderIds]).toEqual([]);
+  });
+
+  test("ショートカット以外の変更（フォルダ本体・音楽ファイル）は無視する", async () => {
+    const extraRootFolderIds = new Set<string>();
+    const changes: DriveChange[] = [
+      { fileId: "folder1", removed: false, file: { id: "folder1", name: "Folder", mimeType: "application/vnd.google-apps.folder" } },
+      { fileId: "f1", removed: false, file: { id: "f1", name: "a.mp3", mimeType: "audio/mpeg", parents: ["p1"] } },
+    ];
+    await applyShortcutChangesToExtraRootFolderIds(changes, extraRootFolderIds, async () => true);
+    expect([...extraRootFolderIds]).toEqual([]);
   });
 });

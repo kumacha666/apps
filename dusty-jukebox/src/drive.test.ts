@@ -282,6 +282,20 @@ describe("listAudioFilesRecursive", () => {
     expect(receivedResourceKeys).toEqual([undefined, "abc123"]);
   });
 
+  test("rootResourceKeyを渡すとルート自体へのリクエストにも引き継ぐ（2026-08-21 Codexレビュー指摘：P2、差分同期がショートカット参照先フォルダをサブツリーのルートとして再走査する際に必要）", async () => {
+    const tree: Record<string, DriveFile[]> = {
+      "protected-folder": [{ id: "song", name: "song.mp3", mimeType: "audio/mpeg" }],
+    };
+    const receivedResourceKeys: (string | undefined)[] = [];
+    const list: DriveListFn = async (folderId, _pageToken, resourceKey) => {
+      receivedResourceKeys.push(resourceKey);
+      return { files: tree[folderId] ?? [] };
+    };
+    const found = await listAudioFilesRecursive(list, "protected-folder", "", [], undefined, new Set(), "rk-root");
+    expect(found.map((e) => e.file.id)).toEqual(["song"]);
+    expect(receivedResourceKeys).toEqual(["rk-root"]);
+  });
+
   test("ensureAccessToken()のサイレント再取得失敗（AuthError）も401と同様に走査全体を中断する（2026-08-19 Codexレビュー指摘）", async () => {
     const tree = makeFakeTree();
     const list: DriveListFn = async (folderId) => {
@@ -649,10 +663,19 @@ describe("createDriveParentsGetFn", () => {
     vi.unstubAllGlobals();
   });
 
-  test("parentsを返す", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => fakeResponse(200, { parents: ["p1"] })));
+  test("parents・trashedを返す", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => fakeResponse(200, { parents: ["p1"], trashed: false })));
     const getParents = createDriveParentsGetFn(async () => "token");
-    await expect(getParents("f1")).resolves.toEqual({ parents: ["p1"] });
+    await expect(getParents("f1")).resolves.toEqual({ parents: ["p1"], trashed: false });
+  });
+
+  test("fieldsパラメータにtrashedを含める（2026-08-21 Codexレビュー指摘：P1、ゴミ箱内フォルダを到達可能と誤判定しないため）", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(200, { parents: ["p1"] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const getParents = createDriveParentsGetFn(async () => "token");
+    await getParents("f1");
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url).toContain("trashed");
   });
 
   test("404はnullを返す（対象自体が削除済み等）", async () => {
@@ -673,6 +696,16 @@ describe("isDescendantOfRoot", () => {
   function makeGetParents(tree: Record<string, string[] | undefined>): DriveParentsGetFn {
     return async (id) => (id in tree ? { parents: tree[id] } : null);
   }
+
+  test("祖先チェーンの途中にゴミ箱内フォルダがあると到達済みと判定しない（2026-08-21 Codexレビュー指摘：P1）", async () => {
+    // trashedFolderはrootへ到達する正しいparentsを持つが、trashed=trueのため
+    // 「もはやそこに無い」ものとして祖先チェーンを打ち切る必要がある。
+    const getParents: DriveParentsGetFn = async (id) => {
+      if (id === "trashedFolder") return { parents: ["root"], trashed: true };
+      return null;
+    };
+    await expect(isDescendantOfRoot(getParents, ["trashedFolder"], "root")).resolves.toBe(false);
+  });
 
   test("直接の親がrootFolderIdの場合はtrue", async () => {
     const getParents = makeGetParents({});

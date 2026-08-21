@@ -21,8 +21,11 @@ export interface DifferentialSyncDeps {
   // 到達性を含めるためextraRootFolderIdsも束縛済みのクロージャを渡す想定）。
   isDescendantOfRoot: (parentIds: string[] | undefined) => Promise<boolean>;
   // フォルダ変更イベント（リネーム・移動）を検知した際、そのフォルダの現在の配下を
-  // 再帰走査する（main.tsはdrive.tsのlistAudioFilesRecursiveを束縛して渡す）。
-  listSubtree: (folderId: string) => Promise<AudioFileEntry[]>;
+  // 再帰走査する（main.tsはdrive.tsのlistAudioFilesRecursiveを束縛して渡す）。resourceKeyは
+  // そのフォルダがリンク共有のセキュリティ更新が適用されたショートカット参照先の場合にのみ渡す
+  // （2026-08-21 Codexレビュー指摘：P2。渡さないとfiles.listが404になり、差分同期がこの
+  // フォルダ変更イベントを毎回再試行し続けてしまう）。
+  listSubtree: (folderId: string, resourceKey?: string) => Promise<AudioFileEntry[]>;
   // 既存索引のfileId→{driveModifiedTime,...}（sheets.tsのindexRowsScanStateの戻り値）。
   // 既に同じdriveModifiedTimeで索引済みのファイルは再抽出をスキップする判定に使う
   // （フォルダのサブツリー再走査は「新しく含まれるようになったファイル」を拾うためのもので、
@@ -48,9 +51,10 @@ function isFolderLikeChange(file: NonNullable<DriveChange["file"]>): boolean {
   return file.mimeType === SHORTCUT_MIME_TYPE && file.shortcutDetails?.targetMimeType === FOLDER_MIME_TYPE;
 }
 
-function folderTargetId(file: NonNullable<DriveChange["file"]>): string | undefined {
-  if (file.mimeType === FOLDER_MIME_TYPE) return file.id;
-  return file.shortcutDetails?.targetId;
+function folderTarget(file: NonNullable<DriveChange["file"]>): { id: string; resourceKey?: string } | undefined {
+  if (file.mimeType === FOLDER_MIME_TYPE) return { id: file.id };
+  if (!file.shortcutDetails?.targetId) return undefined;
+  return { id: file.shortcutDetails.targetId, resourceKey: file.shortcutDetails.targetResourceKey };
 }
 
 function needsExtraction(entry: AudioFileEntry, existingScanState: Map<string, IndexRowScanState>): boolean {
@@ -70,6 +74,41 @@ function needsExtraction(entry: AudioFileEntry, existingScanState: Map<string, I
 type FileOutcome =
   | { action: "process"; entry: AudioFileEntry; skipIfUnchanged: boolean }
   | { action: "remove" };
+
+// フルスキャンでのみ永続化されるextraRootFolderIds（sync.tsのshortcutRootFolderIds）は、
+// 差分同期中に発生したフォルダショートカットの追加・削除・移動をまだ反映していない
+// （2026-08-21 Codexレビュー指摘：P1）。これを更新しないと：
+// ①差分同期中に新しく追加されたショートカットの参照先は「追加のルート」に含まれないため、
+//   その配下をlistSubtreeでアップサートした直後にneedsReconcileが発火すると（楽曲の物理的な
+//   親は通常rootFolderIdへ到達しないため）追加した行がすべて削除されてしまう
+// ②逆にショートカットが削除・移動された場合は古い参照先が残り続け、配下だった行が
+//   リコンサイルで削除されなくなる
+// main.tsはplanDifferentialSync呼び出し前にこれを呼び、extraRootFolderIdsを直接書き換えたうえで
+// isDescendantOfRoot・reconcileIndexAgainstRootの両方に使い回し、最後にsync タブへ永続化する。
+export async function applyShortcutChangesToExtraRootFolderIds(
+  changes: DriveChange[],
+  extraRootFolderIds: Set<string>,
+  isUnderRoot: (parentIds: string[] | undefined) => Promise<boolean>
+): Promise<void> {
+  for (const change of changes) {
+    const file = change.file;
+    if (!file) continue;
+    const targetId =
+      file.mimeType === SHORTCUT_MIME_TYPE && file.shortcutDetails?.targetMimeType === FOLDER_MIME_TYPE
+        ? file.shortcutDetails.targetId
+        : undefined;
+    if (!targetId) continue;
+    if (change.removed || file.trashed) {
+      extraRootFolderIds.delete(targetId);
+      continue;
+    }
+    if (await isUnderRoot(file.parents)) {
+      extraRootFolderIds.add(targetId);
+    } else {
+      extraRootFolderIds.delete(targetId);
+    }
+  }
+}
 
 export async function planDifferentialSync(changes: DriveChange[], deps: DifferentialSyncDeps): Promise<DifferentialSyncPlan> {
   const outcomes = new Map<string, FileOutcome>();
@@ -92,8 +131,8 @@ export async function planDifferentialSync(changes: DriveChange[], deps: Differe
 
     if (isFolderLikeChange(file)) {
       needsReconcile = true;
-      const targetId = folderTargetId(file);
-      if (!targetId) continue;
+      const target = folderTarget(file);
+      if (!target) continue;
       // このフォルダが現在rootFolderId配下にある場合のみサブツリーを再走査する。changes.listは
       // Drive全体（または共有ドライブ全体）の変更を返すため、この確認をしないとrootFolderIdと
       // 無関係なフォルダの変更でも配下全体を走査・タグ抽出してしまう（2026-08-21 Codexレビュー
@@ -103,7 +142,7 @@ export async function planDifferentialSync(changes: DriveChange[], deps: Differe
       // 検出自体はリコンサイル側の役目）。
       const stillUnderRoot = await deps.isDescendantOfRoot(file.parents);
       if (!stillUnderRoot) continue;
-      const subtreeEntries = await deps.listSubtree(targetId);
+      const subtreeEntries = await deps.listSubtree(target.id, target.resourceKey);
       for (const entry of subtreeEntries) {
         outcomes.set(entry.file.id, { action: "process", entry, skipIfUnchanged: true });
       }

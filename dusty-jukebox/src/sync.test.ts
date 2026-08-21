@@ -12,7 +12,7 @@ import {
   parseSyncState,
   persistShortcutRootFolderIds,
   prepareSyncForScan,
-  resetInitialScanCompletedAt,
+  resetForFullRescan,
   SYNC_TAB_HEADER,
   type SyncTabIO,
 } from "./sync";
@@ -457,15 +457,20 @@ describe("isSyncStateCurrent", () => {
   });
 });
 
-describe("resetInitialScanCompletedAt", () => {
-  test("準備時と現在のroot/tokenが一致すればinitialScanCompletedAtを空文字列にクリアする", async () => {
+describe("resetForFullRescan", () => {
+  test("準備時と現在のroot/tokenが一致すればinitialScanCompletedAt・startPageTokenの両方を空文字列にクリアする（2026-08-21 Codexレビュー指摘：P2。startPageTokenも消さないと、拒否された同じトークンを次回also使い回してしまい再び410になる）", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
       ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"],
     ]);
-    await resetInitialScanCompletedAt(io, { rootFolderId: "root1", startPageToken: "T0" });
-    expect(io.updateCalls).toEqual([[{ rowNumber: 4, row: ["initialScanCompletedAt", ""] }]]);
+    await resetForFullRescan(io, { rootFolderId: "root1", startPageToken: "T0" });
+    expect(io.updateCalls).toEqual([
+      [
+        { rowNumber: 2, row: ["startPageToken", ""] },
+        { rowNumber: 4, row: ["initialScanCompletedAt", ""] },
+      ],
+    ]);
   });
 
   test("root/token不一致の場合は書き込まない", async () => {
@@ -474,7 +479,7 @@ describe("resetInitialScanCompletedAt", () => {
       ["rootFolderId", "root-B"],
       ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"],
     ]);
-    await resetInitialScanCompletedAt(io, { rootFolderId: "root-A", startPageToken: "T-old" });
+    await resetForFullRescan(io, { rootFolderId: "root-A", startPageToken: "T-old" });
     expect(io.updateCalls).toEqual([]);
   });
 });

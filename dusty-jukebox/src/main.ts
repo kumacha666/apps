@@ -23,7 +23,7 @@ import {
   DriveHttpError,
   type AudioFileEntry,
 } from "./drive";
-import { planDifferentialSync } from "./differentialSync";
+import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
 import {
   createSheetsIndexIO,
@@ -55,7 +55,7 @@ import {
   markInitialScanCompleted,
   persistShortcutRootFolderIds,
   prepareSyncForScan,
-  resetInitialScanCompletedAt,
+  resetForFullRescan,
   SYNC_SHEET_NAME,
   SYNC_TAB_HEADER,
   type SyncTabIO,
@@ -231,27 +231,38 @@ async function runFullScan(
   // 差分同期（changes.list）が開始トークン以降の変更しか拾わない性質上、恒久的に索引から
   // 漏れてしまう。取得失敗があった場合は完了とみなさず、次回のスキャンでの再挑戦に委ねる）。
   if (failedFolders.length === 0) {
-    // 準備時に確保したrootFolderId/startPageTokenと照合してから書く（sync.tsのmarkInitialScanCompleted
-    // 参照）。長時間のスキャン中に別デバイスがルートを切り替えていた場合、無関係になった
-    // ルートを誤って完了扱いにしないため。
-    await markInitialScanCompleted(syncIO, new Date().toISOString(), { rootFolderId: folderId, startPageToken });
+    // reconcileIndexAgainstRoot（索引全体を書き換えうる）を実行する前に、準備時に確保した
+    // rootFolderId/startPageTokenがまだ現在のsync状態と一致するかを確認する（2026-08-21
+    // Codexレビュー指摘：P1）。markInitialScanCompletedは不一致なら静かに書き込みをスキップする
+    // だけで、それを判定材料にせず後続処理を続けてしまうと、長時間のスキャン中に別デバイスが
+    // 既に新しいルートへの完了したフルスキャンを終えていた場合、この（もはや無関係な）
+    // ルート基準のリコンサイルが別デバイスの新ルートの索引行を誤って空欄化しうる
+    // （sync.tsのisSyncStateCurrent、runDifferentialSyncと同じ対策）。
+    const stillCurrent = await isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken });
+    if (stillCurrent) {
+      // 「旧ルート配下だった行の削除（リコンサイル）」（CONCEPT.md 4.3節）：新しい初回スキャンが
+      // 完了した時点の仕上げとして実行する。以前はこの呼び出しが無く、ルート変更後にフルスキャンが
+      // 成功しても旧ルート配下の行が索引に残り続けていた（2026-08-21 Codexレビュー指摘：P1）。
+      // ルート変更を伴わない（中断からの再開）フルスキャン完了時に呼んでも、全行が新ルート配下の
+      // はずなので無害（isFolderUnderRootの祖先チェーン確認コストが掛かるのみ）。
+      setStatus("フォルダ構成を確認中...");
+      const getParentsFn = createDriveParentsGetFn(() => auth.ensureAccessToken());
+      const ancestryCache = new Map<string, boolean>();
+      await reconcileIndexAgainstRoot(sheetsIO, (parentId) =>
+        isDescendantOfRoot(getParentsFn, [parentId], folderId, ancestryCache, shortcutTargetFolderIds)
+      );
 
-    // 「旧ルート配下だった行の削除（リコンサイル）」（CONCEPT.md 4.3節）：新しい初回スキャンが
-    // 完了した時点の仕上げとして実行する。以前はこの呼び出しが無く、ルート変更後にフルスキャンが
-    // 成功しても旧ルート配下の行が索引に残り続けていた（2026-08-21 Codexレビュー指摘：P1）。
-    // ルート変更を伴わない（中断からの再開）フルスキャン完了時に呼んでも、全行が新ルート配下の
-    // はずなので無害（isFolderUnderRootの祖先チェーン確認コストが掛かるのみ）。
-    setStatus("フォルダ構成を確認中...");
-    const getParentsFn = createDriveParentsGetFn(() => auth.ensureAccessToken());
-    const ancestryCache = new Map<string, boolean>();
-    await reconcileIndexAgainstRoot(sheetsIO, (parentId) =>
-      isDescendantOfRoot(getParentsFn, [parentId], folderId, ancestryCache, shortcutTargetFolderIds)
-    );
+      // 今回のフルスキャンが解決したショートカット参照先フォルダIDの集合をsyncタブへ永続化する。
+      // 前回のスキャン以降にショートカットが増減した場合も、今回発見した集合でそのまま上書きする
+      // （自己修復。持ち越さない）。
+      await persistShortcutRootFolderIds(syncIO, [...shortcutTargetFolderIds], { rootFolderId: folderId, startPageToken });
 
-    // 今回のフルスキャンが解決したショートカット参照先フォルダIDの集合をsyncタブへ永続化する。
-    // 前回のスキャン以降にショートカットが増減した場合も、今回発見した集合でそのまま上書きする
-    // （自己修復。持ち越さない）。
-    await persistShortcutRootFolderIds(syncIO, [...shortcutTargetFolderIds], { rootFolderId: folderId, startPageToken });
+      // クリーンアップ（リコンサイル・ショートカット集合の永続化）が成功してから完了を記録する
+      // （2026-08-21 Codexレビュー指摘：P2）。先に完了記録だけ書いてこの後の処理が失敗すると、
+      // 次回以降は差分同期のみに進む一方、旧ルート配下の行が残ったままになってしまう
+      // （その後フォルダ変更イベントが来ない限り、通常の差分同期ではリコンサイルが発火しないため）。
+      await markInitialScanCompleted(syncIO, new Date().toISOString(), { rootFolderId: folderId, startPageToken });
+    }
   }
 
   // 全バッチが最後まで完走した（=ここに到達した）ので、このスキャン実行のウォーターマークは
@@ -291,9 +302,9 @@ async function runDifferentialSync(
     // 保存済みのstartPageTokenが古すぎるとDrive APIは410 Goneを返す（変更履歴の保持期間切れ）。
     // このまま失敗し続けると毎回同じ箇所で止まるため、initialScanCompletedAtをクリアして
     // 次回のスキャンクリックがフルスキャンからやり直すようにする（2026-08-21 Codexレビュー
-    // 指摘：P2、sync.tsのresetInitialScanCompletedAt参照）。
+    // 指摘：P2、sync.tsのresetForFullRescan参照）。
     if (err instanceof DriveHttpError && err.status === 410) {
-      await resetInitialScanCompletedAt(syncIO, { rootFolderId: folderId, startPageToken });
+      await resetForFullRescan(syncIO, { rootFolderId: folderId, startPageToken });
       setStatus("変更履歴の保持期限切れのため、次回のスキャンはフルスキャンからやり直します。もう一度スキャンを実行してください。", true);
       return;
     }
@@ -308,17 +319,45 @@ async function runDifferentialSync(
   // ルートとして扱う（2026-08-21 Codexレビュー指摘：P1）。
   const ancestryCache = new Map<string, boolean>();
   const extraRootFolderIds = new Set(shortcutRootFolderIds);
+  const isUnderRoot = (parentIds: string[] | undefined) =>
+    isDescendantOfRoot(getParentsFn, parentIds, folderId, ancestryCache, extraRootFolderIds);
   const listFn = createDriveListFn(() => auth.ensureAccessToken());
   const failedFolders: string[] = [];
 
+  // フルスキャンでのみ永続化されるextraRootFolderIdsは、差分同期中に発生したショートカットの
+  // 追加・削除・移動をまだ反映していない。このまま使うと、今回新しく追加されたショートカット
+  // 配下のアップサート直後にreconcileIndexAgainstRootが走った場合に誤って削除されたり、
+  // 逆に削除・移動されたショートカットの配下がリコンサイルで削除されなくなる
+  // （2026-08-21 Codexレビュー指摘：P1）。planDifferentialSync呼び出し前に最新化する。
+  await applyShortcutChangesToExtraRootFolderIds(changes, extraRootFolderIds, isUnderRoot);
+
   const scanStateByFileId = indexRowsScanState(await sheetsIO.listExistingRows());
   const plan = await planDifferentialSync(changes, {
-    isDescendantOfRoot: (parentIds) => isDescendantOfRoot(getParentsFn, parentIds, folderId, ancestryCache, extraRootFolderIds),
+    isDescendantOfRoot: isUnderRoot,
     // フォルダ変更イベントで検知したサブツリーの再走査。フルスキャンより並行数を抑える
-    // （通常は少数のフォルダのみが対象のため、ここで大きく並行実行する必要は無い）。
-    listSubtree: (targetFolderId) => listAudioFilesRecursive(listFn, targetFolderId, "", failedFolders, 3),
+    // （通常は少数のフォルダのみが対象のため、ここで大きく並行実行する必要は無い）。resourceKeyは
+    // リンク共有のセキュリティ更新が適用されたショートカット参照先の解決に必要
+    // （2026-08-21 Codexレビュー指摘：P2。渡さないとfiles.listが404になり、このフォルダ変更
+    // イベントを毎回再試行し続けてしまう）。
+    listSubtree: (targetFolderId, resourceKey) => listAudioFilesRecursive(listFn, targetFolderId, "", failedFolders, 3, undefined, resourceKey),
     existingScanState: scanStateByFileId,
   });
+
+  // 破壊的・追加的な書き込み（アップサート・削除・リコンサイル）の前に、差分同期を開始した
+  // 時点のroot/tokenがまだ現在のsync状態と一致するかを再確認する（2026-08-21 Codexレビュー
+  // 指摘：P1、以前はこの確認がアップサートより後にあったため、別デバイスが既にルートを
+  // 切り替えていた場合でも旧ルートの曲を新ルートの索引へ書き込んでしまっていた）。長時間の
+  // 差分同期の実行中に別デバイスがrootFolderIdを切り替えて新しいフルスキャンを完了させていた
+  // 場合、それに気づかず処理を続けると、別デバイスが追加した新ルートの行を汚染・削除しうる
+  // （advanceStartPageTokenのTOCTOU対策はトークンの書き込みしか防げず、既に実行してしまった
+  // 索引の書き込みは取り消せないため、実行前に確認する）。Sheets APIには行単位のロックが無く
+  // 完全な排他はできないため、この確認は競合の窓を狭める緩和策であって根本解消ではない
+  // （sync.ts全体の「事前防止ではなく事後の整合」という既知の限界と同じ扱い）。
+  const stillCurrent = await isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken });
+  if (!stillCurrent) {
+    setStatus("別のデバイスがルート設定を変更したため、今回の差分同期は見送りました。次回の同期で改めて反映されます。", true);
+    return;
+  }
 
   if (plan.entriesToProcess.length > 0) {
     setStatus(`タグを抽出中...（差分 ${plan.entriesToProcess.length}件）`);
@@ -329,21 +368,6 @@ async function runDifferentialSync(
       ""
     );
     await upsertIndexRows(sheetsIO, upsertEntries);
-  }
-
-  // 破壊的な書き込み（削除・リコンサイル）の直前に、差分同期を開始した時点のroot/tokenが
-  // まだ現在のsync状態と一致するかを再確認する（2026-08-21 Codexレビュー指摘：P1）。
-  // 長時間の差分同期の実行中に別デバイスがrootFolderIdを切り替えて新しいフルスキャンを
-  // 完了させていた場合、それに気づかず削除・リコンサイルを実行すると、別デバイスが追加した
-  // 新ルートの行まで誤って削除しうる（advanceStartPageTokenのTOCTOU対策はトークンの書き込み
-  // しか防げず、既に実行してしまった索引の書き込みは取り消せないため、実行前に確認する）。
-  // Sheets APIには行単位のロックが無く完全な排他はできないため、この確認は競合の窓を
-  // 狭める緩和策であって根本解消ではない（sync.ts全体の「事前防止ではなく事後の整合」という
-  // 既知の限界と同じ扱い）。
-  const stillCurrent = await isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken });
-  if (!stillCurrent) {
-    setStatus("別のデバイスがルート設定を変更したため、今回の削除・リコンサイルは見送りました。次回の同期で改めて反映されます。", true);
-    return;
   }
 
   if (plan.removedFileIds.length > 0) {
@@ -362,10 +386,13 @@ async function runDifferentialSync(
   // 事後確認する（sheets.tsのreconcileIndexAgainstRoot参照）。
   if (plan.needsReconcile) {
     setStatus("フォルダ構成の変更を反映中...");
-    await reconcileIndexAgainstRoot(sheetsIO, (parentId) =>
-      isDescendantOfRoot(getParentsFn, [parentId], folderId, ancestryCache, extraRootFolderIds)
-    );
+    await reconcileIndexAgainstRoot(sheetsIO, (parentId) => isUnderRoot([parentId]));
   }
+
+  // 今回更新したextraRootFolderIds（フルスキャン後の永続値＋差分同期中のショートカット変更）を
+  // 永続化する。次回以降の差分同期・リコンサイルが最新の状態を使えるようにするため
+  // （2026-08-21 Codexレビュー指摘：P1）。
+  await persistShortcutRootFolderIds(syncIO, [...extraRootFolderIds], { rootFolderId: folderId, startPageToken });
 
   // フォルダ変更イベントのサブツリー再走査で子フォルダの取得に失敗した場合
   // （listAudioFilesRecursiveは例外にせずfailedFoldersへ積んで継続する）、そのサブツリー配下は

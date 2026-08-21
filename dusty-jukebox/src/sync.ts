@@ -346,12 +346,15 @@ export async function isSyncStateCurrent(io: SyncTabIO, expected: { rootFolderId
 }
 
 // changes.listが保存済みのstartPageTokenを「古すぎる」として拒否した場合（HTTP 410 Gone、
-// Drive APIの変更履歴保持期間は無制限ではない）の復旧経路（2026-08-21 Codexレビュー指摘：P2）。
-// initialScanCompletedAtをクリアすることで、次回のスキャンクリックがprepareSyncForScanの
-// 「同じルートで初期化未完了」分岐（既存のstartPageTokenは使い回すが差分同期には進まずフルスキャン
-// からやり直す）を通るようにする。markInitialScanCompleted等と同じTOCTOU対策：直前に確保した
-// root/tokenと現在のsync状態が一致する場合のみ書き込む。
-export async function resetInitialScanCompletedAt(
+// Drive APIの変更履歴保持期間は無制限ではない）の復旧経路。initialScanCompletedAtだけを
+// クリアすると、prepareSyncForScanの「同じルートで初期化未完了」分岐が拒否された同じ
+// startPageTokenを使い回してしまい、次回のフルスキャン完了直後の差分同期が再び410で
+// 失敗し続ける（2026-08-21 Codexレビュー指摘：P2、以前の実装の見落とし）。
+// startPageTokenも一緒にクリアすることで、prepareSyncForScanの「rootFolderIdは記録済みだが
+// startPageTokenが無い」フォールバック分岐（新しいstartPageTokenを取得してから
+// フルスキャンをやり直す）を通るようにする。markInitialScanCompleted等と同じTOCTOU対策：
+// 直前に確保したroot/tokenと現在のsync状態が一致する場合のみ書き込む。
+export async function resetForFullRescan(
   io: SyncTabIO,
   expected: { rootFolderId: string; startPageToken: string }
 ): Promise<void> {
@@ -360,7 +363,7 @@ export async function resetInitialScanCompletedAt(
   if (state.rootFolderId !== expected.rootFolderId || state.startPageToken !== expected.startPageToken) {
     return;
   }
-  await writeSyncEntries(io, rows, { initialScanCompletedAt: "" });
+  await writeSyncEntries(io, rows, { initialScanCompletedAt: "", startPageToken: "" });
 }
 
 // 着手順の目安4の残り（changes.list消費）：差分同期がstartPageTokenから最後まで消費し終えた後に

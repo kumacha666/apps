@@ -155,13 +155,18 @@ export class ConcurrencyLimiter {
 // 祖先チェーン確認では原理的に発見できない）。差分同期・リコンサイル（main.ts）がこの集合を
 // 「rootFolderId自体と同格の追加のルート」としてisDescendantOfRootに渡すことで、ショートカット
 // 経由で索引化された曲を誤ってrootFolderId外と判定しない（2026-08-21 Codexレビュー指摘：P1）。
+// rootResourceKey: folderId自体がリンク共有のセキュリティ更新が適用されたフォルダ（ショートカット
+// 参照先）の場合に渡す。differentialSync.tsのフォルダ変更イベント処理で、そのショートカットの
+// targetResourceKeyをそのままこの走査のルートへ引き継ぐために必要（2026-08-21 Codexレビュー
+// 指摘：P2。渡さないとfiles.listが404になり、差分同期がそのサブツリーを毎回再試行し続ける）。
 export async function listAudioFilesRecursive(
   list: DriveListFn,
   folderId: string,
   folderPath = "",
   failedFolders: string[] = [],
   maxConcurrentLists = DEFAULT_MAX_CONCURRENT_LISTS,
-  shortcutTargetFolderIds: Set<string> = new Set()
+  shortcutTargetFolderIds: Set<string> = new Set(),
+  rootResourceKey?: string
 ): Promise<AudioFileEntry[]> {
   const limiter = new ConcurrencyLimiter(maxConcurrentLists);
   const controller = new AbortController();
@@ -179,7 +184,7 @@ export async function listAudioFilesRecursive(
       limiter,
       controller,
       visited,
-      undefined,
+      rootResourceKey,
       shortcutTargetFolderIds
     );
   } finally {
@@ -535,16 +540,20 @@ export async function consumeAllChanges(
 // どうかの判定、CONCEPT.md 5節「フォルダがrootFolderIdの内外をまたいで移動した場合」・
 // 4.3節「旧ルート配下だった行の削除（リコンサイル）」の両方で使う）。fields=parentsのみの
 // 軽量なfiles.get。404（対象自体が削除済み等）はnullを返す。
-export type DriveParentsGetFn = (fileId: string) => Promise<{ parents?: string[] } | null>;
+// trashedも取得する：ゴミ箱に入れられたフォルダは通常のparentsメタデータをそのまま保持し続ける
+// （完全削除されるまでparentsは変わらない）ため、trashedを見ずに祖先チェーンを辿ると
+// ゴミ箱内のフォルダ配下の索引行を「rootFolderId配下のまま」と誤判定してしまう
+// （2026-08-21 Codexレビュー指摘：P1、folderReachesRoot参照）。
+export type DriveParentsGetFn = (fileId: string) => Promise<{ parents?: string[]; trashed?: boolean } | null>;
 
 export function createDriveParentsGetFn(getAccessToken: () => Promise<string>): DriveParentsGetFn {
   return async (fileId) => {
-    const params = new URLSearchParams({ fields: "parents", supportsAllDrives: "true" });
+    const params = new URLSearchParams({ fields: "parents,trashed", supportsAllDrives: "true" });
     const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`;
     try {
       const res = await fetchDriveApiWithRetry(url, getAccessToken);
-      const data = (await res.json()) as { parents?: string[] };
-      return { parents: data.parents };
+      const data = (await res.json()) as { parents?: string[]; trashed?: boolean };
+      return { parents: data.parents, trashed: data.trashed };
     } catch (err) {
       if (err instanceof DriveHttpError && err.status === 404) return null;
       throw err;
@@ -580,10 +589,15 @@ async function folderReachesRoot(
   visiting.add(folderId);
   let result = false;
   const meta = await getParents(folderId);
-  for (const parentId of meta?.parents ?? []) {
-    if (await folderReachesRoot(getParents, parentId, rootFolderId, cache, visiting, extraRootIds)) {
-      result = true;
-      break;
+  // ゴミ箱に入れられたフォルダは「もはやそこに無い」ものとして扱う。trashedのままでも
+  // parentsは保持され続けるため、これを見ないと祖先チェーンの途中にあるゴミ箱内フォルダを
+  // 素通りしてrootFolderIdに到達してしまう（2026-08-21 Codexレビュー指摘：P1）。
+  if (meta && !meta.trashed) {
+    for (const parentId of meta.parents ?? []) {
+      if (await folderReachesRoot(getParents, parentId, rootFolderId, cache, visiting, extraRootIds)) {
+        result = true;
+        break;
+      }
     }
   }
   visiting.delete(folderId);
