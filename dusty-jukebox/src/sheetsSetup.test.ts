@@ -4,9 +4,10 @@ import {
   ensureValidHeader,
   createSpreadsheetSetupIO,
   migrateLegacyIndexHeaderV1,
+  migrateLegacyIndexHeaderV2,
   type SpreadsheetSetupIO,
 } from "./sheetsSetup";
-import { INDEX_SHEET_HEADER, INDEX_SHEET_NAME, LEGACY_INDEX_SHEET_HEADER_V1 } from "./sheets";
+import { INDEX_SHEET_HEADER, INDEX_SHEET_NAME, LEGACY_INDEX_SHEET_HEADER_V1, LEGACY_INDEX_SHEET_HEADER_V2 } from "./sheets";
 import { SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 
 function makeFakeIO(
@@ -242,9 +243,43 @@ describe("migrateLegacyIndexHeaderV1", () => {
     expect(setupIO.headerCalls).toEqual([]);
   });
 
-  test("既に新ヘッダー（45列）の場合はfalseを返す（isValidIndexHeader側で既に有効と判定されるはずだが、念のため旧ヘッダーとは一致しないことを確認）", async () => {
+  test("既に現行ヘッダーの場合はfalseを返す（isValidIndexHeader側で既に有効と判定されるはずだが、念のため旧ヘッダーとは一致しないことを確認）", async () => {
     const setupIO = makeFakeIO([INDEX_SHEET_NAME], []);
     const migrated = await migrateLegacyIndexHeaderV1(setupIO, [...INDEX_SHEET_HEADER]);
+
+    expect(migrated).toBe(false);
+  });
+});
+
+describe("migrateLegacyIndexHeaderV2", () => {
+  test("旧45列ヘッダー（scanRunId列追加前）の場合、グリッドを拡張してから新ヘッダーを書き込みtrueを返す", async () => {
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], []);
+    const migrated = await migrateLegacyIndexHeaderV2(setupIO, [...LEGACY_INDEX_SHEET_HEADER_V2]);
+
+    expect(migrated).toBe(true);
+    expect(setupIO.expandColumnCountCalls).toEqual([{ sheetName: INDEX_SHEET_NAME, columnCount: INDEX_SHEET_HEADER.length }]);
+    expect(setupIO.headerCalls).toEqual([{ sheetName: INDEX_SHEET_NAME, header: INDEX_SHEET_HEADER }]);
+  });
+
+  test("旧45列ヘッダーと一致しない場合は何もせずfalseを返す", async () => {
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], []);
+    const migrated = await migrateLegacyIndexHeaderV2(setupIO, ["foo", "bar"]);
+
+    expect(migrated).toBe(false);
+    expect(setupIO.expandColumnCountCalls).toEqual([]);
+    expect(setupIO.headerCalls).toEqual([]);
+  });
+
+  test("旧27列ヘッダー（V1）とは一致しないためfalseを返す（V1はmigrateLegacyIndexHeaderV1が別途扱う）", async () => {
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], []);
+    const migrated = await migrateLegacyIndexHeaderV2(setupIO, [...LEGACY_INDEX_SHEET_HEADER_V1]);
+
+    expect(migrated).toBe(false);
+  });
+
+  test("既に現行ヘッダーの場合はfalseを返す", async () => {
+    const setupIO = makeFakeIO([INDEX_SHEET_NAME], []);
+    const migrated = await migrateLegacyIndexHeaderV2(setupIO, [...INDEX_SHEET_HEADER]);
 
     expect(migrated).toBe(false);
   });

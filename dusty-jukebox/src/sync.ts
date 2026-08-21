@@ -1,27 +1,36 @@
 // `sync`タブ（アプリ共有設定・同期状態）の読み書き（CONCEPT.md 4.3節）。
 // `key, value`の2列だけを持つ単純なキーバリュー表として、`startPageToken`・`rootFolderId`・
-// `initialScanCompletedAt`の3行を管理する。sheets.tsのindexタブ用upsert（fileId起点）と同じ
-// 「既存キーがあれば行を更新、無ければ追記」方針を、キー集合が固定・行数が少ない（3行）という
-// 前提のもとで実装したもの。
+// `initialScanCompletedAt`・`scanRunId`（着手順の目安5、バッチ処理・中断再開のウォーターマーク）
+// の4行を管理する。sheets.tsのindexタブ用upsert（fileId起点）と同じ「既存キーがあれば行を
+// 更新、無ければ追記」方針を、キー集合が固定・行数が少ない（4行）という前提のもとで実装したもの。
 //
 // このファイルの範囲：sync タブの読み書き基盤と、CONCEPT.md 4.3節で確定している
 // 「ルート変更時は3項目をまとめて書く」「初期化未完了中は既存トークンを使い回す」という
-// 決定ロジックまで。changes.list による実際の差分同期の消費、初回スキャンのバッチ処理・
-// 中断再開（ページ単位の進捗保存）、ルート変更後の旧ルート配下行の削除（リコンサイル）は
-// 未実装のまま残す（apps/dusty-jukebox/CLAUDE.md参照）。
+// 決定ロジック、着手順の目安5のscanRunId管理まで。changes.list による実際の差分同期の消費、
+// ルート変更後の旧ルート配下行の削除（リコンサイル）は未実装のまま残す
+// （apps/dusty-jukebox/CLAUDE.md参照）。
 
-import { columnLetter, createSheetsFetch } from "./sheets";
+import { columnLetter, createSheetsFetch, type IndexRowScanState } from "./sheets";
 
 export const SYNC_SHEET_NAME = "sync";
 export const SYNC_TAB_HEADER = ["key", "value"] as const;
 
-const SYNC_KEYS = ["startPageToken", "rootFolderId", "initialScanCompletedAt"] as const;
+const SYNC_KEYS = ["startPageToken", "rootFolderId", "initialScanCompletedAt", "scanRunId"] as const;
 export type SyncKey = (typeof SYNC_KEYS)[number];
 
 export interface SyncState {
   startPageToken?: string;
   rootFolderId?: string;
   initialScanCompletedAt?: string;
+  // 着手順の目安5（初回スキャンのバッチ処理・中断再開）向けの、進行中スキャン実行を識別する
+  // 不透明なID（時刻ではなくランダム文字列、2026-08-21 Codexレビュー指摘：P1で時刻ベースの
+  // ウォーターマークから変更。複数デバイスの時計ずれがあると時刻の大小比較では「今回の実行で
+  // 処理済みか」を誤判定しうるため）。main.tsはこの値をindexタブの各行のscanRunId列と
+  // 完全一致するかどうかで「今回の実行（過去のバッチ、または中断前のセッション）で既に
+  // 処理済みか」を判定する（sheets.tsのindexRowsScanState参照）。スキャン実行が最後まで
+  // 完了したらclearScanRunIdで空文字列に戻す（次回のスキャンクリックが新しい実行として
+  // 扱われるようにするため）。
+  scanRunId?: string;
 }
 
 // syncタブへの実際の読み書きをDIするインターフェース（drive.ts/sheets.tsと同じ方針）。
@@ -48,6 +57,14 @@ export function isValidSyncHeader(header: (string | number)[]): boolean {
 // （writeSyncEntriesでrootFolderId変更時にstartPageToken/initialScanCompletedAtを
 // 空文字列で「クリア」する際、読み取り側もそれをundefined相当として扱う必要があるため）。
 //
+// 同じキーの行が複数存在する場合、最後（シート上で最も下）の行を常に採用する（空文字列の
+// 「クリア」行を含む）。2026-08-21 Codexレビュー指摘（P1）：以前は空文字列の行を
+// 読み飛ばしていたため、「同じキーの行がまだ無い状態で2台のデバイスがほぼ同時に初回作成した
+// 重複行」をclearScanRunId等が後から空文字列で更新しても、より上にある古い非空の重複行が
+// 生き残ってしまい、クリアされたはずのウォーターマークが復活し続けていた（writeSyncEntriesの
+// rowNumberByKeyも同じ「最後の行を採用」規則で該当行を特定するため、こう変更しても
+// 書き込み先と整合する）。同じ理由でキーのみ空の行（空行等）はスキップする。
+//
 // SYNC_KEYSに対してswitch+default: neverで網羅性を保証する（AI開発ルール4）。以前はif/else if
 // チェーンで個々のキー名をハードコードしており、SYNC_KEYSに新しいキーを追加してもコンパイル
 // エラーにならず、この関数だけ更新を忘れてもビルドが通ってしまっていた（2026-08-20 /code-review
@@ -56,14 +73,15 @@ export function parseSyncState(rows: (string | number)[][]): SyncState {
   const byKey = new Map<string, string>();
   for (const row of rows) {
     const key = String(row[0] ?? "");
+    if (!key) continue;
     const value = row[1] !== undefined && row[1] !== null ? String(row[1]) : "";
-    if (key && value) byKey.set(key, value);
+    byKey.set(key, value); // 空文字列でも常に上書きする（tombstone、上記コメント参照）
   }
 
   const state: SyncState = {};
   for (const key of SYNC_KEYS) {
     const value = byKey.get(key);
-    if (value === undefined) continue;
+    if (!value) continue; // 未設定・空文字列（クリア済み）はどちらもundefined相当として扱う
     switch (key) {
       case "startPageToken":
         state.startPageToken = value;
@@ -73,6 +91,9 @@ export function parseSyncState(rows: (string | number)[][]): SyncState {
         break;
       case "initialScanCompletedAt":
         state.initialScanCompletedAt = value;
+        break;
+      case "scanRunId":
+        state.scanRunId = value;
         break;
       default: {
         const _exhaustive: never = key;
@@ -108,50 +129,121 @@ async function writeSyncEntries(io: SyncTabIO, rows: (string | number)[][], entr
   await io.writeRows(updates, appends);
 }
 
-export interface PrepareSyncResult {
-  startPageToken: string;
+// 着手順の目安5（初回スキャンのバッチ処理・中断再開）向け：あるファイルが今回のスキャン実行
+// （scanRunId）で既に処理済みかどうかを判定する。main.tsのpendingEntriesフィルタが
+// これに直書きされていたため、比較演算子の書き間違い（<を<=にする等）を検知するテストが
+// 存在しなかった（2026-08-20 /code-review指摘：AI開発ルール1、ビジネスロジックの変更には
+// ユニットテストが必要）。純粋関数として切り出し、main.tsからもテストからも同じ実装を使う。
+//
+// 2026-08-21、Codexレビュー指摘で判定方式を変更：
+// - P1: 既存行のscanRunIdが現在のscanRunIdと完全一致する場合のみ「処理済み」とする（時刻の
+//   大小比較はしない）。旧実装（lastScannedAt<scanRunStartedAtの時刻比較）は複数デバイスの
+//   時計ずれで誤判定しうる：時計が進んだ端末が書いたlastScannedAtは、時計が遅い端末が新規
+//   発行したウォーターマークより後に見えてしまい、実際には未処理のファイルを処理済みと
+//   誤認してスキップしてしまう（逆方向のずれでは再開のたびに無駄な再処理が起こる）。
+//   不透明なランダムID同士の完全一致であれば、端末間の時計のずれに影響されない。
+// - P2: scanRunIdが一致していても、そのファイルのDrive側driveModifiedTimeが既存行の
+//   記録値と異なる場合（＝あるバッチの書き込み後、残りのスキャンが中断している間にDrive上で
+//   そのファイルが更新された場合）は、ウォーターマークに関わらず再処理対象に戻す。
+export function isPendingForScanRun(existing: IndexRowScanState | undefined, currentScanRunId: string, currentDriveModifiedTime: string): boolean {
+  if (!existing) return true;
+  if (existing.scanRunId !== currentScanRunId) return true;
+  return existing.driveModifiedTime !== currentDriveModifiedTime;
 }
 
-// スキャン開始前に呼ぶ。CONCEPT.md 4.3節の3つのルールを実装する：
+export interface PrepareSyncResult {
+  startPageToken: string;
+  // このスキャン実行を識別する不透明なID（着手順の目安5）。新規実行なら今回発行した
+  // ランダムID、前回の実行が完走せず中断していた場合はその実行のIDを再利用する。
+  scanRunId: string;
+}
+
+function defaultNewRunId(): string {
+  return crypto.randomUUID();
+}
+
+// スキャン開始前に呼ぶ。CONCEPT.md 4.3節の3つのルールに加え、着手順の目安5（バッチ処理・
+// 中断再開）のためのscanRunId管理を実装する：
 // 1. rootFolderIdが変わった（または未設定）場合：新しいstartPageTokenを取得し、
-//    rootFolderId・startPageToken・initialScanCompletedAtのクリアを1回にまとめて書く
+//    rootFolderId・startPageToken・initialScanCompletedAtのクリア・新しいscanRunIdを
+//    1回にまとめて書く（ルートが変わった以上、以前の実行の処理済みウォーターマークは無関係）
 // 2. 同じrootFolderIdでinitialScanCompletedAtが無い（初期化未完了）場合：新規取得せず
 //    既存のstartPageTokenを使い回す（複数デバイスが初期化未完了中に別々のトークンを
 //    取得し直すと、取得し直された側との間で変更が記録されず漏れるため）
 // 3. 同じrootFolderIdでinitialScanCompletedAtがある場合：引き続き既存のstartPageTokenを使う
 //    （changes.listによる実際の差分同期の消費は未実装のため、本PR時点ではこの分岐でも
 //    main.ts は従来通りフルスキャンを行う。次PR以降、差分同期を実装する際にこの値を使う）
+// 2・3のどちらでも、scanRunIdが既に設定されていれば（前回の実行が完走せず中断していた
+// ことを意味する）そのまま再利用し、無ければ新しいIDを新規実行として書き込む。
 //
 // 「旧ルート配下だった行の削除（リコンサイル）」はCONCEPT.md 4.3節が新規初回スキャン完了時の
 // 仕上げとして定義しているが、本PRでは未実装（apps/dusty-jukebox/CLAUDE.md参照）。
 export async function prepareSyncForScan(
   io: SyncTabIO,
   getNewStartPageToken: () => Promise<string>,
-  requestedRootFolderId: string
+  requestedRootFolderId: string,
+  newRunId: () => string = defaultNewRunId
 ): Promise<PrepareSyncResult> {
   const rows = await io.readAllRows();
   const state = parseSyncState(rows);
 
   if (state.rootFolderId !== requestedRootFolderId) {
     const newToken = await getNewStartPageToken();
+    const scanRunId = newRunId();
     await writeSyncEntries(io, rows, {
       rootFolderId: requestedRootFolderId,
       startPageToken: newToken,
       initialScanCompletedAt: "",
+      scanRunId,
     });
-    return { startPageToken: newToken };
+    return { startPageToken: newToken, scanRunId };
   }
 
   if (state.startPageToken) {
-    return { startPageToken: state.startPageToken };
+    if (state.scanRunId) {
+      return { startPageToken: state.startPageToken, scanRunId: state.scanRunId };
+    }
+    const scanRunId = newRunId();
+    await writeSyncEntries(io, rows, { scanRunId });
+    return { startPageToken: state.startPageToken, scanRunId };
   }
 
   // rootFolderIdは記録済みだがstartPageTokenが無い異常系（書き込み途中の中断等）への
   // フォールバック。通常はrootFolderId書き込みと同時にstartPageTokenも書かれるため
   // 起こらないはずだが、安全のため新規取得して補う。
   const newToken = await getNewStartPageToken();
-  await writeSyncEntries(io, rows, { startPageToken: newToken });
-  return { startPageToken: newToken };
+  const scanRunId = state.scanRunId || newRunId();
+  await writeSyncEntries(io, rows, { startPageToken: newToken, scanRunId });
+  return { startPageToken: newToken, scanRunId };
+}
+
+// 1回のスキャン実行（全バッチ）が最後まで完走した後にmain.tsから呼ぶ。scanRunIdを
+// クリアすることで、次回のスキャンクリックを新しい実行として扱う（＝新しいウォーターマークで
+// 全ファイルを対象にする）。markInitialScanCompletedと同様、直前に現在のsync状態と照合し
+// 一致する場合のみ書き込む（長時間のスキャン中に別デバイスがルートを切り替えていた場合、
+// この実行とは無関係になったウォーターマークを誤ってクリアしないため）。
+//
+// expected.scanRunIdも照合する（2026-08-20 Codexレビュー指摘：P2）。rootFolderId・
+// startPageTokenだけの一致では、同じルート・同じトークンのまま別デバイスが新しい実行を
+// 開始し新しいscanRunIdを書き込んでいた場合（ルート変更を伴わないため両方とも
+// 変わらない）を区別できず、この呼び出しが誤ってその新しい実行のウォーターマークを
+// クリアしてしまう。その新しい実行が完走前に中断すると、次回は実行IDを再利用できず
+// 中断・再開の効果が失われる（本アプリの明記された挙動）ため、このスキャン実行が確保した
+// scanRunId自体と現在値が一致する場合のみクリアする。
+export async function clearScanRunId(
+  io: SyncTabIO,
+  expected: { rootFolderId: string; startPageToken: string; scanRunId: string }
+): Promise<void> {
+  const rows = await io.readAllRows();
+  const state = parseSyncState(rows);
+  if (
+    state.rootFolderId !== expected.rootFolderId ||
+    state.startPageToken !== expected.startPageToken ||
+    state.scanRunId !== expected.scanRunId
+  ) {
+    return;
+  }
+  await writeSyncEntries(io, rows, { scanRunId: "" });
 }
 
 // 初回スキャン（ページングによる一覧構築＋その後のchanges.list再生、CONCEPT.md 5節）が

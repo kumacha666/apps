@@ -159,7 +159,12 @@ const MAX_CONCURRENT_EXTRACTIONS = 4;
 export async function extractAndBuildIndexEntries(
   entries: AudioFileEntry[],
   createFetchRangeForFile: (fileId: string, signal: AbortSignal) => FetchRangeFn,
-  onProgress: (done: number, total: number) => void
+  onProgress: (done: number, total: number) => void,
+  // 着手順の目安5（バッチ処理・中断再開）向け：このバッチを処理しているスキャン実行のID
+  // （sync.tsのscanRunId）。indexタブのscanRunId列にそのまま書き込み、main.tsの
+  // isPendingForScanRunが次回スキャン時の再処理要否判定に使う（2026-08-21 Codexレビュー
+  // 指摘：P1、時刻ベースのウォーターマークだと複数デバイスの時計ずれで誤判定しうるため）。
+  scanRunId: string
 ): Promise<UpsertIndexEntry[]> {
   const limiter = new ConcurrencyLimiter(MAX_CONCURRENT_EXTRACTIONS);
   const controller = new AbortController();
@@ -205,6 +210,7 @@ export async function extractAndBuildIndexEntries(
           lastScannedAtIso,
           tags: effectiveTags,
           extractionFailed,
+          scanRunId,
         });
         return { fileId: file.id, row };
       })

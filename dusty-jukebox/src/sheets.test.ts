@@ -2,11 +2,14 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   buildIndexRow,
   createSheetsIndexIO,
+  indexRowsScanState,
   INDEX_SHEET_HEADER,
   INDEX_SHEET_NAME,
   isLegacyIndexHeaderV1,
+  isLegacyIndexHeaderV2,
   isValidIndexHeader,
   LEGACY_INDEX_SHEET_HEADER_V1,
+  LEGACY_INDEX_SHEET_HEADER_V2,
   mergeDuplicateIndexRows,
   upsertIndexRows,
   type SheetsIndexIO,
@@ -103,6 +106,35 @@ describe("buildIndexRow", () => {
     const byName = Object.fromEntries(INDEX_SHEET_HEADER.map((name, i) => [name, row[i]]));
     expect(byName.extractionFailed).toBe("TRUE");
     expect(byName.title).toBe("");
+  });
+
+  test("scanRunIdを指定した場合、対応する列に書き込む（着手順の目安5、2026-08-21追加）", () => {
+    const row = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-20T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-20T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+      scanRunId: "run-abc",
+    });
+    const byName = Object.fromEntries(INDEX_SHEET_HEADER.map((name, i) => [name, row[i]]));
+    expect(byName.scanRunId).toBe("run-abc");
+  });
+
+  test("scanRunIdを省略した場合は空欄で作成する", () => {
+    const row = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-20T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-20T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const byName = Object.fromEntries(INDEX_SHEET_HEADER.map((name, i) => [name, row[i]]));
+    expect(byName.scanRunId).toBe("");
   });
 });
 
@@ -290,6 +322,93 @@ describe("upsertIndexRows", () => {
     ]);
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([[rowF1, rowF2]]);
+  });
+
+  test("existingRowsSnapshotを渡した場合、listExistingRowsを呼ばずそのスナップショットを使う（着手順の目安5：バッチ処理での全件読み取り回避）", async () => {
+    const existingF1 = buildIndexRow({
+      fileId: "f1",
+      fileName: "old.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    let listCalled = false;
+    const io: SheetsIndexIO = {
+      async listExistingRows() {
+        listCalled = true;
+        return [];
+      },
+      async readHeaderRow() {
+        return [...INDEX_SHEET_HEADER];
+      },
+      updateRows: vi.fn(async () => {}),
+      appendRows: vi.fn(async () => {}),
+    };
+    const newF1 = buildIndexRow({
+      fileId: "f1",
+      fileName: "updated.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-20T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-20T00:00:00.000Z",
+      tags: { title: "Updated Title" },
+      extractionFailed: false,
+    });
+
+    await upsertIndexRows(io, [{ fileId: "f1", row: newF1 }], [existingF1]);
+
+    expect(listCalled).toBe(false);
+    expect(io.updateRows).toHaveBeenCalledWith([{ rowNumber: 2, row: newF1 }]);
+  });
+});
+
+describe("indexRowsScanState", () => {
+  test("fileId→{scanRunId, driveModifiedTime}のMapを作る", () => {
+    const rowF1 = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-20T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-20T09:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+      scanRunId: "run-1",
+    });
+    const rowF2 = buildIndexRow({
+      fileId: "f2",
+      fileName: "b.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-19T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-19T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+      scanRunId: "run-2",
+    });
+    const map = indexRowsScanState([rowF1, rowF2]);
+    expect(map.get("f1")).toEqual({ scanRunId: "run-1", driveModifiedTime: "2026-08-20T00:00:00.000Z" });
+    expect(map.get("f2")).toEqual({ scanRunId: "run-2", driveModifiedTime: "2026-08-19T00:00:00.000Z" });
+    expect(map.has("f3")).toBe(false);
+  });
+
+  test("scanRunIdを指定しない場合は空文字列として記録される（既定値）", () => {
+    const row = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-20T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-20T09:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const map = indexRowsScanState([row]);
+    expect(map.get("f1")).toEqual({ scanRunId: "", driveModifiedTime: "2026-08-20T00:00:00.000Z" });
+  });
+
+  test("fileIdが空の行は無視する（重複行マージで空欄化された行等）", () => {
+    const blank = new Array(INDEX_SHEET_HEADER.length).fill("");
+    const map = indexRowsScanState([blank]);
+    expect(map.size).toBe(0);
   });
 });
 
@@ -565,12 +684,30 @@ describe("isLegacyIndexHeaderV1", () => {
     expect(isLegacyIndexHeaderV1([...LEGACY_INDEX_SHEET_HEADER_V1])).toBe(true);
   });
 
-  test("現行の45列ヘッダーはfalse（旧ヘッダーではない）", () => {
+  test("現行ヘッダーはfalse（旧ヘッダーではない）", () => {
     expect(isLegacyIndexHeaderV1([...INDEX_SHEET_HEADER])).toBe(false);
   });
 
   test("無関係なヘッダーはfalse", () => {
     expect(isLegacyIndexHeaderV1(["foo", "bar"])).toBe(false);
+  });
+});
+
+describe("isLegacyIndexHeaderV2", () => {
+  test("2026-08-21のscanRunId列追加より前の旧45列ヘッダーと完全一致する場合はtrue", () => {
+    expect(isLegacyIndexHeaderV2([...LEGACY_INDEX_SHEET_HEADER_V2])).toBe(true);
+  });
+
+  test("現行ヘッダーはfalse（旧ヘッダーではない）", () => {
+    expect(isLegacyIndexHeaderV2([...INDEX_SHEET_HEADER])).toBe(false);
+  });
+
+  test("旧27列ヘッダー（V1）はfalse（V1はmigrateLegacyIndexHeaderV1が別途扱う）", () => {
+    expect(isLegacyIndexHeaderV2([...LEGACY_INDEX_SHEET_HEADER_V1])).toBe(false);
+  });
+
+  test("無関係なヘッダーはfalse", () => {
+    expect(isLegacyIndexHeaderV2(["foo", "bar"])).toBe(false);
   });
 });
 
