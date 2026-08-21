@@ -129,6 +129,7 @@ const TAG_COLUMN_INDEXES = new Set(
 const EXTRACTION_FAILED_INDEX = INDEX_SHEET_HEADER.indexOf("extractionFailed");
 const LAST_SCANNED_AT_INDEX = INDEX_SHEET_HEADER.indexOf("lastScannedAt");
 const FILE_ID_INDEX = INDEX_SHEET_HEADER.indexOf("fileId");
+const PARENT_ID_INDEX = INDEX_SHEET_HEADER.indexOf("parentId");
 const DRIVE_MODIFIED_TIME_INDEX = INDEX_SHEET_HEADER.indexOf("driveModifiedTime");
 const SCAN_RUN_ID_INDEX = INDEX_SHEET_HEADER.indexOf("scanRunId");
 
@@ -521,6 +522,99 @@ export async function mergeDuplicateIndexRows(io: SheetsIndexIO): Promise<MergeD
   }
   if (updates.length > 0) await io.updateRows(updates);
   return { mergedGroups, rowsCleared };
+}
+
+export interface RemoveIndexRowsResult {
+  removedCount: number;
+}
+
+// 着手順の目安4の残り（changes.list消費、differentialSync.ts）：Driveから削除・ゴミ箱に
+// 入れられたファイルのfileIdを指定して索引行を除去する。mergeDuplicateIndexRowsと同じ理由
+// （Sheets APIに行削除用のnumeric sheetIdを保持していないDI設計）で、削除ではなく全列空欄化で
+// 代替する（空欄行のfileIdは空のため以降のlistExistingRows()ベースの処理からは無視される）。
+// 空欄化対象が多い場合（ルート変更直後・大量の一括削除等）、1回のvalues:batchUpdateに
+// まとめず一定件数ごとに分割して呼ぶ（2026-08-21 Codexレビュー指摘：P2。既知の「大規模
+// batchUpdateの分割は未実装」という制約に、reconcileIndexAgainstRootに続きremoveIndexRowsの
+// 経路でも抵触しうる：同一同期区間で大量の音源が個別に削除・ゴミ箱移動・ルート外移動された
+// 場合、removedFileIdsに対応する全行が1回のリクエストに入り、リクエストサイズ・処理時間の
+// 上限で失敗しうる）。main.tsのフルスキャンと同じBATCH_SIZE（200）を踏襲する。
+const WRITE_BATCH_SIZE = 200;
+
+async function updateRowsInBatches(io: SheetsIndexIO, updates: { rowNumber: number; row: (string | number)[] }[]): Promise<void> {
+  for (let i = 0; i < updates.length; i += WRITE_BATCH_SIZE) {
+    await io.updateRows(updates.slice(i, i + WRITE_BATCH_SIZE));
+  }
+}
+
+export async function removeIndexRows(io: SheetsIndexIO, fileIds: string[]): Promise<RemoveIndexRowsResult> {
+  if (fileIds.length === 0) return { removedCount: 0 };
+  const targets = new Set(fileIds);
+  const rows = await io.listExistingRows();
+  const blankRow = new Array(INDEX_SHEET_HEADER.length).fill("") as (string | number)[];
+  const updates: { rowNumber: number; row: (string | number)[] }[] = [];
+  rows.forEach((row, i) => {
+    const fileId = row[FILE_ID_INDEX];
+    if (fileId && targets.has(String(fileId))) updates.push({ rowNumber: i + 2, row: blankRow });
+  });
+  await updateRowsInBatches(io, updates);
+  return { removedCount: updates.length };
+}
+
+export interface ReconcileIndexResult {
+  removedCount: number;
+}
+
+// 旧ルート配下だった行の削除（リコンサイル、CONCEPT.md 4.3節）。rootFolderId変更後の新しい
+// 初回スキャン完了時の仕上げとして実行する想定だが、差分同期中にフォルダの変更イベントを
+// 検知した場合の安全網としても使う（differentialSync.ts参照。フォルダがrootFolderIdの外へ
+// 移動したケースは、そのフォルダ自体の変更イベントだけでは配下ファイル1件1件の変更を
+// 検知できないため、リコンサイルによる事後の整合に委ねる、CONCEPT.md 5節）。
+//
+// indexタブ全行のparentIdについて、現在のrootFolderIdの祖先チェーンに到達するかどうかを
+// isFolderUnderRootで判定し、到達しない行を削除（空欄化）する。distinctなparentId（≒フォルダ数）
+// ごとに1回だけ判定する（10235件規模でも実際のフォルダ数は行数よりずっと少ないため、
+// isFolderUnderRoot呼び出し回数を抑えられる）。
+//
+// knownFileIds（省略可）：直近のフルスキャンで実際に発見できたfileIdの完全な集合を渡すと、
+// parentIdの祖先チェーンが到達可能でも、この集合に含まれない行はあわせて空欄化する
+// （2026-08-21 Codexレビュー指摘：P2）。changes.listの保持期間切れ（410 Gone）からの復旧で
+// 新しいstartPageTokenを取得しフルスキャンをやり直す場合、410で失われた期間中に削除・
+// ゴミ箱移動・対象外拡張子へのリネームがあったファイルは、新しいフルスキャンの一覧
+// （listAudioFilesRecursiveの結果）には現れない一方、その親フォルダ自体は変わらずrootFolderId
+// 配下にあり続けるため、parentId基準の判定だけでは「まだ到達可能」と誤判定され続け、以後の
+// 差分同期も（新トークンが410欠落期間より後のため）その削除イベントを二度と取得できず、
+// 恒久的に残ってしまう。差分同期由来のリコンサイル（フォルダ変更イベントの安全網としての
+// 呼び出し）ではこの引数を渡さない：フォルダ変更イベントに反応した限定的な再走査であり、
+// 「今回見つからなかった＝全体から見て存在しない」という前提が成立しないため
+// （knownFileIdsを渡してよいのは、対象フォルダ配下を完全に再列挙したフルスキャンの後のみ）。
+export async function reconcileIndexAgainstRoot(
+  io: SheetsIndexIO,
+  isFolderUnderRoot: (parentId: string) => Promise<boolean>,
+  knownFileIds?: Set<string>
+): Promise<ReconcileIndexResult> {
+  const rows = await io.listExistingRows();
+  const distinctParentIds = new Set<string>();
+  rows.forEach((row) => {
+    if (!row[FILE_ID_INDEX]) return;
+    distinctParentIds.add(String(row[PARENT_ID_INDEX] ?? ""));
+  });
+
+  const reachable = new Map<string, boolean>();
+  for (const parentId of distinctParentIds) {
+    reachable.set(parentId, parentId ? await isFolderUnderRoot(parentId) : false);
+  }
+
+  const blankRow = new Array(INDEX_SHEET_HEADER.length).fill("") as (string | number)[];
+  const updates: { rowNumber: number; row: (string | number)[] }[] = [];
+  rows.forEach((row, i) => {
+    const fileId = row[FILE_ID_INDEX];
+    if (!fileId) return;
+    const parentId = String(row[PARENT_ID_INDEX] ?? "");
+    const stillKnown = !knownFileIds || knownFileIds.has(String(fileId));
+    if (!reachable.get(parentId) || !stillKnown) updates.push({ rowNumber: i + 2, row: blankRow });
+  });
+  await updateRowsInBatches(io, updates);
+  return { removedCount: updates.length };
 }
 
 // SheetsIndexIOの実実装。ensureAccessTokenで取得したアクセストークンをAuthorizationヘッダーに載せる。

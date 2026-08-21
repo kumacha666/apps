@@ -23,6 +23,9 @@ export interface DriveFile {
   // ショートカットは、参照先を単独のIDだけでは解決できず、後続のDrive APIリクエストに
   // このresource keyを添える必要がある（2026-08-19 Codexレビュー指摘）
   shortcutDetails?: { targetId?: string; targetMimeType?: string; targetResourceKey?: string };
+  // changes.listのfile(...)にのみ含める。files.list/files.get(通常の走査)では要求していないため
+  // 常にundefinedのまま（trashed=falseのファイルはfiles.listのクエリ自体が除外するため不要）。
+  trashed?: boolean;
 }
 
 export interface DriveListPage {
@@ -67,8 +70,10 @@ export function isAuthError(err: unknown): boolean {
 // （2026-08-19 Codexレビュー指摘）。呼び出し元には伝播させない（failedFoldersにも積まない）。
 class ScanAbortedError extends Error {}
 
-const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
-const SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut";
+// 着手順の目安4の残り（changes.list消費、differentialSync.ts）でもフォルダ/ショートカット
+// 判定に使うためexportする。
+export const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
+export const SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut";
 
 // フォルダIDそのものの存在・種別・アクセス権を確認する。files.list（'<folderId>' in parents）は
 // folderId自体を検証せず、存在しない/権限が無いIDに対しても単に空の子一覧（200応答）を返しうるため、
@@ -143,12 +148,25 @@ export class ConcurrencyLimiter {
 // 走査を続けさせない（2026-08-19 Codexレビュー指摘）。JS版のfetchにsignalを渡す形の
 // 厳密な中断ではなく、キュー未消化のタスクを対象にした協調的な打ち切りである点に注意
 // （既にHTTPリクエストが発行済みのタスクまでは止められない。実装の詳細はdrive.test.ts参照）。
+// shortcutTargetFolderIds: 走査中に解決した「フォルダを指すショートカット」の参照先フォルダID
+// を集める出力用引数（failedFoldersと同じ、呼び出し元が渡した配列/Setを変更する方式）。
+// 参照先フォルダは自身の実体としての親チェーンをどれだけ遡ってもrootFolderIdに到達しない
+// （ショートカットは通常のparents関係を作らないため、drive.tsのisDescendantOfRootが前提とする
+// 祖先チェーン確認では原理的に発見できない）。差分同期・リコンサイル（main.ts）がこの集合を
+// 「rootFolderId自体と同格の追加のルート」としてisDescendantOfRootに渡すことで、ショートカット
+// 経由で索引化された曲を誤ってrootFolderId外と判定しない（2026-08-21 Codexレビュー指摘：P1）。
+// rootResourceKey: folderId自体がリンク共有のセキュリティ更新が適用されたフォルダ（ショートカット
+// 参照先）の場合に渡す。differentialSync.tsのフォルダ変更イベント処理で、そのショートカットの
+// targetResourceKeyをそのままこの走査のルートへ引き継ぐために必要（2026-08-21 Codexレビュー
+// 指摘：P2。渡さないとfiles.listが404になり、差分同期がそのサブツリーを毎回再試行し続ける）。
 export async function listAudioFilesRecursive(
   list: DriveListFn,
   folderId: string,
   folderPath = "",
   failedFolders: string[] = [],
-  maxConcurrentLists = DEFAULT_MAX_CONCURRENT_LISTS
+  maxConcurrentLists = DEFAULT_MAX_CONCURRENT_LISTS,
+  shortcutTargetFolderIds: Set<string> = new Set(),
+  rootResourceKey?: string
 ): Promise<AudioFileEntry[]> {
   const limiter = new ConcurrencyLimiter(maxConcurrentLists);
   const controller = new AbortController();
@@ -166,7 +184,8 @@ export async function listAudioFilesRecursive(
       limiter,
       controller,
       visited,
-      undefined
+      rootResourceKey,
+      shortcutTargetFolderIds
     );
   } finally {
     // 正常終了時は既に全タスクが完了しているため実質no-opだが、想定外の経路で
@@ -184,7 +203,8 @@ async function listAudioFilesRecursiveInternal(
   limiter: ConcurrencyLimiter,
   controller: AbortController,
   visited: Set<string>,
-  resourceKey: string | undefined
+  resourceKey: string | undefined,
+  shortcutTargetFolderIds: Set<string>
 ): Promise<AudioFileEntry[]> {
   let children: DriveFile[];
   try {
@@ -224,6 +244,7 @@ async function listAudioFilesRecursiveInternal(
       // 404になる。targetResourceKeyを取得し、参照先フォルダへの一覧要求に引き継ぐ
       // （2026-08-19 Codexレビュー指摘）
       targetResourceKey = file.shortcutDetails.targetResourceKey;
+      shortcutTargetFolderIds.add(targetFolderId);
     } else if (isAudioFile(file.name)) {
       results.push({ file, folderPath });
       continue;
@@ -242,7 +263,8 @@ async function listAudioFilesRecursiveInternal(
           limiter,
           controller,
           visited,
-          targetResourceKey
+          targetResourceKey,
+          shortcutTargetFolderIds
         )
       );
     }
@@ -446,6 +468,182 @@ async function fetchRangeWithBodyRetry(
     }
   }
   throw lastError ?? new Error("unreachable");
+}
+
+// 着手順の目安4の残り（changes.list消費）: 初回スキャン完了後の差分同期。
+// 1件のchanges.listエントリ。removed=trueは「Driveから完全に削除された」ことを示し、
+// この場合fileは含まれない。trashed（ゴミ箱）はremoved=falseのままfile.trashed=trueで通知される
+// （Drive APIの仕様）。本アプリはどちらも「もはや索引対象ではない」として同じ扱いにする
+// （differentialSync.ts参照）。
+export interface DriveChange {
+  fileId: string;
+  removed: boolean;
+  file?: DriveFile;
+}
+
+export interface ChangesListPage {
+  changes: DriveChange[];
+  nextPageToken?: string;
+  // 最終ページ（nextPageTokenが無い）にのみ含まれる、次回の差分同期の開始点。
+  newStartPageToken?: string;
+}
+
+export type ChangesListFn = (pageToken: string) => Promise<ChangesListPage>;
+
+// changes.list APIの実実装。createGetStartPageTokenFnと同じ理由でdriveId（共有ドライブ配下の
+// ルートの場合）を指定する：省略するとマイドライブのユーザー変更ログがスコープになり、
+// 共有ドライブ配下の変更を取りこぼす。
+export function createChangesListFn(getAccessToken: () => Promise<string>, driveId?: string): ChangesListFn {
+  return async (pageToken) => {
+    const params = new URLSearchParams({
+      pageToken,
+      fields:
+        "nextPageToken, newStartPageToken, changes(fileId, removed, file(id, name, mimeType, size, modifiedTime, parents, trashed, shortcutDetails))",
+      pageSize: "1000",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+    });
+    if (driveId) params.set("driveId", driveId);
+    const url = `https://www.googleapis.com/drive/v3/changes?${params.toString()}`;
+    const res = await fetchDriveApiWithRetry(url, getAccessToken);
+    const data = (await res.json()) as { changes?: DriveChange[]; nextPageToken?: string; newStartPageToken?: string };
+    return { changes: data.changes ?? [], nextPageToken: data.nextPageToken, newStartPageToken: data.newStartPageToken };
+  };
+}
+
+// startPageTokenから最後（newStartPageTokenが得られるページ）まで全ページを消費し、
+// 全変更を1つの配列にまとめて返す。CONCEPT.md 3.4節規模のライブラリでも、通常のスキャン間隔
+// （アプリを開くたび）で蓄積する変更件数はフルスキャン（10235件）よりずっと少ない前提のため、
+// フルスキャンのようなバッチ処理・中断再開は設けない（差分同期自体が長時間化するライブラリ規模
+// になった場合は別途検討）。
+export async function consumeAllChanges(
+  listChanges: ChangesListFn,
+  startPageToken: string
+): Promise<{ changes: DriveChange[]; newStartPageToken: string }> {
+  let pageToken = startPageToken;
+  const allChanges: DriveChange[] = [];
+  for (;;) {
+    const page = await listChanges(pageToken);
+    allChanges.push(...page.changes);
+    if (page.nextPageToken) {
+      pageToken = page.nextPageToken;
+      continue;
+    }
+    if (!page.newStartPageToken) {
+      throw new Error("changes.list応答にnewStartPageTokenが含まれていません（最終ページのはずですが取得できませんでした）");
+    }
+    return { changes: allChanges, newStartPageToken: page.newStartPageToken };
+  }
+}
+
+// フォルダの祖先チェーン確認（changes.listで通知されたファイル/フォルダがrootFolderId配下か
+// どうかの判定、CONCEPT.md 5節「フォルダがrootFolderIdの内外をまたいで移動した場合」・
+// 4.3節「旧ルート配下だった行の削除（リコンサイル）」の両方で使う）。fields=parentsのみの
+// 軽量なfiles.get。404（対象自体が削除済み等）はnullを返す。
+// trashedも取得する：ゴミ箱に入れられたフォルダは通常のparentsメタデータをそのまま保持し続ける
+// （完全削除されるまでparentsは変わらない）ため、trashedを見ずに祖先チェーンを辿ると
+// ゴミ箱内のフォルダ配下の索引行を「rootFolderId配下のまま」と誤判定してしまう
+// （2026-08-21 Codexレビュー指摘：P1、folderReachesRoot参照）。
+export type DriveParentsGetFn = (fileId: string) => Promise<{ parents?: string[]; trashed?: boolean } | null>;
+
+export function createDriveParentsGetFn(getAccessToken: () => Promise<string>): DriveParentsGetFn {
+  return async (fileId) => {
+    const params = new URLSearchParams({ fields: "parents,trashed", supportsAllDrives: "true" });
+    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`;
+    try {
+      const res = await fetchDriveApiWithRetry(url, getAccessToken);
+      const data = (await res.json()) as { parents?: string[]; trashed?: boolean };
+      return { parents: data.parents, trashed: data.trashed };
+    } catch (err) {
+      if (err instanceof DriveHttpError && err.status === 404) return null;
+      throw err;
+    }
+  };
+}
+
+// folderIdからrootFolderIdへの祖先チェーンをfiles.get(fields=parents)で1階層ずつ遡って
+// 確認する。結果はcacheにフォルダID単位でメモ化する（indexタブの行数よりdistinctな
+// parentId（≒フォルダ数）はずっと少ないため、reconcileIndexAgainstRootでの呼び出しに対して
+// 効果が大きい）。visitingは1回の呼び出し内の循環参照ガード（通常の親子関係では循環は
+// 起きないが、フォルダショートカットは任意のフォルダを指しうるため安全のため設ける）。
+//
+// extraRootIds: rootFolderId自体に加えて「到達済み」とみなす追加のフォルダID集合
+// （listAudioFilesRecursiveのshortcutTargetFolderIds、main.tsがsync タブに永続化したものを
+// 渡す）。フォルダショートカットの参照先は、Drive上の通常のparents関係を作らない
+// （ショートカットは参照先フォルダに対して「親」ではない）ため、この祖先チェーン確認だけでは
+// ショートカット経由でrootFolderId配下に見える曲を原理的に発見できない（2026-08-21 Codex
+// レビュー指摘：P1。以前の実装ではショートカット経由で索引化された曲が、差分同期・
+// リコンサイルの初回実行で誤って「rootFolderId外」と判定され削除されてしまっていた）。
+//
+// **既知の限界（2026-08-21 さらにCodexレビュー指摘：P1、対応は見送り）**：extraRootIdsは
+// フォルダIDのみのSetで、そのショートカット参照先がリンク共有のセキュリティ更新の対象で
+// あった場合に必要なresourceKeyを保持しない。そのため、下記でextraRootIds一致時に行う
+// trashed確認のためのgetParents呼び出しがresourceKeyを渡せず、resource key保護された
+// ショートカット参照先フォルダでは404になり「到達不可」と誤判定されうる（listAudioFilesRecursive
+// によるフルスキャン時の走査自体はresourceKeyを正しく引き継いでいるため、フルスキャンでの
+// 索引化自体は成功する。誤判定の影響が及ぶのはその後のtrashed確認を伴う祖先チェーン確認
+// ＝差分同期・リコンサイルの経路のみ）。正しく解決するにはextraRootIdsをid単体のSetから
+// `Map<string, string | undefined>`（フォルダID→resourceKey）へ拡張し、sync タブの
+// 永続化フォーマット・関連する複数の呼び出し元シグネチャを変更する必要がある。resource key
+// 保護されたショートカット参照先という状況自体が既存のCLAUDE.mdの「見送った2件」（ルート
+// フォルダ自体がresource key保護・ショートカットの場合は未対応）と同種の稀なケースのため、
+// 次PR以降の対応とする。
+async function folderReachesRoot(
+  getParents: DriveParentsGetFn,
+  folderId: string,
+  rootFolderId: string,
+  cache: Map<string, boolean>,
+  visiting: Set<string>,
+  extraRootIds: Set<string>
+): Promise<boolean> {
+  // rootFolderId自体だけは即座にtrueを返す（ルート自身のゴミ箱状態はスキャン開始前の
+  // validateRootFolderの検証範囲外・既知の限界として別途扱う）。extraRootIds（ショートカット
+  // 参照先）はrootFolderIdと違い、差分同期中にゴミ箱へ移動されうる実在のフォルダのため、
+  // 一致するだけで即trueにはせず、下のtrashed確認を必ず通す（2026-08-21 Codexレビュー
+  // 指摘：P1。以前はここで早期returnしていたため、ショートカット参照先自体がゴミ箱へ
+  // 移動された場合でもtrashedを確認せず到達済み扱いのままになっていた）。
+  if (folderId === rootFolderId) return true;
+  const cached = cache.get(folderId);
+  if (cached !== undefined) return cached;
+  if (visiting.has(folderId)) return false;
+  visiting.add(folderId);
+  let result = false;
+  const meta = await getParents(folderId);
+  // ゴミ箱に入れられたフォルダは「もはやそこに無い」ものとして扱う。trashedのままでも
+  // parentsは保持され続けるため、これを見ないと祖先チェーンの途中にあるゴミ箱内フォルダを
+  // 素通りしてrootFolderIdに到達してしまう（2026-08-21 Codexレビュー指摘：P1）。
+  if (meta && !meta.trashed) {
+    if (extraRootIds.has(folderId)) {
+      result = true;
+    } else {
+      for (const parentId of meta.parents ?? []) {
+        if (await folderReachesRoot(getParents, parentId, rootFolderId, cache, visiting, extraRootIds)) {
+          result = true;
+          break;
+        }
+      }
+    }
+  }
+  visiting.delete(folderId);
+  cache.set(folderId, result);
+  return result;
+}
+
+// ファイル（またはフォルダ）の直接の親ID群のいずれかがrootFolderIdの祖先チェーンに到達するかを
+// 判定する。cacheを呼び出し元（main.ts）が使い回すことで、同じスキャン・同期の中で同じ
+// フォルダIDへの重複した祖先チェーン確認を避けられる。extraRootIdsは上記folderReachesRoot参照
+// （ショートカット経由の到達性を補うための追加ルート集合、省略時は空集合＝従来通りの挙動）。
+export async function isDescendantOfRoot(
+  getParents: DriveParentsGetFn,
+  candidateParentIds: string[] | undefined,
+  rootFolderId: string,
+  cache: Map<string, boolean> = new Map(),
+  extraRootIds: Set<string> = new Set()
+): Promise<boolean> {
+  for (const parentId of candidateParentIds ?? []) {
+    if (await folderReachesRoot(getParents, parentId, rootFolderId, cache, new Set(), extraRootIds)) return true;
+  }
+  return false;
 }
 
 export function createDriveFetchRange(
