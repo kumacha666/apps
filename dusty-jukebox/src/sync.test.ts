@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
-  clearScanRunStartedAt,
+  clearScanRunId,
   createSyncTabIO,
   isPendingForScanRun,
   isValidSyncHeader,
@@ -10,9 +10,10 @@ import {
   SYNC_TAB_HEADER,
   type SyncTabIO,
 } from "./sync";
+import type { IndexRowScanState } from "./sheets";
 
-const FIXED_NOW = "2026-08-20T12:00:00.000Z";
-const fixedNowIso = () => FIXED_NOW;
+const FIXED_RUN_ID = "run-fixed-0001";
+const fixedRunId = () => FIXED_RUN_ID;
 
 function makeFakeIO(
   existingRows: (string | number)[][]
@@ -43,26 +44,34 @@ function makeFakeIO(
 }
 
 describe("isPendingForScanRun", () => {
-  const scanRunStartedAt = "2026-08-20T12:00:00.000Z";
+  const currentScanRunId = "run-current";
+  const currentModifiedTime = "2026-08-20T00:00:00.000Z";
+  const existing = (scanRunId: string, driveModifiedTime: string): IndexRowScanState => ({ scanRunId, driveModifiedTime });
 
-  test("lastScannedAtが未設定（初回スキャン対象）なら処理対象", () => {
-    expect(isPendingForScanRun(undefined, scanRunStartedAt)).toBe(true);
+  test("既存行が無い（初回スキャン対象）なら処理対象", () => {
+    expect(isPendingForScanRun(undefined, currentScanRunId, currentModifiedTime)).toBe(true);
   });
 
-  test("lastScannedAtが空文字列（既存行だが未走査扱い）でも処理対象", () => {
-    expect(isPendingForScanRun("", scanRunStartedAt)).toBe(true);
+  test("既存行のscanRunIdが今回のscanRunIdと異なる（別の実行、または未処理）なら処理対象", () => {
+    expect(isPendingForScanRun(existing("run-other", currentModifiedTime), currentScanRunId, currentModifiedTime)).toBe(true);
   });
 
-  test("lastScannedAtがscanRunStartedAtより前（今回の実行では未処理）なら処理対象", () => {
-    expect(isPendingForScanRun("2026-08-20T11:59:59.999Z", scanRunStartedAt)).toBe(true);
+  test("既存行のscanRunIdが空文字列（旧スキーマからの移行直後等）なら処理対象", () => {
+    expect(isPendingForScanRun(existing("", currentModifiedTime), currentScanRunId, currentModifiedTime)).toBe(true);
   });
 
-  test("lastScannedAtがscanRunStartedAtと同時刻（今回の実行で処理済み扱い）ならスキップ", () => {
-    expect(isPendingForScanRun(scanRunStartedAt, scanRunStartedAt)).toBe(false);
+  test("scanRunIdが一致し、driveModifiedTimeも一致すれば処理済みとしてスキップ", () => {
+    expect(isPendingForScanRun(existing(currentScanRunId, currentModifiedTime), currentScanRunId, currentModifiedTime)).toBe(false);
   });
 
-  test("lastScannedAtがscanRunStartedAtより後（今回の実行の前のバッチで処理済み）ならスキップ", () => {
-    expect(isPendingForScanRun("2026-08-20T12:00:00.001Z", scanRunStartedAt)).toBe(false);
+  test("scanRunIdが一致していても、driveModifiedTimeが異なる（中断中にDrive側で更新された）場合は処理対象に戻す（2026-08-21 Codexレビュー指摘：P2）", () => {
+    const changedModifiedTime = "2026-08-20T01:00:00.000Z";
+    expect(isPendingForScanRun(existing(currentScanRunId, currentModifiedTime), currentScanRunId, changedModifiedTime)).toBe(true);
+  });
+
+  test("scanRunIdは時刻の大小ではなく完全一致で判定する（クロックスキュー耐性、2026-08-21 Codexレビュー指摘：P1）", () => {
+    // 辞書順で「後」に見えるIDでも、完全一致しなければ処理対象のまま
+    expect(isPendingForScanRun(existing("run-zzz-later", currentModifiedTime), "run-aaa-earlier", currentModifiedTime)).toBe(true);
   });
 });
 
@@ -72,13 +81,13 @@ describe("parseSyncState", () => {
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
       ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"],
-      ["scanRunStartedAt", "2026-08-20T09:00:00.000Z"],
+      ["scanRunId", "run-1"],
     ]);
     expect(state).toEqual({
       startPageToken: "T0",
       rootFolderId: "root1",
       initialScanCompletedAt: "2026-08-20T00:00:00.000Z",
-      scanRunStartedAt: "2026-08-20T09:00:00.000Z",
+      scanRunId: "run-1",
     });
   });
 
@@ -103,78 +112,98 @@ describe("parseSyncState", () => {
   test("行が無い場合は全て未設定", () => {
     expect(parseSyncState([])).toEqual({});
   });
+
+  test("同じキーの重複行が存在する場合、最後（シート上で最も下）の行の値を採用する（空文字列のtombstoneを含む、2026-08-21 Codexレビュー指摘：P1）", () => {
+    // 2台のデバイスがscanRunIdの行がまだ無い状態でほぼ同時に初回作成すると重複行ができうる。
+    // その後clearScanRunIdが「最後の行」を空文字列に更新しても、以前は空文字列の行を
+    // 読み飛ばしていたため、より上にある古い非空の重複行が復活してしまっていた。
+    const state = parseSyncState([
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-stale-duplicate"],
+      ["scanRunId", ""], // clearScanRunIdが更新した、最後（＝現在値）の行
+    ]);
+    expect(state.scanRunId).toBeUndefined();
+  });
+
+  test("同じキーの重複行で最後が非空なら、その値を現在値として採用する", () => {
+    const state = parseSyncState([
+      ["scanRunId", "run-old"],
+      ["scanRunId", "run-new"],
+    ]);
+    expect(state.scanRunId).toBe("run-new");
+  });
 });
 
 describe("prepareSyncForScan", () => {
-  test("初回（sync タブが空）はrootFolderIdが無いため新規トークンを取得し、4項目（scanRunStartedAt含む）をまとめて書く", async () => {
+  test("初回（sync タブが空）はrootFolderIdが無いため新規トークンを取得し、4項目（scanRunId含む）をまとめて書く", async () => {
     const io = makeFakeIO([]);
     const getNewToken = vi.fn(async () => "T-new");
 
-    const result = await prepareSyncForScan(io, getNewToken, "root1", fixedNowIso);
+    const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-new", scanRunStartedAt: FIXED_NOW });
+    expect(result).toEqual({ startPageToken: "T-new", scanRunId: FIXED_RUN_ID });
     expect(getNewToken).toHaveBeenCalledTimes(1);
     expect(io.appendCalls).toEqual([
       [
         ["startPageToken", "T-new"],
         ["rootFolderId", "root1"],
         ["initialScanCompletedAt", ""],
-        ["scanRunStartedAt", FIXED_NOW],
+        ["scanRunId", FIXED_RUN_ID],
       ],
     ]);
     expect(io.updateCalls).toEqual([]);
   });
 
-  test("ルートフォルダIDが変わった場合、新規トークンを取得しrootFolderId/startPageToken/initialScanCompletedAtクリア・新しいscanRunStartedAtを1回でまとめて書く（CONCEPT.md 4.3節・着手順の目安5）", async () => {
+  test("ルートフォルダIDが変わった場合、新規トークンを取得しrootFolderId/startPageToken/initialScanCompletedAtクリア・新しいscanRunIdを1回でまとめて書く（CONCEPT.md 4.3節・着手順の目安5）", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T-old"],
       ["rootFolderId", "root-old"],
       ["initialScanCompletedAt", "2026-08-19T00:00:00.000Z"],
-      ["scanRunStartedAt", "2026-08-19T00:00:00.000Z"],
+      ["scanRunId", "run-old"],
     ]);
     const getNewToken = vi.fn(async () => "T-new");
 
-    const result = await prepareSyncForScan(io, getNewToken, "root-new", fixedNowIso);
+    const result = await prepareSyncForScan(io, getNewToken, "root-new", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-new", scanRunStartedAt: FIXED_NOW });
+    expect(result).toEqual({ startPageToken: "T-new", scanRunId: FIXED_RUN_ID });
     expect(getNewToken).toHaveBeenCalledTimes(1);
     expect(io.updateCalls).toEqual([
       [
         { rowNumber: 2, row: ["startPageToken", "T-new"] },
         { rowNumber: 3, row: ["rootFolderId", "root-new"] },
         { rowNumber: 4, row: ["initialScanCompletedAt", ""] },
-        { rowNumber: 5, row: ["scanRunStartedAt", FIXED_NOW] },
+        { rowNumber: 5, row: ["scanRunId", FIXED_RUN_ID] },
       ],
     ]);
     expect(io.appendCalls).toEqual([]);
   });
 
-  test("同じルートで初期化未完了（initialScanCompletedAt無し）の場合、既存のstartPageTokenを使い回し新規取得しない（4.3節：複数デバイスの取得し直し競合を避けるため）。scanRunStartedAtが無ければ新規に書く", async () => {
+  test("同じルートで初期化未完了（initialScanCompletedAt無し）の場合、既存のstartPageTokenを使い回し新規取得しない（4.3節：複数デバイスの取得し直し競合を避けるため）。scanRunIdが無ければ新規に書く", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T-existing"],
       ["rootFolderId", "root1"],
     ]);
     const getNewToken = vi.fn(async () => "T-should-not-be-used");
 
-    const result = await prepareSyncForScan(io, getNewToken, "root1", fixedNowIso);
+    const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-existing", scanRunStartedAt: FIXED_NOW });
+    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: FIXED_RUN_ID });
     expect(getNewToken).not.toHaveBeenCalled();
     expect(io.updateCalls).toEqual([]);
-    expect(io.appendCalls).toEqual([[["scanRunStartedAt", FIXED_NOW]]]);
+    expect(io.appendCalls).toEqual([[["scanRunId", FIXED_RUN_ID]]]);
   });
 
-  test("同じルートでscanRunStartedAtが既に設定済み（前回の実行が中断していた）場合はそのまま再利用し、書き込まない（着手順の目安5：中断・再開のウォーターマーク）", async () => {
+  test("同じルートでscanRunIdが既に設定済み（前回の実行が中断していた）場合はそのまま再利用し、書き込まない（着手順の目安5：中断・再開のウォーターマーク）", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T-existing"],
       ["rootFolderId", "root1"],
-      ["scanRunStartedAt", "2026-08-19T09:00:00.000Z"],
+      ["scanRunId", "run-in-progress"],
     ]);
     const getNewToken = vi.fn(async () => "T-should-not-be-used");
 
-    const result = await prepareSyncForScan(io, getNewToken, "root1", fixedNowIso);
+    const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-existing", scanRunStartedAt: "2026-08-19T09:00:00.000Z" });
+    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: "run-in-progress" });
     expect(getNewToken).not.toHaveBeenCalled();
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
@@ -185,72 +214,82 @@ describe("prepareSyncForScan", () => {
       ["startPageToken", "T-existing"],
       ["rootFolderId", "root1"],
       ["initialScanCompletedAt", "2026-08-19T00:00:00.000Z"],
-      ["scanRunStartedAt", "2026-08-19T09:00:00.000Z"],
+      ["scanRunId", "run-in-progress"],
     ]);
     const getNewToken = vi.fn(async () => "T-should-not-be-used");
 
-    const result = await prepareSyncForScan(io, getNewToken, "root1", fixedNowIso);
+    const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-existing", scanRunStartedAt: "2026-08-19T09:00:00.000Z" });
+    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: "run-in-progress" });
     expect(getNewToken).not.toHaveBeenCalled();
   });
 
-  test("rootFolderIdは記録済みだがstartPageTokenが無い異常系では新規取得して補う（scanRunStartedAtも併せて設定する）", async () => {
+  test("rootFolderIdは記録済みだがstartPageTokenが無い異常系では新規取得して補う（scanRunIdも併せて設定する）", async () => {
     const io = makeFakeIO([["rootFolderId", "root1"]]);
     const getNewToken = vi.fn(async () => "T-recovered");
 
-    const result = await prepareSyncForScan(io, getNewToken, "root1", fixedNowIso);
+    const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-recovered", scanRunStartedAt: FIXED_NOW });
+    expect(result).toEqual({ startPageToken: "T-recovered", scanRunId: FIXED_RUN_ID });
     expect(getNewToken).toHaveBeenCalledTimes(1);
     expect(io.appendCalls).toEqual([
       [
         ["startPageToken", "T-recovered"],
-        ["scanRunStartedAt", FIXED_NOW],
+        ["scanRunId", FIXED_RUN_ID],
       ],
     ]);
   });
+
+  test("newRunIdを省略した場合はcrypto.randomUUID()相当の実装がデフォルトで使われる", async () => {
+    const io = makeFakeIO([]);
+    const getNewToken = vi.fn(async () => "T-new");
+
+    const result = await prepareSyncForScan(io, getNewToken, "root1");
+
+    expect(typeof result.scanRunId).toBe("string");
+    expect(result.scanRunId.length).toBeGreaterThan(0);
+  });
 });
 
-describe("clearScanRunStartedAt", () => {
-  test("準備時と現在のroot/token/scanRunStartedAtが一致すれば空文字列で書き込む", async () => {
+describe("clearScanRunId", () => {
+  test("準備時と現在のroot/token/scanRunIdが一致すれば空文字列で書き込む", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
-      ["scanRunStartedAt", "2026-08-20T09:00:00.000Z"],
+      ["scanRunId", "run-1"],
     ]);
-    await clearScanRunStartedAt(io, { rootFolderId: "root1", startPageToken: "T0", scanRunStartedAt: "2026-08-20T09:00:00.000Z" });
-    expect(io.updateCalls).toEqual([[{ rowNumber: 4, row: ["scanRunStartedAt", ""] }]]);
+    await clearScanRunId(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-1" });
+    expect(io.updateCalls).toEqual([[{ rowNumber: 4, row: ["scanRunId", ""] }]]);
   });
 
   test("root/tokenが不一致の場合は書き込まない（他デバイスが別実行に切り替え済み）", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T-new"],
       ["rootFolderId", "root-B"],
-      ["scanRunStartedAt", "2026-08-20T09:00:00.000Z"],
+      ["scanRunId", "run-1"],
     ]);
-    await clearScanRunStartedAt(io, { rootFolderId: "root-A", startPageToken: "T-old", scanRunStartedAt: "2026-08-20T09:00:00.000Z" });
+    await clearScanRunId(io, { rootFolderId: "root-A", startPageToken: "T-old", scanRunId: "run-1" });
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
   });
 
-  test("root/tokenは一致するがscanRunStartedAtが異なる場合は書き込まない（2026-08-20 Codexレビュー指摘：P2。同じルート・トークンのまま別デバイスが新しい実行を開始していた場合、その新しいウォーターマークを誤ってクリアしないため）", async () => {
+  test("root/tokenは一致するがscanRunIdが異なる場合は書き込まない（2026-08-20 Codexレビュー指摘：P2。同じルート・トークンのまま別デバイスが新しい実行を開始していた場合、その新しいウォーターマークを誤ってクリアしないため）", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
-      ["scanRunStartedAt", "2026-08-20T10:00:00.000Z"], // 別デバイスが新しい実行を開始済み
+      ["scanRunId", "run-2"], // 別デバイスが新しい実行を開始済み
     ]);
-    await clearScanRunStartedAt(io, { rootFolderId: "root1", startPageToken: "T0", scanRunStartedAt: "2026-08-20T09:00:00.000Z" });
+    await clearScanRunId(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-1" });
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
   });
 
-  test("scanRunStartedAtが既に未設定なら何もしない", async () => {
+  test("scanRunIdが既に未設定なら何もしない", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
     ]);
-    await clearScanRunStartedAt(io, { rootFolderId: "root1", startPageToken: "T0", scanRunStartedAt: "2026-08-20T09:00:00.000Z" });
+    await clearScanRunId(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-1" });
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
   });

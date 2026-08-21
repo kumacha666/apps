@@ -66,6 +66,13 @@ export const INDEX_SHEET_HEADER = [
   "vocalGender_hasConflict",
   "providerNote_conflictCandidate",
   "providerNote_hasConflict",
+  // 2026-08-21追加（着手順の目安5、Codexレビュー指摘：P1）。複数デバイスの時計ずれがあると
+  // lastScannedAtとscanRunStartedAtの大小比較では「今回の実行で処理済みか」を誤判定しうる
+  // （時計が進んだ端末のlastScannedAtが、時計が遅い端末が新規発行したウォーターマークより
+  // 後に見えてしまう等）。ウォーターマークを時刻ではなく不透明な実行ID（sync.tsのscanRunId、
+  // ランダム文字列）にし、この列に「そのファイルを最後に処理したスキャン実行のID」を記録して
+  // 完全一致でのみ「今回の実行で処理済み」と判定する（main.tsのpendingEntries参照）。
+  "scanRunId",
 ] as const;
 
 // mergeDuplicateIndexRowsが対象にする_override列のベース名（列名から末尾"_override"を除いたもの）。
@@ -102,7 +109,18 @@ const CONFLICT_META_COLUMN_INDEXES = new Set(
 // タグ抽出に失敗した場合（5節：巨大ファイルのタイムアウト等）、これらの列は新しい行の
 // 空値で上書きせず既存行の値を保持する（2026-08-20 Codexレビュー指摘：失敗するたびに
 // 一度正常に索引化できていたタイトル・アーティスト等が消えてしまっていた）。
-const NON_TAG_COLUMN_NAMES = new Set(["fileId", "extension", "parentId", "driveModifiedTime", "lastScannedAt", "extractionFailed"]);
+// scanRunIdもlastScannedAtと同じ扱い：タグの抽出成否に関わらず「このスキャン実行で
+// このファイルを処理した」という事実を記録する識別子のため、抽出失敗時も既存値を保持せず
+// 常に今回の値で上書きする。
+const NON_TAG_COLUMN_NAMES = new Set([
+  "fileId",
+  "extension",
+  "parentId",
+  "driveModifiedTime",
+  "lastScannedAt",
+  "extractionFailed",
+  "scanRunId",
+]);
 const TAG_COLUMN_INDEXES = new Set(
   INDEX_SHEET_HEADER.map((name, i) =>
     !OVERRIDE_COLUMN_INDEXES.has(i) && !CONFLICT_META_COLUMN_INDEXES.has(i) && !NON_TAG_COLUMN_NAMES.has(name) ? i : -1
@@ -111,6 +129,8 @@ const TAG_COLUMN_INDEXES = new Set(
 const EXTRACTION_FAILED_INDEX = INDEX_SHEET_HEADER.indexOf("extractionFailed");
 const LAST_SCANNED_AT_INDEX = INDEX_SHEET_HEADER.indexOf("lastScannedAt");
 const FILE_ID_INDEX = INDEX_SHEET_HEADER.indexOf("fileId");
+const DRIVE_MODIFIED_TIME_INDEX = INDEX_SHEET_HEADER.indexOf("driveModifiedTime");
+const SCAN_RUN_ID_INDEX = INDEX_SHEET_HEADER.indexOf("scanRunId");
 
 // 抽出タグとfileId起点upsertに必要な最小限の入力。_override列は4.2節の方針通り、
 // スキャナは絶対に書き込まない（新規行では空欄のまま作成する）。文字化け自動修復（4.4節）・
@@ -137,6 +157,11 @@ export interface BuildIndexRowArgs {
   lastScannedAtIso: string;
   tags: IndexTagsLike | null | undefined;
   extractionFailed: boolean;
+  // このファイルを処理したスキャン実行のID（sync.tsのscanRunId）。省略時は空欄のまま
+  // 記録する：この列を導入する前のテスト・呼び出し（scanRunIdの判定と無関係な観点を
+  // 検証しているもの）を書き換えずに済ませるための既定値であり、main.tsの実際の呼び出しは
+  // 必ず指定する。
+  scanRunId?: string;
 }
 
 export function buildIndexRow({
@@ -147,6 +172,7 @@ export function buildIndexRow({
   lastScannedAtIso,
   tags,
   extractionFailed,
+  scanRunId = "",
 }: BuildIndexRowArgs): (string | number)[] {
   const title = tags?.title ?? "";
   const artist = tags?.artist ?? "";
@@ -194,6 +220,7 @@ export function buildIndexRow({
     // 2026-08-20追加：競合候補・競合フラグ列（mergeDuplicateIndexRows専用）。通常のスキャンは
     // 常に「競合なし」として新規行を作成する（これらの列を埋めるのはmergeDuplicateIndexRowsのみ）。
     ...OVERRIDE_FIELD_NAMES.flatMap(() => ["", "FALSE"]),
+    scanRunId, // 2026-08-21追加：このファイルを処理したスキャン実行のID
   ];
 }
 
@@ -251,23 +278,48 @@ export function isLegacyIndexHeaderV1(header: (string | number)[]): boolean {
   );
 }
 
+// 2026-08-21追加のscanRunId列（1列）より前の、旧バージョンのindexタブヘッダー（45列）。
+// LEGACY_INDEX_SHEET_HEADER_V1と同じ理由：この列を追加する前から使っていた既存ユーザーの
+// indexタブがisValidIndexHeaderで弾かれ続けないよう、sheetsSetup.tsのmigrateLegacyIndexHeaderV2
+// がこの旧ヘッダーを検出してグリッド拡張＋ヘッダー書き換えのマイグレーションを行う。
+export const LEGACY_INDEX_SHEET_HEADER_V2 = INDEX_SHEET_HEADER.slice(0, INDEX_SHEET_HEADER.length - 1);
+
+export function isLegacyIndexHeaderV2(header: (string | number)[]): boolean {
+  return (
+    header.length === LEGACY_INDEX_SHEET_HEADER_V2.length && header.every((v, i) => v === LEGACY_INDEX_SHEET_HEADER_V2[i])
+  );
+}
+
 export interface UpsertIndexEntry {
   fileId: string;
   row: (string | number)[];
 }
 
+export interface IndexRowScanState {
+  scanRunId: string;
+  driveModifiedTime: string;
+}
+
 // 着手順の目安5（初回スキャンのバッチ処理・中断再開）向け：indexタブの既存行スナップショットから
-// fileId→lastScannedAtの対応を作る。main.tsが「今回のスキャン開始（sync.tsのscanRunStartedAt）
-// より後にlastScannedAtされたfileIdは、このスキャン実行の以前のバッチ（または中断前のセッション）
-// で既に処理済み」と判定してスキップするために使う。列インデックス（FILE_ID_INDEX/
-// LAST_SCANNED_AT_INDEX）はこのファイル内に閉じた実装詳細のため、main.ts側に漏らさずここで
-// 変換関数として提供する。
-export function indexRowsLastScannedAt(rows: (string | number)[][]): Map<string, string> {
-  const map = new Map<string, string>();
+// fileId→{scanRunId, driveModifiedTime}の対応を作る。main.tsはこれを使い、「今回のスキャン実行
+// （sync.tsのscanRunId）で既にこのfileIdを処理済み、かつDrive側のdriveModifiedTimeも前回処理時
+// から変わっていない」場合だけスキップする（着手順の目安5、2026-08-21 Codexレビュー指摘で
+// lastScannedAtの時刻比較から変更）：
+// - 時刻比較（旧lastScannedAt vs scanRunStartedAt）は複数デバイスの時計ずれで誤判定しうる
+//   （P1）。scanRunIdは時刻に依存しない不透明な識別子のため、完全一致でのみ判定する。
+// - scanRunIdが一致していても、そのファイルが中断中にDrive側で更新されていた場合
+//   （driveModifiedTimeが変わっている）は、ウォーターマークに関わらず再処理対象に戻す（P2）。
+// 列インデックス（FILE_ID_INDEX等）はこのファイル内に閉じた実装詳細のため、main.ts側に
+// 漏らさずここで変換関数として提供する。
+export function indexRowsScanState(rows: (string | number)[][]): Map<string, IndexRowScanState> {
+  const map = new Map<string, IndexRowScanState>();
   for (const row of rows) {
     const fileId = row[FILE_ID_INDEX];
     if (!fileId) continue;
-    map.set(String(fileId), String(row[LAST_SCANNED_AT_INDEX] ?? ""));
+    map.set(String(fileId), {
+      scanRunId: String(row[SCAN_RUN_ID_INDEX] ?? ""),
+      driveModifiedTime: String(row[DRIVE_MODIFIED_TIME_INDEX] ?? ""),
+    });
   }
   return map;
 }

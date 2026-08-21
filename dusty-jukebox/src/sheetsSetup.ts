@@ -17,7 +17,7 @@
 // `ensureValidHeader`（下記）が、`main.ts`側のヘッダー検証が実際に失敗した場合にのみ行う
 // フォールバックとして引き受ける。定常状態のスキャンでは一切呼ばれない。
 
-import { columnLetter, createSheetsFetch, INDEX_SHEET_HEADER, INDEX_SHEET_NAME, isLegacyIndexHeaderV1 } from "./sheets";
+import { columnLetter, createSheetsFetch, INDEX_SHEET_HEADER, INDEX_SHEET_NAME, isLegacyIndexHeaderV1, isLegacyIndexHeaderV2 } from "./sheets";
 import { SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 
 // スプレッドシートのタブ一覧確認・タブ追加・ヘッダー行書き込みをDIするインターフェース
@@ -123,6 +123,20 @@ export async function ensureValidHeader(
 // 「競合なし」の初期値と同じ意味で扱うため、読み取り側の解釈に影響しない。
 export async function migrateLegacyIndexHeaderV1(setupIO: SpreadsheetSetupIO, header: (string | number)[]): Promise<boolean> {
   if (!isLegacyIndexHeaderV1(header)) return false;
+  await setupIO.expandColumnCount(INDEX_SHEET_NAME, INDEX_SHEET_HEADER.length);
+  await setupIO.writeHeaderRow(INDEX_SHEET_NAME, INDEX_SHEET_HEADER);
+  return true;
+}
+
+// 2026-08-21追加のscanRunId列（1列、着手順の目安5のバッチ再開判定をクロックスキュー耐性の
+// ある実行IDベースへ変更したことに伴う追加、Codexレビュー指摘P1）より前の、旧バージョン
+// （45列、2026-08-20の重複行マージ実装時点のスキーマ）のindexタブヘッダーを検出し、
+// migrateLegacyIndexHeaderV1と同じ方針でグリッド拡張＋新ヘッダー書き込みを行う。
+// 既存のデータ行には一切触れない：新設したscanRunId列は空欄のままだが、main.tsの
+// pending判定は「空欄 !== 現在のscanRunId」として扱うため、既存行は次回スキャンで
+// 通常通り再処理対象になる（読み取り側の解釈に影響しない）。
+export async function migrateLegacyIndexHeaderV2(setupIO: SpreadsheetSetupIO, header: (string | number)[]): Promise<boolean> {
+  if (!isLegacyIndexHeaderV2(header)) return false;
   await setupIO.expandColumnCount(INDEX_SHEET_NAME, INDEX_SHEET_HEADER.length);
   await setupIO.writeHeaderRow(INDEX_SHEET_NAME, INDEX_SHEET_HEADER);
   return true;

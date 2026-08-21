@@ -191,7 +191,7 @@ describe("extractAndBuildIndexEntries", () => {
       };
     };
 
-    await expect(extractAndBuildIndexEntries(entries, createFetchRangeForFile, () => {})).rejects.toBe(authError);
+    await expect(extractAndBuildIndexEntries(entries, createFetchRangeForFile, () => {}, "run-test")).rejects.toBe(authError);
 
     // 同時実行数の枠内で既に開始済みだったファイルは呼ばれるが、キューに並んでいた最後尾の
     // ファイルは打ち切りシグナルにより一度もfetchRangeファクトリを呼ばれない
@@ -229,7 +229,7 @@ describe("extractAndBuildIndexEntries", () => {
       };
     };
 
-    await expect(extractAndBuildIndexEntries(entries, createFetchRangeForFile, () => {})).rejects.toBe(authError);
+    await expect(extractAndBuildIndexEntries(entries, createFetchRangeForFile, () => {}, "run-test")).rejects.toBe(authError);
 
     // f1は同時実行枠を使って既に開始済み（f0と同時にconcurrency内で走っていた）。
     // キュー未着手タスクの打ち切りだけでは影響を受けないはずだが、externalSignalの伝播により
@@ -249,11 +249,27 @@ describe("extractAndBuildIndexEntries", () => {
     const results = await extractAndBuildIndexEntries(
       entries,
       () => async () => new Uint8Array(1),
-      (done, total) => progressCalls.push([done, total])
+      (done, total) => progressCalls.push([done, total]),
+      "run-test"
     );
 
     expect(results.map((r) => r.fileId).sort()).toEqual(["f0", "f1", "f2"]);
     expect(progressCalls).toHaveLength(3);
     expect(progressCalls[2]).toEqual([3, 3]);
+  });
+
+  test("scanRunIdをindexタブのscanRunId列にそのまま書き込む（着手順の目安5、2026-08-21追加）", async () => {
+    parseFromTokenizerMock.mockImplementation(async (tokenizer: DriveRangeTokenizer) => {
+      await tokenizer.readBuffer(new Uint8Array(1), { position: 0, length: 1 });
+      return { common: { title: "ok" } };
+    });
+    const { extractAndBuildIndexEntries } = await import("./tagExtraction");
+    const { INDEX_SHEET_HEADER } = await import("./sheets");
+
+    const entries = makeEntries(1);
+    const results = await extractAndBuildIndexEntries(entries, () => async () => new Uint8Array(1), () => {}, "run-abc");
+
+    const scanRunIdIndex = INDEX_SHEET_HEADER.indexOf("scanRunId");
+    expect(results[0]?.row[scanRunIdIndex]).toBe("run-abc");
   });
 });

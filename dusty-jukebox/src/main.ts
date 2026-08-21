@@ -19,7 +19,7 @@ import {
 import { extractAndBuildIndexEntries } from "./tagExtraction";
 import {
   createSheetsIndexIO,
-  indexRowsLastScannedAt,
+  indexRowsScanState,
   isValidIndexHeader,
   mergeDuplicateIndexRows,
   upsertIndexRows,
@@ -27,9 +27,15 @@ import {
   INDEX_SHEET_HEADER,
   INDEX_SHEET_NAME,
 } from "./sheets";
-import { ensureIndexAndSyncTabsExist, ensureValidHeader, createSpreadsheetSetupIO, migrateLegacyIndexHeaderV1 } from "./sheetsSetup";
 import {
-  clearScanRunStartedAt,
+  ensureIndexAndSyncTabsExist,
+  ensureValidHeader,
+  createSpreadsheetSetupIO,
+  migrateLegacyIndexHeaderV1,
+  migrateLegacyIndexHeaderV2,
+} from "./sheetsSetup";
+import {
+  clearScanRunId,
   createSyncTabIO,
   isPendingForScanRun,
   isValidSyncHeader,
@@ -163,14 +169,20 @@ async function handleScan(): Promise<void> {
     // （2026-08-20 Codexレビュー指摘）。ensureValidHeader()がヘッダー検証・失敗時の回復
     // （タブが真に空なら書き直して再検証）・それでも無効な場合のエラーをまとめて行う
     // （index/syncで同じ検証ロジックが重複していたのを共通化、2026-08-20 /code-review指摘）
-    // 旧バージョン（27列、2026-08-20の重複行マージ実装より前）のindexタブヘッダーを使っている
-    // 既存ユーザーは、新スキーマ（45列）とのisValidIndexHeader不一致でここに来る。
-    // migrateLegacyIndexHeaderV1がこの旧ヘッダーを検出した場合のみグリッド拡張＋ヘッダー
-    // 書き換えを行う（2026-08-20 Codexレビュー指摘：この移行が無いと既存の27列indexタブが
-    // 永久にヘッダー不一致エラーでブロックされ続けてしまっていた）。
+    // 旧バージョン（27列、2026-08-20の重複行マージ実装より前。またはその後の45列、
+    // 2026-08-21のscanRunId列追加より前）のindexタブヘッダーを使っている既存ユーザーは、
+    // 現行スキーマ（46列）とのisValidIndexHeader不一致でここに来る。migrateLegacyIndexHeaderV1/V2が
+    // それぞれの旧ヘッダーを検出した場合のみグリッド拡張＋ヘッダー書き換えを行う（2026-08-20/21
+    // Codexレビュー指摘：この移行が無いと既存の旧indexタブが永久にヘッダー不一致エラーで
+    // ブロックされ続けてしまっていた）。
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    await ensureValidHeader(sheetsIO, setupIO, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, isValidIndexHeader, (header) =>
-      migrateLegacyIndexHeaderV1(setupIO, header)
+    await ensureValidHeader(
+      sheetsIO,
+      setupIO,
+      INDEX_SHEET_NAME,
+      INDEX_SHEET_HEADER,
+      isValidIndexHeader,
+      async (header) => (await migrateLegacyIndexHeaderV1(setupIO, header)) || (await migrateLegacyIndexHeaderV2(setupIO, header))
     );
 
     // syncタブについてもindexタブと同じ理由でヘッダー行を検証する（2026-08-20 Codexレビュー指摘）：
@@ -184,10 +196,11 @@ async function handleScan(): Promise<void> {
     // 変更トークンの取得順序（CONCEPT.md 5節）：初回一覧の構築を始める前にstartPageTokenを
     // 確保しておく。ルート変更時は新規取得、初期化未完了中の再開時は既存トークンを使い回す
     // （sync.tsのprepareSyncForScan参照）。changes.listによる実際の差分再生は次PR以降。
-    // scanRunStartedAtは着手順の目安5（バッチ処理・中断再開）のウォーターマーク：前回の実行が
-    // 完走せず中断していた場合はその開始時刻を再利用し、以降で「今回の実行で既に処理済みの
-    // ファイル」を判定するのに使う。
-    const { startPageToken, scanRunStartedAt } = await prepareSyncForScan(
+    // scanRunIdは着手順の目安5（バッチ処理・中断再開）のウォーターマーク：前回の実行が
+    // 完走せず中断していた場合はそのIDを再利用し、以降で「今回の実行で既に処理済みの
+    // ファイル」を判定するのに使う（時刻ではなく不透明なIDにしている理由は2026-08-21
+    // Codexレビュー指摘：P1、sync.tsのisPendingForScanRunのコメント参照）。
+    const { startPageToken, scanRunId } = await prepareSyncForScan(
       syncIO,
       createGetStartPageTokenFn(() => auth.ensureAccessToken(), driveId),
       folderId
@@ -199,20 +212,23 @@ async function handleScan(): Promise<void> {
     const entries = await listAudioFilesRecursive(listFn, folderId, "", failedFolders);
     renderResults(entries, failedFolders);
 
-    // 前回の実行（このscanRunStartedAt）で既に処理済み（lastScannedAt >= scanRunStartedAt）の
-    // ファイルはスキップする。中断・再開時にタグ抽出（重い処理）をやり直さないための判定
-    // （着手順の目安5）。この読み取り結果は「何をスキップするか」の判定だけに使い、多少
-    // 古くても実害は無い（最悪の場合、他デバイスが直後に処理し終えたファイルをもう一度
-    // 処理するだけ）。
+    // 前回の実行（このscanRunId）で既に処理済み、かつDrive側で以後更新されていないファイルは
+    // スキップする。中断・再開時にタグ抽出（重い処理）をやり直さないための判定
+    // （着手順の目安5、2026-08-21 Codexレビュー指摘でscanRunId完全一致＋driveModifiedTime
+    // 比較へ変更。sync.tsのisPendingForScanRun参照）。この読み取り結果は「何をスキップするか」の
+    // 判定だけに使い、多少古くても実害は無い（最悪の場合、他デバイスが直後に処理し終えた
+    // ファイルをもう一度処理するだけ）。
     setStatus("進捗を確認中...");
-    const lastScannedAtByFileId = indexRowsLastScannedAt(await sheetsIO.listExistingRows());
-    const pendingEntries = entries.filter((entry) => isPendingForScanRun(lastScannedAtByFileId.get(entry.file.id), scanRunStartedAt));
+    const scanStateByFileId = indexRowsScanState(await sheetsIO.listExistingRows());
+    const pendingEntries = entries.filter((entry) =>
+      isPendingForScanRun(scanStateByFileId.get(entry.file.id), scanRunId, entry.file.modifiedTime ?? "")
+    );
     const alreadyDoneCount = entries.length - pendingEntries.length;
 
     // 中断・再開可能なバッチ処理（CONCEPT.md 5節）：全件をまとめて抽出・1回だけ書き込む
     // のではなく、一定件数ごとにタグ抽出→索引への書き込みを行う。ブラウザのタブを閉じる・
     // 通信が長時間切れる等でスキャンが中断しても、既に書き込み済みのバッチはスプレッドシート側に
-    // 残るため、再開時（次のスキャンクリック）はscanRunStartedAtのウォーターマークで
+    // 残るため、再開時（次のスキャンクリック）はscanRunIdのウォーターマークで
     // 既に処理済みのファイルをスキップし、残りのバッチから再開できる。
     //
     // 各バッチのupsertIndexRows直前に改めてlistExistingRows()を読み直す（バッチ開始前の
@@ -240,7 +256,8 @@ async function handleScan(): Promise<void> {
         (done) =>
           setStatus(
             `タグを抽出中...（バッチ ${batchNumber}/${totalBatches}、${processedCount + alreadyDoneCount + done}/${entries.length}件）`
-          )
+          ),
+        scanRunId
       );
       // upsert直前に読み直す（このバッチのタグ抽出中に加えられた手動補正まではカバーできないが、
       // それより前の他バッチ・他デバイスの更新は反映された状態でマージできる）。
@@ -278,10 +295,10 @@ async function handleScan(): Promise<void> {
 
     // 全バッチが最後まで完走した（=ここに到達した）ので、このスキャン実行のウォーターマークは
     // 役目を終えた。クリアしておくことで、次回のスキャンクリックは新しい実行として扱われ、
-    // 今回処理済みのファイルも次のscanRunStartedAt以降で改めて対象になる（着手順の目安5）。
+    // 今回処理済みのファイルも次のscanRunId以降で改めて対象になる（着手順の目安5）。
     // failedFolders自体はinitialScanCompletedAtとは独立に、常にクリアしてよい（フォルダ一覧の
     // 取得失敗は別の問題であり、見つかった全ファイルに対するタグ抽出・書き込みは完走している）。
-    await clearScanRunStartedAt(syncIO, { rootFolderId: folderId, startPageToken, scanRunStartedAt });
+    await clearScanRunId(syncIO, { rootFolderId: folderId, startPageToken, scanRunId });
 
     setStatus(
       `スキャン完了（${entries.length}件を索引に反映${alreadyDoneCount > 0 ? `、前回実行分${alreadyDoneCount}件はスキップ` : ""}${
