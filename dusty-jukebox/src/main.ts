@@ -1,29 +1,39 @@
-// エントリポイント。着手順の目安4の一部: sync タブ基盤（startPageToken/rootFolderId/
-// initialScanCompletedAt）とindexタブ／syncタブの初回自動作成を結線した。初回スキャンの
-// バッチ処理・中断再開（ページ単位の進捗保存）・changes.listによる実際の差分同期・
-// 索引upsertの重複行マージ・絞り込み/再生UIは引き続き未着手（dusty-jukebox/CLAUDE.md参照）。
-// このPRのスキャンは引き続き「見つかった全ファイルを1回で最後まで処理する」素朴な実装で、途中で
-// タブを閉じる／通信が長時間切れる等での中断・再開には対応しない。
+// エントリポイント。着手順の目安4: sync タブ基盤・index/syncタブの初回自動作成・索引upsertの
+// 重複行マージ・初回スキャンのバッチ処理/中断再開に続き、残りだったchanges.list消費による
+// 差分同期とルート変更後の旧ルート配下行の削除（リコンサイル）を実装した。絞り込み/再生UI・
+// Service Workerストリーミングプロキシは引き続き未着手（dusty-jukebox/CLAUDE.md参照）。
+//
+// 初回スキャン完了前（sync.tsのhasCompletedInitialScan=false）は引き続きフルスキャン
+// （runFullScan、フォルダ全体の再帰走査＋バッチ処理・中断再開）を行う。完了後
+// （hasCompletedInitialScan=true）はrunDifferentialSync（changes.list消費）に切り替わる。
 import { AuthError, DriveAuth } from "./auth";
 import {
+  createChangesListFn,
   createDriveCapabilitiesGetFn,
   createDriveFetchRange,
   createDriveGetFn,
   createDriveListFn,
+  createDriveParentsGetFn,
   createGetStartPageTokenFn,
+  consumeAllChanges,
+  isDescendantOfRoot,
   listAudioFilesRecursive,
   validateRootFolder,
   isAuthError,
   type AudioFileEntry,
 } from "./drive";
+import { planDifferentialSync } from "./differentialSync";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
 import {
   createSheetsIndexIO,
   indexRowsScanState,
   isValidIndexHeader,
   mergeDuplicateIndexRows,
+  reconcileIndexAgainstRoot,
+  removeIndexRows,
   upsertIndexRows,
   SheetsHttpError,
+  SheetsIndexIO,
   INDEX_SHEET_HEADER,
   INDEX_SHEET_NAME,
 } from "./sheets";
@@ -35,6 +45,7 @@ import {
   migrateLegacyIndexHeaderV2,
 } from "./sheetsSetup";
 import {
+  advanceStartPageToken,
   clearScanRunId,
   createSyncTabIO,
   isPendingForScanRun,
@@ -43,6 +54,7 @@ import {
   prepareSyncForScan,
   SYNC_SHEET_NAME,
   SYNC_TAB_HEADER,
+  type SyncTabIO,
 } from "./sync";
 
 // drive.tsのisAuthError()（AuthError・DriveHttpError(401)）に加え、main.tsではSheets側の
@@ -116,6 +128,190 @@ function renderResults(entries: AudioFileEntry[], failedFolders: string[]): void
   const summary = document.createElement("li");
   summary.textContent = `音楽ファイル: ${entries.length}件${failedFolders.length > 0 ? `（取得失敗フォルダ: ${failedFolders.length}件）` : ""}`;
   list.appendChild(summary);
+}
+
+// 初回スキャン（初期化未完了、またはルート変更直後）: フォルダ全体を再帰走査し、
+// バッチ処理・中断再開（着手順の目安5）で索引に書き込む。従来のhandleScan本体をそのまま
+// 切り出したもので、挙動は変えていない。
+async function runFullScan(
+  sheetsIO: SheetsIndexIO,
+  syncIO: SyncTabIO,
+  folderId: string,
+  startPageToken: string,
+  scanRunId: string
+): Promise<void> {
+  setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
+  const listFn = createDriveListFn(() => auth.ensureAccessToken());
+  const failedFolders: string[] = [];
+  const entries = await listAudioFilesRecursive(listFn, folderId, "", failedFolders);
+  renderResults(entries, failedFolders);
+
+  // 前回の実行（このscanRunId）で既に処理済み、かつDrive側で以後更新されていないファイルは
+  // スキップする。中断・再開時にタグ抽出（重い処理）をやり直さないための判定
+  // （着手順の目安5、2026-08-21 Codexレビュー指摘でscanRunId完全一致＋driveModifiedTime
+  // 比較へ変更。sync.tsのisPendingForScanRun参照）。この読み取り結果は「何をスキップするか」の
+  // 判定だけに使い、多少古くても実害は無い（最悪の場合、他デバイスが直後に処理し終えた
+  // ファイルをもう一度処理するだけ）。
+  setStatus("進捗を確認中...");
+  const scanStateByFileId = indexRowsScanState(await sheetsIO.listExistingRows());
+  const pendingEntries = entries.filter((entry) =>
+    isPendingForScanRun(scanStateByFileId.get(entry.file.id), scanRunId, entry.file.modifiedTime ?? "")
+  );
+  const alreadyDoneCount = entries.length - pendingEntries.length;
+
+  // 中断・再開可能なバッチ処理（CONCEPT.md 5節）：全件をまとめて抽出・1回だけ書き込む
+  // のではなく、一定件数ごとにタグ抽出→索引への書き込みを行う。ブラウザのタブを閉じる・
+  // 通信が長時間切れる等でスキャンが中断しても、既に書き込み済みのバッチはスプレッドシート側に
+  // 残るため、再開時（次のスキャンクリック）はscanRunIdのウォーターマークで
+  // 既に処理済みのファイルをスキップし、残りのバッチから再開できる。
+  //
+  // 各バッチのupsertIndexRows直前に改めてlistExistingRows()を読み直す（バッチ開始前の
+  // スキップ判定用スナップショットを全バッチで使い回さない）。10235件規模で全バッチ分の
+  // 全件読み取りを繰り返すコストはあるが、スキャン開始時に読んだ1回のスナップショットを
+  // 全バッチに使い回すと、長時間のタグ抽出中にユーザー（または別デバイス）が加えた
+  // `_override`列の手動補正を、後続バッチのupsertIndexRows（sheets.tsのmergeWithExisting）が
+  // 古いスナップショットの値で上書きして消してしまう（2026-08-20 Codexレビュー指摘：P1、
+  // 変更前は抽出完了後に1回だけlistExistingRowsを読んでいたためこの回帰は無かった）。
+  // データ損失の回避を全件読み取りの節約より優先する。
+  const BATCH_SIZE = 200;
+  let processedCount = 0;
+  for (let i = 0; i < pendingEntries.length; i += BATCH_SIZE) {
+    const batch = pendingEntries.slice(i, i + BATCH_SIZE);
+    const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(pendingEntries.length / BATCH_SIZE);
+    setStatus(
+      `タグを抽出中...（バッチ ${batchNumber}/${totalBatches}、${processedCount + alreadyDoneCount}/${entries.length}件${
+        alreadyDoneCount > 0 ? `、前回実行分${alreadyDoneCount}件はスキップ済み` : ""
+      }）`
+    );
+    const upsertEntries = await extractAndBuildIndexEntries(
+      batch,
+      (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
+      (done) =>
+        setStatus(
+          `タグを抽出中...（バッチ ${batchNumber}/${totalBatches}、${processedCount + alreadyDoneCount + done}/${entries.length}件）`
+        ),
+      scanRunId
+    );
+    // upsert直前に読み直す（このバッチのタグ抽出中に加えられた手動補正まではカバーできないが、
+    // それより前の他バッチ・他デバイスの更新は反映された状態でマージできる）。
+    const freshExistingRows = await sheetsIO.listExistingRows();
+    await upsertIndexRows(sheetsIO, upsertEntries, freshExistingRows);
+    processedCount += batch.length;
+  }
+
+  // 索引upsertの重複行マージ（CONCEPT.md 4.3節）。複数デバイスがほぼ同時にスキャンした場合、
+  // 片方が「まだ無い」と判断した新規fileIdを両方が別行として追記してしまう競合が起こりうる。
+  // 本来の「差分同期完了時」に加え、初回スキャン完了時にもこのチェックを行う（CONCEPT.md同節
+  // 「事前防止ではなく事後の整合」の方針通り）。無条件に毎回呼ぶ：一時的に「新規追記が無ければ
+  // 今回は重複が増えようがないので呼ばなくてよい」という最適化を入れていたが、直前のスキャンで
+  // 追記直後にタブを閉じる／mergeDuplicateIndexRows自体が通信エラーで失敗する等により重複行が
+  // 残った場合、そのfileIdは次回以降「既存」扱いになり新規追記が二度と発生しないため、
+  // 事後整合による回復手段がこの呼び出し以外に無いのに永久にスキップされ続けてしまう
+  // （2026-08-20 Codexレビュー指摘：P2。パフォーマンスよりも「唯一の回復経路を塞がない」
+  // ことを優先し、無条件呼び出しに戻した）。
+  setStatus("重複行を確認中...");
+  await mergeDuplicateIndexRows(sheetsIO);
+
+  // 取得失敗フォルダ（failedFolders）が1件でもある場合、初回一覧の構築は完了していない
+  // （2026-08-20 Codexレビュー指摘：listAudioFilesRecursiveは子フォルダ単位の一時的な失敗を
+  // 例外にせずfailedFoldersへ積んで継続するため、部分的な結果のままここへ到達しうる。
+  // それをinitialScanCompletedAtとして記録すると、取得できなかったサブツリー配下のファイルは
+  // 差分同期（changes.list）が開始トークン以降の変更しか拾わない性質上、恒久的に索引から
+  // 漏れてしまう。取得失敗があった場合は完了とみなさず、次回のスキャンでの再挑戦に委ねる）。
+  if (failedFolders.length === 0) {
+    // 準備時に確保したrootFolderId/startPageTokenと照合してから書く（sync.tsのmarkInitialScanCompleted
+    // 参照）。長時間のスキャン中に別デバイスがルートを切り替えていた場合、無関係になった
+    // ルートを誤って完了扱いにしないため。
+    await markInitialScanCompleted(syncIO, new Date().toISOString(), { rootFolderId: folderId, startPageToken });
+  }
+
+  // 全バッチが最後まで完走した（=ここに到達した）ので、このスキャン実行のウォーターマークは
+  // 役目を終えた。クリアしておくことで、次回のスキャンクリックは新しい実行として扱われ、
+  // 今回処理済みのファイルも次のscanRunId以降で改めて対象になる（着手順の目安5）。
+  // failedFolders自体はinitialScanCompletedAtとは独立に、常にクリアしてよい（フォルダ一覧の
+  // 取得失敗は別の問題であり、見つかった全ファイルに対するタグ抽出・書き込みは完走している）。
+  await clearScanRunId(syncIO, { rootFolderId: folderId, startPageToken, scanRunId });
+
+  setStatus(
+    `スキャン完了（${entries.length}件を索引に反映${alreadyDoneCount > 0 ? `、前回実行分${alreadyDoneCount}件はスキップ` : ""}${
+      failedFolders.length > 0 ? `、取得失敗フォルダ: ${failedFolders.length}件` : ""
+    }）`
+  );
+}
+
+// 着手順の目安4の残り：初回スキャン完了後の差分同期（CONCEPT.md 5節）。フォルダ全体の
+// 再帰走査は行わず、startPageTokenからのchanges.list消費だけでDriveの変更を索引に反映する。
+// differentialSync.tsのplanDifferentialSyncへDrive/Sheets呼び出しをDIし、判定結果
+// （タグ抽出が必要なエントリ・削除すべきfileId・リコンサイルの要否）に基づいて
+// extractAndBuildIndexEntries/upsertIndexRows/removeIndexRows/reconcileIndexAgainstRootを呼ぶ。
+async function runDifferentialSync(
+  sheetsIO: SheetsIndexIO,
+  syncIO: SyncTabIO,
+  folderId: string,
+  driveId: string | undefined,
+  startPageToken: string
+): Promise<void> {
+  setStatus("前回からの変更を確認中...");
+  const changesListFn = createChangesListFn(() => auth.ensureAccessToken(), driveId);
+  const { changes, newStartPageToken } = await consumeAllChanges(changesListFn, startPageToken);
+
+  const getParentsFn = createDriveParentsGetFn(() => auth.ensureAccessToken());
+  // 祖先チェーンの確認結果（フォルダID→rootFolderId配下かどうか）をこの同期実行の中で
+  // 使い回す（drive.tsのisDescendantOfRoot参照）。差分同期・その後のリコンサイルの両方で
+  // 同じフォルダIDへの重複した確認を避けられる。
+  const ancestryCache = new Map<string, boolean>();
+  const listFn = createDriveListFn(() => auth.ensureAccessToken());
+  const failedFolders: string[] = [];
+
+  const scanStateByFileId = indexRowsScanState(await sheetsIO.listExistingRows());
+  const plan = await planDifferentialSync(changes, {
+    isDescendantOfRoot: (parentIds) => isDescendantOfRoot(getParentsFn, parentIds, folderId, ancestryCache),
+    // フォルダ変更イベントで検知したサブツリーの再走査。フルスキャンより並行数を抑える
+    // （通常は少数のフォルダのみが対象のため、ここで大きく並行実行する必要は無い）。
+    listSubtree: (targetFolderId) => listAudioFilesRecursive(listFn, targetFolderId, "", failedFolders, 3),
+    existingScanState: scanStateByFileId,
+  });
+
+  if (plan.entriesToProcess.length > 0) {
+    setStatus(`タグを抽出中...（差分 ${plan.entriesToProcess.length}件）`);
+    const upsertEntries = await extractAndBuildIndexEntries(
+      plan.entriesToProcess,
+      (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
+      (done) => setStatus(`タグを抽出中...（差分 ${done}/${plan.entriesToProcess.length}件）`),
+      ""
+    );
+    await upsertIndexRows(sheetsIO, upsertEntries);
+  }
+
+  if (plan.removedFileIds.length > 0) {
+    setStatus("削除されたファイルを索引から除去中...");
+    await removeIndexRows(sheetsIO, plan.removedFileIds);
+  }
+
+  // 索引upsertの重複行マージ。フルスキャンと同じ理由（CONCEPT.md 4.3節）で、本来の
+  // 「差分同期完了時」に呼ぶ想定通りここで実行する。
+  setStatus("重複行を確認中...");
+  await mergeDuplicateIndexRows(sheetsIO);
+
+  // フォルダの変更イベントを検知した場合のみ実行する（CONCEPT.md 5節「フォルダがrootFolderIdの
+  // 内外をまたいで移動した場合」）。フォルダ自身の変更イベントだけでは配下ファイル1件1件の
+  // 変更を検知できないため、rootFolderId配下から外れた行が残っていないかを索引全体に対して
+  // 事後確認する（sheets.tsのreconcileIndexAgainstRoot参照）。
+  if (plan.needsReconcile) {
+    setStatus("フォルダ構成の変更を反映中...");
+    await reconcileIndexAgainstRoot(sheetsIO, (parentId) => isDescendantOfRoot(getParentsFn, [parentId], folderId, ancestryCache));
+  }
+
+  // 消費し終えたstartPageTokenを進める。差分同期の最後に行う（途中でエラーが起きた場合、
+  // 次回起動時に同じstartPageTokenから再度consumeAllChangesできるようにするため）。
+  await advanceStartPageToken(syncIO, newStartPageToken, { rootFolderId: folderId, startPageToken });
+
+  setStatus(
+    `差分同期完了（反映 ${plan.entriesToProcess.length}件、削除 ${plan.removedFileIds.length}件${
+      failedFolders.length > 0 ? `、フォルダ取得失敗: ${failedFolders.length}件` : ""
+    }）`
+  );
 }
 
 async function handleScan(): Promise<void> {
@@ -195,116 +391,19 @@ async function handleScan(): Promise<void> {
 
     // 変更トークンの取得順序（CONCEPT.md 5節）：初回一覧の構築を始める前にstartPageTokenを
     // 確保しておく。ルート変更時は新規取得、初期化未完了中の再開時は既存トークンを使い回す
-    // （sync.tsのprepareSyncForScan参照）。changes.listによる実際の差分再生は次PR以降。
-    // scanRunIdは着手順の目安5（バッチ処理・中断再開）のウォーターマーク：前回の実行が
-    // 完走せず中断していた場合はそのIDを再利用し、以降で「今回の実行で既に処理済みの
-    // ファイル」を判定するのに使う（時刻ではなく不透明なIDにしている理由は2026-08-21
-    // Codexレビュー指摘：P1、sync.tsのisPendingForScanRunのコメント参照）。
-    const { startPageToken, scanRunId } = await prepareSyncForScan(
+    // （sync.tsのprepareSyncForScan参照）。hasCompletedInitialScanがtrueなら前回の初回スキャンが
+    // 完了済み（＝以降はフルスキャンでなく差分同期に進む）ことを意味する。
+    const prep = await prepareSyncForScan(
       syncIO,
       createGetStartPageTokenFn(() => auth.ensureAccessToken(), driveId),
       folderId
     );
 
-    setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
-    const listFn = createDriveListFn(() => auth.ensureAccessToken());
-    const failedFolders: string[] = [];
-    const entries = await listAudioFilesRecursive(listFn, folderId, "", failedFolders);
-    renderResults(entries, failedFolders);
-
-    // 前回の実行（このscanRunId）で既に処理済み、かつDrive側で以後更新されていないファイルは
-    // スキップする。中断・再開時にタグ抽出（重い処理）をやり直さないための判定
-    // （着手順の目安5、2026-08-21 Codexレビュー指摘でscanRunId完全一致＋driveModifiedTime
-    // 比較へ変更。sync.tsのisPendingForScanRun参照）。この読み取り結果は「何をスキップするか」の
-    // 判定だけに使い、多少古くても実害は無い（最悪の場合、他デバイスが直後に処理し終えた
-    // ファイルをもう一度処理するだけ）。
-    setStatus("進捗を確認中...");
-    const scanStateByFileId = indexRowsScanState(await sheetsIO.listExistingRows());
-    const pendingEntries = entries.filter((entry) =>
-      isPendingForScanRun(scanStateByFileId.get(entry.file.id), scanRunId, entry.file.modifiedTime ?? "")
-    );
-    const alreadyDoneCount = entries.length - pendingEntries.length;
-
-    // 中断・再開可能なバッチ処理（CONCEPT.md 5節）：全件をまとめて抽出・1回だけ書き込む
-    // のではなく、一定件数ごとにタグ抽出→索引への書き込みを行う。ブラウザのタブを閉じる・
-    // 通信が長時間切れる等でスキャンが中断しても、既に書き込み済みのバッチはスプレッドシート側に
-    // 残るため、再開時（次のスキャンクリック）はscanRunIdのウォーターマークで
-    // 既に処理済みのファイルをスキップし、残りのバッチから再開できる。
-    //
-    // 各バッチのupsertIndexRows直前に改めてlistExistingRows()を読み直す（バッチ開始前の
-    // スキップ判定用スナップショットを全バッチで使い回さない）。10235件規模で全バッチ分の
-    // 全件読み取りを繰り返すコストはあるが、スキャン開始時に読んだ1回のスナップショットを
-    // 全バッチに使い回すと、長時間のタグ抽出中にユーザー（または別デバイス）が加えた
-    // `_override`列の手動補正を、後続バッチのupsertIndexRows（sheets.tsのmergeWithExisting）が
-    // 古いスナップショットの値で上書きして消してしまう（2026-08-20 Codexレビュー指摘：P1、
-    // 変更前は抽出完了後に1回だけlistExistingRowsを読んでいたためこの回帰は無かった）。
-    // データ損失の回避を全件読み取りの節約より優先する。
-    const BATCH_SIZE = 200;
-    let processedCount = 0;
-    for (let i = 0; i < pendingEntries.length; i += BATCH_SIZE) {
-      const batch = pendingEntries.slice(i, i + BATCH_SIZE);
-      const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
-      const totalBatches = Math.ceil(pendingEntries.length / BATCH_SIZE);
-      setStatus(
-        `タグを抽出中...（バッチ ${batchNumber}/${totalBatches}、${processedCount + alreadyDoneCount}/${entries.length}件${
-          alreadyDoneCount > 0 ? `、前回実行分${alreadyDoneCount}件はスキップ済み` : ""
-        }）`
-      );
-      const upsertEntries = await extractAndBuildIndexEntries(
-        batch,
-        (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
-        (done) =>
-          setStatus(
-            `タグを抽出中...（バッチ ${batchNumber}/${totalBatches}、${processedCount + alreadyDoneCount + done}/${entries.length}件）`
-          ),
-        scanRunId
-      );
-      // upsert直前に読み直す（このバッチのタグ抽出中に加えられた手動補正まではカバーできないが、
-      // それより前の他バッチ・他デバイスの更新は反映された状態でマージできる）。
-      const freshExistingRows = await sheetsIO.listExistingRows();
-      await upsertIndexRows(sheetsIO, upsertEntries, freshExistingRows);
-      processedCount += batch.length;
+    if (prep.hasCompletedInitialScan) {
+      await runDifferentialSync(sheetsIO, syncIO, folderId, driveId, prep.startPageToken);
+    } else {
+      await runFullScan(sheetsIO, syncIO, folderId, prep.startPageToken, prep.scanRunId);
     }
-
-    // 索引upsertの重複行マージ（CONCEPT.md 4.3節）。複数デバイスがほぼ同時にスキャンした場合、
-    // 片方が「まだ無い」と判断した新規fileIdを両方が別行として追記してしまう競合が起こりうる。
-    // changes.listによる実際の差分同期はまだ実装していないため、本来の「差分同期完了時」の
-    // 代わりに毎回のフルスキャン完了時にこのチェックを行う（CONCEPT.md同節「事前防止ではなく
-    // 事後の整合」の方針通り）。無条件に毎回呼ぶ：一時的に「新規追記が無ければ今回は重複が
-    // 増えようがないので呼ばなくてよい」という最適化を入れていたが、直前のスキャンで追記直後に
-    // タブを閉じる／mergeDuplicateIndexRows自体が通信エラーで失敗する等により重複行が
-    // 残った場合、そのfileIdは次回以降「既存」扱いになり新規追記が二度と発生しないため、
-    // 事後整合による回復手段がこの呼び出し以外に無いのに永久にスキップされ続けてしまう
-    // （2026-08-20 Codexレビュー指摘：P2。パフォーマンスよりも「唯一の回復経路を塞がない」
-    // ことを優先し、無条件呼び出しに戻した）。
-    setStatus("重複行を確認中...");
-    await mergeDuplicateIndexRows(sheetsIO);
-
-    // 取得失敗フォルダ（failedFolders）が1件でもある場合、初回一覧の構築は完了していない
-    // （2026-08-20 Codexレビュー指摘：listAudioFilesRecursiveは子フォルダ単位の一時的な失敗を
-    // 例外にせずfailedFoldersへ積んで継続するため、部分的な結果のままここへ到達しうる。
-    // それをinitialScanCompletedAtとして記録すると、取得できなかったサブツリー配下のファイルは
-    // 差分同期（changes.list、未実装）が開始トークン以降の変更しか拾わない性質上、恒久的に
-    // 索引から漏れてしまう。取得失敗があった場合は完了とみなさず、次回のスキャンでの再挑戦に委ねる）。
-    if (failedFolders.length === 0) {
-      // 準備時に確保したrootFolderId/startPageTokenと照合してから書く（sync.tsのmarkInitialScanCompleted
-      // 参照）。長時間のスキャン中に別デバイスがルートを切り替えていた場合、無関係になった
-      // ルートを誤って完了扱いにしないため。
-      await markInitialScanCompleted(syncIO, new Date().toISOString(), { rootFolderId: folderId, startPageToken });
-    }
-
-    // 全バッチが最後まで完走した（=ここに到達した）ので、このスキャン実行のウォーターマークは
-    // 役目を終えた。クリアしておくことで、次回のスキャンクリックは新しい実行として扱われ、
-    // 今回処理済みのファイルも次のscanRunId以降で改めて対象になる（着手順の目安5）。
-    // failedFolders自体はinitialScanCompletedAtとは独立に、常にクリアしてよい（フォルダ一覧の
-    // 取得失敗は別の問題であり、見つかった全ファイルに対するタグ抽出・書き込みは完走している）。
-    await clearScanRunId(syncIO, { rootFolderId: folderId, startPageToken, scanRunId });
-
-    setStatus(
-      `スキャン完了（${entries.length}件を索引に反映${alreadyDoneCount > 0 ? `、前回実行分${alreadyDoneCount}件はスキップ` : ""}${
-        failedFolders.length > 0 ? `、取得失敗フォルダ: ${failedFolders.length}件` : ""
-      }）`
-    );
   } catch (err) {
     // 401（トークン取り消し等）は、ローカルのexpiresAtがまだ有効に見えていても
     // Drive APIに拒否されたことを意味する。キャッシュを残したままだと次回の

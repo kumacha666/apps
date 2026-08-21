@@ -129,6 +129,7 @@ const TAG_COLUMN_INDEXES = new Set(
 const EXTRACTION_FAILED_INDEX = INDEX_SHEET_HEADER.indexOf("extractionFailed");
 const LAST_SCANNED_AT_INDEX = INDEX_SHEET_HEADER.indexOf("lastScannedAt");
 const FILE_ID_INDEX = INDEX_SHEET_HEADER.indexOf("fileId");
+const PARENT_ID_INDEX = INDEX_SHEET_HEADER.indexOf("parentId");
 const DRIVE_MODIFIED_TIME_INDEX = INDEX_SHEET_HEADER.indexOf("driveModifiedTime");
 const SCAN_RUN_ID_INDEX = INDEX_SHEET_HEADER.indexOf("scanRunId");
 
@@ -521,6 +522,69 @@ export async function mergeDuplicateIndexRows(io: SheetsIndexIO): Promise<MergeD
   }
   if (updates.length > 0) await io.updateRows(updates);
   return { mergedGroups, rowsCleared };
+}
+
+export interface RemoveIndexRowsResult {
+  removedCount: number;
+}
+
+// 着手順の目安4の残り（changes.list消費、differentialSync.ts）：Driveから削除・ゴミ箱に
+// 入れられたファイルのfileIdを指定して索引行を除去する。mergeDuplicateIndexRowsと同じ理由
+// （Sheets APIに行削除用のnumeric sheetIdを保持していないDI設計）で、削除ではなく全列空欄化で
+// 代替する（空欄行のfileIdは空のため以降のlistExistingRows()ベースの処理からは無視される）。
+export async function removeIndexRows(io: SheetsIndexIO, fileIds: string[]): Promise<RemoveIndexRowsResult> {
+  if (fileIds.length === 0) return { removedCount: 0 };
+  const targets = new Set(fileIds);
+  const rows = await io.listExistingRows();
+  const blankRow = new Array(INDEX_SHEET_HEADER.length).fill("") as (string | number)[];
+  const updates: { rowNumber: number; row: (string | number)[] }[] = [];
+  rows.forEach((row, i) => {
+    const fileId = row[FILE_ID_INDEX];
+    if (fileId && targets.has(String(fileId))) updates.push({ rowNumber: i + 2, row: blankRow });
+  });
+  if (updates.length > 0) await io.updateRows(updates);
+  return { removedCount: updates.length };
+}
+
+export interface ReconcileIndexResult {
+  removedCount: number;
+}
+
+// 旧ルート配下だった行の削除（リコンサイル、CONCEPT.md 4.3節）。rootFolderId変更後の新しい
+// 初回スキャン完了時の仕上げとして実行する想定だが、差分同期中にフォルダの変更イベントを
+// 検知した場合の安全網としても使う（differentialSync.ts参照。フォルダがrootFolderIdの外へ
+// 移動したケースは、そのフォルダ自体の変更イベントだけでは配下ファイル1件1件の変更を
+// 検知できないため、リコンサイルによる事後の整合に委ねる、CONCEPT.md 5節）。
+//
+// indexタブ全行のparentIdについて、現在のrootFolderIdの祖先チェーンに到達するかどうかを
+// isFolderUnderRootで判定し、到達しない行を削除（空欄化）する。distinctなparentId（≒フォルダ数）
+// ごとに1回だけ判定する（10235件規模でも実際のフォルダ数は行数よりずっと少ないため、
+// isFolderUnderRoot呼び出し回数を抑えられる）。
+export async function reconcileIndexAgainstRoot(
+  io: SheetsIndexIO,
+  isFolderUnderRoot: (parentId: string) => Promise<boolean>
+): Promise<ReconcileIndexResult> {
+  const rows = await io.listExistingRows();
+  const distinctParentIds = new Set<string>();
+  rows.forEach((row) => {
+    if (!row[FILE_ID_INDEX]) return;
+    distinctParentIds.add(String(row[PARENT_ID_INDEX] ?? ""));
+  });
+
+  const reachable = new Map<string, boolean>();
+  for (const parentId of distinctParentIds) {
+    reachable.set(parentId, parentId ? await isFolderUnderRoot(parentId) : false);
+  }
+
+  const blankRow = new Array(INDEX_SHEET_HEADER.length).fill("") as (string | number)[];
+  const updates: { rowNumber: number; row: (string | number)[] }[] = [];
+  rows.forEach((row, i) => {
+    if (!row[FILE_ID_INDEX]) return;
+    const parentId = String(row[PARENT_ID_INDEX] ?? "");
+    if (!reachable.get(parentId)) updates.push({ rowNumber: i + 2, row: blankRow });
+  });
+  if (updates.length > 0) await io.updateRows(updates);
+  return { removedCount: updates.length };
 }
 
 // SheetsIndexIOの実実装。ensureAccessTokenで取得したアクセストークンをAuthorizationヘッダーに載せる。

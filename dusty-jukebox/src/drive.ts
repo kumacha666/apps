@@ -23,6 +23,9 @@ export interface DriveFile {
   // ショートカットは、参照先を単独のIDだけでは解決できず、後続のDrive APIリクエストに
   // このresource keyを添える必要がある（2026-08-19 Codexレビュー指摘）
   shortcutDetails?: { targetId?: string; targetMimeType?: string; targetResourceKey?: string };
+  // changes.listのfile(...)にのみ含める。files.list/files.get(通常の走査)では要求していないため
+  // 常にundefinedのまま（trashed=falseのファイルはfiles.listのクエリ自体が除外するため不要）。
+  trashed?: boolean;
 }
 
 export interface DriveListPage {
@@ -67,8 +70,10 @@ export function isAuthError(err: unknown): boolean {
 // （2026-08-19 Codexレビュー指摘）。呼び出し元には伝播させない（failedFoldersにも積まない）。
 class ScanAbortedError extends Error {}
 
-const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
-const SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut";
+// 着手順の目安4の残り（changes.list消費、differentialSync.ts）でもフォルダ/ショートカット
+// 判定に使うためexportする。
+export const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
+export const SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut";
 
 // フォルダIDそのものの存在・種別・アクセス権を確認する。files.list（'<folderId>' in parents）は
 // folderId自体を検証せず、存在しない/権限が無いIDに対しても単に空の子一覧（200応答）を返しうるため、
@@ -446,6 +451,138 @@ async function fetchRangeWithBodyRetry(
     }
   }
   throw lastError ?? new Error("unreachable");
+}
+
+// 着手順の目安4の残り（changes.list消費）: 初回スキャン完了後の差分同期。
+// 1件のchanges.listエントリ。removed=trueは「Driveから完全に削除された」ことを示し、
+// この場合fileは含まれない。trashed（ゴミ箱）はremoved=falseのままfile.trashed=trueで通知される
+// （Drive APIの仕様）。本アプリはどちらも「もはや索引対象ではない」として同じ扱いにする
+// （differentialSync.ts参照）。
+export interface DriveChange {
+  fileId: string;
+  removed: boolean;
+  file?: DriveFile;
+}
+
+export interface ChangesListPage {
+  changes: DriveChange[];
+  nextPageToken?: string;
+  // 最終ページ（nextPageTokenが無い）にのみ含まれる、次回の差分同期の開始点。
+  newStartPageToken?: string;
+}
+
+export type ChangesListFn = (pageToken: string) => Promise<ChangesListPage>;
+
+// changes.list APIの実実装。createGetStartPageTokenFnと同じ理由でdriveId（共有ドライブ配下の
+// ルートの場合）を指定する：省略するとマイドライブのユーザー変更ログがスコープになり、
+// 共有ドライブ配下の変更を取りこぼす。
+export function createChangesListFn(getAccessToken: () => Promise<string>, driveId?: string): ChangesListFn {
+  return async (pageToken) => {
+    const params = new URLSearchParams({
+      pageToken,
+      fields:
+        "nextPageToken, newStartPageToken, changes(fileId, removed, file(id, name, mimeType, size, modifiedTime, parents, trashed, shortcutDetails))",
+      pageSize: "1000",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+    });
+    if (driveId) params.set("driveId", driveId);
+    const url = `https://www.googleapis.com/drive/v3/changes?${params.toString()}`;
+    const res = await fetchDriveApiWithRetry(url, getAccessToken);
+    const data = (await res.json()) as { changes?: DriveChange[]; nextPageToken?: string; newStartPageToken?: string };
+    return { changes: data.changes ?? [], nextPageToken: data.nextPageToken, newStartPageToken: data.newStartPageToken };
+  };
+}
+
+// startPageTokenから最後（newStartPageTokenが得られるページ）まで全ページを消費し、
+// 全変更を1つの配列にまとめて返す。CONCEPT.md 3.4節規模のライブラリでも、通常のスキャン間隔
+// （アプリを開くたび）で蓄積する変更件数はフルスキャン（10235件）よりずっと少ない前提のため、
+// フルスキャンのようなバッチ処理・中断再開は設けない（差分同期自体が長時間化するライブラリ規模
+// になった場合は別途検討）。
+export async function consumeAllChanges(
+  listChanges: ChangesListFn,
+  startPageToken: string
+): Promise<{ changes: DriveChange[]; newStartPageToken: string }> {
+  let pageToken = startPageToken;
+  const allChanges: DriveChange[] = [];
+  for (;;) {
+    const page = await listChanges(pageToken);
+    allChanges.push(...page.changes);
+    if (page.nextPageToken) {
+      pageToken = page.nextPageToken;
+      continue;
+    }
+    if (!page.newStartPageToken) {
+      throw new Error("changes.list応答にnewStartPageTokenが含まれていません（最終ページのはずですが取得できませんでした）");
+    }
+    return { changes: allChanges, newStartPageToken: page.newStartPageToken };
+  }
+}
+
+// フォルダの祖先チェーン確認（changes.listで通知されたファイル/フォルダがrootFolderId配下か
+// どうかの判定、CONCEPT.md 5節「フォルダがrootFolderIdの内外をまたいで移動した場合」・
+// 4.3節「旧ルート配下だった行の削除（リコンサイル）」の両方で使う）。fields=parentsのみの
+// 軽量なfiles.get。404（対象自体が削除済み等）はnullを返す。
+export type DriveParentsGetFn = (fileId: string) => Promise<{ parents?: string[] } | null>;
+
+export function createDriveParentsGetFn(getAccessToken: () => Promise<string>): DriveParentsGetFn {
+  return async (fileId) => {
+    const params = new URLSearchParams({ fields: "parents", supportsAllDrives: "true" });
+    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`;
+    try {
+      const res = await fetchDriveApiWithRetry(url, getAccessToken);
+      const data = (await res.json()) as { parents?: string[] };
+      return { parents: data.parents };
+    } catch (err) {
+      if (err instanceof DriveHttpError && err.status === 404) return null;
+      throw err;
+    }
+  };
+}
+
+// folderIdからrootFolderIdへの祖先チェーンをfiles.get(fields=parents)で1階層ずつ遡って
+// 確認する。結果はcacheにフォルダID単位でメモ化する（indexタブの行数よりdistinctな
+// parentId（≒フォルダ数）はずっと少ないため、reconcileIndexAgainstRootでの呼び出しに対して
+// 効果が大きい）。visitingは1回の呼び出し内の循環参照ガード（通常の親子関係では循環は
+// 起きないが、フォルダショートカットは任意のフォルダを指しうるため安全のため設ける）。
+async function folderReachesRoot(
+  getParents: DriveParentsGetFn,
+  folderId: string,
+  rootFolderId: string,
+  cache: Map<string, boolean>,
+  visiting: Set<string>
+): Promise<boolean> {
+  if (folderId === rootFolderId) return true;
+  const cached = cache.get(folderId);
+  if (cached !== undefined) return cached;
+  if (visiting.has(folderId)) return false;
+  visiting.add(folderId);
+  let result = false;
+  const meta = await getParents(folderId);
+  for (const parentId of meta?.parents ?? []) {
+    if (await folderReachesRoot(getParents, parentId, rootFolderId, cache, visiting)) {
+      result = true;
+      break;
+    }
+  }
+  visiting.delete(folderId);
+  cache.set(folderId, result);
+  return result;
+}
+
+// ファイル（またはフォルダ）の直接の親ID群のいずれかがrootFolderIdの祖先チェーンに到達するかを
+// 判定する。cacheを呼び出し元（main.ts）が使い回すことで、同じスキャン・同期の中で同じ
+// フォルダIDへの重複した祖先チェーン確認を避けられる。
+export async function isDescendantOfRoot(
+  getParents: DriveParentsGetFn,
+  candidateParentIds: string[] | undefined,
+  rootFolderId: string,
+  cache: Map<string, boolean> = new Map()
+): Promise<boolean> {
+  for (const parentId of candidateParentIds ?? []) {
+    if (await folderReachesRoot(getParents, parentId, rootFolderId, cache, new Set())) return true;
+  }
+  return false;
 }
 
 export function createDriveFetchRange(

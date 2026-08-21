@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  advanceStartPageToken,
   clearScanRunId,
   createSyncTabIO,
   isPendingForScanRun,
@@ -141,7 +142,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-new", scanRunId: FIXED_RUN_ID });
+    expect(result).toEqual({ startPageToken: "T-new", scanRunId: FIXED_RUN_ID, hasCompletedInitialScan: false });
     expect(getNewToken).toHaveBeenCalledTimes(1);
     expect(io.appendCalls).toEqual([
       [
@@ -165,7 +166,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root-new", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-new", scanRunId: FIXED_RUN_ID });
+    expect(result).toEqual({ startPageToken: "T-new", scanRunId: FIXED_RUN_ID, hasCompletedInitialScan: false });
     expect(getNewToken).toHaveBeenCalledTimes(1);
     expect(io.updateCalls).toEqual([
       [
@@ -187,7 +188,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: FIXED_RUN_ID });
+    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: FIXED_RUN_ID, hasCompletedInitialScan: false });
     expect(getNewToken).not.toHaveBeenCalled();
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([[["scanRunId", FIXED_RUN_ID]]]);
@@ -203,7 +204,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: "run-in-progress" });
+    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: "run-in-progress", hasCompletedInitialScan: false });
     expect(getNewToken).not.toHaveBeenCalled();
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
@@ -220,7 +221,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: "run-in-progress" });
+    expect(result).toEqual({ startPageToken: "T-existing", scanRunId: "run-in-progress", hasCompletedInitialScan: true });
     expect(getNewToken).not.toHaveBeenCalled();
   });
 
@@ -230,7 +231,7 @@ describe("prepareSyncForScan", () => {
 
     const result = await prepareSyncForScan(io, getNewToken, "root1", fixedRunId);
 
-    expect(result).toEqual({ startPageToken: "T-recovered", scanRunId: FIXED_RUN_ID });
+    expect(result).toEqual({ startPageToken: "T-recovered", scanRunId: FIXED_RUN_ID, hasCompletedInitialScan: false });
     expect(getNewToken).toHaveBeenCalledTimes(1);
     expect(io.appendCalls).toEqual([
       [
@@ -333,6 +334,37 @@ describe("markInitialScanCompleted", () => {
     await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T-original" });
     expect(io.appendCalls).toEqual([]);
     expect(io.updateCalls).toEqual([]);
+  });
+});
+
+describe("advanceStartPageToken", () => {
+  test("準備時と現在のroot/tokenが一致すれば新しいstartPageTokenで更新する", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+    ]);
+    await advanceStartPageToken(io, "T1", { rootFolderId: "root1", startPageToken: "T0" });
+    expect(io.updateCalls).toEqual([[{ rowNumber: 2, row: ["startPageToken", "T1"] }]]);
+  });
+
+  test("root不一致の場合は書き込まない（差分同期中に別デバイスがルートを切り替えていた場合）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T-new"],
+      ["rootFolderId", "root-B"],
+    ]);
+    await advanceStartPageToken(io, "T1", { rootFolderId: "root-A", startPageToken: "T-old" });
+    expect(io.updateCalls).toEqual([]);
+    expect(io.appendCalls).toEqual([]);
+  });
+
+  test("startPageToken不一致の場合は書き込まない（他デバイスが先に進めていた等）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T-already-advanced"],
+      ["rootFolderId", "root1"],
+    ]);
+    await advanceStartPageToken(io, "T1", { rootFolderId: "root1", startPageToken: "T0" });
+    expect(io.updateCalls).toEqual([]);
+    expect(io.appendCalls).toEqual([]);
   });
 });
 

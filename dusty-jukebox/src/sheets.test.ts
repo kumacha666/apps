@@ -11,6 +11,8 @@ import {
   LEGACY_INDEX_SHEET_HEADER_V1,
   LEGACY_INDEX_SHEET_HEADER_V2,
   mergeDuplicateIndexRows,
+  reconcileIndexAgainstRoot,
+  removeIndexRows,
   upsertIndexRows,
   type SheetsIndexIO,
 } from "./sheets";
@@ -839,5 +841,102 @@ describe("createSheetsIndexIO", () => {
     await vi.runAllTimersAsync();
     await promise;
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("removeIndexRows", () => {
+  test("fileIdが空なら何もしない（APIを呼ばない）", async () => {
+    const io = makeFakeIO([]);
+    const result = await removeIndexRows(io, []);
+    expect(result).toEqual({ removedCount: 0 });
+    expect(io.updateCalls).toEqual([]);
+  });
+
+  test("指定したfileIdの行を空欄化する（Sheets APIに行削除のためのnumeric sheetIdを持たないため）", async () => {
+    const rowF1 = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const rowF2 = buildIndexRow({
+      fileId: "f2",
+      fileName: "b.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const io = makeFakeIO([rowF1, rowF2]);
+
+    const result = await removeIndexRows(io, ["f1"]);
+    expect(result).toEqual({ removedCount: 1 });
+    expect(io.updateCalls).toEqual([[{ rowNumber: 2, row: new Array(INDEX_SHEET_HEADER.length).fill("") }]]);
+  });
+
+  test("存在しないfileIdを指定しても何もしない", async () => {
+    const rowF1 = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const io = makeFakeIO([rowF1]);
+    const result = await removeIndexRows(io, ["nonexistent"]);
+    expect(result).toEqual({ removedCount: 0 });
+    expect(io.updateCalls).toEqual([]);
+  });
+});
+
+describe("reconcileIndexAgainstRoot", () => {
+  function rowFor(fileId: string, parentId: string): (string | number)[] {
+    return buildIndexRow({
+      fileId,
+      fileName: `${fileId}.mp3`,
+      parentId,
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+  }
+
+  test("全行のparentIdがrootFolderId配下なら何もしない", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "sub1")]);
+    const isFolderUnderRoot = vi.fn(async () => true);
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(result).toEqual({ removedCount: 0 });
+    expect(io.updateCalls).toEqual([]);
+  });
+
+  test("rootFolderId配下でないparentIdを持つ行を空欄化する", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "oldRoot")]);
+    const isFolderUnderRoot = vi.fn(async (parentId: string) => parentId === "root");
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(result).toEqual({ removedCount: 1 });
+    expect(io.updateCalls).toEqual([[{ rowNumber: 3, row: new Array(INDEX_SHEET_HEADER.length).fill("") }]]);
+  });
+
+  test("distinctなparentIdごとに1回だけisFolderUnderRootを呼ぶ（同じフォルダ配下の複数行で重複確認しない）", async () => {
+    const io = makeFakeIO([rowFor("f1", "sub1"), rowFor("f2", "sub1"), rowFor("f3", "sub1")]);
+    const isFolderUnderRoot = vi.fn(async () => true);
+    await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(isFolderUnderRoot).toHaveBeenCalledTimes(1);
+  });
+
+  test("空欄行（fileIdが空）はスキップする", async () => {
+    const blank = new Array(INDEX_SHEET_HEADER.length).fill("");
+    const io = makeFakeIO([blank, rowFor("f1", "root")]);
+    const isFolderUnderRoot = vi.fn(async () => true);
+    await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(isFolderUnderRoot).toHaveBeenCalledTimes(1);
+    expect(isFolderUnderRoot).toHaveBeenCalledWith("root");
   });
 });

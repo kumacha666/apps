@@ -6,13 +6,20 @@ import {
   createDriveGetFn,
   createDriveCapabilitiesGetFn,
   createGetStartPageTokenFn,
+  createChangesListFn,
+  consumeAllChanges,
+  createDriveParentsGetFn,
+  isDescendantOfRoot,
   createDriveFetchRange,
   validateRootFolder,
   ConcurrencyLimiter,
   DriveHttpError,
+  type ChangesListFn,
+  type DriveChange,
   type DriveFile,
   type DriveGetFn,
   type DriveListFn,
+  type DriveParentsGetFn,
 } from "./drive";
 import { AuthError } from "./auth";
 
@@ -560,6 +567,123 @@ describe("createGetStartPageTokenFn", () => {
     await getStartPageToken();
     const [url] = fetchMock.mock.calls[0] as unknown as [string];
     expect(url).not.toContain("driveId");
+  });
+});
+
+describe("createChangesListFn", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("pageTokenをクエリに含め、changes/nextPageToken/newStartPageTokenを返す", async () => {
+    const body = {
+      changes: [{ fileId: "f1", removed: false, file: { id: "f1", name: "a.mp3", mimeType: "audio/mpeg" } }],
+      nextPageToken: "p2",
+    };
+    const fetchMock = vi.fn(async () => fakeResponse(200, body));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const listChanges = createChangesListFn(async () => "token");
+    const page = await listChanges("T0");
+    expect(page.changes).toEqual(body.changes);
+    expect(page.nextPageToken).toBe("p2");
+    expect(page.newStartPageToken).toBeUndefined();
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url).toContain("pageToken=T0");
+    expect(url).toContain("/drive/v3/changes?");
+  });
+
+  test("driveIdを渡すとリクエストパラメータに含める（共有ドライブ配下の変更ログをスコープするため）", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(200, { changes: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const listChanges = createChangesListFn(async () => "token", "shared-drive-1");
+    await listChanges("T0");
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url).toContain("driveId=shared-drive-1");
+  });
+});
+
+describe("consumeAllChanges", () => {
+  test("nextPageTokenが無くなるまで全ページを結合し、最終ページのnewStartPageTokenを返す", async () => {
+    const pages: Record<string, { changes: DriveChange[]; nextPageToken?: string; newStartPageToken?: string }> = {
+      T0: { changes: [{ fileId: "a", removed: false }], nextPageToken: "p2" },
+      p2: { changes: [{ fileId: "b", removed: true }], newStartPageToken: "T1" },
+    };
+    const listChanges: ChangesListFn = async (pageToken) => pages[pageToken];
+
+    const result = await consumeAllChanges(listChanges, "T0");
+    expect(result.changes.map((c) => c.fileId)).toEqual(["a", "b"]);
+    expect(result.newStartPageToken).toBe("T1");
+  });
+
+  test("最終ページにnewStartPageTokenが含まれない場合はエラーを投げる", async () => {
+    const listChanges: ChangesListFn = async () => ({ changes: [] });
+    await expect(consumeAllChanges(listChanges, "T0")).rejects.toThrow(/newStartPageToken/);
+  });
+});
+
+describe("createDriveParentsGetFn", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("parentsを返す", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => fakeResponse(200, { parents: ["p1"] })));
+    const getParents = createDriveParentsGetFn(async () => "token");
+    await expect(getParents("f1")).resolves.toEqual({ parents: ["p1"] });
+  });
+
+  test("404はnullを返す（対象自体が削除済み等）", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => fakeResponse(404, { error: "not found" })));
+    const getParents = createDriveParentsGetFn(async () => "token");
+    await expect(getParents("f1")).resolves.toBeNull();
+  });
+
+  test("404以外のエラーはそのまま投げる", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => fakeResponse(500, { error: "server error" })));
+    const getParents = createDriveParentsGetFn(async () => "token");
+    await expect(getParents("f1")).rejects.toThrow(DriveHttpError);
+  });
+});
+
+describe("isDescendantOfRoot", () => {
+  // フォルダID -> 直接の親IDのフェイクツリー（folder1 -> parentA -> root、folder2は無関係な木）
+  function makeGetParents(tree: Record<string, string[] | undefined>): DriveParentsGetFn {
+    return async (id) => (id in tree ? { parents: tree[id] } : null);
+  }
+
+  test("直接の親がrootFolderIdの場合はtrue", async () => {
+    const getParents = makeGetParents({});
+    await expect(isDescendantOfRoot(getParents, ["root"], "root")).resolves.toBe(true);
+  });
+
+  test("祖先チェーンを遡ってrootFolderIdに到達すればtrue", async () => {
+    const getParents = makeGetParents({ parentA: ["root"], parentB: ["parentA"] });
+    await expect(isDescendantOfRoot(getParents, ["parentB"], "root")).resolves.toBe(true);
+  });
+
+  test("rootFolderIdに到達しない場合はfalse", async () => {
+    const getParents = makeGetParents({ unrelated: ["otherRoot"], otherRoot: undefined });
+    await expect(isDescendantOfRoot(getParents, ["unrelated"], "root")).resolves.toBe(false);
+  });
+
+  test("循環参照があっても無限ループせずfalseを返す", async () => {
+    const getParents = makeGetParents({ a: ["b"], b: ["a"] });
+    await expect(isDescendantOfRoot(getParents, ["a"], "root")).resolves.toBe(false);
+  });
+
+  test("複数の直接の親のいずれかがrootに到達すればtrue", async () => {
+    const getParents = makeGetParents({ p1: ["otherRoot"], otherRoot: undefined, p2: ["root"] });
+    await expect(isDescendantOfRoot(getParents, ["p1", "p2"], "root")).resolves.toBe(true);
+  });
+
+  test("cacheを渡すと同じフォルダIDへの重複した祖先チェーン確認を避ける", async () => {
+    const getParentsSpy = vi.fn(async (id: string) => (id === "shared" ? { parents: ["root"] } : null));
+    const cache = new Map<string, boolean>();
+    await isDescendantOfRoot(getParentsSpy, ["shared"], "root", cache);
+    await isDescendantOfRoot(getParentsSpy, ["shared"], "root", cache);
+    expect(getParentsSpy).toHaveBeenCalledTimes(1);
   });
 });
 

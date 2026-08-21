@@ -4,11 +4,12 @@
 // の4行を管理する。sheets.tsのindexタブ用upsert（fileId起点）と同じ「既存キーがあれば行を
 // 更新、無ければ追記」方針を、キー集合が固定・行数が少ない（4行）という前提のもとで実装したもの。
 //
-// このファイルの範囲：sync タブの読み書き基盤と、CONCEPT.md 4.3節で確定している
+// このファイルの範囲：sync タブの読み書き基盤、CONCEPT.md 4.3節で確定している
 // 「ルート変更時は3項目をまとめて書く」「初期化未完了中は既存トークンを使い回す」という
-// 決定ロジック、着手順の目安5のscanRunId管理まで。changes.list による実際の差分同期の消費、
-// ルート変更後の旧ルート配下行の削除（リコンサイル）は未実装のまま残す
-// （apps/dusty-jukebox/CLAUDE.md参照）。
+// 決定ロジック、着手順の目安5のscanRunId管理に加え、着手順の目安4の残り（changes.list消費）向けの
+// hasCompletedInitialScan判定・advanceStartPageTokenまで。changes.list自体の呼び出し・
+// リコンサイルの実際の判定ロジックはdrive.ts/sheets.ts/differentialSync.ts（main.tsから結線）
+// を参照（apps/dusty-jukebox/CLAUDE.md参照）。
 
 import { columnLetter, createSheetsFetch, type IndexRowScanState } from "./sheets";
 
@@ -156,6 +157,11 @@ export interface PrepareSyncResult {
   // このスキャン実行を識別する不透明なID（着手順の目安5）。新規実行なら今回発行した
   // ランダムID、前回の実行が完走せず中断していた場合はその実行のIDを再利用する。
   scanRunId: string;
+  // rootFolderIdが変わっていない、かつ前回のinitialScanCompletedAtが記録済み（＝直近の
+  // 初回スキャンが最後まで完了している）場合のみtrue。main.tsはこれを見て、フォルダ全体の
+  // 再帰走査（フルスキャン）ではなくchanges.list消費による差分同期に進む
+  // （着手順の目安4の残り、differentialSync.ts参照）。
+  hasCompletedInitialScan: boolean;
 }
 
 function defaultNewRunId(): string {
@@ -170,14 +176,16 @@ function defaultNewRunId(): string {
 // 2. 同じrootFolderIdでinitialScanCompletedAtが無い（初期化未完了）場合：新規取得せず
 //    既存のstartPageTokenを使い回す（複数デバイスが初期化未完了中に別々のトークンを
 //    取得し直すと、取得し直された側との間で変更が記録されず漏れるため）
-// 3. 同じrootFolderIdでinitialScanCompletedAtがある場合：引き続き既存のstartPageTokenを使う
-//    （changes.listによる実際の差分同期の消費は未実装のため、本PR時点ではこの分岐でも
-//    main.ts は従来通りフルスキャンを行う。次PR以降、差分同期を実装する際にこの値を使う）
-// 2・3のどちらでも、scanRunIdが既に設定されていれば（前回の実行が完走せず中断していた
-// ことを意味する）そのまま再利用し、無ければ新しいIDを新規実行として書き込む。
+// 3. 同じrootFolderIdでinitialScanCompletedAtがある場合：引き続き既存のstartPageTokenを使う。
+//    戻り値のhasCompletedInitialScanがtrueになり、main.tsはこの値からchanges.listで差分を
+//    消費する（フルスキャンはしない、differentialSync.ts参照）
+// 2・3のどちらでも、scanRunIdが既に設定されていれば（前回の初回スキャン実行が完走せず
+// 中断していたことを意味する）そのまま再利用し、無ければ新しいIDを新規実行として書き込む
+// （差分同期モード自体はscanRunIdのバッチ・中断再開ウォーターマークを使わない）。
 //
-// 「旧ルート配下だった行の削除（リコンサイル）」はCONCEPT.md 4.3節が新規初回スキャン完了時の
-// 仕上げとして定義しているが、本PRでは未実装（apps/dusty-jukebox/CLAUDE.md参照）。
+// 「旧ルート配下だった行の削除（リコンサイル）」（CONCEPT.md 4.3節）は、新しい初回スキャン
+// 完了時の仕上げとしてmain.tsから呼ぶのに加え、差分同期中にフォルダの変更イベントを検知した
+// 場合の安全網としても使う（sheets.tsのreconcileIndexAgainstRoot、differentialSync.ts参照）。
 export async function prepareSyncForScan(
   io: SyncTabIO,
   getNewStartPageToken: () => Promise<string>,
@@ -196,25 +204,31 @@ export async function prepareSyncForScan(
       initialScanCompletedAt: "",
       scanRunId,
     });
-    return { startPageToken: newToken, scanRunId };
+    return { startPageToken: newToken, scanRunId, hasCompletedInitialScan: false };
   }
 
   if (state.startPageToken) {
+    // ルート不変・initialScanCompletedAtが記録済みなら、前回の初回スキャンは最後まで
+    // 完了している。scanRunIdの有無（次の分岐）は初回スキャンのバッチ処理・中断再開専用の
+    // 状態のため、差分同期に進めるかどうかの判定には関係しない。
+    const hasCompletedInitialScan = Boolean(state.initialScanCompletedAt);
     if (state.scanRunId) {
-      return { startPageToken: state.startPageToken, scanRunId: state.scanRunId };
+      return { startPageToken: state.startPageToken, scanRunId: state.scanRunId, hasCompletedInitialScan };
     }
     const scanRunId = newRunId();
     await writeSyncEntries(io, rows, { scanRunId });
-    return { startPageToken: state.startPageToken, scanRunId };
+    return { startPageToken: state.startPageToken, scanRunId, hasCompletedInitialScan };
   }
 
   // rootFolderIdは記録済みだがstartPageTokenが無い異常系（書き込み途中の中断等）への
   // フォールバック。通常はrootFolderId書き込みと同時にstartPageTokenも書かれるため
-  // 起こらないはずだが、安全のため新規取得して補う。
+  // 起こらないはずだが、安全のため新規取得して補う。initialScanCompletedAtが記録されようが
+  // 無かろうがstartPageToken自体が失われている以上、差分同期の前提（消費開始点）が無いため
+  // 必ずフルスキャンからやり直す。
   const newToken = await getNewStartPageToken();
   const scanRunId = state.scanRunId || newRunId();
   await writeSyncEntries(io, rows, { startPageToken: newToken, scanRunId });
-  return { startPageToken: newToken, scanRunId };
+  return { startPageToken: newToken, scanRunId, hasCompletedInitialScan: false };
 }
 
 // 1回のスキャン実行（全バッチ）が最後まで完走した後にmain.tsから呼ぶ。scanRunIdを
@@ -269,6 +283,27 @@ export async function markInitialScanCompleted(
     return;
   }
   await writeSyncEntries(io, rows, { initialScanCompletedAt: completedAtIso });
+}
+
+// 着手順の目安4の残り（changes.list消費）：差分同期がstartPageTokenから最後まで消費し終えた後に
+// main.tsから呼ぶ。消費済みのstartPageTokenを、changes.listが返したnewStartPageTokenへ進める。
+// markInitialScanCompleted/clearScanRunIdと同じTOCTOU対策：直前に確保したrootFolderId/
+// startPageToken（＝差分同期を開始した時点の状態）と現在のsync状態を照合し、一致する場合のみ
+// 書き込む。長時間の差分同期中に別デバイスがルートを切り替えていた場合、無関係になった
+// （切り替え後のルートとは別の）トークンを誤って進めないため（不一致時は静かにスキップする：
+// 切り替え後のルートは既にprepareSyncForScanのルート変更分岐で新しいstartPageTokenを
+// 取得・保存済みのため、ここで書き込みをスキップしても問題にならない）。
+export async function advanceStartPageToken(
+  io: SyncTabIO,
+  newStartPageToken: string,
+  expected: { rootFolderId: string; startPageToken: string }
+): Promise<void> {
+  const rows = await io.readAllRows();
+  const state = parseSyncState(rows);
+  if (state.rootFolderId !== expected.rootFolderId || state.startPageToken !== expected.startPageToken) {
+    return;
+  }
+  await writeSyncEntries(io, rows, { startPageToken: newStartPageToken });
 }
 
 // SyncTabIOの実実装。sheets.tsのcreateSheetsFetch（認証・リトライ共通）を再利用する。
