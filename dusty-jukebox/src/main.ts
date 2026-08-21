@@ -204,6 +204,17 @@ async function runFullScan(
         ),
       scanRunId
     );
+    // タグ抽出（数十秒以上かかりうる）の後・実際の書き込みの直前にroot/tokenを再確認する
+    // （2026-08-21 Codexレビュー指摘：P1）。10235件規模のフルスキャンは全バッチで長時間かかる
+    // ため、開始前の1回きりの確認では別デバイスが途中でルートを切り替えて新しいフルスキャンを
+    // 完了させた場合に気づけない。末尾のisSyncStateCurrentチェックはその後のリコンサイル・
+    // 完了記録をスキップするだけで、既にここで書いてしまった行は戻せないため、各バッチの
+    // 書き込み前に確認して不一致ならその場でスキャン自体を中止する。
+    const stillCurrentForBatch = await isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken });
+    if (!stillCurrentForBatch) {
+      setStatus("別のデバイスがルート設定を変更したため、今回のスキャンを中止しました。次回のスキャンで改めて反映されます。", true);
+      return;
+    }
     // upsert直前に読み直す（このバッチのタグ抽出中に加えられた手動補正まではカバーできないが、
     // それより前の他バッチ・他デバイスの更新は反映された状態でマージできる）。
     const freshExistingRows = await sheetsIO.listExistingRows();
@@ -248,8 +259,18 @@ async function runFullScan(
       setStatus("フォルダ構成を確認中...");
       const getParentsFn = createDriveParentsGetFn(() => auth.ensureAccessToken());
       const ancestryCache = new Map<string, boolean>();
-      await reconcileIndexAgainstRoot(sheetsIO, (parentId) =>
-        isDescendantOfRoot(getParentsFn, [parentId], folderId, ancestryCache, shortcutTargetFolderIds)
+      // knownFileIdsに今回のフルスキャンが実際に発見したfileId集合を渡す：410 Gone
+      // （changes.list保持期間切れ）からの復旧でフルスキャンをやり直す場合、410で失われた
+      // 期間中に削除・ゴミ箱移動・対象外拡張子へリネームされたファイルは今回の一覧に現れないが、
+      // 親フォルダ自体はrootFolderId配下にあり続けるためparentId基準の判定だけでは
+      // 「まだ到達可能」と誤判定され続け、以後の差分同期（新トークンは410欠落期間より後）でも
+      // 削除イベントを二度と取得できず恒久的に残ってしまう（2026-08-21 Codexレビュー指摘：P2）。
+      // 完全な一覧が取れているフルスキャンの後でのみ安全な照合のため、差分同期側の
+      // フォルダ変更イベント安全網としての呼び出しでは渡さない（sheets.tsのコメント参照）。
+      await reconcileIndexAgainstRoot(
+        sheetsIO,
+        (parentId) => isDescendantOfRoot(getParentsFn, [parentId], folderId, ancestryCache, shortcutTargetFolderIds),
+        new Set(entries.map((entry) => entry.file.id))
       );
 
       // 今回のフルスキャンが解決したショートカット参照先フォルダIDの集合をsyncタブへ永続化する。
@@ -406,7 +427,14 @@ async function runDifferentialSync(
   // 事後確認する（sheets.tsのreconcileIndexAgainstRoot参照）。
   if (plan.needsReconcile) {
     setStatus("フォルダ構成の変更を反映中...");
-    await reconcileIndexAgainstRoot(sheetsIO, (parentId) => isUnderRoot([parentId]));
+    // 共有のancestryCacheは使わず、ここで新しいキャッシュを渡す（2026-08-21 Codexレビュー
+    // 指摘：P1）。planDifferentialSync計算中のフォルダ変更イベント処理（listSubtreeによる
+    // ネストしたショートカットの発見、extraRootFolderIdsへ都度追加される）は、共有キャッシュに
+    // 「更新前のextraRootFolderIds」を前提とした古い到達性判定を残しうる。索引全体を書き換える
+    // 最も破壊的な処理であるリコンサイルだけは、常に最新のextraRootFolderIdsで再計算する。
+    await reconcileIndexAgainstRoot(sheetsIO, (parentId) =>
+      isDescendantOfRoot(getParentsFn, [parentId], folderId, new Map(), extraRootFolderIds)
+    );
   }
 
   // 今回更新したextraRootFolderIds（フルスキャン後の永続値＋差分同期中のショートカット変更）を

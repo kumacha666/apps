@@ -893,6 +893,29 @@ describe("removeIndexRows", () => {
     expect(result).toEqual({ removedCount: 0 });
     expect(io.updateCalls).toEqual([]);
   });
+
+  test("空欄化対象が200件を超える場合は複数回のupdateRowsに分割する（2026-08-21 Codexレビュー指摘：P2）", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) =>
+      buildIndexRow({
+        fileId: `f${i}`,
+        fileName: `f${i}.mp3`,
+        parentId: "p",
+        driveModifiedTime: "2026-08-01T00:00:00.000Z",
+        lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+        tags: {},
+        extractionFailed: false,
+      })
+    );
+    const io = makeFakeIO(rows);
+    const result = await removeIndexRows(
+      io,
+      Array.from({ length: 250 }, (_, i) => `f${i}`)
+    );
+    expect(result).toEqual({ removedCount: 250 });
+    expect(io.updateCalls).toHaveLength(2);
+    expect(io.updateCalls[0]).toHaveLength(200);
+    expect(io.updateCalls[1]).toHaveLength(50);
+  });
 });
 
 describe("reconcileIndexAgainstRoot", () => {
@@ -949,5 +972,20 @@ describe("reconcileIndexAgainstRoot", () => {
     expect(io.updateCalls).toHaveLength(2);
     expect(io.updateCalls[0]).toHaveLength(200);
     expect(io.updateCalls[1]).toHaveLength(50);
+  });
+
+  test("knownFileIdsを渡すと、parentIdは到達可能でもその集合に無い行を空欄化する（2026-08-21 Codexレビュー指摘：P2。410 Gone復旧後のフルスキャンで、欠落期間中に削除されたファイルの後始末）", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "root")]);
+    const isFolderUnderRoot = vi.fn(async () => true);
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot, new Set(["f1"]));
+    expect(result).toEqual({ removedCount: 1 });
+    expect(io.updateCalls).toEqual([[{ rowNumber: 3, row: new Array(INDEX_SHEET_HEADER.length).fill("") }]]);
+  });
+
+  test("knownFileIdsを省略した場合は従来通りparentIdの到達可能性のみで判定する", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "root")]);
+    const isFolderUnderRoot = vi.fn(async () => true);
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(result).toEqual({ removedCount: 0 });
   });
 });

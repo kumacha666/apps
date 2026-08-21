@@ -532,6 +532,20 @@ export interface RemoveIndexRowsResult {
 // 入れられたファイルのfileIdを指定して索引行を除去する。mergeDuplicateIndexRowsと同じ理由
 // （Sheets APIに行削除用のnumeric sheetIdを保持していないDI設計）で、削除ではなく全列空欄化で
 // 代替する（空欄行のfileIdは空のため以降のlistExistingRows()ベースの処理からは無視される）。
+// 空欄化対象が多い場合（ルート変更直後・大量の一括削除等）、1回のvalues:batchUpdateに
+// まとめず一定件数ごとに分割して呼ぶ（2026-08-21 Codexレビュー指摘：P2。既知の「大規模
+// batchUpdateの分割は未実装」という制約に、reconcileIndexAgainstRootに続きremoveIndexRowsの
+// 経路でも抵触しうる：同一同期区間で大量の音源が個別に削除・ゴミ箱移動・ルート外移動された
+// 場合、removedFileIdsに対応する全行が1回のリクエストに入り、リクエストサイズ・処理時間の
+// 上限で失敗しうる）。main.tsのフルスキャンと同じBATCH_SIZE（200）を踏襲する。
+const WRITE_BATCH_SIZE = 200;
+
+async function updateRowsInBatches(io: SheetsIndexIO, updates: { rowNumber: number; row: (string | number)[] }[]): Promise<void> {
+  for (let i = 0; i < updates.length; i += WRITE_BATCH_SIZE) {
+    await io.updateRows(updates.slice(i, i + WRITE_BATCH_SIZE));
+  }
+}
+
 export async function removeIndexRows(io: SheetsIndexIO, fileIds: string[]): Promise<RemoveIndexRowsResult> {
   if (fileIds.length === 0) return { removedCount: 0 };
   const targets = new Set(fileIds);
@@ -542,7 +556,7 @@ export async function removeIndexRows(io: SheetsIndexIO, fileIds: string[]): Pro
     const fileId = row[FILE_ID_INDEX];
     if (fileId && targets.has(String(fileId))) updates.push({ rowNumber: i + 2, row: blankRow });
   });
-  if (updates.length > 0) await io.updateRows(updates);
+  await updateRowsInBatches(io, updates);
   return { removedCount: updates.length };
 }
 
@@ -560,9 +574,23 @@ export interface ReconcileIndexResult {
 // isFolderUnderRootで判定し、到達しない行を削除（空欄化）する。distinctなparentId（≒フォルダ数）
 // ごとに1回だけ判定する（10235件規模でも実際のフォルダ数は行数よりずっと少ないため、
 // isFolderUnderRoot呼び出し回数を抑えられる）。
+//
+// knownFileIds（省略可）：直近のフルスキャンで実際に発見できたfileIdの完全な集合を渡すと、
+// parentIdの祖先チェーンが到達可能でも、この集合に含まれない行はあわせて空欄化する
+// （2026-08-21 Codexレビュー指摘：P2）。changes.listの保持期間切れ（410 Gone）からの復旧で
+// 新しいstartPageTokenを取得しフルスキャンをやり直す場合、410で失われた期間中に削除・
+// ゴミ箱移動・対象外拡張子へのリネームがあったファイルは、新しいフルスキャンの一覧
+// （listAudioFilesRecursiveの結果）には現れない一方、その親フォルダ自体は変わらずrootFolderId
+// 配下にあり続けるため、parentId基準の判定だけでは「まだ到達可能」と誤判定され続け、以後の
+// 差分同期も（新トークンが410欠落期間より後のため）その削除イベントを二度と取得できず、
+// 恒久的に残ってしまう。差分同期由来のリコンサイル（フォルダ変更イベントの安全網としての
+// 呼び出し）ではこの引数を渡さない：フォルダ変更イベントに反応した限定的な再走査であり、
+// 「今回見つからなかった＝全体から見て存在しない」という前提が成立しないため
+// （knownFileIdsを渡してよいのは、対象フォルダ配下を完全に再列挙したフルスキャンの後のみ）。
 export async function reconcileIndexAgainstRoot(
   io: SheetsIndexIO,
-  isFolderUnderRoot: (parentId: string) => Promise<boolean>
+  isFolderUnderRoot: (parentId: string) => Promise<boolean>,
+  knownFileIds?: Set<string>
 ): Promise<ReconcileIndexResult> {
   const rows = await io.listExistingRows();
   const distinctParentIds = new Set<string>();
@@ -579,21 +607,13 @@ export async function reconcileIndexAgainstRoot(
   const blankRow = new Array(INDEX_SHEET_HEADER.length).fill("") as (string | number)[];
   const updates: { rowNumber: number; row: (string | number)[] }[] = [];
   rows.forEach((row, i) => {
-    if (!row[FILE_ID_INDEX]) return;
+    const fileId = row[FILE_ID_INDEX];
+    if (!fileId) return;
     const parentId = String(row[PARENT_ID_INDEX] ?? "");
-    if (!reachable.get(parentId)) updates.push({ rowNumber: i + 2, row: blankRow });
+    const stillKnown = !knownFileIds || knownFileIds.has(String(fileId));
+    if (!reachable.get(parentId) || !stillKnown) updates.push({ rowNumber: i + 2, row: blankRow });
   });
-  // ルート変更直後は索引のほぼ全行が空欄化対象になりうる（10235件規模、CONCEPT.md 3.4節）。
-  // 1回のvalues:batchUpdateに全行分をまとめると、大規模batchUpdateの既知の制約（本ファイルの
-  // 「大規模batchUpdateの分割は未実装」コメント参照、upsertIndexRows側はmain.tsの200件バッチで
-  // 既に回避しているが、reconcileIndexAgainstRootはindexタブ全体を一度に処理する設計のため
-  // この制約を新たに踏みうる）でリクエストサイズ・処理時間上限に抵触し、ルート変更の完了記録まで
-  // 到達できなくなりうる（2026-08-21 Codexレビュー指摘：P2）。main.tsのバッチ処理と同じ
-  // BATCH_SIZE（200）で分割して呼び出す。
-  const RECONCILE_BATCH_SIZE = 200;
-  for (let i = 0; i < updates.length; i += RECONCILE_BATCH_SIZE) {
-    await io.updateRows(updates.slice(i, i + RECONCILE_BATCH_SIZE));
-  }
+  await updateRowsInBatches(io, updates);
   return { removedCount: updates.length };
 }
 

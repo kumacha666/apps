@@ -261,6 +261,27 @@ describe("planDifferentialSync", () => {
     });
     expect(plan.entriesToProcess.map((e) => e.file.id)).toEqual(["f1"]);
   });
+
+  test("既知のショートカット参照先フォルダ自身の変更イベント（例：ゴミ箱からの復元）は、物理的な親がrootFolderId外でもサブツリーを再走査する（2026-08-21 Codexレビュー指摘：P1）", async () => {
+    // shortcutTarget自身がfile.idとして変更イベントに現れるケース。物理的な親（file.parents）を
+    // 辿ってもrootFolderIdには到達しないが、shortcutTarget自身は既知の追加ルート（extraRootFolderIds）
+    // のメンバーである、という状況をisDescendantOfRootのモックで再現する。
+    const restoredFolder: DriveChange = {
+      fileId: "shortcutTarget",
+      removed: false,
+      file: { id: "shortcutTarget", name: "Restored", mimeType: "application/vnd.google-apps.folder", parents: ["somewhereElse"] },
+    };
+    const subtreeEntry: AudioFileEntry = { file: audioFile("f-restored"), folderPath: "" };
+    const listSubtree = vi.fn(async () => [subtreeEntry]);
+    const plan = await planDifferentialSync([restoredFolder], {
+      // file.parents（["somewhereElse"]）はfalse、file.id自身（["shortcutTarget"]）はtrueを返す
+      isDescendantOfRoot: async (parentIds) => (parentIds?.includes("shortcutTarget") ? true : false),
+      listSubtree,
+      existingScanState: new Map(),
+    });
+    expect(listSubtree).toHaveBeenCalledWith("shortcutTarget", undefined);
+    expect(plan.entriesToProcess.map((e) => e.file.id)).toEqual(["f-restored"]);
+  });
 });
 
 function shortcutChange(id: string, targetId: string, opts?: { removed?: boolean; trashed?: boolean }): DriveChange {

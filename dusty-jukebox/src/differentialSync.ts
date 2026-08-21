@@ -86,9 +86,9 @@ type FileOutcome =
 // main.tsはplanDifferentialSync呼び出し前にこれを呼び、extraRootFolderIdsを直接書き換えたうえで
 // isDescendantOfRoot・reconcileIndexAgainstRootの両方に使い回し、最後にsync タブへ永続化する。
 //
-// **既知の限界（2026-08-21 Codexレビュー指摘：P2×2、対応は見送り）**：extraRootFolderIdsは
+// **既知の限界（2026-08-21 Codexレビュー指摘：P2×2・P1×1、対応は見送り）**：extraRootFolderIdsは
 // 「参照先フォルダID」の単純なSetであり、それを指すショートカット自体の情報（何個あるか、
-// resourceKeyは何か）を持たない。これに起因する2つの限界がある：
+// resourceKeyは何か、どのフォルダの配下にあるか）を持たない。これに起因する3つの限界がある：
 // ①rootFolderId配下に同じフォルダを指すショートカットが2個以上ある状態で片方だけが
 //   削除・ゴミ箱移動・ルート外への移動をした場合、この関数はまだ有効なもう片方のショートカットが
 //   存在するかを考慮せず参照先IDを集合から除去してしまい、直後のリコンサイルがまだ到達可能な
@@ -98,9 +98,14 @@ type FileOutcome =
 //   `planDifferentialSync`側は種別不明の削除として`needsReconcile`を立てる安全策を持つが、
 //   extraRootFolderIdsに古い参照先が残ったままだとリコンサイル自体がその配下を「まだ到達可能」と
 //   誤判定し続けるため、この安全策が実質的に無力化される
+// ③（P1）ショートカットを含む通常フォルダ、または外側のショートカットがrootFolderId外へ
+//   移動された場合、配下のショートカット自身の`parents`は変わらないため個別の変更イベントが
+//   発生せず、`planDifferentialSync`はこの移動を検知できない（`isFolderLikeChange`の分岐に
+//   一切到達しない）。結果としてextraRootFolderIdsに古い参照先が残り続け、配下の曲が
+//   恒久的に索引に残ってしまう
 // 正しく解決するには「参照先ID→それを指す現在有効なショートカットIDの集合」という参照カウント
-// 付きの構造へ拡張する必要があり、sync タブの永続化スキーマ・関連するテストの変更を伴う。
-// 同じフォルダを複数のショートカットで参照する構成・ショートカット自体の完全削除は稀なケースと
+// 付きの構造（③も含めるなら、さらにショートカットの祖先チェーンも保持する構造）へ拡張する
+// 必要があり、sync タブの永続化スキーマ・関連するテストの変更を伴う。いずれも稀なケースと
 // 想定し、次PR以降の対応とする（直近のフルスキャンで自己修復する）。
 export async function applyShortcutChangesToExtraRootFolderIds(
   changes: DriveChange[],
@@ -170,7 +175,14 @@ export async function planDifferentialSync(changes: DriveChange[], deps: Differe
       // 立てたneedsReconcileによるreconcileIndexAgainstRootに委ねる（サブツリー走査では
       // 「今どこにあるか」しか分からず「以前どこにあったか」は分からないため、外れたケースの
       // 検出自体はリコンサイル側の役目）。
-      const stillUnderRoot = await deps.isDescendantOfRoot(file.parents);
+      //
+      // file自身の直接の親（file.parents）に加え、file自身のID（file.id）でも確認する
+      // （2026-08-21 Codexレビュー指摘：P1）。このフォルダ自身が既知のショートカット参照先
+      // （extraRootFolderIdsのメンバー）の場合、その物理的な親を辿ってもrootFolderIdには
+      // 到達しない（それがショートカットの本質）ため、file.parentsだけの確認では「参照先
+      // フォルダ自身の変更イベント」（例：ゴミ箱から復元された等）を常にrootFolderId外と
+      // 誤判定してしまい、復元後の再走査が行われない。
+      const stillUnderRoot = (await deps.isDescendantOfRoot(file.parents)) || (await deps.isDescendantOfRoot([file.id]));
       if (!stillUnderRoot) continue;
       const subtreeEntries = await deps.listSubtree(target.id, target.resourceKey);
       for (const entry of subtreeEntries) {
