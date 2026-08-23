@@ -339,10 +339,27 @@ export async function persistShortcutRootFolderIds(
 // falseならその操作をスキップすることで、この競合の窓を狭める（Sheets APIには行単位の
 // ロック・条件付き書き込みが無く根本解消はできないため、事前防止ではなく「直前の再確認」に
 // よる緩和である点はsync.ts全体の既知の限界＝事後の整合という方針と同じ）。
-export async function isSyncStateCurrent(io: SyncTabIO, expected: { rootFolderId: string; startPageToken: string }): Promise<boolean> {
+//
+// expected.scanRunId（省略可）：呼び出し元がこの実行が確保したscanRunIdを渡すと、
+// rootFolderId・startPageTokenに加えてこれも照合する（2026-08-23 Codexレビュー指摘：P1）。
+// 同じルートの初期化が未完了な状態で2台のデバイスがほぼ同時にフルスキャンを開始すると、
+// 両方とも同じrootFolderId・startPageTokenを共有する（初期化未完了中は既存のトークンを
+// 使い回すため）ため、root/tokenだけの比較では2つの並行実行を区別できない。この場合、
+// 先に一覧取得を終えた側（例：端末B）が索引化を完了しても、遅れて到達した側（端末A）は
+// root/tokenの一致だけを根拠に「まだ有効」と判定し、Aが取得した（Bより古い）knownFileIds
+// 基準でreconcileIndexAgainstRootを実行してしまい、Bが追加した新しい正当な行を誤って
+// 空欄化しうる。clearScanRunId（既存）と同じ方式で、呼び出し元がprepareSyncForScanから
+// 得た自分自身のscanRunIdを渡すことで、2つの並行実行が偶然異なるscanRunIdを取得した
+// 場合（scanRunId未設定のまま両者がほぼ同時に開始したケース）にこれを検出できる。
+export async function isSyncStateCurrent(
+  io: SyncTabIO,
+  expected: { rootFolderId: string; startPageToken: string; scanRunId?: string }
+): Promise<boolean> {
   const rows = await io.readAllRows();
   const state = parseSyncState(rows);
-  return state.rootFolderId === expected.rootFolderId && state.startPageToken === expected.startPageToken;
+  if (state.rootFolderId !== expected.rootFolderId || state.startPageToken !== expected.startPageToken) return false;
+  if (expected.scanRunId !== undefined && state.scanRunId !== expected.scanRunId) return false;
+  return true;
 }
 
 // changes.listが保存済みのstartPageTokenを「古すぎる」として拒否した場合（HTTP 410 Gone、

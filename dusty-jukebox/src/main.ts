@@ -210,7 +210,7 @@ async function runFullScan(
     // 完了させた場合に気づけない。末尾のisSyncStateCurrentチェックはその後のリコンサイル・
     // 完了記録をスキップするだけで、既にここで書いてしまった行は戻せないため、各バッチの
     // 書き込み前に確認して不一致ならその場でスキャン自体を中止する。
-    const stillCurrentForBatch = await isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken });
+    const stillCurrentForBatch = await isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken, scanRunId });
     if (!stillCurrentForBatch) {
       setStatus("別のデバイスがルート設定を変更したため、今回のスキャンを中止しました。次回のスキャンで改めて反映されます。", true);
       return;
@@ -249,7 +249,7 @@ async function runFullScan(
     // 既に新しいルートへの完了したフルスキャンを終えていた場合、この（もはや無関係な）
     // ルート基準のリコンサイルが別デバイスの新ルートの索引行を誤って空欄化しうる
     // （sync.tsのisSyncStateCurrent、runDifferentialSyncと同じ対策）。
-    const stillCurrent = await isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken });
+    const stillCurrent = await isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken, scanRunId });
     if (stillCurrent) {
       // 「旧ルート配下だった行の削除（リコンサイル）」（CONCEPT.md 4.3節）：新しい初回スキャンが
       // 完了した時点の仕上げとして実行する。以前はこの呼び出しが無く、ルート変更後にフルスキャンが
@@ -275,7 +275,7 @@ async function runFullScan(
         sheetsIO,
         (parentId) => isDescendantOfRoot(getParentsFn, [parentId], folderId, ancestryCache, shortcutTargetFolderIds),
         new Set(entries.map((entry) => entry.file.id)),
-        () => isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken })
+        () => isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken, scanRunId })
       );
 
       // 今回のフルスキャンが解決したショートカット参照先フォルダIDの集合をsyncタブへ永続化する。

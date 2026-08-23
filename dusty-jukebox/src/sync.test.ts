@@ -455,6 +455,33 @@ describe("isSyncStateCurrent", () => {
     ]);
     await expect(isSyncStateCurrent(io, { rootFolderId: "root1", startPageToken: "T0" })).resolves.toBe(false);
   });
+
+  test("scanRunIdを渡さない場合は従来通りroot/tokenのみで判定する（differentialSync等、scanRunIdの概念が無い呼び出し元との後方互換）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-B"],
+    ]);
+    await expect(isSyncStateCurrent(io, { rootFolderId: "root1", startPageToken: "T0" })).resolves.toBe(true);
+  });
+
+  test("scanRunIdを渡した場合、root/tokenが一致してもscanRunIdが異なればfalse（2026-08-23 Codexレビュー指摘：P1。初期化未完了中の同一ルートで2台のデバイスがほぼ同時にフルスキャンを開始し、異なるscanRunIdを取得した場合、root/tokenの一致だけでは2つの並行実行を区別できず、先に完了した側の索引を後から到達した側が古いknownFileIdsで誤って空欄化しうる）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-B"],
+    ]);
+    await expect(isSyncStateCurrent(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" })).resolves.toBe(false);
+  });
+
+  test("scanRunIdを渡した場合、root/token/scanRunIdすべて一致すればtrue", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-A"],
+    ]);
+    await expect(isSyncStateCurrent(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" })).resolves.toBe(true);
+  });
 });
 
 describe("resetForFullRescan", () => {
