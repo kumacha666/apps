@@ -916,6 +916,34 @@ describe("removeIndexRows", () => {
     expect(io.updateCalls[0]).toHaveLength(200);
     expect(io.updateCalls[1]).toHaveLength(50);
   });
+
+  test("isStillCurrentが各バッチ送信の直前に呼ばれ、途中でfalseになると残りのバッチを送らない（2026-08-23 Codexレビュー指摘：P1。以前は呼び出し全体の最初に1回だけ確認しており、複数バッチに分割された後続バッチの間に生じた不一致を検出できなかった）", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) =>
+      buildIndexRow({
+        fileId: `f${i}`,
+        fileName: `f${i}.mp3`,
+        parentId: "p",
+        driveModifiedTime: "2026-08-01T00:00:00.000Z",
+        lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+        tags: {},
+        extractionFailed: false,
+      })
+    );
+    const io = makeFakeIO(rows);
+    let calls = 0;
+    const isStillCurrent = vi.fn(async () => {
+      calls += 1;
+      return calls === 1; // 最初のバッチだけ許可し、2バッチ目の直前でfalseにする
+    });
+    const result = await removeIndexRows(
+      io,
+      Array.from({ length: 250 }, (_, i) => `f${i}`),
+      isStillCurrent
+    );
+    expect(result).toEqual({ removedCount: 200 });
+    expect(io.updateCalls).toHaveLength(1);
+    expect(isStillCurrent).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("reconcileIndexAgainstRoot", () => {
@@ -1013,5 +1041,20 @@ describe("reconcileIndexAgainstRoot", () => {
     const isFolderUnderRoot = vi.fn(async (parentId: string) => parentId === "root");
     const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
     expect(result).toEqual({ removedCount: 1 });
+  });
+
+  test("isStillCurrentは各バッチ送信の直前に再確認され、200件超で複数バッチに分割される場合、途中でfalseになると残りのバッチを送らない（2026-08-23 Codexレビュー指摘：P1）", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) => rowFor(`f${i}`, "oldRoot"));
+    const io = makeFakeIO(rows);
+    const isFolderUnderRoot = vi.fn(async () => false);
+    let calls = 0;
+    const isStillCurrent = vi.fn(async () => {
+      calls += 1;
+      return calls === 1;
+    });
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot, undefined, isStillCurrent);
+    expect(result).toEqual({ removedCount: 200 });
+    expect(io.updateCalls).toHaveLength(1);
+    expect(isStillCurrent).toHaveBeenCalledTimes(2);
   });
 });

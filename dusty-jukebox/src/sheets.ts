@@ -540,13 +540,32 @@ export interface RemoveIndexRowsResult {
 // 上限で失敗しうる）。main.tsのフルスキャンと同じBATCH_SIZE（200）を踏襲する。
 const WRITE_BATCH_SIZE = 200;
 
-async function updateRowsInBatches(io: SheetsIndexIO, updates: { rowNumber: number; row: (string | number)[] }[]): Promise<void> {
+// isStillCurrent（省略可）：各バッチのio.updateRows呼び出し直前に再確認するコールバック
+// （2026-08-23 Codexレビュー指摘：P1）。以前はreconcileIndexAgainstRootが呼び出し全体の
+// 最初に1回だけ確認していたが、200件超で複数バッチに分割される場合、最初のバッチが
+// 送信された後・後続バッチが送信されるまでの間に別デバイスが同じrootFolderIdのまま
+// トークンを進めて同じ行番号へ正当なデータを書いていると、後続の旧バッチがそのデータを
+// 空欄化で上書きしうる。バッチごとに再確認し、不一致になった時点で残りのバッチを送らない。
+async function updateRowsInBatches(
+  io: SheetsIndexIO,
+  updates: { rowNumber: number; row: (string | number)[] }[],
+  isStillCurrent?: () => Promise<boolean>
+): Promise<number> {
+  let written = 0;
   for (let i = 0; i < updates.length; i += WRITE_BATCH_SIZE) {
-    await io.updateRows(updates.slice(i, i + WRITE_BATCH_SIZE));
+    if (isStillCurrent && !(await isStillCurrent())) break;
+    const batch = updates.slice(i, i + WRITE_BATCH_SIZE);
+    await io.updateRows(batch);
+    written += batch.length;
   }
+  return written;
 }
 
-export async function removeIndexRows(io: SheetsIndexIO, fileIds: string[]): Promise<RemoveIndexRowsResult> {
+export async function removeIndexRows(
+  io: SheetsIndexIO,
+  fileIds: string[],
+  isStillCurrent?: () => Promise<boolean>
+): Promise<RemoveIndexRowsResult> {
   if (fileIds.length === 0) return { removedCount: 0 };
   const targets = new Set(fileIds);
   const rows = await io.listExistingRows();
@@ -556,8 +575,8 @@ export async function removeIndexRows(io: SheetsIndexIO, fileIds: string[]): Pro
     const fileId = row[FILE_ID_INDEX];
     if (fileId && targets.has(String(fileId))) updates.push({ rowNumber: i + 2, row: blankRow });
   });
-  await updateRowsInBatches(io, updates);
-  return { removedCount: updates.length };
+  const written = await updateRowsInBatches(io, updates, isStillCurrent);
+  return { removedCount: written };
 }
 
 export interface ReconcileIndexResult {
@@ -615,18 +634,17 @@ export async function reconcileIndexAgainstRoot(
     if (!reachable.get(parentId) || !stillKnown) updates.push({ rowNumber: i + 2, row: blankRow });
   });
 
-  // 破壊的な書き込み（空欄化）の直前にsync状態を再確認する（2026-08-22 Codexレビュー指摘：P1）。
-  // listExistingRows()と祖先チェーン確認（distinctParentIds分のfiles.get、フォルダ数が多いと
-  // 数十秒以上かかりうる）の間に、別デバイスが同じrootFolderIdのまま差分同期を完了させ
-  // startPageTokenを進めていた場合、その差分同期が追加した新しい正当な行はparentId基準の
-  // 到達判定では検出できない（knownFileIds基準の判定だけがこの新規行を巻き込みうる）。
-  // 呼び出し元が渡すisStillCurrentで直前に再確認し、不一致なら書き込み自体を行わない。
-  if (isStillCurrent && !(await isStillCurrent())) {
-    return { removedCount: 0 };
-  }
-
-  await updateRowsInBatches(io, updates);
-  return { removedCount: updates.length };
+  // 破壊的な書き込み（空欄化）の直前・各バッチの直前にsync状態を再確認する
+  // （2026-08-22/23 Codexレビュー指摘：P1×2）。listExistingRows()と祖先チェーン確認
+  // （distinctParentIds分のfiles.get、フォルダ数が多いと数十秒以上かかりうる）の間、および
+  // 200件超で複数バッチに分割される場合の各バッチ送信の間に、別デバイスが同じrootFolderIdの
+  // まま差分同期を完了させstartPageTokenを進めていた場合、その差分同期が追加した新しい
+  // 正当な行はparentId基準の到達判定では検出できない（knownFileIds基準の判定だけがこの
+  // 新規行を巻き込みうる）。isStillCurrentをupdateRowsInBatchesへそのまま渡し、
+  // 各io.updateRows呼び出しの直前で再確認させる（呼び出し元1回だけの確認では、複数バッチに
+  // 分割された後続バッチの間に生じる不一致を検出できないため）。
+  const written = await updateRowsInBatches(io, updates, isStillCurrent);
+  return { removedCount: written };
 }
 
 // SheetsIndexIOの実実装。ensureAccessTokenで取得したアクセストークンをAuthorizationヘッダーに載せる。

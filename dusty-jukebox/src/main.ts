@@ -418,7 +418,15 @@ async function runDifferentialSync(
 
   if (plan.removedFileIds.length > 0) {
     setStatus("削除されたファイルを索引から除去中...");
-    await removeIndexRows(sheetsIO, plan.removedFileIds);
+    // upsertIndexRowsの実行後・削除の直前にもsync状態を再確認する（2026-08-23 Codexレビュー
+    // 指摘：P1）。同じ差分同期にupsertと削除の両方が含まれる場合、上のisSyncStateCurrent確認は
+    // upsertの前にしか行われないため、upsert実行中に別デバイスが同じファイルをルート内へ
+    // 戻して行を更新しトークンを進めると、この削除呼び出しがその正当な行を再び空欄化しうる。
+    // reconcileIndexAgainstRootと同様、破壊的な書き込みごとに専用の確認コールバックを渡す
+    // （removeIndexRows内部でも複数バッチに分割される場合は各バッチ直前で再確認される）。
+    await removeIndexRows(sheetsIO, plan.removedFileIds, () =>
+      isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken })
+    );
   }
 
   // 索引upsertの重複行マージ。フルスキャンと同じ理由（CONCEPT.md 4.3節）で、本来の
