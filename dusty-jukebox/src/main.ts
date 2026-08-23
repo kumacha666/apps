@@ -355,14 +355,17 @@ async function runDifferentialSync(
   // 配下のアップサート直後にreconcileIndexAgainstRootが走った場合に誤って削除されたり、
   // 逆に削除・移動されたショートカットの配下がリコンサイルで削除されなくなる
   // （2026-08-21 Codexレビュー指摘：P1）。planDifferentialSync呼び出し前に最新化する。
-  await applyShortcutChangesToExtraRootFolderIds(changes, extraRootFolderIds, isUnderRoot);
+  // applyShortcutChangesToExtraRootFolderIds自身も、extraRootFolderIdsを変更するたびに
+  // ancestryCacheを破棄する（同一バッチ内の後続イテレーションが古いキャッシュを再利用しない
+  // ようにするため、2026-08-23 Codexレビュー指摘：P1）。
+  await applyShortcutChangesToExtraRootFolderIds(changes, extraRootFolderIds, isUnderRoot, () => ancestryCache.clear());
   // 上記の呼び出し自体がisUnderRoot（＝ancestryCacheを使うisDescendantOfRoot）を呼びながら
   // extraRootFolderIdsを書き換えるため、その過程でキャッシュされた到達性判定は「更新前の
   // extraRootFolderIds」を前提にした値のまま残っている。以降のplanDifferentialSync・
   // reconcileIndexAgainstRootがこの古いキャッシュを再利用すると、今回追加・除去された
   // 参照先を反映しないまま判定してしまう（2026-08-21 Codexレビュー指摘：P2）。
   // extraRootFolderIdsの更新が完了した時点でキャッシュを破棄し、以降は新しい集合を前提に
-  // 再計算させる。
+  // 再計算させる（呼び出し内で既に都度破棄されているため、ここでの呼び出しは冪等な保険）。
   ancestryCache.clear();
 
   const scanStateByFileId = indexRowsScanState(await sheetsIO.listExistingRows());
@@ -379,8 +382,20 @@ async function runDifferentialSync(
     // （2026-08-21 Codexレビュー指摘：P1。以前は捨てていた第6引数を省略していたため、
     // ネストしたショートカットの参照先が発見されても集合に反映されず、直後のリコンサイルで
     // その配下のアップサート結果が誤って削除されていた）。
-    listSubtree: (targetFolderId, resourceKey) =>
-      listAudioFilesRecursive(listFn, targetFolderId, "", failedFolders, 3, extraRootFolderIds, resourceKey),
+    // listSubtree自体もextraRootFolderIds（上記のshortcutTargetFolderIds出力引数）を
+    // サブツリー内で発見したネストしたショートカットの参照先で拡張しうる。同じ
+    // planDifferentialSync呼び出し内で後続のフォルダ変更イベントがisDescendantOfRoot
+    // （＝ancestryCacheを共有するisUnderRoot）を呼ぶ場合、この拡張前にキャッシュされた
+    // 到達不可（false）が残っていると、新しく追加された参照先を反映しないまま古い判定を
+    // 再利用してしまう（2026-08-23 Codexレビュー指摘：P1。applyShortcutChangesToExtraRootFolderIds
+    // 側の同種の問題と同じ根本原因）。extraRootFolderIdsのサイズが変化した場合のみキャッシュを
+    // 破棄する（変化が無ければ既存のキャッシュは引き続き有効なため、無条件clearより安価）。
+    listSubtree: async (targetFolderId, resourceKey) => {
+      const sizeBefore = extraRootFolderIds.size;
+      const entries = await listAudioFilesRecursive(listFn, targetFolderId, "", failedFolders, 3, extraRootFolderIds, resourceKey);
+      if (extraRootFolderIds.size !== sizeBefore) ancestryCache.clear();
+      return entries;
+    },
     existingScanState: scanStateByFileId,
   });
 

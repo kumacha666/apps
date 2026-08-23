@@ -110,8 +110,20 @@ type FileOutcome =
 export async function applyShortcutChangesToExtraRootFolderIds(
   changes: DriveChange[],
   extraRootFolderIds: Set<string>,
-  isUnderRoot: (parentIds: string[] | undefined) => Promise<boolean>
+  isUnderRoot: (parentIds: string[] | undefined) => Promise<boolean>,
+  invalidateCache?: () => void
 ): Promise<void> {
+  // isUnderRoot（呼び出し元でancestryCacheへ束縛されている）は、この関数自体がループの
+  // 途中でextraRootFolderIdsを書き換えていくのと同じ実行内で呼ばれる。祖先チェーン確認の
+  // キャッシュはfolderId単位で結果を保持するため、同じバッチ内の先行するイテレーションで
+  // 「まだextraRootFolderIdsに含まれていなかった時点」の到達不可（false）がキャッシュされて
+  // いると、後続のイテレーションでそのfolderIdがextraRootFolderIdsに追加されても、キャッシュの
+  // 存在チェックがextraRootIdsの再確認より先に短絡するため（drive.tsのfolderReachesRoot）、
+  // 古いfalseが再利用され続けてしまう（2026-08-23 Codexレビュー指摘：P1）。同じバッチ内で
+  // 複数のショートカット変更イベントが互いに関係する場合（例：あるショートカットの物理的な
+  // 親が、別のショートカットの参照先フォルダである場合）にのみ顕在化する。
+  // extraRootFolderIdsを変更するたびにキャッシュを破棄し、以降のイテレーションが常に
+  // 最新の集合を前提に再計算するようにする。
   for (const change of changes) {
     const file = change.file;
     if (!file) continue;
@@ -121,13 +133,16 @@ export async function applyShortcutChangesToExtraRootFolderIds(
         : undefined;
     if (!targetId) continue;
     if (change.removed || file.trashed) {
-      extraRootFolderIds.delete(targetId);
+      if (extraRootFolderIds.delete(targetId)) invalidateCache?.();
       continue;
     }
     if (await isUnderRoot(file.parents)) {
-      extraRootFolderIds.add(targetId);
+      if (!extraRootFolderIds.has(targetId)) {
+        extraRootFolderIds.add(targetId);
+        invalidateCache?.();
+      }
     } else {
-      extraRootFolderIds.delete(targetId);
+      if (extraRootFolderIds.delete(targetId)) invalidateCache?.();
     }
   }
 }

@@ -347,4 +347,39 @@ describe("applyShortcutChangesToExtraRootFolderIds", () => {
     await applyShortcutChangesToExtraRootFolderIds(changes, extraRootFolderIds, async () => true);
     expect([...extraRootFolderIds]).toEqual([]);
   });
+
+  test("extraRootFolderIdsへ実際に追加した場合はinvalidateCacheを呼ぶ（2026-08-23 Codexレビュー指摘：P1。同一バッチ内の後続イテレーションが、まだextraRootFolderIdsに含まれていなかった時点の古いキャッシュを再利用しないようにするため）", async () => {
+    const extraRootFolderIds = new Set<string>();
+    const invalidateCache = vi.fn();
+    await applyShortcutChangesToExtraRootFolderIds([shortcutChange("s1", "target1")], extraRootFolderIds, async () => true, invalidateCache);
+    expect(invalidateCache).toHaveBeenCalledTimes(1);
+  });
+
+  test("extraRootFolderIdsから実際に除去した場合もinvalidateCacheを呼ぶ", async () => {
+    const extraRootFolderIds = new Set<string>(["target1"]);
+    const invalidateCache = vi.fn();
+    await applyShortcutChangesToExtraRootFolderIds(
+      [shortcutChange("s1", "target1", { trashed: true })],
+      extraRootFolderIds,
+      async () => true,
+      invalidateCache
+    );
+    expect(invalidateCache).toHaveBeenCalledTimes(1);
+  });
+
+  test("extraRootFolderIdsに変化が無い場合（既に含まれる参照先を再度追加しようとした等）はinvalidateCacheを呼ばない", async () => {
+    const extraRootFolderIds = new Set<string>(["target1"]);
+    const invalidateCache = vi.fn();
+    await applyShortcutChangesToExtraRootFolderIds([shortcutChange("s1", "target1")], extraRootFolderIds, async () => true, invalidateCache);
+    expect(invalidateCache).not.toHaveBeenCalled();
+  });
+
+  test("同一バッチ内で2つのショートカット変更を処理する場合、1つ目の追加によりinvalidateCacheが呼ばれ、2つ目の判定は破棄後のキャッシュに基づいて再計算される（実際のisUnderRoot呼び出し回数はテスト対象外だが、コールバックの発火自体を確認する）", async () => {
+    const extraRootFolderIds = new Set<string>();
+    const invalidateCache = vi.fn();
+    const changes = [shortcutChange("s1", "targetA"), shortcutChange("s2", "targetB")];
+    await applyShortcutChangesToExtraRootFolderIds(changes, extraRootFolderIds, async () => true, invalidateCache);
+    expect(invalidateCache).toHaveBeenCalledTimes(2);
+    expect([...extraRootFolderIds].sort()).toEqual(["targetA", "targetB"]);
+  });
 });
