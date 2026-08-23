@@ -299,14 +299,26 @@ export async function clearScanRunId(
 // ルートは実際には誰もスキャンしていないため、この誤記録によって将来の差分同期がそのルート配下の
 // 未索引ファイルを恒久的に取りこぼす。不一致の場合は書き込みをスキップする（このスキャンの結果は
 // 索引タブへは既に反映済みのため無駄にはならないが、sync状態としての「完了」記録だけは見送られる）。
+//
+// expected.scanRunId（省略可）も照合する（2026-08-23 Codexレビュー指摘：P1）。
+// isSyncStateCurrentへのscanRunId追加（同日）は`reconcileIndexAgainstRoot`の`isStillCurrent`
+// コールバック等には伝播したが、この完了記録・下のpersistShortcutRootFolderIdsには
+// scanRunIdの概念自体が無く、root/tokenの一致だけで書き込んでいた。同一ルートの初期化未完了中に
+// 2台のデバイスがほぼ同時にフルスキャンを開始した場合、リコンサイル対象が0件（何も空欄化する
+// 行が無い）だとreconcileIndexAgainstRoot内部の再確認自体が呼ばれないため、この完了記録が
+// scanRunIdを見ずにroot/tokenの一致だけで進んでしまうと、まだ未処理のファイルが残っている
+// 別デバイスの実行を「完了」扱いにしてしまいうる。clearScanRunIdと同じ方式で照合する。
 export async function markInitialScanCompleted(
   io: SyncTabIO,
   completedAtIso: string,
-  expected: { rootFolderId: string; startPageToken: string }
+  expected: { rootFolderId: string; startPageToken: string; scanRunId?: string }
 ): Promise<void> {
   const rows = await io.readAllRows();
   const state = parseSyncState(rows);
   if (state.rootFolderId !== expected.rootFolderId || state.startPageToken !== expected.startPageToken) {
+    return;
+  }
+  if (expected.scanRunId !== undefined && state.scanRunId !== expected.scanRunId) {
     return;
   }
   await writeSyncEntries(io, rows, { initialScanCompletedAt: completedAtIso });
@@ -315,16 +327,20 @@ export async function markInitialScanCompleted(
 // フルスキャンが解決したショートカット参照先フォルダIDの集合を永続化する（2026-08-21
 // Codexレビュー指摘：P1、上記SyncState.shortcutRootFolderIds参照）。markInitialScanCompletedと
 // 同じタイミング・同じTOCTOU対策（直前に確保したroot/tokenと現在のsync状態が一致する場合のみ
-// 書き込む）で、フルスキャン完了時にmain.tsから呼ぶ。空配列を渡した場合も明示的に書き込む
+// 書き込む。expected.scanRunId省略可の照合も同様、2026-08-23 Codexレビュー指摘：P1）で、
+// フルスキャン完了時にmain.tsから呼ぶ。空配列を渡した場合も明示的に書き込む
 // （前回はショートカットがあったが今回のスキャンでは無くなった、という変化も反映するため）。
 export async function persistShortcutRootFolderIds(
   io: SyncTabIO,
   shortcutRootFolderIds: readonly string[],
-  expected: { rootFolderId: string; startPageToken: string }
+  expected: { rootFolderId: string; startPageToken: string; scanRunId?: string }
 ): Promise<void> {
   const rows = await io.readAllRows();
   const state = parseSyncState(rows);
   if (state.rootFolderId !== expected.rootFolderId || state.startPageToken !== expected.startPageToken) {
+    return;
+  }
+  if (expected.scanRunId !== undefined && state.scanRunId !== expected.scanRunId) {
     return;
   }
   await writeSyncEntries(io, rows, { shortcutRootFolderIds: encodeFolderIdList(shortcutRootFolderIds) });

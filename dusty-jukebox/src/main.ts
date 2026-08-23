@@ -281,13 +281,13 @@ async function runFullScan(
       // 今回のフルスキャンが解決したショートカット参照先フォルダIDの集合をsyncタブへ永続化する。
       // 前回のスキャン以降にショートカットが増減した場合も、今回発見した集合でそのまま上書きする
       // （自己修復。持ち越さない）。
-      await persistShortcutRootFolderIds(syncIO, [...shortcutTargetFolderIds], { rootFolderId: folderId, startPageToken });
+      await persistShortcutRootFolderIds(syncIO, [...shortcutTargetFolderIds], { rootFolderId: folderId, startPageToken, scanRunId });
 
       // クリーンアップ（リコンサイル・ショートカット集合の永続化）が成功してから完了を記録する
       // （2026-08-21 Codexレビュー指摘：P2）。先に完了記録だけ書いてこの後の処理が失敗すると、
       // 次回以降は差分同期のみに進む一方、旧ルート配下の行が残ったままになってしまう
       // （その後フォルダ変更イベントが来ない限り、通常の差分同期ではリコンサイルが発火しないため）。
-      await markInitialScanCompleted(syncIO, new Date().toISOString(), { rootFolderId: folderId, startPageToken });
+      await markInitialScanCompleted(syncIO, new Date().toISOString(), { rootFolderId: folderId, startPageToken, scanRunId });
     }
   }
 

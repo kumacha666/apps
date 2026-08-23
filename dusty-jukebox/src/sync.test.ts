@@ -354,6 +354,37 @@ describe("markInitialScanCompleted", () => {
     expect(io.appendCalls).toEqual([]);
     expect(io.updateCalls).toEqual([]);
   });
+
+  test("scanRunIdを渡した場合、root/tokenが一致してもscanRunIdが異なれば書き込まない（2026-08-23 Codexレビュー指摘：P1。同一ルートの初期化未完了中に2台のデバイスがほぼ同時にフルスキャンを開始し、リコンサイル対象0件でisSyncStateCurrentのscanRunId確認自体が呼ばれなかった場合でも、この完了記録の直前確認で誤った完了扱いを防ぐ）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-B"],
+    ]);
+    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
+    expect(io.appendCalls).toEqual([]);
+    expect(io.updateCalls).toEqual([]);
+  });
+
+  test("scanRunIdを渡した場合、root/token/scanRunIdすべて一致すれば書き込む", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-A"],
+    ]);
+    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
+    expect(io.appendCalls).toEqual([[["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"]]]);
+  });
+
+  test("scanRunIdを省略した場合は従来通りroot/tokenのみで判定する", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-B"],
+    ]);
+    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0" });
+    expect(io.appendCalls).toEqual([[["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"]]]);
+  });
 });
 
 describe("advanceStartPageToken", () => {
@@ -428,6 +459,27 @@ describe("persistShortcutRootFolderIds", () => {
     await persistShortcutRootFolderIds(io, ["folderA"], { rootFolderId: "root-A", startPageToken: "T-old" });
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
+  });
+
+  test("scanRunIdを渡した場合、root/tokenが一致してもscanRunIdが異なれば書き込まない（2026-08-23 Codexレビュー指摘：P1。markInitialScanCompletedと同じ理由）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-B"],
+    ]);
+    await persistShortcutRootFolderIds(io, ["folderA"], { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
+    expect(io.updateCalls).toEqual([]);
+    expect(io.appendCalls).toEqual([]);
+  });
+
+  test("scanRunIdを渡した場合、root/token/scanRunIdすべて一致すれば書き込む", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-A"],
+    ]);
+    await persistShortcutRootFolderIds(io, ["folderA"], { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
+    expect(io.appendCalls).toEqual([[["shortcutRootFolderIds", "folderA"]]]);
   });
 });
 
