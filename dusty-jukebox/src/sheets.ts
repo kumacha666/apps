@@ -590,7 +590,8 @@ export interface ReconcileIndexResult {
 export async function reconcileIndexAgainstRoot(
   io: SheetsIndexIO,
   isFolderUnderRoot: (parentId: string) => Promise<boolean>,
-  knownFileIds?: Set<string>
+  knownFileIds?: Set<string>,
+  isStillCurrent?: () => Promise<boolean>
 ): Promise<ReconcileIndexResult> {
   const rows = await io.listExistingRows();
   const distinctParentIds = new Set<string>();
@@ -613,6 +614,17 @@ export async function reconcileIndexAgainstRoot(
     const stillKnown = !knownFileIds || knownFileIds.has(String(fileId));
     if (!reachable.get(parentId) || !stillKnown) updates.push({ rowNumber: i + 2, row: blankRow });
   });
+
+  // 破壊的な書き込み（空欄化）の直前にsync状態を再確認する（2026-08-22 Codexレビュー指摘：P1）。
+  // listExistingRows()と祖先チェーン確認（distinctParentIds分のfiles.get、フォルダ数が多いと
+  // 数十秒以上かかりうる）の間に、別デバイスが同じrootFolderIdのまま差分同期を完了させ
+  // startPageTokenを進めていた場合、その差分同期が追加した新しい正当な行はparentId基準の
+  // 到達判定では検出できない（knownFileIds基準の判定だけがこの新規行を巻き込みうる）。
+  // 呼び出し元が渡すisStillCurrentで直前に再確認し、不一致なら書き込み自体を行わない。
+  if (isStillCurrent && !(await isStillCurrent())) {
+    return { removedCount: 0 };
+  }
+
   await updateRowsInBatches(io, updates);
   return { removedCount: updates.length };
 }

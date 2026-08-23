@@ -988,4 +988,30 @@ describe("reconcileIndexAgainstRoot", () => {
     const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
     expect(result).toEqual({ removedCount: 0 });
   });
+
+  test("isStillCurrentがfalseを返す場合、空欄化対象があっても書き込みをスキップする（2026-08-22 Codexレビュー指摘：P1。listExistingRows〜書き込みの間に別デバイスの差分同期が新しい正当な行を追加していた場合の保護）", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "oldRoot")]);
+    const isFolderUnderRoot = vi.fn(async (parentId: string) => parentId === "root");
+    const isStillCurrent = vi.fn(async () => false);
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot, undefined, isStillCurrent);
+    expect(result).toEqual({ removedCount: 0 });
+    expect(io.updateCalls).toEqual([]);
+    expect(isStillCurrent).toHaveBeenCalledTimes(1);
+  });
+
+  test("isStillCurrentがtrueを返す場合は従来通り書き込む", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "oldRoot")]);
+    const isFolderUnderRoot = vi.fn(async (parentId: string) => parentId === "root");
+    const isStillCurrent = vi.fn(async () => true);
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot, undefined, isStillCurrent);
+    expect(result).toEqual({ removedCount: 1 });
+    expect(io.updateCalls).toHaveLength(1);
+  });
+
+  test("isStillCurrentを省略した場合は従来通り常に書き込む", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "oldRoot")]);
+    const isFolderUnderRoot = vi.fn(async (parentId: string) => parentId === "root");
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(result).toEqual({ removedCount: 1 });
+  });
 });

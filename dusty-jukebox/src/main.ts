@@ -267,10 +267,15 @@ async function runFullScan(
       // 削除イベントを二度と取得できず恒久的に残ってしまう（2026-08-21 Codexレビュー指摘：P2）。
       // 完全な一覧が取れているフルスキャンの後でのみ安全な照合のため、差分同期側の
       // フォルダ変更イベント安全網としての呼び出しでは渡さない（sheets.tsのコメント参照）。
+      // knownFileIds基準の削除は「親の到達性に関係なく同一ルートの新規行まで削除しうる」ため、
+      // listExistingRows()〜書き込みの間に別デバイスが同じrootFolderIdのまま差分同期を完了させ
+      // startPageTokenを進めていた場合に備え、書き込み直前にもsync状態を再確認する
+      // （2026-08-22 Codexレビュー指摘：P1）。
       await reconcileIndexAgainstRoot(
         sheetsIO,
         (parentId) => isDescendantOfRoot(getParentsFn, [parentId], folderId, ancestryCache, shortcutTargetFolderIds),
-        new Set(entries.map((entry) => entry.file.id))
+        new Set(entries.map((entry) => entry.file.id)),
+        () => isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken })
       );
 
       // 今回のフルスキャンが解決したショートカット参照先フォルダIDの集合をsyncタブへ永続化する。
@@ -432,8 +437,17 @@ async function runDifferentialSync(
     // ネストしたショートカットの発見、extraRootFolderIdsへ都度追加される）は、共有キャッシュに
     // 「更新前のextraRootFolderIds」を前提とした古い到達性判定を残しうる。索引全体を書き換える
     // 最も破壊的な処理であるリコンサイルだけは、常に最新のextraRootFolderIdsで再計算する。
-    await reconcileIndexAgainstRoot(sheetsIO, (parentId) =>
-      isDescendantOfRoot(getParentsFn, [parentId], folderId, new Map(), extraRootFolderIds)
+    // ただしこの新しいキャッシュは、reconcileIndexAgainstRoot呼び出し1回の中で毎回のparentId
+    // 判定コールバック呼び出しをまたいで共有する必要がある：コールバック内でnew Map()していた
+    // ため実質キャッシュが機能せず、同じ祖先フォルダ（例：同じアーティストフォルダ配下の
+    // 複数アルバムフォルダ）への祖先チェーン確認（files.get）が行数分重複していた
+    // （2026-08-22 Codexレビュー指摘：P2）。
+    const reconcileAncestryCache = new Map<string, boolean>();
+    await reconcileIndexAgainstRoot(
+      sheetsIO,
+      (parentId) => isDescendantOfRoot(getParentsFn, [parentId], folderId, reconcileAncestryCache, extraRootFolderIds),
+      undefined,
+      () => isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken })
     );
   }
 
