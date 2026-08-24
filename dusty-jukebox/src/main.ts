@@ -24,6 +24,7 @@ import {
   type AudioFileEntry,
 } from "./drive";
 import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
+import { commitInitialChangeReplay } from "./initialChangeReplay";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
 import {
   createSheetsIndexIO,
@@ -142,6 +143,7 @@ async function runFullScan(
   sheetsIO: SheetsIndexIO,
   syncIO: SyncTabIO,
   folderId: string,
+  driveId: string | undefined,
   startPageToken: string,
   scanRunId: string
 ): Promise<void> {
@@ -287,15 +289,19 @@ async function runFullScan(
       // 先に完了を記録すると通常の差分同期へ切り替わり、初回一覧が取得済みだった時点より後の
       // 追加・更新・削除を取りこぼしうる。runDifferentialSyncがトークンを進め、成功後にだけ
       // initialScanCompletedAtを記録するため、失敗時は次回も初回スキャンとして安全に再開できる。
-      await runDifferentialSync(
+      const initialChangesCompleted = await runDifferentialSync(
         sheetsIO,
         syncIO,
         folderId,
-        undefined,
+        driveId,
         startPageToken,
         [...shortcutTargetFolderIds],
         { completedAt: new Date().toISOString(), scanRunId }
       );
+      // 差分再生でフォルダ取得失敗・410・別デバイスとの競合が発生した場合は、初回一覧と
+      // startPageTokenの組み合わせがまだ完了状態ではない。成功表示やscanRunIdのクリアへ進むと
+      // 次回の再開に必要なウォーターマークを失うため、ここで止める。
+      if (!initialChangesCompleted) return;
     }
   }
 
@@ -326,7 +332,7 @@ async function runDifferentialSync(
   startPageToken: string,
   shortcutRootFolderIds: string[],
   initialCompletion?: { completedAt: string; scanRunId: string }
-): Promise<void> {
+): Promise<boolean> {
   setStatus("前回からの変更を確認中...");
   const changesListFn = createChangesListFn(() => auth.ensureAccessToken(), driveId);
   let changes;
@@ -341,7 +347,7 @@ async function runDifferentialSync(
     if (err instanceof DriveHttpError && err.status === 410) {
       await resetForFullRescan(syncIO, { rootFolderId: folderId, startPageToken });
       setStatus("変更履歴の保持期限切れのため、次回のスキャンはフルスキャンからやり直します。もう一度スキャンを実行してください。", true);
-      return;
+      return false;
     }
     throw err;
   }
@@ -433,7 +439,7 @@ async function runDifferentialSync(
   const stillCurrent = await isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken });
   if (!stillCurrent) {
     setStatus("別のデバイスがルート設定を変更したため、今回の差分同期は見送りました。次回の同期で改めて反映されます。", true);
-    return;
+    return false;
   }
 
   if (upsertEntries.length > 0) {
@@ -494,27 +500,31 @@ async function runDifferentialSync(
   // フォルダ変更イベント自体を二度と返さない（既に消費済みのため）ため、取りこぼしたサブツリーが
   // 恒久的に再走査されなくなる。取得失敗があった場合はトークンを進めず、次回同じ範囲を
   // 再消費して再挑戦できるようにする（2026-08-21 Codexレビュー指摘：P1）。
-  if (failedFolders.length === 0) {
-    // 消費し終えたstartPageTokenを進める。差分同期の最後に行う（途中でエラーが起きた場合、
-    // 次回起動時に同じstartPageTokenから再度consumeAllChangesできるようにするため）。
-    await advanceStartPageToken(syncIO, newStartPageToken, { rootFolderId: folderId, startPageToken });
-    if (initialCompletion) {
+  const replaySucceeded = failedFolders.length === 0;
+  if (initialCompletion) {
+    await commitInitialChangeReplay(replaySucceeded, {
       // 初回スキャンの完了記録は、一覧の構築・整合・差分再生・トークン更新のすべてが成功した後に
       // 行う。scanRunIdも照合し、同じルートで別デバイスが開始した初回スキャンを誤って完了扱いに
       // しない（runFullScanの各バッチ・整合処理と同じ競合緩和策）。
-      await markInitialScanCompleted(syncIO, initialCompletion.completedAt, {
-        rootFolderId: folderId,
-        startPageToken: newStartPageToken,
-        scanRunId: initialCompletion.scanRunId,
-      });
+      advanceStartPageToken: () => advanceStartPageToken(syncIO, newStartPageToken, { rootFolderId: folderId, startPageToken }),
+      markInitialScanCompleted: () =>
+        markInitialScanCompleted(syncIO, initialCompletion.completedAt, {
+          rootFolderId: folderId,
+          startPageToken: newStartPageToken,
+          scanRunId: initialCompletion.scanRunId,
+        }),
       // runFullScan側の従来のclearScanRunIdは旧トークンを期待するため、トークン更新後の初回完了
       // パスではここで現在のトークンを使ってクリアする。
-      await clearScanRunId(syncIO, {
-        rootFolderId: folderId,
-        startPageToken: newStartPageToken,
-        scanRunId: initialCompletion.scanRunId,
-      });
-    }
+      clearScanRunId: () =>
+        clearScanRunId(syncIO, {
+          rootFolderId: folderId,
+          startPageToken: newStartPageToken,
+          scanRunId: initialCompletion.scanRunId,
+        }),
+    });
+  } else if (replaySucceeded) {
+    // 通常の差分同期では、トークンだけを進める。
+    await advanceStartPageToken(syncIO, newStartPageToken, { rootFolderId: folderId, startPageToken });
   }
 
   setStatus(
@@ -522,6 +532,7 @@ async function runDifferentialSync(
       failedFolders.length > 0 ? `、フォルダ取得失敗: ${failedFolders.length}件（次回再試行します）` : ""
     }）`
   );
+  return replaySucceeded;
 }
 
 async function handleScan(): Promise<void> {
@@ -612,7 +623,7 @@ async function handleScan(): Promise<void> {
     if (prep.hasCompletedInitialScan) {
       await runDifferentialSync(sheetsIO, syncIO, folderId, driveId, prep.startPageToken, prep.shortcutRootFolderIds);
     } else {
-      await runFullScan(sheetsIO, syncIO, folderId, prep.startPageToken, prep.scanRunId);
+      await runFullScan(sheetsIO, syncIO, folderId, driveId, prep.startPageToken, prep.scanRunId);
     }
   } catch (err) {
     // 401（トークン取り消し等）は、ローカルのexpiresAtがまだ有効に見えていても
