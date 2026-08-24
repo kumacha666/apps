@@ -283,11 +283,19 @@ async function runFullScan(
       // （自己修復。持ち越さない）。
       await persistShortcutRootFolderIds(syncIO, [...shortcutTargetFolderIds], { rootFolderId: folderId, startPageToken, scanRunId });
 
-      // クリーンアップ（リコンサイル・ショートカット集合の永続化）が成功してから完了を記録する
-      // （2026-08-21 Codexレビュー指摘：P2）。先に完了記録だけ書いてこの後の処理が失敗すると、
-      // 次回以降は差分同期のみに進む一方、旧ルート配下の行が残ったままになってしまう
-      // （その後フォルダ変更イベントが来ない限り、通常の差分同期ではリコンサイルが発火しないため）。
-      await markInitialScanCompleted(syncIO, new Date().toISOString(), { rootFolderId: folderId, startPageToken, scanRunId });
+      // 初回一覧の構築中に発生した変更も、完了前に同じstartPageTokenから再生する。
+      // 先に完了を記録すると通常の差分同期へ切り替わり、初回一覧が取得済みだった時点より後の
+      // 追加・更新・削除を取りこぼしうる。runDifferentialSyncがトークンを進め、成功後にだけ
+      // initialScanCompletedAtを記録するため、失敗時は次回も初回スキャンとして安全に再開できる。
+      await runDifferentialSync(
+        sheetsIO,
+        syncIO,
+        folderId,
+        undefined,
+        startPageToken,
+        [...shortcutTargetFolderIds],
+        { completedAt: new Date().toISOString(), scanRunId }
+      );
     }
   }
 
@@ -316,7 +324,8 @@ async function runDifferentialSync(
   folderId: string,
   driveId: string | undefined,
   startPageToken: string,
-  shortcutRootFolderIds: string[]
+  shortcutRootFolderIds: string[],
+  initialCompletion?: { completedAt: string; scanRunId: string }
 ): Promise<void> {
   setStatus("前回からの変更を確認中...");
   const changesListFn = createChangesListFn(() => auth.ensureAccessToken(), driveId);
@@ -489,6 +498,23 @@ async function runDifferentialSync(
     // 消費し終えたstartPageTokenを進める。差分同期の最後に行う（途中でエラーが起きた場合、
     // 次回起動時に同じstartPageTokenから再度consumeAllChangesできるようにするため）。
     await advanceStartPageToken(syncIO, newStartPageToken, { rootFolderId: folderId, startPageToken });
+    if (initialCompletion) {
+      // 初回スキャンの完了記録は、一覧の構築・整合・差分再生・トークン更新のすべてが成功した後に
+      // 行う。scanRunIdも照合し、同じルートで別デバイスが開始した初回スキャンを誤って完了扱いに
+      // しない（runFullScanの各バッチ・整合処理と同じ競合緩和策）。
+      await markInitialScanCompleted(syncIO, initialCompletion.completedAt, {
+        rootFolderId: folderId,
+        startPageToken: newStartPageToken,
+        scanRunId: initialCompletion.scanRunId,
+      });
+      // runFullScan側の従来のclearScanRunIdは旧トークンを期待するため、トークン更新後の初回完了
+      // パスではここで現在のトークンを使ってクリアする。
+      await clearScanRunId(syncIO, {
+        rootFolderId: folderId,
+        startPageToken: newStartPageToken,
+        scanRunId: initialCompletion.scanRunId,
+      });
+    }
   }
 
   setStatus(
