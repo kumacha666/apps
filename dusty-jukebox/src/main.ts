@@ -343,9 +343,11 @@ async function runDifferentialSync(
     // 保存済みのstartPageTokenが古すぎるとDrive APIは410 Goneを返す（変更履歴の保持期間切れ）。
     // このまま失敗し続けると毎回同じ箇所で止まるため、initialScanCompletedAtをクリアして
     // 次回のスキャンクリックがフルスキャンからやり直すようにする（2026-08-21 Codexレビュー
-    // 指摘：P2、sync.tsのresetForFullRescan参照）。
+    // 指摘：P2、sync.tsのresetForFullRescan参照）。initialCompletionがある場合（初回差分再生中）は
+    // 自分自身のscanRunIdも渡す（2026-08-24 Codexレビュー指摘：P2）。渡さないと、所有権を
+    // 失った実行がroot/tokenの一致だけで、既に別デバイスが確保した正当な状態をリセットしうる。
     if (err instanceof DriveHttpError && err.status === 410) {
-      await resetForFullRescan(syncIO, { rootFolderId: folderId, startPageToken });
+      await resetForFullRescan(syncIO, { rootFolderId: folderId, startPageToken, scanRunId: initialCompletion?.scanRunId });
       setStatus("変更履歴の保持期限切れのため、次回のスキャンはフルスキャンからやり直します。もう一度スキャンを実行してください。", true);
       return false;
     }

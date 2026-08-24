@@ -640,6 +640,59 @@ describe("resetForFullRescan", () => {
     await resetForFullRescan(io, { rootFolderId: "root-A", startPageToken: "T-old" });
     expect(io.updateCalls).toEqual([]);
   });
+
+  // 2026-08-24 Codexレビュー指摘：P2。初回差分再生中に410を検知した実行がscanRunIdを渡さずに
+  // リセットすると、同じroot/tokenのまま別デバイスが既に開始していた新しい実行（所有権あり）の
+  // 正当な状態まで誤ってクリアしうる。
+  test("scanRunIdを渡した場合、root/tokenが一致してもscanRunIdが異なれば書き込まない（別デバイスが既に所有権を持つ実行を誤ってリセットしない）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-B"], // 別デバイスが所有権を確保済み
+      ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"],
+    ]);
+    await resetForFullRescan(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
+    expect(io.updateCalls).toEqual([]);
+    // 別デバイスの状態がそのまま残っていること。
+    await expect(io.readAllRows()).resolves.toEqual([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-B"],
+      ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"],
+    ]);
+  });
+
+  test("scanRunIdを渡した場合、root/token/scanRunIdすべて一致すればクリアする", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-A"],
+      ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"],
+    ]);
+    await resetForFullRescan(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
+    expect(io.updateCalls).toEqual([
+      [
+        { rowNumber: 2, row: ["startPageToken", ""] },
+        { rowNumber: 5, row: ["initialScanCompletedAt", ""] },
+      ],
+    ]);
+  });
+
+  test("scanRunIdを省略した場合は従来通りroot/tokenのみで判定する（後方互換）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-anything"],
+      ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"],
+    ]);
+    await resetForFullRescan(io, { rootFolderId: "root1", startPageToken: "T0" });
+    expect(io.updateCalls).toEqual([
+      [
+        { rowNumber: 2, row: ["startPageToken", ""] },
+        { rowNumber: 5, row: ["initialScanCompletedAt", ""] },
+      ],
+    ]);
+  });
 });
 
 describe("isValidSyncHeader", () => {

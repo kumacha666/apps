@@ -394,13 +394,24 @@ export async function isSyncStateCurrent(
 // startPageTokenが無い」フォールバック分岐（新しいstartPageTokenを取得してから
 // フルスキャンをやり直す）を通るようにする。markInitialScanCompleted等と同じTOCTOU対策：
 // 直前に確保したroot/tokenと現在のsync状態が一致する場合のみ書き込む。
+//
+// expected.scanRunId（省略可）：初回差分再生中に410を検知した場合、呼び出し元（main.ts）が
+// この実行のscanRunIdを渡すと、root/tokenに加えてこれも照合する（2026-08-24 Codexレビュー
+// 指摘：P2）。初回スキャンの初期化未完了中に別デバイスが同じroot/tokenのまま新しい実行
+// （run-B）を開始した後、所有権を失ったこの実行（run-A）がconsumeAllChangesで410を検知した
+// 場合、root/tokenだけで照合するとrun-Bの正当なstartPageToken・完了状態をこのリセットが
+// 誤ってクリアしてしまい、以後run-B側の状態確定ガードもroot/token不一致で失敗し、
+// フルスキャンのやり直しが強制されうる。clearScanRunId等と同じ方式で照合する。
 export async function resetForFullRescan(
   io: SyncTabIO,
-  expected: { rootFolderId: string; startPageToken: string }
+  expected: { rootFolderId: string; startPageToken: string; scanRunId?: string }
 ): Promise<void> {
   const rows = await io.readAllRows();
   const state = parseSyncState(rows);
   if (state.rootFolderId !== expected.rootFolderId || state.startPageToken !== expected.startPageToken) {
+    return;
+  }
+  if (expected.scanRunId !== undefined && state.scanRunId !== expected.scanRunId) {
     return;
   }
   await writeSyncEntries(io, rows, { initialScanCompletedAt: "", startPageToken: "" });
