@@ -52,3 +52,22 @@ export function build410ResetExpected(
     ? { rootFolderId, startPageToken }
     : { rootFolderId, startPageToken, scanRunId: initialScanRunId };
 }
+
+export interface TokenExpiryResetOps {
+  resetForFullRescan: (expected: { rootFolderId: string; startPageToken: string; scanRunId?: string }) => Promise<void>;
+}
+
+// 410 catch処理そのもの（main.tsから呼ぶ薄い窓口）。build410ResetExpectedを純粋関数として
+// 切り出しただけでは、main.tsの410 catchが実際にこの関数を正しく呼んでいるか（第3引数を
+// 渡し忘れていないか）まではテストで担保できない、という指摘を受けての追加切り出し
+// （2026-08-24 Codexレビュー指摘：P1）。main.tsはこの関数へ生のresetForFullRescanを
+// バインドして呼ぶだけの1行になり、初回モードでscanRunIdを含めるか・通常同期で省略するかの
+// 判定はこの関数の呼び出し境界（handleTokenExpiryReset自体）でテストする。
+export async function handleTokenExpiryReset(
+  ops: TokenExpiryResetOps,
+  params: { rootFolderId: string; startPageToken: string; initialScanRunId?: string }
+): Promise<void> {
+  await ops.resetForFullRescan(
+    build410ResetExpected(params.rootFolderId, params.startPageToken, params.initialScanRunId)
+  );
+}

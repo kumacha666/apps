@@ -24,7 +24,7 @@ import {
   type AudioFileEntry,
 } from "./drive";
 import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
-import { build410ResetExpected, commitInitialChangeReplay } from "./initialChangeReplay";
+import { commitInitialChangeReplay, handleTokenExpiryReset } from "./initialChangeReplay";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
 import {
   createSheetsIndexIO,
@@ -344,12 +344,18 @@ async function runDifferentialSync(
     // このまま失敗し続けると毎回同じ箇所で止まるため、initialScanCompletedAtをクリアして
     // 次回のスキャンクリックがフルスキャンからやり直すようにする（2026-08-21 Codexレビュー
     // 指摘：P2、sync.tsのresetForFullRescan参照）。initialCompletionがある場合（初回差分再生中）は
-    // 自分自身のscanRunIdも渡す（2026-08-24 Codexレビュー指摘：P2）。渡さないと、所有権を
-    // 失った実行がroot/tokenの一致だけで、既に別デバイスが確保した正当な状態をリセットしうる。
-    // この判定自体はinitialChangeReplay.tsのbuild410ResetExpected（テスト対象）に切り出し、
-    // main.tsは薄く呼び出すだけにする（2026-08-24 Codexレビュー指摘：P1）。
+    // 自分自身のscanRunIdも渡す必要がある（2026-08-24 Codexレビュー指摘：P2）。渡さないと、
+    // 所有権を失った実行がroot/tokenの一致だけで、既に別デバイスが確保した正当な状態を
+    // リセットしうる。この410 catch処理そのものをinitialChangeReplay.tsのhandleTokenExpiryReset
+    // （テスト対象）へ切り出し、main.tsは生のresetForFullRescanをバインドして呼ぶだけの
+    // 薄い窓口にする（2026-08-24 Codexレビュー指摘：P1。build410ResetExpectedを純粋関数として
+    // 切り出しただけでは、main.ts側の呼び出しコード自体が正しく引数を渡しているかはテストで
+    // 担保されないという指摘を受けた追加切り出し）。
     if (err instanceof DriveHttpError && err.status === 410) {
-      await resetForFullRescan(syncIO, build410ResetExpected(folderId, startPageToken, initialCompletion?.scanRunId));
+      await handleTokenExpiryReset(
+        { resetForFullRescan: (expected) => resetForFullRescan(syncIO, expected) },
+        { rootFolderId: folderId, startPageToken, initialScanRunId: initialCompletion?.scanRunId }
+      );
       setStatus("変更履歴の保持期限切れのため、次回のスキャンはフルスキャンからやり直します。もう一度スキャンを実行してください。", true);
       return false;
     }

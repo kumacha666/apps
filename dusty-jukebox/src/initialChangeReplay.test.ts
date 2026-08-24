@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { build410ResetExpected, commitInitialChangeReplay } from "./initialChangeReplay";
+import { build410ResetExpected, commitInitialChangeReplay, handleTokenExpiryReset } from "./initialChangeReplay";
 
 function makeOps() {
   const calls: string[] = [];
@@ -118,6 +118,35 @@ describe("build410ResetExpected", () => {
       startPageToken: "T0",
     });
     expect(build410ResetExpected("root1", "T0", undefined)).toEqual({
+      rootFolderId: "root1",
+      startPageToken: "T0",
+    });
+  });
+});
+
+// 2026-08-24 Codexレビュー指摘：P1。build410ResetExpectedを純粋関数として切り出しても、
+// main.tsの410 catch自体が実際にこの関数を正しく呼んでいる（第3引数を渡し忘れていない）かは
+// テストで担保されない、という新しい指摘。410 catch処理そのもの（handleTokenExpiryReset）を
+// フェイクのresetForFullRescanで駆動し、初回モードではscanRunIdがresetForFullRescanまで
+// 実際に届くこと・通常同期では省略されることを、この境界で直接検証する。
+describe("handleTokenExpiryReset", () => {
+  test("initialScanRunIdを指定した場合、resetForFullRescanにscanRunId込みのexpectedが渡る", async () => {
+    const resetForFullRescan = vi.fn(async () => {});
+    await handleTokenExpiryReset(
+      { resetForFullRescan },
+      { rootFolderId: "root1", startPageToken: "T0", initialScanRunId: "run-A" }
+    );
+    expect(resetForFullRescan).toHaveBeenCalledWith({
+      rootFolderId: "root1",
+      startPageToken: "T0",
+      scanRunId: "run-A",
+    });
+  });
+
+  test("initialScanRunIdを省略した場合、resetForFullRescanにscanRunIdを含めずに渡る", async () => {
+    const resetForFullRescan = vi.fn(async () => {});
+    await handleTokenExpiryReset({ resetForFullRescan }, { rootFolderId: "root1", startPageToken: "T0" });
+    expect(resetForFullRescan).toHaveBeenCalledWith({
       rootFolderId: "root1",
       startPageToken: "T0",
     });
