@@ -32,3 +32,23 @@ export async function commitInitialChangeReplay(
   if (!(await ops.clearScanRunId())) return false;
   return true;
 }
+
+// consumeAllChangesが410 Gone（保存済みstartPageTokenが変更履歴保持期間切れで拒否された）を
+// 検知した際、sync.tsのresetForFullRescanへ渡すべきexpectedパラメータを算出する。初回差分再生
+// 中（initialScanRunIdが渡された場合）はこの実行のscanRunIdを含め、通常の差分同期
+// （initialScanRunIdが省略された場合）は含めない。
+//
+// この判定自体をmain.tsから切り出してテストするのは、scanRunIdが省略可能な引数のため、
+// main.ts側の呼び出しがscanRunIdを渡し忘れても型検査を通過してしまい、所有権を失った初回実行が
+// 別デバイスの正当な状態をリセットする回帰を検出できないため（2026-08-24 Codexレビュー指摘：
+// P1）。main.tsはユニットテスト対象外の既存方針のため、この判定ロジックだけを純粋関数として
+// 切り出し、main.tsからは薄く呼び出すだけにする。
+export function build410ResetExpected(
+  rootFolderId: string,
+  startPageToken: string,
+  initialScanRunId?: string
+): { rootFolderId: string; startPageToken: string; scanRunId?: string } {
+  return initialScanRunId === undefined
+    ? { rootFolderId, startPageToken }
+    : { rootFolderId, startPageToken, scanRunId: initialScanRunId };
+}

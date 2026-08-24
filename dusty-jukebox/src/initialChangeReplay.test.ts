@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { commitInitialChangeReplay } from "./initialChangeReplay";
+import { build410ResetExpected, commitInitialChangeReplay } from "./initialChangeReplay";
 
 function makeOps() {
   const calls: string[] = [];
@@ -95,5 +95,31 @@ describe("commitInitialChangeReplay", () => {
     await expect(commitInitialChangeReplay(true, ops)).resolves.toBe(false);
 
     expect(calls).toEqual(["advance", "mark", "clear"]);
+  });
+});
+
+// 2026-08-24 Codexレビュー指摘：P1。410 Gone復旧のresetForFullRescan呼び出しにscanRunIdを
+// 渡し忘れても（scanRunIdは省略可能な引数のため）型検査は通過してしまい、所有権を失った初回
+// 実行が別デバイスの正当な状態をリセットする回帰を検出できない。main.tsの410 catchから
+// この判定ロジックを切り出し、初回再生ではscanRunIdあり・通常差分同期では従来どおり省略される
+// ことをここで固定する。
+describe("build410ResetExpected", () => {
+  test("初回差分再生中（initialScanRunId指定）はscanRunIdを含める", () => {
+    expect(build410ResetExpected("root1", "T0", "run-A")).toEqual({
+      rootFolderId: "root1",
+      startPageToken: "T0",
+      scanRunId: "run-A",
+    });
+  });
+
+  test("通常の差分同期（initialScanRunId省略）はscanRunIdを含めない", () => {
+    expect(build410ResetExpected("root1", "T0")).toEqual({
+      rootFolderId: "root1",
+      startPageToken: "T0",
+    });
+    expect(build410ResetExpected("root1", "T0", undefined)).toEqual({
+      rootFolderId: "root1",
+      startPageToken: "T0",
+    });
   });
 });

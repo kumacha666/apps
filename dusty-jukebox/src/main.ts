@@ -24,7 +24,7 @@ import {
   type AudioFileEntry,
 } from "./drive";
 import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
-import { commitInitialChangeReplay } from "./initialChangeReplay";
+import { build410ResetExpected, commitInitialChangeReplay } from "./initialChangeReplay";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
 import {
   createSheetsIndexIO,
@@ -346,8 +346,10 @@ async function runDifferentialSync(
     // 指摘：P2、sync.tsのresetForFullRescan参照）。initialCompletionがある場合（初回差分再生中）は
     // 自分自身のscanRunIdも渡す（2026-08-24 Codexレビュー指摘：P2）。渡さないと、所有権を
     // 失った実行がroot/tokenの一致だけで、既に別デバイスが確保した正当な状態をリセットしうる。
+    // この判定自体はinitialChangeReplay.tsのbuild410ResetExpected（テスト対象）に切り出し、
+    // main.tsは薄く呼び出すだけにする（2026-08-24 Codexレビュー指摘：P1）。
     if (err instanceof DriveHttpError && err.status === 410) {
-      await resetForFullRescan(syncIO, { rootFolderId: folderId, startPageToken, scanRunId: initialCompletion?.scanRunId });
+      await resetForFullRescan(syncIO, build410ResetExpected(folderId, startPageToken, initialCompletion?.scanRunId));
       setStatus("変更履歴の保持期限切れのため、次回のスキャンはフルスキャンからやり直します。もう一度スキャンを実行してください。", true);
       return false;
     }
