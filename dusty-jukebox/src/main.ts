@@ -436,7 +436,15 @@ async function runDifferentialSync(
     );
   }
 
-  const stillCurrent = await isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken });
+  // initialCompletionがある場合（初回スキャン完了直後の差分再生）は、自分自身のscanRunIdも
+  // 照合する（2026-08-24 Codexレビュー指摘：P1。初期化未完了中は同じroot/tokenのまま
+  // 別デバイスが並行して初回スキャンを実行しうるため、root/tokenだけでは所有権を失った
+  // 実行を区別できない。通常の差分同期にはscanRunIdの概念が無いため未指定のまま）。
+  const stillCurrent = await isSyncStateCurrent(syncIO, {
+    rootFolderId: folderId,
+    startPageToken,
+    scanRunId: initialCompletion?.scanRunId,
+  });
   if (!stillCurrent) {
     setStatus("別のデバイスがルート設定を変更したため、今回の差分同期は見送りました。次回の同期で改めて反映されます。", true);
     return false;
@@ -455,7 +463,7 @@ async function runDifferentialSync(
     // reconcileIndexAgainstRootと同様、破壊的な書き込みごとに専用の確認コールバックを渡す
     // （removeIndexRows内部でも複数バッチに分割される場合は各バッチ直前で再確認される）。
     await removeIndexRows(sheetsIO, plan.removedFileIds, () =>
-      isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken })
+      isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken, scanRunId: initialCompletion?.scanRunId })
     );
   }
 
@@ -485,7 +493,7 @@ async function runDifferentialSync(
       sheetsIO,
       (parentId) => isDescendantOfRoot(getParentsFn, [parentId], folderId, reconcileAncestryCache, extraRootFolderIds),
       undefined,
-      () => isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken })
+      () => isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken, scanRunId: initialCompletion?.scanRunId })
     );
   }
 
@@ -501,12 +509,21 @@ async function runDifferentialSync(
   // 恒久的に再走査されなくなる。取得失敗があった場合はトークンを進めず、次回同じ範囲を
   // 再消費して再挑戦できるようにする（2026-08-21 Codexレビュー指摘：P1）。
   const replaySucceeded = failedFolders.length === 0;
+  let committed = true;
   if (initialCompletion) {
-    await commitInitialChangeReplay(replaySucceeded, {
-      // 初回スキャンの完了記録は、一覧の構築・整合・差分再生・トークン更新のすべてが成功した後に
-      // 行う。scanRunIdも照合し、同じルートで別デバイスが開始した初回スキャンを誤って完了扱いに
-      // しない（runFullScanの各バッチ・整合処理と同じ競合緩和策）。
-      advanceStartPageToken: () => advanceStartPageToken(syncIO, newStartPageToken, { rootFolderId: folderId, startPageToken }),
+    // advance→mark→clearの3段階すべてにscanRunIdを渡し、いずれかの段階で所有権
+    // （同じルート・同じ初期化未完了中に別デバイスが並行して初回スキャンを実行していないか）が
+    // 失われていた場合はcommitInitialChangeReplayがfalseを返し、以降の段階へ進まない
+    // （2026-08-24 Codexレビュー指摘：P1。以前はadvanceStartPageTokenだけscanRunIdを
+    // 照合しておらず、所有権を失った実行でもroot/tokenの一致だけでトークンが進み、
+    // 続くmark・clearが無効化されてもcommitInitialChangeReplayは無条件でtrueを返していた）。
+    committed = await commitInitialChangeReplay(replaySucceeded, {
+      advanceStartPageToken: () =>
+        advanceStartPageToken(syncIO, newStartPageToken, {
+          rootFolderId: folderId,
+          startPageToken,
+          scanRunId: initialCompletion.scanRunId,
+        }),
       markInitialScanCompleted: () =>
         markInitialScanCompleted(syncIO, initialCompletion.completedAt, {
           rootFolderId: folderId,
@@ -523,16 +540,18 @@ async function runDifferentialSync(
         }),
     });
   } else if (replaySucceeded) {
-    // 通常の差分同期では、トークンだけを進める。
+    // 通常の差分同期では、トークンだけを進める（scanRunIdの概念が無いため省略）。
     await advanceStartPageToken(syncIO, newStartPageToken, { rootFolderId: folderId, startPageToken });
   }
 
   setStatus(
-    `差分同期完了（反映 ${plan.entriesToProcess.length}件、削除 ${plan.removedFileIds.length}件${
-      failedFolders.length > 0 ? `、フォルダ取得失敗: ${failedFolders.length}件（次回再試行します）` : ""
-    }）`
+    initialCompletion && replaySucceeded && !committed
+      ? "別のデバイスが同じルートへの初回スキャンを進めているため、今回の初回スキャン結果は確定しませんでした。次回のスキャンで改めて完了を試みます。"
+      : `差分同期完了（反映 ${plan.entriesToProcess.length}件、削除 ${plan.removedFileIds.length}件${
+          failedFolders.length > 0 ? `、フォルダ取得失敗: ${failedFolders.length}件（次回再試行します）` : ""
+        }）`
   );
-  return replaySucceeded;
+  return replaySucceeded && committed;
 }
 
 async function handleScan(): Promise<void> {

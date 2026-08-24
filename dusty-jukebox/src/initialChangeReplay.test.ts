@@ -6,9 +6,9 @@ function makeOps() {
   return {
     calls,
     ops: {
-      advanceStartPageToken: vi.fn(async () => { calls.push("advance"); }),
-      markInitialScanCompleted: vi.fn(async () => { calls.push("mark"); }),
-      clearScanRunId: vi.fn(async () => { calls.push("clear"); }),
+      advanceStartPageToken: vi.fn(async () => { calls.push("advance"); return true; }),
+      markInitialScanCompleted: vi.fn(async () => { calls.push("mark"); return true; }),
+      clearScanRunId: vi.fn(async () => { calls.push("clear"); return true; }),
     },
   };
 }
@@ -52,5 +52,48 @@ describe("commitInitialChangeReplay", () => {
     await expect(commitInitialChangeReplay(true, ops)).rejects.toThrow("completion write failed");
 
     expect(calls).toEqual(["advance", "mark"]);
+  });
+
+  // 2026-08-24 Codexレビュー指摘：P1。所有権を失った実行（同じルート・同じ初期化未完了中に
+  // 別デバイスが並行して初回スキャンを開始し、scanRunIdが不一致になったケース）では、
+  // sync.ts側の条件付き書き込みが例外を投げず静かにfalseを返す。この場合に後続処理へ
+  // 進んだり、無条件でtrueを返したりしないことを検証する。
+  test("トークン更新が所有権喪失でfalseを返した場合、完了記録・ウォーターマーク消去へ進まずfalseを返す", async () => {
+    const { calls, ops } = makeOps();
+    ops.advanceStartPageToken.mockImplementationOnce(async () => {
+      calls.push("advance");
+      return false;
+    });
+
+    await expect(commitInitialChangeReplay(true, ops)).resolves.toBe(false);
+
+    expect(calls).toEqual(["advance"]);
+    expect(ops.markInitialScanCompleted).not.toHaveBeenCalled();
+    expect(ops.clearScanRunId).not.toHaveBeenCalled();
+  });
+
+  test("初回完了記録が所有権喪失でfalseを返した場合、ウォーターマーク消去へ進まずfalseを返す", async () => {
+    const { calls, ops } = makeOps();
+    ops.markInitialScanCompleted.mockImplementationOnce(async () => {
+      calls.push("mark");
+      return false;
+    });
+
+    await expect(commitInitialChangeReplay(true, ops)).resolves.toBe(false);
+
+    expect(calls).toEqual(["advance", "mark"]);
+    expect(ops.clearScanRunId).not.toHaveBeenCalled();
+  });
+
+  test("ウォーターマーク消去が所有権喪失でfalseを返した場合、全体としてfalseを返す", async () => {
+    const { calls, ops } = makeOps();
+    ops.clearScanRunId.mockImplementationOnce(async () => {
+      calls.push("clear");
+      return false;
+    });
+
+    await expect(commitInitialChangeReplay(true, ops)).resolves.toBe(false);
+
+    expect(calls).toEqual(["advance", "mark", "clear"]);
   });
 });

@@ -271,10 +271,13 @@ export async function prepareSyncForScan(
 // クリアしてしまう。その新しい実行が完走前に中断すると、次回は実行IDを再利用できず
 // 中断・再開の効果が失われる（本アプリの明記された挙動）ため、このスキャン実行が確保した
 // scanRunId自体と現在値が一致する場合のみクリアする。
+// 戻り値は条件付き書き込みが実際に適用されたかどうか（2026-08-24 Codexレビュー指摘：P1、
+// initialChangeReplay.tsのcommitInitialChangeReplay参照）。呼び出し元が複数段階の状態確定を
+// 直列に行う場合、この戻り値でどこまで実際に反映されたかを判別できる必要がある。
 export async function clearScanRunId(
   io: SyncTabIO,
   expected: { rootFolderId: string; startPageToken: string; scanRunId: string }
-): Promise<void> {
+): Promise<boolean> {
   const rows = await io.readAllRows();
   const state = parseSyncState(rows);
   if (
@@ -282,9 +285,10 @@ export async function clearScanRunId(
     state.startPageToken !== expected.startPageToken ||
     state.scanRunId !== expected.scanRunId
   ) {
-    return;
+    return false;
   }
   await writeSyncEntries(io, rows, { scanRunId: "" });
+  return true;
 }
 
 // 初回スキャン（ページングによる一覧構築＋その後のchanges.list再生、CONCEPT.md 5節）が
@@ -308,20 +312,23 @@ export async function clearScanRunId(
 // 行が無い）だとreconcileIndexAgainstRoot内部の再確認自体が呼ばれないため、この完了記録が
 // scanRunIdを見ずにroot/tokenの一致だけで進んでしまうと、まだ未処理のファイルが残っている
 // 別デバイスの実行を「完了」扱いにしてしまいうる。clearScanRunIdと同じ方式で照合する。
+// 戻り値は条件付き書き込みが実際に適用されたかどうか（2026-08-24 Codexレビュー指摘：P1、
+// clearScanRunIdと同じ理由）。
 export async function markInitialScanCompleted(
   io: SyncTabIO,
   completedAtIso: string,
   expected: { rootFolderId: string; startPageToken: string; scanRunId?: string }
-): Promise<void> {
+): Promise<boolean> {
   const rows = await io.readAllRows();
   const state = parseSyncState(rows);
   if (state.rootFolderId !== expected.rootFolderId || state.startPageToken !== expected.startPageToken) {
-    return;
+    return false;
   }
   if (expected.scanRunId !== undefined && state.scanRunId !== expected.scanRunId) {
-    return;
+    return false;
   }
   await writeSyncEntries(io, rows, { initialScanCompletedAt: completedAtIso });
+  return true;
 }
 
 // フルスキャンが解決したショートカット参照先フォルダIDの集合を永続化する（2026-08-21
@@ -407,17 +414,31 @@ export async function resetForFullRescan(
 // （切り替え後のルートとは別の）トークンを誤って進めないため（不一致時は静かにスキップする：
 // 切り替え後のルートは既にprepareSyncForScanのルート変更分岐で新しいstartPageTokenを
 // 取得・保存済みのため、ここで書き込みをスキップしても問題にならない）。
+// expected.scanRunId（省略可）：呼び出し元がこの実行が確保したscanRunIdを渡すと、
+// rootFolderId・startPageTokenに加えてこれも照合する（2026-08-24 Codexレビュー指摘：P1）。
+// 従来はこの関数だけscanRunIdを照合しておらず、初期化未完了中に2台のデバイスがほぼ同時に
+// 初回スキャンを開始した場合（両方とも同じroot/tokenを共有する）、所有権を失った側の実行でも
+// このトークン更新だけはroot/tokenの一致のみで進んでしまい、後続のmarkInitialScanCompleted・
+// clearScanRunIdがscanRunId不一致で書き込みをスキップしても、呼び出し元（
+// commitInitialChangeReplay）がそれに気づけない状態になっていた。
+//
+// 戻り値は条件付き書き込みが実際に適用されたかどうか（clearScanRunId・markInitialScanCompleted
+// と同じ理由）。
 export async function advanceStartPageToken(
   io: SyncTabIO,
   newStartPageToken: string,
-  expected: { rootFolderId: string; startPageToken: string }
-): Promise<void> {
+  expected: { rootFolderId: string; startPageToken: string; scanRunId?: string }
+): Promise<boolean> {
   const rows = await io.readAllRows();
   const state = parseSyncState(rows);
   if (state.rootFolderId !== expected.rootFolderId || state.startPageToken !== expected.startPageToken) {
-    return;
+    return false;
+  }
+  if (expected.scanRunId !== undefined && state.scanRunId !== expected.scanRunId) {
+    return false;
   }
   await writeSyncEntries(io, rows, { startPageToken: newStartPageToken });
+  return true;
 }
 
 // SyncTabIOの実実装。sheets.tsのcreateSheetsFetch（認証・リトライ共通）を再利用する。
