@@ -1,5 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
-import { build410ResetExpected, commitInitialChangeReplay, handleTokenExpiryReset } from "./initialChangeReplay";
+import {
+  build410ResetExpected,
+  commitInitialChangeReplay,
+  consumeChangesOrHandleExpiry,
+  handleTokenExpiryReset,
+} from "./initialChangeReplay";
+import { DriveHttpError, type DriveChange } from "./drive";
 
 function makeOps() {
   const calls: string[] = [];
@@ -150,5 +156,86 @@ describe("handleTokenExpiryReset", () => {
       rootFolderId: "root1",
       startPageToken: "T0",
     });
+  });
+});
+
+// 2026-08-24 Codexレビュー指摘：P1。handleTokenExpiryReset単体をテストしても、main.tsの
+// try/catch自体（410だけを捕捉して復旧するか、それ以外の例外は再throwするか）は
+// main.tsのcatch節を実際に実行しない限り検証できない。410を投げるフェイクの
+// consumeAllChangesでconsumeChangesOrHandleExpiry自体を駆動し、この呼び出し境界ごと
+// オーケストレーションを検証する。
+describe("consumeChangesOrHandleExpiry", () => {
+  const fakeChanges: DriveChange[] = [{ fileId: "file1", removed: false }];
+
+  test("consumeAllChangesが成功した場合、ok:trueでchanges/newStartPageTokenを返しresetForFullRescanは呼ばない", async () => {
+    const consumeAllChanges = vi.fn(async () => ({ changes: fakeChanges, newStartPageToken: "T1" }));
+    const resetForFullRescan = vi.fn(async () => {});
+    const result = await consumeChangesOrHandleExpiry(
+      { consumeAllChanges, resetForFullRescan },
+      { rootFolderId: "root1", startPageToken: "T0" }
+    );
+    expect(result).toEqual({ ok: true, changes: fakeChanges, newStartPageToken: "T1" });
+    expect(resetForFullRescan).not.toHaveBeenCalled();
+  });
+
+  test("410 Goneかつ初回差分再生中（initialScanRunId指定）の場合、resetForFullRescanにscanRunId込みで渡りok:falseを返す", async () => {
+    const consumeAllChanges = vi.fn(async () => {
+      throw new DriveHttpError(410, "Gone");
+    });
+    const resetForFullRescan = vi.fn(async () => {});
+    const result = await consumeChangesOrHandleExpiry(
+      { consumeAllChanges, resetForFullRescan },
+      { rootFolderId: "root1", startPageToken: "T0", initialScanRunId: "run-A" }
+    );
+    expect(result).toEqual({ ok: false });
+    expect(resetForFullRescan).toHaveBeenCalledWith({
+      rootFolderId: "root1",
+      startPageToken: "T0",
+      scanRunId: "run-A",
+    });
+  });
+
+  test("410 Goneかつ通常の差分同期中（initialScanRunId省略）の場合、resetForFullRescanにscanRunIdを含めずに渡る", async () => {
+    const consumeAllChanges = vi.fn(async () => {
+      throw new DriveHttpError(410, "Gone");
+    });
+    const resetForFullRescan = vi.fn(async () => {});
+    const result = await consumeChangesOrHandleExpiry(
+      { consumeAllChanges, resetForFullRescan },
+      { rootFolderId: "root1", startPageToken: "T0" }
+    );
+    expect(result).toEqual({ ok: false });
+    expect(resetForFullRescan).toHaveBeenCalledWith({
+      rootFolderId: "root1",
+      startPageToken: "T0",
+    });
+  });
+
+  test("410以外のDriveHttpErrorは再throwし、resetForFullRescanを呼ばない", async () => {
+    const consumeAllChanges = vi.fn(async () => {
+      throw new DriveHttpError(500, "Server Error");
+    });
+    const resetForFullRescan = vi.fn(async () => {});
+    await expect(
+      consumeChangesOrHandleExpiry(
+        { consumeAllChanges, resetForFullRescan },
+        { rootFolderId: "root1", startPageToken: "T0" }
+      )
+    ).rejects.toThrow("Server Error");
+    expect(resetForFullRescan).not.toHaveBeenCalled();
+  });
+
+  test("DriveHttpError以外の例外も再throwする", async () => {
+    const consumeAllChanges = vi.fn(async () => {
+      throw new Error("network error");
+    });
+    const resetForFullRescan = vi.fn(async () => {});
+    await expect(
+      consumeChangesOrHandleExpiry(
+        { consumeAllChanges, resetForFullRescan },
+        { rootFolderId: "root1", startPageToken: "T0" }
+      )
+    ).rejects.toThrow("network error");
+    expect(resetForFullRescan).not.toHaveBeenCalled();
   });
 });

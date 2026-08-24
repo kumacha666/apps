@@ -20,11 +20,10 @@ import {
   listAudioFilesRecursive,
   validateRootFolder,
   isAuthError,
-  DriveHttpError,
   type AudioFileEntry,
 } from "./drive";
 import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
-import { commitInitialChangeReplay, handleTokenExpiryReset } from "./initialChangeReplay";
+import { commitInitialChangeReplay, consumeChangesOrHandleExpiry } from "./initialChangeReplay";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
 import {
   createSheetsIndexIO,
@@ -335,32 +334,28 @@ async function runDifferentialSync(
 ): Promise<boolean> {
   setStatus("前回からの変更を確認中...");
   const changesListFn = createChangesListFn(() => auth.ensureAccessToken(), driveId);
-  let changes;
-  let newStartPageToken: string;
-  try {
-    ({ changes, newStartPageToken } = await consumeAllChanges(changesListFn, startPageToken));
-  } catch (err) {
-    // 保存済みのstartPageTokenが古すぎるとDrive APIは410 Goneを返す（変更履歴の保持期間切れ）。
-    // このまま失敗し続けると毎回同じ箇所で止まるため、initialScanCompletedAtをクリアして
-    // 次回のスキャンクリックがフルスキャンからやり直すようにする（2026-08-21 Codexレビュー
-    // 指摘：P2、sync.tsのresetForFullRescan参照）。initialCompletionがある場合（初回差分再生中）は
-    // 自分自身のscanRunIdも渡す必要がある（2026-08-24 Codexレビュー指摘：P2）。渡さないと、
-    // 所有権を失った実行がroot/tokenの一致だけで、既に別デバイスが確保した正当な状態を
-    // リセットしうる。この410 catch処理そのものをinitialChangeReplay.tsのhandleTokenExpiryReset
-    // （テスト対象）へ切り出し、main.tsは生のresetForFullRescanをバインドして呼ぶだけの
-    // 薄い窓口にする（2026-08-24 Codexレビュー指摘：P1。build410ResetExpectedを純粋関数として
-    // 切り出しただけでは、main.ts側の呼び出しコード自体が正しく引数を渡しているかはテストで
-    // 担保されないという指摘を受けた追加切り出し）。
-    if (err instanceof DriveHttpError && err.status === 410) {
-      await handleTokenExpiryReset(
-        { resetForFullRescan: (expected) => resetForFullRescan(syncIO, expected) },
-        { rootFolderId: folderId, startPageToken, initialScanRunId: initialCompletion?.scanRunId }
-      );
-      setStatus("変更履歴の保持期限切れのため、次回のスキャンはフルスキャンからやり直します。もう一度スキャンを実行してください。", true);
-      return false;
-    }
-    throw err;
+  // 410検知（保存済みstartPageTokenが古すぎるとDrive APIが返す、変更履歴保持期間切れ）〜
+  // 復旧のオーケストレーション全体をinitialChangeReplay.tsのconsumeChangesOrHandleExpiryへ
+  // 切り出し、main.tsはconsumeAllChanges/resetForFullRescanをバインドして呼ぶだけの薄い窓口に
+  // する（2026-08-24 Codexレビュー指摘：P1）。handleTokenExpiryReset単体をテストしても、
+  // main.tsのtry/catch自体（410だけを捕捉し復旧するか、それ以外は再throwするか）は
+  // main.tsのcatch節を実際に実行しない限り検証できないという指摘を受け、410を投げる
+  // フェイクのconsumeAllChangesでこの呼び出し境界ごと駆動できるようにした。initialCompletionが
+  // ある場合（初回差分再生中）は自分自身のscanRunIdも渡す。渡さないと、所有権を失った実行が
+  // root/tokenの一致だけで、既に別デバイスが確保した正当な状態をリセットしうる
+  // （2026-08-21〜24の一連のCodexレビュー指摘）。
+  const consumeResult = await consumeChangesOrHandleExpiry(
+    {
+      consumeAllChanges: (token) => consumeAllChanges(changesListFn, token),
+      resetForFullRescan: (expected) => resetForFullRescan(syncIO, expected),
+    },
+    { rootFolderId: folderId, startPageToken, initialScanRunId: initialCompletion?.scanRunId }
+  );
+  if (!consumeResult.ok) {
+    setStatus("変更履歴の保持期限切れのため、次回のスキャンはフルスキャンからやり直します。もう一度スキャンを実行してください。", true);
+    return false;
   }
+  const { changes, newStartPageToken } = consumeResult;
 
   const getParentsFn = createDriveParentsGetFn(() => auth.ensureAccessToken());
   // 祖先チェーンの確認結果（フォルダID→rootFolderId配下かどうか）をこの同期実行の中で

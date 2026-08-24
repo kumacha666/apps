@@ -1,3 +1,5 @@
+import { DriveHttpError, type DriveChange } from "./drive";
+
 // 初回スキャンの開始時トークンからchanges.listを再生した後に、同期状態をどの順序で
 // 確定させるかをまとめる。初回完了フラグを早く立てると、途中失敗でも以後は差分同期だけへ
 // 切り替わり、初回一覧に含まれないファイルを恒久的に取りこぼすため、この順序は重要。
@@ -70,4 +72,35 @@ export async function handleTokenExpiryReset(
   await ops.resetForFullRescan(
     build410ResetExpected(params.rootFolderId, params.startPageToken, params.initialScanRunId)
   );
+}
+
+export interface ConsumeChangesWithResetOps extends TokenExpiryResetOps {
+  consumeAllChanges: (startPageToken: string) => Promise<{ changes: DriveChange[]; newStartPageToken: string }>;
+}
+
+export type ConsumeChangesWithResetResult =
+  | { ok: true; changes: DriveChange[]; newStartPageToken: string }
+  | { ok: false };
+
+// runDifferentialSyncの410検知〜復旧の呼び出し元そのものをテストする境界
+// （2026-08-24 Codexレビュー指摘：P1）。handleTokenExpiryReset自体を正しく呼んでいても、
+// main.tsのtry/catchがconsumeAllChangesの410だけを捕捉しているか・それ以外の例外は
+// 再throwしているかは、main.tsの実際のcatch節を実行しない限りテストで検証できない。
+// consumeAllChanges自体をDIし、410を投げるフェイクでこの関数を駆動することで、main.tsの
+// runDifferentialSyncはこの関数を呼ぶだけの薄い窓口に留め、初回/通常モードの選択を含む
+// オーケストレーション全体をここでテストする。
+export async function consumeChangesOrHandleExpiry(
+  ops: ConsumeChangesWithResetOps,
+  params: { rootFolderId: string; startPageToken: string; initialScanRunId?: string }
+): Promise<ConsumeChangesWithResetResult> {
+  try {
+    const { changes, newStartPageToken } = await ops.consumeAllChanges(params.startPageToken);
+    return { ok: true, changes, newStartPageToken };
+  } catch (err) {
+    if (err instanceof DriveHttpError && err.status === 410) {
+      await handleTokenExpiryReset(ops, params);
+      return { ok: false };
+    }
+    throw err;
+  }
 }
