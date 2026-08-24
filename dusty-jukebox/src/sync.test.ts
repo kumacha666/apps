@@ -272,56 +272,61 @@ describe("prepareSyncForScan", () => {
 });
 
 describe("clearScanRunId", () => {
-  test("準備時と現在のroot/token/scanRunIdが一致すれば空文字列で書き込む", async () => {
+  test("準備時と現在のroot/token/scanRunIdが一致すれば空文字列で書き込み、trueを返す", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
       ["scanRunId", "run-1"],
     ]);
-    await clearScanRunId(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-1" });
+    const result = await clearScanRunId(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-1" });
+    expect(result).toBe(true);
     expect(io.updateCalls).toEqual([[{ rowNumber: 4, row: ["scanRunId", ""] }]]);
   });
 
-  test("root/tokenが不一致の場合は書き込まない（他デバイスが別実行に切り替え済み）", async () => {
+  test("root/tokenが不一致の場合は書き込まずfalseを返す（他デバイスが別実行に切り替え済み）", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T-new"],
       ["rootFolderId", "root-B"],
       ["scanRunId", "run-1"],
     ]);
-    await clearScanRunId(io, { rootFolderId: "root-A", startPageToken: "T-old", scanRunId: "run-1" });
+    const result = await clearScanRunId(io, { rootFolderId: "root-A", startPageToken: "T-old", scanRunId: "run-1" });
+    expect(result).toBe(false);
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
   });
 
-  test("root/tokenは一致するがscanRunIdが異なる場合は書き込まない（2026-08-20 Codexレビュー指摘：P2。同じルート・トークンのまま別デバイスが新しい実行を開始していた場合、その新しいウォーターマークを誤ってクリアしないため）", async () => {
+  test("root/tokenは一致するがscanRunIdが異なる場合は書き込まずfalseを返す（2026-08-20 Codexレビュー指摘：P2。同じルート・トークンのまま別デバイスが新しい実行を開始していた場合、その新しいウォーターマークを誤ってクリアしないため）", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
       ["scanRunId", "run-2"], // 別デバイスが新しい実行を開始済み
     ]);
-    await clearScanRunId(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-1" });
+    const result = await clearScanRunId(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-1" });
+    expect(result).toBe(false);
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
   });
 
-  test("scanRunIdが既に未設定なら何もしない", async () => {
+  test("scanRunIdが既に未設定なら何もせずfalseを返す", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
     ]);
-    await clearScanRunId(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-1" });
+    const result = await clearScanRunId(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-1" });
+    expect(result).toBe(false);
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
   });
 });
 
 describe("markInitialScanCompleted", () => {
-  test("initialScanCompletedAtが未設定なら追記する（現在のsync状態が準備時のroot/tokenと一致する場合）", async () => {
+  test("initialScanCompletedAtが未設定なら追記し、trueを返す（現在のsync状態が準備時のroot/tokenと一致する場合）", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
     ]);
-    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0" });
+    const result = await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0" });
+    expect(result).toBe(true);
     expect(io.appendCalls).toEqual([[["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"]]]);
   });
 
@@ -331,48 +336,53 @@ describe("markInitialScanCompleted", () => {
       ["rootFolderId", "root1"],
       ["initialScanCompletedAt", "2026-08-19T00:00:00.000Z"],
     ]);
-    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0" });
+    const result = await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0" });
+    expect(result).toBe(true);
     expect(io.updateCalls).toEqual([[{ rowNumber: 4, row: ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"] }]]);
   });
 
-  test("準備時と現在のrootFolderIdが異なる場合は書き込まない（2026-08-20 Codexレビュー指摘：長時間のスキャン中に別デバイスがルートを切り替えていた場合、無関係なルートを誤って完了扱いにしないため）", async () => {
+  test("準備時と現在のrootFolderIdが異なる場合は書き込まずfalseを返す（2026-08-20 Codexレビュー指摘：長時間のスキャン中に別デバイスがルートを切り替えていた場合、無関係なルートを誤って完了扱いにしないため）", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T-new"],
       ["rootFolderId", "root-B"], // 別デバイスがrootAからrootBへ切り替え済み
     ]);
-    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root-A", startPageToken: "T-old" });
+    const result = await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root-A", startPageToken: "T-old" });
+    expect(result).toBe(false);
     expect(io.appendCalls).toEqual([]);
     expect(io.updateCalls).toEqual([]);
   });
 
-  test("rootFolderIdは一致するがstartPageTokenが異なる場合も書き込まない", async () => {
+  test("rootFolderIdは一致するがstartPageTokenが異なる場合も書き込まずfalseを返す", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T-changed"],
       ["rootFolderId", "root1"],
     ]);
-    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T-original" });
+    const result = await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T-original" });
+    expect(result).toBe(false);
     expect(io.appendCalls).toEqual([]);
     expect(io.updateCalls).toEqual([]);
   });
 
-  test("scanRunIdを渡した場合、root/tokenが一致してもscanRunIdが異なれば書き込まない（2026-08-23 Codexレビュー指摘：P1。同一ルートの初期化未完了中に2台のデバイスがほぼ同時にフルスキャンを開始し、リコンサイル対象0件でisSyncStateCurrentのscanRunId確認自体が呼ばれなかった場合でも、この完了記録の直前確認で誤った完了扱いを防ぐ）", async () => {
+  test("scanRunIdを渡した場合、root/tokenが一致してもscanRunIdが異なれば書き込まずfalseを返す（2026-08-23 Codexレビュー指摘：P1。同一ルートの初期化未完了中に2台のデバイスがほぼ同時にフルスキャンを開始し、リコンサイル対象0件でisSyncStateCurrentのscanRunId確認自体が呼ばれなかった場合でも、この完了記録の直前確認で誤った完了扱いを防ぐ）", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
       ["scanRunId", "run-B"],
     ]);
-    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
+    const result = await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
+    expect(result).toBe(false);
     expect(io.appendCalls).toEqual([]);
     expect(io.updateCalls).toEqual([]);
   });
 
-  test("scanRunIdを渡した場合、root/token/scanRunIdすべて一致すれば書き込む", async () => {
+  test("scanRunIdを渡した場合、root/token/scanRunIdすべて一致すれば書き込みtrueを返す", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
       ["scanRunId", "run-A"],
     ]);
-    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
+    const result = await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
+    expect(result).toBe(true);
     expect(io.appendCalls).toEqual([[["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"]]]);
   });
 
@@ -382,39 +392,77 @@ describe("markInitialScanCompleted", () => {
       ["rootFolderId", "root1"],
       ["scanRunId", "run-B"],
     ]);
-    await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0" });
+    const result = await markInitialScanCompleted(io, "2026-08-20T00:00:00.000Z", { rootFolderId: "root1", startPageToken: "T0" });
+    expect(result).toBe(true);
     expect(io.appendCalls).toEqual([[["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"]]]);
   });
 });
 
 describe("advanceStartPageToken", () => {
-  test("準備時と現在のroot/tokenが一致すれば新しいstartPageTokenで更新する", async () => {
+  test("準備時と現在のroot/tokenが一致すれば新しいstartPageTokenで更新し、trueを返す", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T0"],
       ["rootFolderId", "root1"],
     ]);
-    await advanceStartPageToken(io, "T1", { rootFolderId: "root1", startPageToken: "T0" });
+    const result = await advanceStartPageToken(io, "T1", { rootFolderId: "root1", startPageToken: "T0" });
+    expect(result).toBe(true);
     expect(io.updateCalls).toEqual([[{ rowNumber: 2, row: ["startPageToken", "T1"] }]]);
   });
 
-  test("root不一致の場合は書き込まない（差分同期中に別デバイスがルートを切り替えていた場合）", async () => {
+  test("root不一致の場合は書き込まずfalseを返す（差分同期中に別デバイスがルートを切り替えていた場合）", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T-new"],
       ["rootFolderId", "root-B"],
     ]);
-    await advanceStartPageToken(io, "T1", { rootFolderId: "root-A", startPageToken: "T-old" });
+    const result = await advanceStartPageToken(io, "T1", { rootFolderId: "root-A", startPageToken: "T-old" });
+    expect(result).toBe(false);
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
   });
 
-  test("startPageToken不一致の場合は書き込まない（他デバイスが先に進めていた等）", async () => {
+  test("startPageToken不一致の場合は書き込まずfalseを返す（他デバイスが先に進めていた等）", async () => {
     const io = makeFakeIO([
       ["startPageToken", "T-already-advanced"],
       ["rootFolderId", "root1"],
     ]);
-    await advanceStartPageToken(io, "T1", { rootFolderId: "root1", startPageToken: "T0" });
+    const result = await advanceStartPageToken(io, "T1", { rootFolderId: "root1", startPageToken: "T0" });
+    expect(result).toBe(false);
     expect(io.updateCalls).toEqual([]);
     expect(io.appendCalls).toEqual([]);
+  });
+
+  test("scanRunIdを渡した場合、root/tokenが一致してもscanRunIdが異なれば書き込まずfalseを返す（2026-08-24 Codexレビュー指摘：P1。初期化未完了中に2台のデバイスがほぼ同時に初回スキャンを開始した場合、root/tokenだけでは所有権を失った実行を区別できないため）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-2"], // 別デバイスが所有権を持つ
+    ]);
+    const result = await advanceStartPageToken(io, "T1", { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-1" });
+    expect(result).toBe(false);
+    expect(io.updateCalls).toEqual([]);
+    expect(io.appendCalls).toEqual([]);
+  });
+
+  test("scanRunIdを渡し、root/token/scanRunIdすべて一致すれば書き込みtrueを返す", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-1"],
+    ]);
+    const result = await advanceStartPageToken(io, "T1", { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-1" });
+    expect(result).toBe(true);
+    expect(io.updateCalls).toEqual([[{ rowNumber: 2, row: ["startPageToken", "T1"] }]]);
+  });
+
+  test("scanRunIdを渡さない場合は従来通りroot/tokenのみで判定する（後方互換）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-anything"],
+    ]);
+    const result = await advanceStartPageToken(io, "T1", { rootFolderId: "root1", startPageToken: "T0" });
+    expect(result).toBe(true);
+    expect(io.updateCalls).toEqual([[{ rowNumber: 2, row: ["startPageToken", "T1"] }]]);
   });
 });
 
@@ -480,6 +528,37 @@ describe("persistShortcutRootFolderIds", () => {
     ]);
     await persistShortcutRootFolderIds(io, ["folderA"], { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
     expect(io.appendCalls).toEqual([[["shortcutRootFolderIds", "folderA"]]]);
+  });
+
+  // 2026-08-24 Codexレビュー指摘：P2。初回差分再生でscanRunIdの所有権を失った後も、
+  // main.ts側の呼び出しがscanRunIdを渡していなかったため、この関数自体はscanRunIdを
+  // 照合できるにも関わらずroot/tokenだけで判定し、所有権を失った端末（端末A）が抱えていた
+  // 古いshortcutRootFolderIdsが、既に所有権を得て先に進んでいた端末Bの正当な値を
+  // 上書きしうる状態だった。端末Aが自分自身のscanRunIdを渡した場合、端末Bが既に
+  // 書き込んだ新しいscanRunIdと不一致になり、古い集合を書き戻さないことを確認する。
+  test("初回再生中に所有権を失った端末（scanRunId不一致）は、既に別端末が書き込んだshortcutRootFolderIdsを古い値で上書きしない", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-B"], // 端末Bが先に所有権を確保済み
+      ["shortcutRootFolderIds", "folderB-only"], // 端末Bが既に書き込んだ正当な値
+    ]);
+    // 端末Aは自分が確保した（今は失効した）scanRunIdで、自分が発見した古いショートカット集合を
+    // 書き戻そうとする。
+    await persistShortcutRootFolderIds(io, ["folderA-stale"], {
+      rootFolderId: "root1",
+      startPageToken: "T0",
+      scanRunId: "run-A",
+    });
+    expect(io.updateCalls).toEqual([]);
+    expect(io.appendCalls).toEqual([]);
+    // 端末Bの値がそのまま残っていること。
+    await expect(io.readAllRows()).resolves.toEqual([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-B"],
+      ["shortcutRootFolderIds", "folderB-only"],
+    ]);
   });
 });
 
@@ -560,6 +639,59 @@ describe("resetForFullRescan", () => {
     ]);
     await resetForFullRescan(io, { rootFolderId: "root-A", startPageToken: "T-old" });
     expect(io.updateCalls).toEqual([]);
+  });
+
+  // 2026-08-24 Codexレビュー指摘：P2。初回差分再生中に410を検知した実行がscanRunIdを渡さずに
+  // リセットすると、同じroot/tokenのまま別デバイスが既に開始していた新しい実行（所有権あり）の
+  // 正当な状態まで誤ってクリアしうる。
+  test("scanRunIdを渡した場合、root/tokenが一致してもscanRunIdが異なれば書き込まない（別デバイスが既に所有権を持つ実行を誤ってリセットしない）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-B"], // 別デバイスが所有権を確保済み
+      ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"],
+    ]);
+    await resetForFullRescan(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
+    expect(io.updateCalls).toEqual([]);
+    // 別デバイスの状態がそのまま残っていること。
+    await expect(io.readAllRows()).resolves.toEqual([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-B"],
+      ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"],
+    ]);
+  });
+
+  test("scanRunIdを渡した場合、root/token/scanRunIdすべて一致すればクリアする", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-A"],
+      ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"],
+    ]);
+    await resetForFullRescan(io, { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
+    expect(io.updateCalls).toEqual([
+      [
+        { rowNumber: 2, row: ["startPageToken", ""] },
+        { rowNumber: 5, row: ["initialScanCompletedAt", ""] },
+      ],
+    ]);
+  });
+
+  test("scanRunIdを省略した場合は従来通りroot/tokenのみで判定する（後方互換）", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-anything"],
+      ["initialScanCompletedAt", "2026-08-20T00:00:00.000Z"],
+    ]);
+    await resetForFullRescan(io, { rootFolderId: "root1", startPageToken: "T0" });
+    expect(io.updateCalls).toEqual([
+      [
+        { rowNumber: 2, row: ["startPageToken", ""] },
+        { rowNumber: 5, row: ["initialScanCompletedAt", ""] },
+      ],
+    ]);
   });
 });
 

@@ -1,0 +1,106 @@
+import { DriveHttpError, type DriveChange } from "./drive";
+
+// 初回スキャンの開始時トークンからchanges.listを再生した後に、同期状態をどの順序で
+// 確定させるかをまとめる。初回完了フラグを早く立てると、途中失敗でも以後は差分同期だけへ
+// 切り替わり、初回一覧に含まれないファイルを恒久的に取りこぼすため、この順序は重要。
+//
+// 各段階はsync.ts側でscanRunId込みの条件付き書き込みとして実装されており、この実行の所有権
+// （同じroot/token・同じscanRunId）が保たれている場合のみ実際に書き込む。所有権を失った場合は
+// falseを返す（2026-08-24 Codexレビュー指摘：P1）。以前はadvanceStartPageTokenがこの照合を
+// 持たずPromise<void>を返していたため、所有権を失った実行でもこの段階は無条件に「成功」した
+// ように見え、続くmarkInitialScanCompleted・clearScanRunIdがscanRunId不一致で静かに
+// スキップされても、commitInitialChangeReplayは各段階の実際の適用有無を確認せず無条件でtrueを
+// 返していた。各段階の戻り値を確認し、falseになった時点で後続の段階へ進まず停止する。
+
+export interface InitialChangeReplayOps {
+  advanceStartPageToken: () => Promise<boolean>;
+  markInitialScanCompleted: () => Promise<boolean>;
+  clearScanRunId: () => Promise<boolean>;
+}
+
+// trueなら、差分再生の結果を安全に初回スキャンの完了状態として確定できた
+// （advance→mark→clearの3段階すべてが実際に適用された）。falseの場合は何も永続状態を
+// 進めず、次回も同じ初回スキャン実行を再開する（途中の段階までは適用されている可能性が
+// あるが、いずれにせよ次回の再確認・再実行で安全に収束する設計のため、途中状態を巻き戻す
+// 必要は無い）。
+export async function commitInitialChangeReplay(
+  replaySucceeded: boolean,
+  ops: InitialChangeReplayOps
+): Promise<boolean> {
+  if (!replaySucceeded) return false;
+
+  if (!(await ops.advanceStartPageToken())) return false;
+  if (!(await ops.markInitialScanCompleted())) return false;
+  if (!(await ops.clearScanRunId())) return false;
+  return true;
+}
+
+// consumeAllChangesが410 Gone（保存済みstartPageTokenが変更履歴保持期間切れで拒否された）を
+// 検知した際、sync.tsのresetForFullRescanへ渡すべきexpectedパラメータを算出する。初回差分再生
+// 中（initialScanRunIdが渡された場合）はこの実行のscanRunIdを含め、通常の差分同期
+// （initialScanRunIdが省略された場合）は含めない。
+//
+// この判定自体をmain.tsから切り出してテストするのは、scanRunIdが省略可能な引数のため、
+// main.ts側の呼び出しがscanRunIdを渡し忘れても型検査を通過してしまい、所有権を失った初回実行が
+// 別デバイスの正当な状態をリセットする回帰を検出できないため（2026-08-24 Codexレビュー指摘：
+// P1）。main.tsはユニットテスト対象外の既存方針のため、この判定ロジックだけを純粋関数として
+// 切り出し、main.tsからは薄く呼び出すだけにする。
+export function build410ResetExpected(
+  rootFolderId: string,
+  startPageToken: string,
+  initialScanRunId?: string
+): { rootFolderId: string; startPageToken: string; scanRunId?: string } {
+  return initialScanRunId === undefined
+    ? { rootFolderId, startPageToken }
+    : { rootFolderId, startPageToken, scanRunId: initialScanRunId };
+}
+
+export interface TokenExpiryResetOps {
+  resetForFullRescan: (expected: { rootFolderId: string; startPageToken: string; scanRunId?: string }) => Promise<void>;
+}
+
+// 410 catch処理そのもの（main.tsから呼ぶ薄い窓口）。build410ResetExpectedを純粋関数として
+// 切り出しただけでは、main.tsの410 catchが実際にこの関数を正しく呼んでいるか（第3引数を
+// 渡し忘れていないか）まではテストで担保できない、という指摘を受けての追加切り出し
+// （2026-08-24 Codexレビュー指摘：P1）。main.tsはこの関数へ生のresetForFullRescanを
+// バインドして呼ぶだけの1行になり、初回モードでscanRunIdを含めるか・通常同期で省略するかの
+// 判定はこの関数の呼び出し境界（handleTokenExpiryReset自体）でテストする。
+export async function handleTokenExpiryReset(
+  ops: TokenExpiryResetOps,
+  params: { rootFolderId: string; startPageToken: string; initialScanRunId?: string }
+): Promise<void> {
+  await ops.resetForFullRescan(
+    build410ResetExpected(params.rootFolderId, params.startPageToken, params.initialScanRunId)
+  );
+}
+
+export interface ConsumeChangesWithResetOps extends TokenExpiryResetOps {
+  consumeAllChanges: (startPageToken: string) => Promise<{ changes: DriveChange[]; newStartPageToken: string }>;
+}
+
+export type ConsumeChangesWithResetResult =
+  | { ok: true; changes: DriveChange[]; newStartPageToken: string }
+  | { ok: false };
+
+// runDifferentialSyncの410検知〜復旧の呼び出し元そのものをテストする境界
+// （2026-08-24 Codexレビュー指摘：P1）。handleTokenExpiryReset自体を正しく呼んでいても、
+// main.tsのtry/catchがconsumeAllChangesの410だけを捕捉しているか・それ以外の例外は
+// 再throwしているかは、main.tsの実際のcatch節を実行しない限りテストで検証できない。
+// consumeAllChanges自体をDIし、410を投げるフェイクでこの関数を駆動することで、main.tsの
+// runDifferentialSyncはこの関数を呼ぶだけの薄い窓口に留め、初回/通常モードの選択を含む
+// オーケストレーション全体をここでテストする。
+export async function consumeChangesOrHandleExpiry(
+  ops: ConsumeChangesWithResetOps,
+  params: { rootFolderId: string; startPageToken: string; initialScanRunId?: string }
+): Promise<ConsumeChangesWithResetResult> {
+  try {
+    const { changes, newStartPageToken } = await ops.consumeAllChanges(params.startPageToken);
+    return { ok: true, changes, newStartPageToken };
+  } catch (err) {
+    if (err instanceof DriveHttpError && err.status === 410) {
+      await handleTokenExpiryReset(ops, params);
+      return { ok: false };
+    }
+    throw err;
+  }
+}

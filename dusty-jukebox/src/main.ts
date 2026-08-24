@@ -20,10 +20,10 @@ import {
   listAudioFilesRecursive,
   validateRootFolder,
   isAuthError,
-  DriveHttpError,
   type AudioFileEntry,
 } from "./drive";
 import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
+import { commitInitialChangeReplay, consumeChangesOrHandleExpiry } from "./initialChangeReplay";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
 import {
   createSheetsIndexIO,
@@ -142,6 +142,7 @@ async function runFullScan(
   sheetsIO: SheetsIndexIO,
   syncIO: SyncTabIO,
   folderId: string,
+  driveId: string | undefined,
   startPageToken: string,
   scanRunId: string
 ): Promise<void> {
@@ -283,11 +284,23 @@ async function runFullScan(
       // （自己修復。持ち越さない）。
       await persistShortcutRootFolderIds(syncIO, [...shortcutTargetFolderIds], { rootFolderId: folderId, startPageToken, scanRunId });
 
-      // クリーンアップ（リコンサイル・ショートカット集合の永続化）が成功してから完了を記録する
-      // （2026-08-21 Codexレビュー指摘：P2）。先に完了記録だけ書いてこの後の処理が失敗すると、
-      // 次回以降は差分同期のみに進む一方、旧ルート配下の行が残ったままになってしまう
-      // （その後フォルダ変更イベントが来ない限り、通常の差分同期ではリコンサイルが発火しないため）。
-      await markInitialScanCompleted(syncIO, new Date().toISOString(), { rootFolderId: folderId, startPageToken, scanRunId });
+      // 初回一覧の構築中に発生した変更も、完了前に同じstartPageTokenから再生する。
+      // 先に完了を記録すると通常の差分同期へ切り替わり、初回一覧が取得済みだった時点より後の
+      // 追加・更新・削除を取りこぼしうる。runDifferentialSyncがトークンを進め、成功後にだけ
+      // initialScanCompletedAtを記録するため、失敗時は次回も初回スキャンとして安全に再開できる。
+      const initialChangesCompleted = await runDifferentialSync(
+        sheetsIO,
+        syncIO,
+        folderId,
+        driveId,
+        startPageToken,
+        [...shortcutTargetFolderIds],
+        { completedAt: new Date().toISOString(), scanRunId }
+      );
+      // 差分再生でフォルダ取得失敗・410・別デバイスとの競合が発生した場合は、初回一覧と
+      // startPageTokenの組み合わせがまだ完了状態ではない。成功表示やscanRunIdのクリアへ進むと
+      // 次回の再開に必要なウォーターマークを失うため、ここで止める。
+      if (!initialChangesCompleted) return;
     }
   }
 
@@ -316,26 +329,33 @@ async function runDifferentialSync(
   folderId: string,
   driveId: string | undefined,
   startPageToken: string,
-  shortcutRootFolderIds: string[]
-): Promise<void> {
+  shortcutRootFolderIds: string[],
+  initialCompletion?: { completedAt: string; scanRunId: string }
+): Promise<boolean> {
   setStatus("前回からの変更を確認中...");
   const changesListFn = createChangesListFn(() => auth.ensureAccessToken(), driveId);
-  let changes;
-  let newStartPageToken: string;
-  try {
-    ({ changes, newStartPageToken } = await consumeAllChanges(changesListFn, startPageToken));
-  } catch (err) {
-    // 保存済みのstartPageTokenが古すぎるとDrive APIは410 Goneを返す（変更履歴の保持期間切れ）。
-    // このまま失敗し続けると毎回同じ箇所で止まるため、initialScanCompletedAtをクリアして
-    // 次回のスキャンクリックがフルスキャンからやり直すようにする（2026-08-21 Codexレビュー
-    // 指摘：P2、sync.tsのresetForFullRescan参照）。
-    if (err instanceof DriveHttpError && err.status === 410) {
-      await resetForFullRescan(syncIO, { rootFolderId: folderId, startPageToken });
-      setStatus("変更履歴の保持期限切れのため、次回のスキャンはフルスキャンからやり直します。もう一度スキャンを実行してください。", true);
-      return;
-    }
-    throw err;
+  // 410検知（保存済みstartPageTokenが古すぎるとDrive APIが返す、変更履歴保持期間切れ）〜
+  // 復旧のオーケストレーション全体をinitialChangeReplay.tsのconsumeChangesOrHandleExpiryへ
+  // 切り出し、main.tsはconsumeAllChanges/resetForFullRescanをバインドして呼ぶだけの薄い窓口に
+  // する（2026-08-24 Codexレビュー指摘：P1）。handleTokenExpiryReset単体をテストしても、
+  // main.tsのtry/catch自体（410だけを捕捉し復旧するか、それ以外は再throwするか）は
+  // main.tsのcatch節を実際に実行しない限り検証できないという指摘を受け、410を投げる
+  // フェイクのconsumeAllChangesでこの呼び出し境界ごと駆動できるようにした。initialCompletionが
+  // ある場合（初回差分再生中）は自分自身のscanRunIdも渡す。渡さないと、所有権を失った実行が
+  // root/tokenの一致だけで、既に別デバイスが確保した正当な状態をリセットしうる
+  // （2026-08-21〜24の一連のCodexレビュー指摘）。
+  const consumeResult = await consumeChangesOrHandleExpiry(
+    {
+      consumeAllChanges: (token) => consumeAllChanges(changesListFn, token),
+      resetForFullRescan: (expected) => resetForFullRescan(syncIO, expected),
+    },
+    { rootFolderId: folderId, startPageToken, initialScanRunId: initialCompletion?.scanRunId }
+  );
+  if (!consumeResult.ok) {
+    setStatus("変更履歴の保持期限切れのため、次回のスキャンはフルスキャンからやり直します。もう一度スキャンを実行してください。", true);
+    return false;
   }
+  const { changes, newStartPageToken } = consumeResult;
 
   const getParentsFn = createDriveParentsGetFn(() => auth.ensureAccessToken());
   // 祖先チェーンの確認結果（フォルダID→rootFolderId配下かどうか）をこの同期実行の中で
@@ -421,10 +441,18 @@ async function runDifferentialSync(
     );
   }
 
-  const stillCurrent = await isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken });
+  // initialCompletionがある場合（初回スキャン完了直後の差分再生）は、自分自身のscanRunIdも
+  // 照合する（2026-08-24 Codexレビュー指摘：P1。初期化未完了中は同じroot/tokenのまま
+  // 別デバイスが並行して初回スキャンを実行しうるため、root/tokenだけでは所有権を失った
+  // 実行を区別できない。通常の差分同期にはscanRunIdの概念が無いため未指定のまま）。
+  const stillCurrent = await isSyncStateCurrent(syncIO, {
+    rootFolderId: folderId,
+    startPageToken,
+    scanRunId: initialCompletion?.scanRunId,
+  });
   if (!stillCurrent) {
     setStatus("別のデバイスがルート設定を変更したため、今回の差分同期は見送りました。次回の同期で改めて反映されます。", true);
-    return;
+    return false;
   }
 
   if (upsertEntries.length > 0) {
@@ -440,7 +468,7 @@ async function runDifferentialSync(
     // reconcileIndexAgainstRootと同様、破壊的な書き込みごとに専用の確認コールバックを渡す
     // （removeIndexRows内部でも複数バッチに分割される場合は各バッチ直前で再確認される）。
     await removeIndexRows(sheetsIO, plan.removedFileIds, () =>
-      isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken })
+      isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken, scanRunId: initialCompletion?.scanRunId })
     );
   }
 
@@ -470,14 +498,25 @@ async function runDifferentialSync(
       sheetsIO,
       (parentId) => isDescendantOfRoot(getParentsFn, [parentId], folderId, reconcileAncestryCache, extraRootFolderIds),
       undefined,
-      () => isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken })
+      () => isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken, scanRunId: initialCompletion?.scanRunId })
     );
   }
 
   // 今回更新したextraRootFolderIds（フルスキャン後の永続値＋差分同期中のショートカット変更）を
   // 永続化する。次回以降の差分同期・リコンサイルが最新の状態を使えるようにするため
   // （2026-08-21 Codexレビュー指摘：P1）。
-  await persistShortcutRootFolderIds(syncIO, [...extraRootFolderIds], { rootFolderId: folderId, startPageToken });
+  // initialCompletionがある場合（初回スキャン完了直後の差分再生）は、自分自身のscanRunIdも
+  // 照合する（2026-08-24 Codexレビュー指摘：P2）。以前はroot/tokenのみで照合していたため、
+  // 所有権を失った端末の実行（同じルート・同じ初期化未完了中に別デバイスが並行して初回スキャンを
+  // 実行していたケース）でも、このショートカット集合の書き込みだけはroot/tokenの一致のみで
+  // 進んでしまい、既に他の状態確定処理（advanceStartPageToken等）ではscanRunId不一致で
+  // ブロックされているにも関わらず、古い（このデバイスが取得した）shortcutRootFolderIdsが
+  // 書き戻されうる。通常の差分同期はscanRunIdの概念が無いため未指定のまま。
+  await persistShortcutRootFolderIds(syncIO, [...extraRootFolderIds], {
+    rootFolderId: folderId,
+    startPageToken,
+    scanRunId: initialCompletion?.scanRunId,
+  });
 
   // フォルダ変更イベントのサブツリー再走査で子フォルダの取得に失敗した場合
   // （listAudioFilesRecursiveは例外にせずfailedFoldersへ積んで継続する）、そのサブツリー配下は
@@ -485,17 +524,50 @@ async function runDifferentialSync(
   // フォルダ変更イベント自体を二度と返さない（既に消費済みのため）ため、取りこぼしたサブツリーが
   // 恒久的に再走査されなくなる。取得失敗があった場合はトークンを進めず、次回同じ範囲を
   // 再消費して再挑戦できるようにする（2026-08-21 Codexレビュー指摘：P1）。
-  if (failedFolders.length === 0) {
-    // 消費し終えたstartPageTokenを進める。差分同期の最後に行う（途中でエラーが起きた場合、
-    // 次回起動時に同じstartPageTokenから再度consumeAllChangesできるようにするため）。
+  const replaySucceeded = failedFolders.length === 0;
+  let committed = true;
+  if (initialCompletion) {
+    // advance→mark→clearの3段階すべてにscanRunIdを渡し、いずれかの段階で所有権
+    // （同じルート・同じ初期化未完了中に別デバイスが並行して初回スキャンを実行していないか）が
+    // 失われていた場合はcommitInitialChangeReplayがfalseを返し、以降の段階へ進まない
+    // （2026-08-24 Codexレビュー指摘：P1。以前はadvanceStartPageTokenだけscanRunIdを
+    // 照合しておらず、所有権を失った実行でもroot/tokenの一致だけでトークンが進み、
+    // 続くmark・clearが無効化されてもcommitInitialChangeReplayは無条件でtrueを返していた）。
+    committed = await commitInitialChangeReplay(replaySucceeded, {
+      advanceStartPageToken: () =>
+        advanceStartPageToken(syncIO, newStartPageToken, {
+          rootFolderId: folderId,
+          startPageToken,
+          scanRunId: initialCompletion.scanRunId,
+        }),
+      markInitialScanCompleted: () =>
+        markInitialScanCompleted(syncIO, initialCompletion.completedAt, {
+          rootFolderId: folderId,
+          startPageToken: newStartPageToken,
+          scanRunId: initialCompletion.scanRunId,
+        }),
+      // runFullScan側の従来のclearScanRunIdは旧トークンを期待するため、トークン更新後の初回完了
+      // パスではここで現在のトークンを使ってクリアする。
+      clearScanRunId: () =>
+        clearScanRunId(syncIO, {
+          rootFolderId: folderId,
+          startPageToken: newStartPageToken,
+          scanRunId: initialCompletion.scanRunId,
+        }),
+    });
+  } else if (replaySucceeded) {
+    // 通常の差分同期では、トークンだけを進める（scanRunIdの概念が無いため省略）。
     await advanceStartPageToken(syncIO, newStartPageToken, { rootFolderId: folderId, startPageToken });
   }
 
   setStatus(
-    `差分同期完了（反映 ${plan.entriesToProcess.length}件、削除 ${plan.removedFileIds.length}件${
-      failedFolders.length > 0 ? `、フォルダ取得失敗: ${failedFolders.length}件（次回再試行します）` : ""
-    }）`
+    initialCompletion && replaySucceeded && !committed
+      ? "別のデバイスが同じルートへの初回スキャンを進めているため、今回の初回スキャン結果は確定しませんでした。次回のスキャンで改めて完了を試みます。"
+      : `差分同期完了（反映 ${plan.entriesToProcess.length}件、削除 ${plan.removedFileIds.length}件${
+          failedFolders.length > 0 ? `、フォルダ取得失敗: ${failedFolders.length}件（次回再試行します）` : ""
+        }）`
   );
+  return replaySucceeded && committed;
 }
 
 async function handleScan(): Promise<void> {
@@ -586,7 +658,7 @@ async function handleScan(): Promise<void> {
     if (prep.hasCompletedInitialScan) {
       await runDifferentialSync(sheetsIO, syncIO, folderId, driveId, prep.startPageToken, prep.shortcutRootFolderIds);
     } else {
-      await runFullScan(sheetsIO, syncIO, folderId, prep.startPageToken, prep.scanRunId);
+      await runFullScan(sheetsIO, syncIO, folderId, driveId, prep.startPageToken, prep.scanRunId);
     }
   } catch (err) {
     // 401（トークン取り消し等）は、ローカルのexpiresAtがまだ有効に見えていても
