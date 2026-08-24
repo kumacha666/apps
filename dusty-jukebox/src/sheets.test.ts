@@ -11,6 +11,8 @@ import {
   LEGACY_INDEX_SHEET_HEADER_V1,
   LEGACY_INDEX_SHEET_HEADER_V2,
   mergeDuplicateIndexRows,
+  reconcileIndexAgainstRoot,
+  removeIndexRows,
   upsertIndexRows,
   type SheetsIndexIO,
 } from "./sheets";
@@ -839,5 +841,220 @@ describe("createSheetsIndexIO", () => {
     await vi.runAllTimersAsync();
     await promise;
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("removeIndexRows", () => {
+  test("fileIdが空なら何もしない（APIを呼ばない）", async () => {
+    const io = makeFakeIO([]);
+    const result = await removeIndexRows(io, []);
+    expect(result).toEqual({ removedCount: 0 });
+    expect(io.updateCalls).toEqual([]);
+  });
+
+  test("指定したfileIdの行を空欄化する（Sheets APIに行削除のためのnumeric sheetIdを持たないため）", async () => {
+    const rowF1 = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const rowF2 = buildIndexRow({
+      fileId: "f2",
+      fileName: "b.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const io = makeFakeIO([rowF1, rowF2]);
+
+    const result = await removeIndexRows(io, ["f1"]);
+    expect(result).toEqual({ removedCount: 1 });
+    expect(io.updateCalls).toEqual([[{ rowNumber: 2, row: new Array(INDEX_SHEET_HEADER.length).fill("") }]]);
+  });
+
+  test("存在しないfileIdを指定しても何もしない", async () => {
+    const rowF1 = buildIndexRow({
+      fileId: "f1",
+      fileName: "a.mp3",
+      parentId: "p",
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+    const io = makeFakeIO([rowF1]);
+    const result = await removeIndexRows(io, ["nonexistent"]);
+    expect(result).toEqual({ removedCount: 0 });
+    expect(io.updateCalls).toEqual([]);
+  });
+
+  test("空欄化対象が200件を超える場合は複数回のupdateRowsに分割する（2026-08-21 Codexレビュー指摘：P2）", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) =>
+      buildIndexRow({
+        fileId: `f${i}`,
+        fileName: `f${i}.mp3`,
+        parentId: "p",
+        driveModifiedTime: "2026-08-01T00:00:00.000Z",
+        lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+        tags: {},
+        extractionFailed: false,
+      })
+    );
+    const io = makeFakeIO(rows);
+    const result = await removeIndexRows(
+      io,
+      Array.from({ length: 250 }, (_, i) => `f${i}`)
+    );
+    expect(result).toEqual({ removedCount: 250 });
+    expect(io.updateCalls).toHaveLength(2);
+    expect(io.updateCalls[0]).toHaveLength(200);
+    expect(io.updateCalls[1]).toHaveLength(50);
+  });
+
+  test("isStillCurrentが各バッチ送信の直前に呼ばれ、途中でfalseになると残りのバッチを送らない（2026-08-23 Codexレビュー指摘：P1。以前は呼び出し全体の最初に1回だけ確認しており、複数バッチに分割された後続バッチの間に生じた不一致を検出できなかった）", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) =>
+      buildIndexRow({
+        fileId: `f${i}`,
+        fileName: `f${i}.mp3`,
+        parentId: "p",
+        driveModifiedTime: "2026-08-01T00:00:00.000Z",
+        lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+        tags: {},
+        extractionFailed: false,
+      })
+    );
+    const io = makeFakeIO(rows);
+    let calls = 0;
+    const isStillCurrent = vi.fn(async () => {
+      calls += 1;
+      return calls === 1; // 最初のバッチだけ許可し、2バッチ目の直前でfalseにする
+    });
+    const result = await removeIndexRows(
+      io,
+      Array.from({ length: 250 }, (_, i) => `f${i}`),
+      isStillCurrent
+    );
+    expect(result).toEqual({ removedCount: 200 });
+    expect(io.updateCalls).toHaveLength(1);
+    expect(isStillCurrent).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("reconcileIndexAgainstRoot", () => {
+  function rowFor(fileId: string, parentId: string): (string | number)[] {
+    return buildIndexRow({
+      fileId,
+      fileName: `${fileId}.mp3`,
+      parentId,
+      driveModifiedTime: "2026-08-01T00:00:00.000Z",
+      lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+      tags: {},
+      extractionFailed: false,
+    });
+  }
+
+  test("全行のparentIdがrootFolderId配下なら何もしない", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "sub1")]);
+    const isFolderUnderRoot = vi.fn(async () => true);
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(result).toEqual({ removedCount: 0 });
+    expect(io.updateCalls).toEqual([]);
+  });
+
+  test("rootFolderId配下でないparentIdを持つ行を空欄化する", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "oldRoot")]);
+    const isFolderUnderRoot = vi.fn(async (parentId: string) => parentId === "root");
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(result).toEqual({ removedCount: 1 });
+    expect(io.updateCalls).toEqual([[{ rowNumber: 3, row: new Array(INDEX_SHEET_HEADER.length).fill("") }]]);
+  });
+
+  test("distinctなparentIdごとに1回だけisFolderUnderRootを呼ぶ（同じフォルダ配下の複数行で重複確認しない）", async () => {
+    const io = makeFakeIO([rowFor("f1", "sub1"), rowFor("f2", "sub1"), rowFor("f3", "sub1")]);
+    const isFolderUnderRoot = vi.fn(async () => true);
+    await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(isFolderUnderRoot).toHaveBeenCalledTimes(1);
+  });
+
+  test("空欄行（fileIdが空）はスキップする", async () => {
+    const blank = new Array(INDEX_SHEET_HEADER.length).fill("");
+    const io = makeFakeIO([blank, rowFor("f1", "root")]);
+    const isFolderUnderRoot = vi.fn(async () => true);
+    await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(isFolderUnderRoot).toHaveBeenCalledTimes(1);
+    expect(isFolderUnderRoot).toHaveBeenCalledWith("root");
+  });
+
+  test("空欄化対象が200件を超える場合は複数回のupdateRowsに分割する（2026-08-21 Codexレビュー指摘：P2。ルート変更直後は索引のほぼ全行が対象になりうるため、1回の大規模batchUpdateでリクエストサイズ・処理時間上限に抵触しないようにする）", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) => rowFor(`f${i}`, "oldRoot"));
+    const io = makeFakeIO(rows);
+    const isFolderUnderRoot = vi.fn(async () => false);
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(result).toEqual({ removedCount: 250 });
+    expect(io.updateCalls).toHaveLength(2);
+    expect(io.updateCalls[0]).toHaveLength(200);
+    expect(io.updateCalls[1]).toHaveLength(50);
+  });
+
+  test("knownFileIdsを渡すと、parentIdは到達可能でもその集合に無い行を空欄化する（2026-08-21 Codexレビュー指摘：P2。410 Gone復旧後のフルスキャンで、欠落期間中に削除されたファイルの後始末）", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "root")]);
+    const isFolderUnderRoot = vi.fn(async () => true);
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot, new Set(["f1"]));
+    expect(result).toEqual({ removedCount: 1 });
+    expect(io.updateCalls).toEqual([[{ rowNumber: 3, row: new Array(INDEX_SHEET_HEADER.length).fill("") }]]);
+  });
+
+  test("knownFileIdsを省略した場合は従来通りparentIdの到達可能性のみで判定する", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "root")]);
+    const isFolderUnderRoot = vi.fn(async () => true);
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(result).toEqual({ removedCount: 0 });
+  });
+
+  test("isStillCurrentがfalseを返す場合、空欄化対象があっても書き込みをスキップする（2026-08-22 Codexレビュー指摘：P1。listExistingRows〜書き込みの間に別デバイスの差分同期が新しい正当な行を追加していた場合の保護）", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "oldRoot")]);
+    const isFolderUnderRoot = vi.fn(async (parentId: string) => parentId === "root");
+    const isStillCurrent = vi.fn(async () => false);
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot, undefined, isStillCurrent);
+    expect(result).toEqual({ removedCount: 0 });
+    expect(io.updateCalls).toEqual([]);
+    expect(isStillCurrent).toHaveBeenCalledTimes(1);
+  });
+
+  test("isStillCurrentがtrueを返す場合は従来通り書き込む", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "oldRoot")]);
+    const isFolderUnderRoot = vi.fn(async (parentId: string) => parentId === "root");
+    const isStillCurrent = vi.fn(async () => true);
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot, undefined, isStillCurrent);
+    expect(result).toEqual({ removedCount: 1 });
+    expect(io.updateCalls).toHaveLength(1);
+  });
+
+  test("isStillCurrentを省略した場合は従来通り常に書き込む", async () => {
+    const io = makeFakeIO([rowFor("f1", "root"), rowFor("f2", "oldRoot")]);
+    const isFolderUnderRoot = vi.fn(async (parentId: string) => parentId === "root");
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot);
+    expect(result).toEqual({ removedCount: 1 });
+  });
+
+  test("isStillCurrentは各バッチ送信の直前に再確認され、200件超で複数バッチに分割される場合、途中でfalseになると残りのバッチを送らない（2026-08-23 Codexレビュー指摘：P1）", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) => rowFor(`f${i}`, "oldRoot"));
+    const io = makeFakeIO(rows);
+    const isFolderUnderRoot = vi.fn(async () => false);
+    let calls = 0;
+    const isStillCurrent = vi.fn(async () => {
+      calls += 1;
+      return calls === 1;
+    });
+    const result = await reconcileIndexAgainstRoot(io, isFolderUnderRoot, undefined, isStillCurrent);
+    expect(result).toEqual({ removedCount: 200 });
+    expect(io.updateCalls).toHaveLength(1);
+    expect(isStillCurrent).toHaveBeenCalledTimes(2);
   });
 });
