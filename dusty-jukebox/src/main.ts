@@ -500,7 +500,18 @@ async function runDifferentialSync(
   // 今回更新したextraRootFolderIds（フルスキャン後の永続値＋差分同期中のショートカット変更）を
   // 永続化する。次回以降の差分同期・リコンサイルが最新の状態を使えるようにするため
   // （2026-08-21 Codexレビュー指摘：P1）。
-  await persistShortcutRootFolderIds(syncIO, [...extraRootFolderIds], { rootFolderId: folderId, startPageToken });
+  // initialCompletionがある場合（初回スキャン完了直後の差分再生）は、自分自身のscanRunIdも
+  // 照合する（2026-08-24 Codexレビュー指摘：P2）。以前はroot/tokenのみで照合していたため、
+  // 所有権を失った端末の実行（同じルート・同じ初期化未完了中に別デバイスが並行して初回スキャンを
+  // 実行していたケース）でも、このショートカット集合の書き込みだけはroot/tokenの一致のみで
+  // 進んでしまい、既に他の状態確定処理（advanceStartPageToken等）ではscanRunId不一致で
+  // ブロックされているにも関わらず、古い（このデバイスが取得した）shortcutRootFolderIdsが
+  // 書き戻されうる。通常の差分同期はscanRunIdの概念が無いため未指定のまま。
+  await persistShortcutRootFolderIds(syncIO, [...extraRootFolderIds], {
+    rootFolderId: folderId,
+    startPageToken,
+    scanRunId: initialCompletion?.scanRunId,
+  });
 
   // フォルダ変更イベントのサブツリー再走査で子フォルダの取得に失敗した場合
   // （listAudioFilesRecursiveは例外にせずfailedFoldersへ積んで継続する）、そのサブツリー配下は

@@ -529,6 +529,37 @@ describe("persistShortcutRootFolderIds", () => {
     await persistShortcutRootFolderIds(io, ["folderA"], { rootFolderId: "root1", startPageToken: "T0", scanRunId: "run-A" });
     expect(io.appendCalls).toEqual([[["shortcutRootFolderIds", "folderA"]]]);
   });
+
+  // 2026-08-24 Codexレビュー指摘：P2。初回差分再生でscanRunIdの所有権を失った後も、
+  // main.ts側の呼び出しがscanRunIdを渡していなかったため、この関数自体はscanRunIdを
+  // 照合できるにも関わらずroot/tokenだけで判定し、所有権を失った端末（端末A）が抱えていた
+  // 古いshortcutRootFolderIdsが、既に所有権を得て先に進んでいた端末Bの正当な値を
+  // 上書きしうる状態だった。端末Aが自分自身のscanRunIdを渡した場合、端末Bが既に
+  // 書き込んだ新しいscanRunIdと不一致になり、古い集合を書き戻さないことを確認する。
+  test("初回再生中に所有権を失った端末（scanRunId不一致）は、既に別端末が書き込んだshortcutRootFolderIdsを古い値で上書きしない", async () => {
+    const io = makeFakeIO([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-B"], // 端末Bが先に所有権を確保済み
+      ["shortcutRootFolderIds", "folderB-only"], // 端末Bが既に書き込んだ正当な値
+    ]);
+    // 端末Aは自分が確保した（今は失効した）scanRunIdで、自分が発見した古いショートカット集合を
+    // 書き戻そうとする。
+    await persistShortcutRootFolderIds(io, ["folderA-stale"], {
+      rootFolderId: "root1",
+      startPageToken: "T0",
+      scanRunId: "run-A",
+    });
+    expect(io.updateCalls).toEqual([]);
+    expect(io.appendCalls).toEqual([]);
+    // 端末Bの値がそのまま残っていること。
+    await expect(io.readAllRows()).resolves.toEqual([
+      ["startPageToken", "T0"],
+      ["rootFolderId", "root1"],
+      ["scanRunId", "run-B"],
+      ["shortcutRootFolderIds", "folderB-only"],
+    ]);
+  });
 });
 
 describe("isSyncStateCurrent", () => {
