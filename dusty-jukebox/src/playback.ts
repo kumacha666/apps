@@ -9,7 +9,7 @@ export interface AudioElementLike {
   currentTime: number;
   play(): Promise<void>;
   pause(): void;
-  addEventListener(type: "error", listener: () => void): void;
+  addEventListener(type: "error" | "pause", listener: () => void): void;
 }
 
 export type PlaybackRetryErrorHandler = (error: unknown) => void;
@@ -27,6 +27,8 @@ export class PlaybackController {
     private readonly onRetryError: PlaybackRetryErrorHandler = () => {}
   ) {
     audio.addEventListener("error", () => void this.retryAfterAuthFailure());
+    // ネイティブコントロール経由の停止でも、認証再取得中の古い再試行を破棄する。
+    audio.addEventListener("pause", () => { this.generation += 1; });
   }
 
   async play(fileId: string): Promise<void> {
