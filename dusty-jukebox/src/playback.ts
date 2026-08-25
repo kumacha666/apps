@@ -18,7 +18,7 @@ export class PlaybackController {
   private currentFileId: string | null = null;
   private retried = false;
 
-  constructor(private readonly audio: AudioElementLike, private readonly ensureAccessToken: EnsureAccessToken) {
+  constructor(private readonly audio: AudioElementLike, private readonly refreshAccessToken: EnsureAccessToken) {
     audio.addEventListener("error", () => void this.retryAfterAuthFailure());
   }
 
@@ -38,7 +38,7 @@ export class PlaybackController {
     this.retried = true;
     const position = this.audio.currentTime;
     try {
-      await this.ensureAccessToken();
+      await this.refreshAccessToken();
       this.audio.src = streamUrl(this.currentFileId);
       this.audio.currentTime = position;
       await this.audio.play();
