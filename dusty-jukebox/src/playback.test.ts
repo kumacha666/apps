@@ -7,6 +7,7 @@ class FakeAudio implements AudioElementLike {
   playCount = 0;
   pauseCount = 0;
   private errorListener: (() => void) | undefined;
+  private pauseListener: (() => void) | undefined;
 
   async play(): Promise<void> {
     this.playCount += 1;
@@ -16,12 +17,17 @@ class FakeAudio implements AudioElementLike {
     this.pauseCount += 1;
   }
 
-  addEventListener(type: "error", listener: () => void): void {
+  addEventListener(type: "error" | "pause", listener: () => void): void {
     if (type === "error") this.errorListener = listener;
+    if (type === "pause") this.pauseListener = listener;
   }
 
   emitError(): void {
     this.errorListener?.();
+  }
+
+  emitPause(): void {
+    this.pauseListener?.();
   }
 }
 
@@ -69,6 +75,22 @@ describe("PlaybackController", () => {
     await Promise.resolve();
 
     expect(audio.pauseCount).toBe(1);
+    expect(audio.playCount).toBe(1);
+  });
+
+  test("ネイティブコントロールで停止されたら再生を再開しない", async () => {
+    const audio = new FakeAudio();
+    const token = deferred<string>();
+    const playback = new PlaybackController(audio, () => token.promise);
+
+    await playback.play("A");
+    audio.emitError();
+    await Promise.resolve();
+    audio.emitPause();
+    token.resolve("new-token");
+    await Promise.resolve();
+    await Promise.resolve();
+
     expect(audio.playCount).toBe(1);
   });
 
