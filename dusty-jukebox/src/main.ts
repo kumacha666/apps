@@ -7,6 +7,8 @@
 // （runFullScan、フォルダ全体の再帰走査＋バッチ処理・中断再開）を行う。完了後
 // （hasCompletedInitialScan=true）はrunDifferentialSync（changes.list消費）に切り替わる。
 import { AuthError, DriveAuth } from "./auth";
+import { PlaybackController } from "./playback";
+import { registerStreamAuthResponder } from "./streamAuth";
 import {
   createChangesListFn,
   createDriveCapabilitiesGetFn,
@@ -72,6 +74,7 @@ function isAuthFailure(err: unknown): boolean {
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
 const auth = new DriveAuth();
+let playback: PlaybackController | null = null;
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -97,6 +100,13 @@ function render(): void {
       </label>
       <button id="login-btn" type="button">Googleドライブ（読み取り専用）＋スプレッドシートへログイン</button>
       <button id="scan-btn" type="button" disabled>音楽ファイルをスキャンして索引に反映する</button>
+      <label class="field">
+        <span>試聴するGoogle DriveファイルID</span>
+        <input id="play-file-id" type="text" placeholder="Google DriveファイルID" />
+      </label>
+      <button id="play-btn" type="button" disabled>この曲を再生</button>
+      <button id="pause-btn" type="button" disabled>一時停止</button>
+      <audio id="audio-player" controls></audio>
       <p id="status" class="status"></p>
       <ul id="result-list" class="result-list"></ul>
     `
@@ -119,10 +129,27 @@ async function handleLogin(): Promise<void> {
     await auth.requestAccessToken({ prompt: "consent" });
     setStatus("ログイン済み。フォルダIDを入力してスキャンできます。");
     el<HTMLButtonElement>("scan-btn").disabled = false;
+    el<HTMLButtonElement>("play-btn").disabled = false;
+    el<HTMLButtonElement>("pause-btn").disabled = false;
   } catch (err) {
     setStatus(err instanceof AuthError ? err.message : String(err), true);
   } finally {
     loginBtn.disabled = false;
+  }
+}
+
+async function handlePlay(): Promise<void> {
+  const fileId = el<HTMLInputElement>("play-file-id").value.trim();
+  if (!fileId || !playback) {
+    setStatus("再生するGoogle DriveファイルIDを入力してください", true);
+    return;
+  }
+  try {
+    setStatus("Service Worker経由で再生を開始しています...");
+    await playback.play(fileId);
+    setStatus("再生中");
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err), true);
   }
 }
 
@@ -689,6 +716,11 @@ function init(): void {
   render();
   if (!CLIENT_ID) return;
 
+  if ("serviceWorker" in navigator) {
+    registerStreamAuthResponder(navigator.serviceWorker, () => auth.ensureAccessToken());
+    void navigator.serviceWorker.register("./sw.js");
+  }
+
   whenPageLoaded(() => {
     try {
       auth.init(CLIENT_ID);
@@ -696,8 +728,11 @@ function init(): void {
       setStatus(err instanceof AuthError ? err.message : String(err), true);
       return;
     }
+    playback = new PlaybackController(el<HTMLAudioElement>("audio-player"), () => auth.ensureAccessToken());
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
+    el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
+    el<HTMLButtonElement>("pause-btn").addEventListener("click", () => playback?.pause());
   });
 }
 
