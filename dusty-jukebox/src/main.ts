@@ -75,6 +75,7 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
 const auth = new DriveAuth();
 let playback: PlaybackController | null = null;
+let serviceWorkerReady: Promise<ServiceWorkerRegistration> | null = null;
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -146,6 +147,7 @@ async function handlePlay(): Promise<void> {
   }
   try {
     setStatus("Service Worker経由で再生を開始しています...");
+    if (serviceWorkerReady) await serviceWorkerReady;
     await playback.play(fileId);
     setStatus("再生中");
   } catch (err) {
@@ -718,7 +720,7 @@ function init(): void {
 
   if ("serviceWorker" in navigator) {
     registerStreamAuthResponder(navigator.serviceWorker, () => auth.ensureAccessToken());
-    void navigator.serviceWorker.register("./sw.js");
+    serviceWorkerReady = navigator.serviceWorker.register("./sw.js");
   }
 
   whenPageLoaded(() => {
@@ -728,7 +730,10 @@ function init(): void {
       setStatus(err instanceof AuthError ? err.message : String(err), true);
       return;
     }
-    playback = new PlaybackController(el<HTMLAudioElement>("audio-player"), () => auth.ensureAccessToken());
+    playback = new PlaybackController(el<HTMLAudioElement>("audio-player"), async () => {
+      auth.clearToken();
+      return auth.ensureAccessToken();
+    });
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
