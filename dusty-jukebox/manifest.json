@@ -1,0 +1,17 @@
+{
+  "name": "DustyJukebox",
+  "short_name": "DustyJukebox",
+  "description": "Google Drive上の音源を再生する個人用ジュークボックス",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#17151a",
+  "theme_color": "#17151a",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
