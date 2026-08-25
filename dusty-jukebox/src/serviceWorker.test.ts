@@ -91,6 +91,7 @@ function dispatchFetch(harness: Harness, url: string, headers: Headers = new Hea
     clientId,
     respondWith: (next) => { response = next; },
   });
+  if (!response) throw new Error("Service Worker did not respond");
   return Promise.resolve(response);
 }
 
