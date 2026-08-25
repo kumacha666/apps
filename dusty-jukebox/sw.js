@@ -5,7 +5,11 @@ const TOKEN_TIMEOUT_MS = 5_000;
 
 self.addEventListener("install", (event) => {
   const requests = ASSETS.map((url) => new Request(url, { cache: "no-cache" }));
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => Promise.all(requests.map((request) => fetch(request).then((response) => cache.put(request, response)))));
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.all(requests.map((request) => fetch(request).then((response) => cache.put(request, response))))
+    )
+  );
   self.skipWaiting();
 });
 
