@@ -7,6 +7,9 @@ type LifecycleHandler = (event: { waitUntil: (promise: Promise<unknown>) => void
 
 interface Harness {
   handlers: Map<string, ((event: never) => void)[]>;
+  cacheKeys: string[];
+  cacheName: string;
+  cachePrefix: string;
   cachePuts: string[];
   deleted: string[];
   fetchCalls: Array<{ input: unknown; init?: RequestInit }>;
@@ -25,7 +28,13 @@ class FakePort {
 }
 
 function createHarness(scope = "https://example.test/dusty-jukebox/"): Harness {
+  const source = readFileSync(new URL("../sw.js", import.meta.url), "utf8");
+  const cacheName = source.match(/^const CACHE_NAME = "([^"]+)";/m)?.[1];
+  const cachePrefix = source.match(/^const CACHE_PREFIX = "([^"]+)";/m)?.[1];
+  if (!cacheName || !cachePrefix) throw new Error("Service worker cache constants are unavailable");
+
   const handlers = new Map<string, ((event: never) => void)[]>();
+  const cacheKeys = ["combrawl-v0.1.63", "dusty-jukebox-v0.0.9", "dusty-jukebox-v0.1.0"];
   const cachePuts: string[] = [];
   const deleted: string[] = [];
   const fetchCalls: Array<{ input: unknown; init?: RequestInit }> = [];
@@ -43,7 +52,7 @@ function createHarness(scope = "https://example.test/dusty-jukebox/"): Harness {
 
   const self = {
     registration: { scope },
-    location: { href: scope },
+    location: { href: scope, origin: new URL(scope).origin },
     addEventListener(type: string, listener: (event: never) => void) {
       handlers.set(type, [...(handlers.get(type) ?? []), listener]);
     },
@@ -64,7 +73,7 @@ function createHarness(scope = "https://example.test/dusty-jukebox/"): Harness {
     MessageChannel: FakeMessageChannel,
     caches: {
       open: async () => ({ put: async (request: { url: string }) => { cachePuts.push(request.url); } }),
-      keys: async () => ["combrawl-v0.1.63", "dusty-jukebox-v0.0.9", "dusty-jukebox-v0.1.0"],
+      keys: async () => cacheKeys,
       delete: async (key: string) => { deleted.push(key); return true; },
       match: async () => undefined,
     },
@@ -75,8 +84,7 @@ function createHarness(scope = "https://example.test/dusty-jukebox/"): Harness {
     setTimeout: (callback: () => void) => { timers.push(callback); return timers.length; },
     clearTimeout: () => {},
   };
-  const source = readFileSync(new URL("../sw.js", import.meta.url), "utf8");
-  return { handlers, cachePuts, deleted, fetchCalls, timers, clients, run: () => runInNewContext(source, context) };
+  return { handlers, cacheKeys, cacheName, cachePrefix, cachePuts, deleted, fetchCalls, timers, clients, run: () => runInNewContext(source, context) };
 }
 
 async function dispatchLifecycle(harness: Harness, type: "install" | "activate"): Promise<void> {
@@ -105,7 +113,9 @@ describe("service worker", () => {
     await dispatchLifecycle(harness, "activate");
 
     expect(harness.cachePuts).toEqual(["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg"]);
-    expect(harness.deleted).toEqual(["dusty-jukebox-v0.0.9"]);
+    expect(harness.deleted).toEqual(
+      harness.cacheKeys.filter((key) => key.startsWith(harness.cachePrefix) && key !== harness.cacheName)
+    );
   });
 
   test("トークン応答がタイムアウトしたストリームは401になる", async () => {
@@ -114,6 +124,7 @@ describe("service worker", () => {
     harness.run();
 
     const response = dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
     harness.timers[0]();
 
     expect((await response).status).toBe(401);
