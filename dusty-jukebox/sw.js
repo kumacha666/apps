@@ -1,7 +1,7 @@
 const CACHE_NAME = "dusty-jukebox-v0.1.1";
 const ASSETS = ["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg"];
 const APP_SHELL_URLS = new Set(ASSETS.map((asset) => new URL(asset, self.location.href).href));
-const STREAM_PATH_PREFIX = "/dusty-jukebox/stream/";
+const STREAM_PATH_PREFIX = new URL("stream/", self.registration.scope).pathname;
 const TOKEN_TIMEOUT_MS = 5_000;
 
 self.addEventListener("install", (event) => {
@@ -15,7 +15,7 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))));
+  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME).map((key) => caches.delete(key)))));
   self.clients.claim();
 });
 
@@ -50,7 +50,7 @@ async function proxyStream(request, fileId, clientId) {
   const headers = { Authorization: `Bearer ${token}` };
   const range = request.headers.get("Range");
   if (range) headers.Range = range;
-  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`, { headers });
+  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers });
   const responseHeaders = new Headers();
   for (const header of ["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type"]) {
     const value = response.headers.get(header);
