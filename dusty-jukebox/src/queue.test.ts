@@ -1,0 +1,13 @@
+import { describe, expect, test } from "vitest";
+import { PlaybackQueue } from "./queue";
+import type { Song } from "./catalog";
+const song = (fileId: string): Song => ({ fileId, parentId: "p", title: fileId, artist: "", album: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "" });
+class Audio { listener: (() => void) | undefined; addEventListener(_: "ended", listener: () => void) { this.listener = listener; } }
+describe("PlaybackQueue", () => {
+  test("除外、新しいリストでのリセット、next/previous/ended、最後で停止を扱う", async () => {
+    const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    queue.setList([song("a"), song("b"), song("c")]); queue.exclude("b", true); expect(queue.list().map((s) => s.fileId)).toEqual(["a", "c"]);
+    await queue.playAt(0); await queue.next(); await queue.next(); await queue.previous(); audio.listener?.();
+    expect(played).toEqual(["a", "c", "a", "c"]); queue.setList([song("b")]); expect(queue.list().map((s) => s.fileId)).toEqual(["b"]);
+  });
+});

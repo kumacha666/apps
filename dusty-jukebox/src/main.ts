@@ -8,6 +8,9 @@
 // （hasCompletedInitialScan=true）はrunDifferentialSync（changes.list消費）に切り替わる。
 import { AuthError, DriveAuth } from "./auth";
 import { PlaybackController } from "./playback";
+import { parseIndexRows, filterSongs, sortSongs, type Song } from "./catalog";
+import { FolderPathResolver } from "./folderPaths";
+import { PlaybackQueue } from "./queue";
 import { registerStreamAuthResponder } from "./streamAuth";
 import {
   createChangesListFn,
@@ -16,6 +19,7 @@ import {
   createDriveGetFn,
   createDriveListFn,
   createDriveParentsGetFn,
+  createDriveFolderGetFn,
   createGetStartPageTokenFn,
   consumeAllChanges,
   isDescendantOfRoot,
@@ -61,6 +65,7 @@ import {
   SYNC_SHEET_NAME,
   SYNC_TAB_HEADER,
   type SyncTabIO,
+  parseSyncState,
 } from "./sync";
 
 // drive.tsのisAuthError()（AuthError・DriveHttpError(401)）に加え、main.tsではSheets側の
@@ -75,6 +80,8 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
 const auth = new DriveAuth();
 let playback: PlaybackController | null = null;
+let queue: PlaybackQueue | null = null;
+let loadedSongs: Song[] = [];
 let serviceWorkerReady: Promise<void> | null = null;
 
 function el<T extends HTMLElement>(id: string): T {
@@ -119,12 +126,52 @@ function render(): void {
       <button id="play-btn" type="button" disabled>この曲を再生</button>
       <button id="pause-btn" type="button" disabled>一時停止</button>
       <audio id="audio-player" controls></audio>
+      <section class="catalog">
+        <h2>ライブラリ</h2>
+        <button id="load-catalog-btn" type="button" disabled>索引から曲一覧を読み込む</button>
+        <label class="field"><span>アーティスト</span><input id="filter-artist" type="search" /></label>
+        <div class="filter-years"><label>年（最小）<input id="filter-min-year" type="number" /></label><label>年（最大）<input id="filter-max-year" type="number" /></label></div>
+        <label class="field"><span>カテゴリ（Genre）</span><input id="filter-genre" type="search" /></label>
+        <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
+        <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
+        <div><button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button></div>
+        <ul id="catalog-list" class="result-list"></ul>
+      </section>
       <p id="status" class="status"></p>
       <ul id="result-list" class="result-list"></ul>
     `
         : `<p class="status error">VITE_GOOGLE_CLIENT_ID が未設定です。.env に設定してください。</p>`
     }
   `;
+}
+
+function numberOrUndefined(value: string): number | undefined { const n = Number(value); return value.trim() === "" || !Number.isFinite(n) ? undefined : n; }
+function renderQueue(): void {
+  const list = el<HTMLUListElement>("catalog-list"); list.innerHTML = "";
+  for (const song of queue?.list() ?? []) { const item = document.createElement("li"); const check = document.createElement("input"); check.type = "checkbox"; check.checked = true;
+    check.addEventListener("change", () => { queue?.exclude(song.fileId, !check.checked); renderQueue(); });
+    item.append(check, ` ${song.title}${song.artist ? ` — ${song.artist}` : ""}${song.album ? ` / ${song.album}` : ""}${song.folderPath ? ` [${song.folderPath}]` : ""}`); list.append(item); }
+}
+async function loadCatalog(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
+  const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+  const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
+  const rootFolderId = parseSyncState(await syncIO.readAllRows()).rootFolderId;
+  if (!rootFolderId) { setStatus("syncタブにrootFolderIdがありません。先にスキャンしてください。", true); return; }
+  loadedSongs = parseIndexRows(await sheetsIO.listExistingRows());
+  const resolver = new FolderPathResolver(createDriveFolderGetFn(() => auth.ensureAccessToken()), rootFolderId);
+  // 取得はキャッシュされたPromiseを共有するので、同一フォルダの多数曲もAPI呼び出しは一度だけ。
+  await Promise.all(loadedSongs.map(async (song) => { song.folderPath = await resolver.resolve(song.parentId).catch(() => ""); }));
+  el<HTMLButtonElement>("create-queue-btn").disabled = false;
+  setStatus(`索引から${loadedSongs.length}曲を読み込みました。条件を指定して再生リストを作れます。`);
+}
+function createQueueFromFilters(): void {
+  if (!queue) return;
+  const songs = sortSongs(filterSongs(loadedSongs, { artist: el<HTMLInputElement>("filter-artist").value, genre: el<HTMLInputElement>("filter-genre").value,
+    minYear: numberOrUndefined(el<HTMLInputElement>("filter-min-year").value), maxYear: numberOrUndefined(el<HTMLInputElement>("filter-max-year").value), includeUnknownYear: el<HTMLInputElement>("filter-unknown-year").checked }));
+  queue.setList(songs); renderQueue(); el<HTMLButtonElement>("next-btn").disabled = songs.length === 0; el<HTMLButtonElement>("previous-btn").disabled = songs.length === 0;
+  setStatus(`${songs.length}曲の再生リストを作りました。`);
 }
 
 function setStatus(message: string, isError = false): void {
@@ -143,6 +190,7 @@ async function handleLogin(): Promise<void> {
     el<HTMLButtonElement>("scan-btn").disabled = false;
     el<HTMLButtonElement>("play-btn").disabled = false;
     el<HTMLButtonElement>("pause-btn").disabled = false;
+    el<HTMLButtonElement>("load-catalog-btn").disabled = false;
   } catch (err) {
     setStatus(err instanceof AuthError ? err.message : String(err), true);
   } finally {
@@ -753,10 +801,15 @@ function init(): void {
       },
       (error) => setStatus(error instanceof Error ? `再生の再試行に失敗しました: ${error.message}` : "再生の再試行に失敗しました", true)
     );
+    queue = new PlaybackQueue(playback, el<HTMLAudioElement>("audio-player"));
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
     el<HTMLButtonElement>("pause-btn").addEventListener("click", () => playback?.pause());
+    el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
+    el<HTMLButtonElement>("create-queue-btn").addEventListener("click", createQueueFromFilters);
+    el<HTMLButtonElement>("next-btn").addEventListener("click", () => void queue?.next());
+    el<HTMLButtonElement>("previous-btn").addEventListener("click", () => void queue?.previous());
   });
 }
 

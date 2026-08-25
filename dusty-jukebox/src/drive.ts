@@ -546,6 +546,18 @@ export async function consumeAllChanges(
 // （2026-08-21 Codexレビュー指摘：P1、folderReachesRoot参照）。
 export type DriveParentsGetFn = (fileId: string) => Promise<{ parents?: string[]; trashed?: boolean } | null>;
 
+export type DriveFolderGetFn = (fileId: string) => Promise<{ name: string; parentId?: string } | null>;
+
+// 表示用のフォルダ名・直接親だけを読む。読み取り専用スコープの範囲内。
+export function createDriveFolderGetFn(getAccessToken: () => Promise<string>): DriveFolderGetFn {
+  return async (fileId) => {
+    const params = new URLSearchParams({ fields: "name,parents", supportsAllDrives: "true" });
+    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`;
+    try { const res = await fetchDriveApiWithRetry(url, getAccessToken); const data = await res.json() as { name: string; parents?: string[] }; return { name: data.name, parentId: data.parents?.[0] }; }
+    catch (err) { if (err instanceof DriveHttpError && err.status === 404) return null; throw err; }
+  };
+}
+
 export function createDriveParentsGetFn(getAccessToken: () => Promise<string>): DriveParentsGetFn {
   return async (fileId) => {
     const params = new URLSearchParams({ fields: "parents,trashed", supportsAllDrives: "true" });
