@@ -64,6 +64,14 @@ test("formatMonth renders the year/month in Japanese without UTC drift", () => {
   assert.equal(formatMonth("2026-01-01"), "2026年1月");
 });
 
+test("formatMonth formats leap-day dates within February", () => {
+  assert.equal(formatMonth("2028-02-29"), "2028年2月");
+});
+
+test("formatMonth formats year-end dates within December", () => {
+  assert.equal(formatMonth("2026-12-31"), "2026年12月");
+});
+
 const countdownMovies = [
   { id: "mcu-past", title: "Past MCU Movie", releaseDate: "2026-01-01", universe: "mcu", type: "movie" },
   { id: "mcu-series-soon", title: "Soon MCU Series", releaseDate: "2026-08-15", universe: "mcu", type: "series" },
