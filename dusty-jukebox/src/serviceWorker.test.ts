@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import vm from "node:vm";
+import { runInNewContext } from "node:vm";
 import { describe, expect, test } from "vitest";
 
 type FetchHandler = (event: { request: Request; clientId: string; respondWith: (response: Promise<Response> | Response) => void }) => void;
@@ -75,7 +75,7 @@ function createHarness(scope = "https://example.test/dusty-jukebox/"): Harness {
     clearTimeout: () => {},
   };
   const source = readFileSync(new URL("../sw.js", import.meta.url), "utf8");
-  return { handlers, cachePuts, deleted, fetchCalls, timers, clients, run: () => vm.runInNewContext(source, context) };
+  return { handlers, cachePuts, deleted, fetchCalls, timers, clients, run: () => runInNewContext(source, context) };
 }
 
 async function dispatchLifecycle(harness: Harness, type: "install" | "activate"): Promise<void> {
