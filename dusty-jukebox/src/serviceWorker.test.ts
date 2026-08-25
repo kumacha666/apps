@@ -43,6 +43,7 @@ function createHarness(scope = "https://example.test/dusty-jukebox/"): Harness {
 
   const self = {
     registration: { scope },
+    location: { href: scope },
     addEventListener(type: string, listener: (event: never) => void) {
       handlers.set(type, [...(handlers.get(type) ?? []), listener]);
     },
