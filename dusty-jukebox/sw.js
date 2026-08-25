@@ -1,5 +1,6 @@
-const CACHE_NAME = "dusty-jukebox-v0.1.0";
+const CACHE_NAME = "dusty-jukebox-v0.1.1";
 const ASSETS = ["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg"];
+const APP_SHELL_URLS = new Set(ASSETS.map((asset) => new URL(asset, self.location.href).href));
 const STREAM_PATH_PREFIX = "/dusty-jukebox/stream/";
 const TOKEN_TIMEOUT_MS = 5_000;
 
@@ -60,11 +61,20 @@ async function proxyStream(request, fileId, clientId) {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (url.pathname.startsWith(STREAM_PATH_PREFIX)) {
+  if (url.origin === self.location.origin && url.pathname.startsWith(STREAM_PATH_PREFIX)) {
     const fileId = decodeURIComponent(url.pathname.slice(STREAM_PATH_PREFIX.length));
     event.respondWith(fileId ? proxyStream(event.request, fileId, event.clientId) : unauthorizedResponse());
     return;
   }
+
+  if (
+    event.request.method !== "GET" ||
+    url.origin !== self.location.origin ||
+    !APP_SHELL_URLS.has(url.href)
+  ) {
+    return;
+  }
+
   event.respondWith(
     fetch(event.request, { cache: "no-cache" })
       .then((response) => {
