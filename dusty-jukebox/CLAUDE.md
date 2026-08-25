@@ -2,6 +2,16 @@
 
 ## 開発ルール
 
+## PWA・Service Workerストリーミング
+
+- 2026-08-25、PWA化（`manifest.json`・`icon.svg`）と、ルート直下の手書き`sw.js`を追加した。SWはViteのビルド対象外であり、`npm run build`後も`dist/sw.js`を出力しない。アプリシェルはnetwork-firstでキャッシュするが、キャッシュ削除は`dusty-jukebox-`プレフィックスの旧バージョンだけに限定し、同一オリジンの他アプリを消さない。
+- `./stream/<fileId>`はSWが横取りする仮想URL。SWの登録scopeからstreamパスを導出するため、GitHub Pagesの`/dusty-jukebox/`配下とローカルのルート配信の両方で動く。SWは`event.clientId`で要求元タブを特定し、MessageChannelでそのタブだけへトークンを問い合わせる。トークンをメモリ・永続ストレージ・URLへ保存しない。
+- SWはRangeをそのままDrive APIへ転送し、`Authorization: Bearer`と`supportsAllDrives=true`を付与する。応答はストリーミングのまま返し、キャッシュしない。取得失敗・タイムアウトは401としてページへ返し、SW内で再ログインやリトライはしない。
+- `src/streamAuth.ts`がページ側のトークン要求応答を担当する。再生は`src/playback.ts`の薄いラッパーで行い、認証再取得後の再試行は一度だけ。再試行中に別曲の再生または停止が入った場合は再生世代で古い続行処理を破棄し、再取得失敗はUIへコールバックで通知する。
+- `src/serviceWorker.test.ts`は素の`sw.js`をVMハーネスで実行し、install/activate、トークンタイムアウト、Range転送・共有ドライブURL、scope導出をテストする。SWを変更した際は必ずこのテストを更新する。
+- `npm run deploy`は`dist/app.js`をルートへコピーし、`scripts/update-sw-version.mjs`でSWキャッシュ名を自動インクリメントする。手動でSWバージョンを変えない。
+
+
 リポジトリルートの `CLAUDE.md` の「AI開発ルール」セクションを必ず参照すること。
 以下は本プロジェクト固有のルール:
 
@@ -13,7 +23,6 @@
   - **同日、さらにCodexレビュー指摘で2件修正**：⑬`handleScan()`のcatchが401/AuthError検知時にエラー表示のみでキャッシュ済みトークン（`DriveAuth.state`）を残していたため、再スキャンしても同じ拒否済みトークンを使い続け必ず失敗する問題を、`DriveAuth.clearToken()`を追加し呼び出すことで修正。⑭`fetchDriveApiWithRetry`はHTTPレスポンスを受け取った場合しかリトライ対象にしておらず、`fetch()`自体が例外を投げる一時的な通信断（DNS障害等のTypeError）がそのまま子フォルダの失敗として確定していた問題を、同じリトライ予算で通信例外も扱うよう修正
   - **同日、さらにCodexレビュー指摘で1件修正・2件は見送り**：⑮スキャン失敗時に前回の結果（`result-list`）が残ったままだと、新しいフォルダのエラーと前回の件数が同時に表示され誤認しうる問題を、スキャン開始時に結果欄をクリアするよう修正。**見送った2件**（本アプリの実利用シナリオ＝所有者本人が自分のライブラリのルートフォルダIDを指定、では発生しにくいため）：ルートフォルダ自体がリンク共有のresource key保護対象・フォルダショートカットである場合は未対応（`validateRootFolder`/`createDriveGetFn`は素のフォルダIDのみを想定。配下のショートカット解決・resourceKey引き継ぎは対応済み）
   - **OAuthクライアントID未作成（2026-08-19時点）**：Google Cloud Consoleで「ウェブアプリケーション」種別のクライアントIDを新規作成し（`catalog-script`の「デスクトップアプリ」用とは別物）、承認済みJavaScript生成元に`https://honeypawlab.com`・`http://localhost:5173`を追加する必要がある。取得した値は`.env`の`VITE_GOOGLE_CLIENT_ID`に設定する（`.env.example`参照、`.gitignore`済み）。**未設定のままビルドすると、ログイン系コードはVite側のdead code eliminationでバンドルから丸ごと除去され、画面には「未設定」メッセージのみが表示される**（`dist/app.js`が数百バイトのみになるのはこのため。異常ではない）
-- **PWA未対応**（`manifest.json`/`sw.js`なし）。Phase 1の認証付きストリーミング設計ではService WorkerをDriveストリーミングプロキシとして使う想定のため、PWA化とSW導入は同時に行う
 - **2026-08-20、Sheets索引upsertの最小基盤を実装**（`src/sheets.ts`）。`CONCEPT.md` 4.3節のindexタブスキーマ（27列、`_override`列を含む）に合わせた`INDEX_SHEET_HEADER`/`buildIndexRow`と、fileId起点のupsert（`upsertIndexRows`：既存行があれば上書き・無ければ末尾に追記）を実装。Sheets APIへの実際のHTTP呼び出しは`SheetsIndexIO`としてDIし（`drive.ts`のDIと同じ方針）、`createSheetsIndexIO`が実実装を提供する。`auth.ts`に`SPREADSHEETS_SCOPE`を追加し、要求スコープを`drive.readonly`と`spreadsheets`の両方（`OAUTH_SCOPES`）にした
   - **このPRの範囲は最小基盤のみ**：`sync`タブ（`startPageToken`/`rootFolderId`/`initialScanCompletedAt`）の管理、重複行のマージ（4.3節、複数デバイスが同時に新規行を追記した場合の事後統合）、文字化けの自動修復（`garbledSuspect`は検出するが`garbledResolved`は常にFALSE、4.4節）、巨大ファイルのタイムアウト救済（`extractionFailed`列は用意したが可変タイムアウト自体は未実装、5節）は未着手。`main.ts`のスキャンUIともまだ結線していない（テストデータでの検証のみ）
   - **`index`タブ自体の初回作成（ヘッダー行の書き込み）は未実装**：`SheetsIndexIO`はユーザーが`index`タブ＋ヘッダー行を事前に用意済みであることを前提にする（2026-08-20 Codexレビュー指摘。タブ作成・ヘッダー初期化は`sync`タブ管理と合わせて後続PRで実装する想定）
