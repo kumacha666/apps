@@ -75,12 +75,23 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
 const auth = new DriveAuth();
 let playback: PlaybackController | null = null;
-let serviceWorkerReady: Promise<ServiceWorkerRegistration> | null = null;
+let serviceWorkerReady: Promise<void> | null = null;
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
   if (!found) throw new Error(`#${id} not found`);
   return found as T;
+}
+
+function waitForServiceWorkerControl(): Promise<void> {
+  if (navigator.serviceWorker.controller) return Promise.resolve();
+  return new Promise((resolve) => {
+    const onControllerChange = () => {
+      navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+      resolve();
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
+  });
 }
 
 function render(): void {
@@ -720,7 +731,11 @@ function init(): void {
 
   if ("serviceWorker" in navigator) {
     registerStreamAuthResponder(navigator.serviceWorker, () => auth.ensureAccessToken());
-    serviceWorkerReady = navigator.serviceWorker.register("./sw.js");
+    serviceWorkerReady = (async () => {
+      await navigator.serviceWorker.register("./sw.js");
+      await navigator.serviceWorker.ready;
+      await waitForServiceWorkerControl();
+    })();
   }
 
   whenPageLoaded(() => {
@@ -730,10 +745,14 @@ function init(): void {
       setStatus(err instanceof AuthError ? err.message : String(err), true);
       return;
     }
-    playback = new PlaybackController(el<HTMLAudioElement>("audio-player"), async () => {
-      auth.clearToken();
-      return auth.ensureAccessToken();
-    });
+    playback = new PlaybackController(
+      el<HTMLAudioElement>("audio-player"),
+      async () => {
+        auth.clearToken();
+        return auth.ensureAccessToken();
+      },
+      (error) => setStatus(error instanceof Error ? `再生の再試行に失敗しました: ${error.message}` : "再生の再試行に失敗しました", true)
+    );
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
