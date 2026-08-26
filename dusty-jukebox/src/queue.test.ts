@@ -10,4 +10,9 @@ describe("PlaybackQueue", () => {
     await queue.playAt(0); await queue.next(); await queue.next(); await queue.previous(); audio.listener?.();
     expect(played).toEqual(["a", "c", "a", "c"]); queue.setList([song("b")]); expect(queue.list().map((s) => s.fileId)).toEqual(["b"]);
   });
+  test("現在曲より前を除外しても次曲を飛ばさない", async () => {
+    const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    queue.setList([song("a"), song("b"), song("c")]); await queue.playAt(1); queue.exclude("a", true); await queue.next();
+    expect(played).toEqual(["b", "c"]);
+  });
 });
