@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { PlaybackQueue } from "./queue";
 import type { Song } from "./catalog";
 const song = (fileId: string): Song => ({ fileId, parentId: "p", title: fileId, artist: "", album: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "" });
@@ -27,5 +27,14 @@ describe("PlaybackQueue", () => {
     queue.notifyExternalPlaybackStarted(); audio.listener?.();
     await Promise.resolve();
     expect(played).toEqual(["a", "b"]);
+  });
+  test("失敗した再生を再試行し、endedの失敗を通知する", async () => {
+    const audio = new Audio(); const error = new Error("temporary"); const onError = vi.fn();
+    const play = vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce(undefined).mockRejectedValueOnce(error);
+    const queue = new PlaybackQueue({ play }, audio, onError);
+    queue.setList([song("a"), song("b")]); await expect(queue.next()).rejects.toThrow("temporary"); await queue.next();
+    audio.listener?.(); await Promise.resolve();
+    expect(play.mock.calls.map(([id]) => id)).toEqual(["a", "a", "b"]);
+    expect(onError).toHaveBeenCalledWith(error);
   });
 });
