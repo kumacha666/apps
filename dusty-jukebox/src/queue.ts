@@ -12,7 +12,7 @@ export class PlaybackQueue {
   constructor(private readonly player: PlayerLike, audio: AudioEndedLike, private readonly onError: (error: unknown) => void = () => {}) {
     audio.addEventListener("ended", () => { if (this.isQueuePlayback) void this.next().catch(this.onError); });
   }
-  setList(songs: Song[]): void { this.generation += 1; this.songs = songs; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; }
+  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(); this.songs = songs; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; }
   notifyExternalPlaybackStarted(): void { this.isQueuePlayback = false; }
   exclude(fileId: string, excluded: boolean): void { excluded ? this.excluded.add(fileId) : this.excluded.delete(fileId); }
   isExcluded(fileId: string): boolean { return this.excluded.has(fileId); }

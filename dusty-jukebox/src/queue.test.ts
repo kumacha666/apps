@@ -71,6 +71,24 @@ describe("PlaybackQueue", () => {
     await queue.next();
     expect(play.mock.calls.map(([id]) => id)).toEqual(["old-a", "new-a"]);
   });
+  test("リスト差し替え後の移動は、旧リストの未解決の再生を待たない", async () => {
+    const audio = new Audio(); let resolveOldPlayback: (() => void) | undefined;
+    const oldPlayback = new Promise<void>((resolve) => { resolveOldPlayback = resolve; });
+    const play = vi.fn().mockImplementationOnce(() => oldPlayback).mockResolvedValueOnce(undefined);
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("old-a")]);
+
+    const oldMove = queue.next();
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a"));
+    queue.setList([song("new-a")]);
+    const newMove = queue.next();
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("new-a"));
+    await newMove;
+
+    resolveOldPlayback?.();
+    await expect(oldMove).resolves.toBeUndefined();
+  });
+
   test("重複を除いたカタログなら次曲へ進める", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     const songs = parseIndexRows([indexRow({ fileId: "a", title: "first" }), indexRow({ fileId: "a", title: "duplicate" }), indexRow({ fileId: "b" })]);
