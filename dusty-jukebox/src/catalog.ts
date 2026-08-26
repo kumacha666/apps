@@ -31,9 +31,10 @@ export function filterSongs(songs: Song[], filters: SongFilters): Song[] {
   const genre = filters.genre?.toLocaleLowerCase() ?? "";
   return songs.filter((song) => {
     if (artist && !song.artist.toLocaleLowerCase().includes(artist)) return false;
-    if (genre && song.genre.toLocaleLowerCase() !== genre) return false;
-    const year = Number(song.releaseYear);
-    if (!Number.isFinite(year)) return filters.includeUnknownYear || (filters.minYear === undefined && filters.maxYear === undefined);
+    if (genre && !song.genre.split(" / ").some((value) => value.trim().toLocaleLowerCase() === genre)) return false;
+    const releaseYear = song.releaseYear.trim();
+    const year = Number(releaseYear);
+    if (releaseYear === "" || !Number.isFinite(year)) return filters.includeUnknownYear || (filters.minYear === undefined && filters.maxYear === undefined);
     return (filters.minYear === undefined || year >= filters.minYear) && (filters.maxYear === undefined || year <= filters.maxYear);
   });
 }
