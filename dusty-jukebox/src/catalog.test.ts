@@ -16,6 +16,7 @@ describe("絞り込みとソート", () => {
     expect(filterSongs(songs, { artist: "alpha", includeUnknownYear: true }).map((s) => s.fileId)).toEqual(["1", "2"]);
     expect(filterSongs([song({ fileId: "multi", genre: "Soundtrack / Game" })], { genre: "game", includeUnknownYear: true }).map((s) => s.fileId)).toEqual(["multi"]);
     expect(filterSongs([song({ fileId: "unknown", releaseYear: "  " })], { minYear: 1990, includeUnknownYear: true }).map((s) => s.fileId)).toEqual(["unknown"]);
+    expect(filterSongs([song({ fileId: "unknown", releaseYear: "not-a-year" })], { includeUnknownYear: false }).map((s) => s.fileId)).toEqual([]);
   });
   test("年、artist、album、disc、trackを数値順でソートする", () => {
     expect(sortSongs([song({ fileId: "10", releaseYear: "2000", artist: "A", album: "X", discNumber: "1", trackNumber: "10" }), song({ fileId: "2", releaseYear: "2000", artist: "A", album: "X", discNumber: "1", trackNumber: "2" }), song({ fileId: "disc2", releaseYear: "2000", artist: "A", album: "X", discNumber: "2", trackNumber: "1" }), song({ fileId: "unknown" })]).map((s) => s.fileId)).toEqual(["2", "10", "disc2", "unknown"]);

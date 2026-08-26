@@ -15,4 +15,17 @@ describe("PlaybackQueue", () => {
     queue.setList([song("a"), song("b"), song("c")]); await queue.playAt(1); queue.exclude("a", true); await queue.next();
     expect(played).toEqual(["b", "c"]);
   });
+  test("未再生のリストでpreviousを押しても何も再生しない", async () => {
+    const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    queue.setList([song("a"), song("b")]); await queue.previous();
+    expect(played).toEqual([]);
+  });
+  test("キュー再生の終了時だけ次の曲へ進み、単曲試聴後の終了では進まない", async () => {
+    const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    queue.setList([song("a"), song("b")]); await queue.playAt(0); audio.listener?.();
+    await Promise.resolve();
+    queue.notifyExternalPlaybackStarted(); audio.listener?.();
+    await Promise.resolve();
+    expect(played).toEqual(["a", "b"]);
+  });
 });

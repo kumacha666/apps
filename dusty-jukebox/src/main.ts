@@ -167,11 +167,25 @@ async function loadCatalog(): Promise<void> {
     loadedSongs = parseIndexRows(await sheetsIO.listExistingRows());
     const resolver = new FolderPathResolver(createDriveFolderGetFn(() => auth.ensureAccessToken()), rootFolderId);
     const limiter = new ConcurrencyLimiter(6);
+    const failedParentIds = new Set<string>();
+    let failedPathCount = 0;
+    let authFailure: unknown;
     await Promise.all(loadedSongs.map(async (song) => {
-      song.folderPath = await limiter.run(() => resolver.resolve(song.parentId)).catch(() => "");
+      await limiter.run(async () => {
+        if (authFailure) throw authFailure;
+        if (failedParentIds.has(song.parentId)) { failedPathCount += 1; song.folderPath = ""; return; }
+        try {
+          song.folderPath = await resolver.resolve(song.parentId);
+        } catch (err) {
+          if (isAuthError(err)) { authFailure = err; throw err; }
+          failedParentIds.add(song.parentId);
+          failedPathCount += 1;
+          song.folderPath = "";
+        }
+      });
     }));
     el<HTMLButtonElement>("create-queue-btn").disabled = false;
-    setStatus(`索引から${loadedSongs.length}曲を読み込みました。条件を指定して再生リストを作れます。`);
+    setStatus(`索引から${loadedSongs.length}曲を読み込みました${failedPathCount > 0 ? `（${failedPathCount}件はパス解決に失敗）` : ""}。条件を指定して再生リストを作れます。`);
   } catch (err) {
     setStatus(err instanceof Error ? `索引の読み込みに失敗しました: ${err.message}` : "索引の読み込みに失敗しました", true);
   } finally {
@@ -220,8 +234,17 @@ async function handlePlay(): Promise<void> {
   try {
     setStatus("Service Worker経由で再生を開始しています...");
     if (serviceWorkerReady) await serviceWorkerReady;
+    queue?.notifyExternalPlaybackStarted();
     await playback.play(fileId);
     setStatus("再生中");
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err), true);
+  }
+}
+
+async function handleQueuePlayback(action: () => Promise<void> | undefined): Promise<void> {
+  try {
+    await action();
   } catch (err) {
     setStatus(err instanceof Error ? err.message : String(err), true);
   }
@@ -821,8 +844,8 @@ function init(): void {
     el<HTMLButtonElement>("pause-btn").addEventListener("click", () => playback?.pause());
     el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
     el<HTMLButtonElement>("create-queue-btn").addEventListener("click", createQueueFromFilters);
-    el<HTMLButtonElement>("next-btn").addEventListener("click", () => void queue?.next());
-    el<HTMLButtonElement>("previous-btn").addEventListener("click", () => void queue?.previous());
+    el<HTMLButtonElement>("next-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.next()));
+    el<HTMLButtonElement>("previous-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.previous()));
   });
 }
 

@@ -34,7 +34,7 @@ export function filterSongs(songs: Song[], filters: SongFilters): Song[] {
     if (genre && !song.genre.split(" / ").some((value) => value.trim().toLocaleLowerCase() === genre)) return false;
     const releaseYear = song.releaseYear.trim();
     const year = Number(releaseYear);
-    if (releaseYear === "" || !Number.isFinite(year)) return filters.includeUnknownYear || (filters.minYear === undefined && filters.maxYear === undefined);
+    if (releaseYear === "" || !Number.isFinite(year)) return filters.includeUnknownYear;
     return (filters.minYear === undefined || year >= filters.minYear) && (filters.maxYear === undefined || year <= filters.maxYear);
   });
 }
