@@ -9,6 +9,7 @@
 import { AuthError, DriveAuth } from "./auth";
 import { PlaybackController } from "./playback";
 import { parseIndexRows, filterSongs, sortSongs, type Song } from "./catalog";
+import { CatalogOperationGate } from "./catalogOperationGate";
 import { FolderPathResolver } from "./folderPaths";
 import { PlaybackQueue } from "./queue";
 import { registerStreamAuthResponder } from "./streamAuth";
@@ -85,6 +86,7 @@ let playback: PlaybackController | null = null;
 let queue: PlaybackQueue | null = null;
 let loadedSongs: Song[] = [];
 let serviceWorkerReady: Promise<void> | null = null;
+const catalogOperationGate = new CatalogOperationGate();
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -161,6 +163,10 @@ async function loadCatalog(): Promise<void> {
   const scanButton = el<HTMLButtonElement>("scan-btn");
   const spreadsheetId = spreadsheetInput.value.trim();
   if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
+  if (!catalogOperationGate.tryAcquire()) {
+    setStatus("スキャンまたは索引の読み込みが進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
   // Catalog parsing must not observe a sheet while a scan is mutating it.
   // Disable both operation's controls before the first await so their runs
   // cannot overlap through two consecutive user actions.
@@ -203,6 +209,7 @@ async function loadCatalog(): Promise<void> {
     if (isAuthFailure(err)) auth.clearToken();
     setStatus(err instanceof Error ? `索引の読み込みに失敗しました: ${err.message}` : "索引の読み込みに失敗しました", true);
   } finally {
+    catalogOperationGate.release();
     spreadsheetInput.disabled = false;
     loadButton.disabled = false;
     folderInput.disabled = false;
@@ -722,6 +729,10 @@ async function handleScan(): Promise<void> {
     setStatus("索引スプレッドシートIDを入力してください", true);
     return;
   }
+  if (!catalogOperationGate.tryAcquire()) {
+    setStatus("スキャンまたは索引の読み込みが進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
   const scanBtn = el<HTMLButtonElement>("scan-btn");
   const folderInput = el<HTMLInputElement>("folder-id");
   const spreadsheetInput = el<HTMLInputElement>("spreadsheet-id");
@@ -817,6 +828,7 @@ async function handleScan(): Promise<void> {
     if (isAuthFailure(err)) auth.clearToken();
     setStatus(err instanceof Error ? err.message : String(err), true);
   } finally {
+    catalogOperationGate.release();
     scanBtn.disabled = false;
     folderInput.disabled = false;
     spreadsheetInput.disabled = false;
