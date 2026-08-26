@@ -1,13 +1,19 @@
 // エントリポイント。着手順の目安4: sync タブ基盤・index/syncタブの初回自動作成・索引upsertの
 // 重複行マージ・初回スキャンのバッチ処理/中断再開に続き、残りだったchanges.list消費による
-// 差分同期とルート変更後の旧ルート配下行の削除（リコンサイル）を実装した。絞り込み/再生UI・
-// Service Workerストリーミングプロキシは引き続き未着手（dusty-jukebox/CLAUDE.md参照）。
+// 差分同期とルート変更後の旧ルート配下行の削除（リコンサイル）を実装した。続けて着手順の目安5:
+// Service Workerストリーミングプロキシ+単曲再生、着手順の目安6: 絞り込み/除外/連続再生キューUI
+// を実装済み。アルバム単位の通し再生・保存済みプレイリストは引き続き未着手（dusty-jukebox/CLAUDE.md参照）。
 //
 // 初回スキャン完了前（sync.tsのhasCompletedInitialScan=false）は引き続きフルスキャン
 // （runFullScan、フォルダ全体の再帰走査＋バッチ処理・中断再開）を行う。完了後
 // （hasCompletedInitialScan=true）はrunDifferentialSync（changes.list消費）に切り替わる。
 import { AuthError, DriveAuth } from "./auth";
 import { PlaybackController } from "./playback";
+import { parseIndexRows, filterSongs, sortSongs, type Song } from "./catalog";
+import { CatalogOperationGate } from "./catalogOperationGate";
+import { CatalogSession } from "./catalogSession";
+import { FolderPathResolver } from "./folderPaths";
+import { PlaybackQueue } from "./queue";
 import { registerStreamAuthResponder } from "./streamAuth";
 import {
   createChangesListFn,
@@ -16,6 +22,8 @@ import {
   createDriveGetFn,
   createDriveListFn,
   createDriveParentsGetFn,
+  createDriveFolderGetFn,
+  ConcurrencyLimiter,
   createGetStartPageTokenFn,
   consumeAllChanges,
   isDescendantOfRoot,
@@ -51,10 +59,12 @@ import {
   advanceStartPageToken,
   clearScanRunId,
   createSyncTabIO,
+  decodeFolderIdList,
   isPendingForScanRun,
   isSyncStateCurrent,
   isValidSyncHeader,
   markInitialScanCompleted,
+  readCompletedSyncStateForCatalog,
   persistShortcutRootFolderIds,
   prepareSyncForScan,
   resetForFullRescan,
@@ -75,7 +85,10 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
 const auth = new DriveAuth();
 let playback: PlaybackController | null = null;
+let queue: PlaybackQueue | null = null;
+const catalogSession = new CatalogSession<Song>();
 let serviceWorkerReady: Promise<void> | null = null;
+const catalogOperationGate = new CatalogOperationGate();
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -119,12 +132,102 @@ function render(): void {
       <button id="play-btn" type="button" disabled>この曲を再生</button>
       <button id="pause-btn" type="button" disabled>一時停止</button>
       <audio id="audio-player" controls></audio>
+      <section class="catalog">
+        <h2>ライブラリ</h2>
+        <button id="load-catalog-btn" type="button" disabled>索引から曲一覧を読み込む</button>
+        <label class="field"><span>アーティスト</span><input id="filter-artist" type="search" /></label>
+        <div class="filter-years"><label>年（最小）<input id="filter-min-year" type="number" /></label><label>年（最大）<input id="filter-max-year" type="number" /></label></div>
+        <label class="field"><span>カテゴリ（Genre）</span><input id="filter-genre" type="search" /></label>
+        <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
+        <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
+        <div><button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button></div>
+        <ul id="catalog-list" class="result-list"></ul>
+      </section>
       <p id="status" class="status"></p>
       <ul id="result-list" class="result-list"></ul>
     `
         : `<p class="status error">VITE_GOOGLE_CLIENT_ID が未設定です。.env に設定してください。</p>`
     }
   `;
+}
+
+function numberOrUndefined(value: string): number | undefined { const n = Number(value); return value.trim() === "" || !Number.isFinite(n) ? undefined : n; }
+function renderQueue(): void {
+  const list = el<HTMLUListElement>("catalog-list"); list.innerHTML = "";
+  for (const song of queue?.all() ?? []) { const item = document.createElement("li"); const check = document.createElement("input"); check.type = "checkbox"; check.checked = !queue?.isExcluded(song.fileId);
+    check.addEventListener("change", () => { queue?.exclude(song.fileId, !check.checked); renderQueue(); });
+    item.append(check, ` ${song.title}${song.artist ? ` — ${song.artist}` : ""}${song.album ? ` / ${song.album}` : ""}${song.folderPath ? ` [${song.folderPath}]` : ""}`); list.append(item); }
+}
+async function loadCatalog(): Promise<void> {
+  const spreadsheetInput = el<HTMLInputElement>("spreadsheet-id");
+  const loadButton = el<HTMLButtonElement>("load-catalog-btn");
+  const folderInput = el<HTMLInputElement>("folder-id");
+  const scanButton = el<HTMLButtonElement>("scan-btn");
+  const spreadsheetId = spreadsheetInput.value.trim();
+  if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
+  if (!catalogOperationGate.tryAcquire()) {
+    setStatus("スキャンまたは索引の読み込みが進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  // Catalog parsing must not observe a sheet while a scan is mutating it.
+  // Disable both operation's controls before the first await so their runs
+  // cannot overlap through two consecutive user actions.
+  loadButton.disabled = true; spreadsheetInput.disabled = true;
+  scanButton.disabled = true; folderInput.disabled = true;
+  try {
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
+    // Unlike scanning, catalog loading must never create or migrate tabs. It
+    // still has to verify the exact schema before positional row parsing.
+    if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
+      throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。スプレッドシートIDが正しいか、無関係な「index」タブが既に存在していないかご確認ください。");
+    }
+    const syncState = readCompletedSyncStateForCatalog(await syncIO.readHeaderRow(), await syncIO.readAllRows());
+    const rootFolderId = syncState.rootFolderId;
+    const songs = parseIndexRows(await sheetsIO.listExistingRows());
+    const resolver = new FolderPathResolver(
+      createDriveFolderGetFn(() => auth.ensureAccessToken()),
+      [rootFolderId, ...decodeFolderIdList(syncState.shortcutRootFolderIds)]
+    );
+    const limiter = new ConcurrencyLimiter(6);
+    let failedPathCount = 0;
+    let authFailure: unknown;
+    await Promise.all(songs.map(async (song) => {
+      await limiter.run(async () => {
+        if (authFailure) throw authFailure;
+        try {
+          song.folderPath = await resolver.resolve(song.parentId);
+        } catch (err) {
+          if (isAuthError(err)) { authFailure = err; throw err; }
+          failedPathCount += 1;
+          song.folderPath = "";
+        }
+      });
+    }));
+    catalogSession.replace(songs);
+    el<HTMLButtonElement>("create-queue-btn").disabled = false;
+    setStatus(`索引から${songs.length}曲を読み込みました${failedPathCount > 0 ? `（${failedPathCount}件はパス解決に失敗）` : ""}。条件を指定して再生リストを作れます。`);
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `索引の読み込みに失敗しました: ${err.message}` : "索引の読み込みに失敗しました", true);
+  } finally {
+    catalogOperationGate.release();
+    spreadsheetInput.disabled = false;
+    loadButton.disabled = false;
+    folderInput.disabled = false;
+    scanButton.disabled = false;
+  }
+}
+function createQueueFromFilters(): void {
+  if (!queue) return;
+  const songs = catalogSession.createQueue((loadedSongs) => sortSongs(filterSongs(loadedSongs, { artist: el<HTMLInputElement>("filter-artist").value, genre: el<HTMLInputElement>("filter-genre").value,
+    minYear: numberOrUndefined(el<HTMLInputElement>("filter-min-year").value), maxYear: numberOrUndefined(el<HTMLInputElement>("filter-max-year").value), includeUnknownYear: el<HTMLInputElement>("filter-unknown-year").checked })));
+  if (!songs) {
+    setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストを作成してください。", true);
+    return;
+  }
+  queue.setList(songs); renderQueue(); el<HTMLButtonElement>("next-btn").disabled = songs.length === 0; el<HTMLButtonElement>("previous-btn").disabled = songs.length === 0;
+  setStatus(`${songs.length}曲の再生リストを作りました。`);
 }
 
 function setStatus(message: string, isError = false): void {
@@ -143,6 +246,7 @@ async function handleLogin(): Promise<void> {
     el<HTMLButtonElement>("scan-btn").disabled = false;
     el<HTMLButtonElement>("play-btn").disabled = false;
     el<HTMLButtonElement>("pause-btn").disabled = false;
+    el<HTMLButtonElement>("load-catalog-btn").disabled = false;
   } catch (err) {
     setStatus(err instanceof AuthError ? err.message : String(err), true);
   } finally {
@@ -159,8 +263,18 @@ async function handlePlay(): Promise<void> {
   try {
     setStatus("Service Worker経由で再生を開始しています...");
     if (serviceWorkerReady) await serviceWorkerReady;
+    queue?.notifyExternalPlaybackStarted();
     await playback.play(fileId);
     setStatus("再生中");
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err), true);
+  }
+}
+
+async function handleQueuePlayback(action: () => Promise<void> | undefined): Promise<void> {
+  try {
+    if (serviceWorkerReady) await serviceWorkerReady;
+    await action();
   } catch (err) {
     setStatus(err instanceof Error ? err.message : String(err), true);
   }
@@ -621,8 +735,24 @@ async function handleScan(): Promise<void> {
     setStatus("索引スプレッドシートIDを入力してください", true);
     return;
   }
+  if (!catalogOperationGate.tryAcquire()) {
+    setStatus("スキャンまたは索引の読み込みが進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
   const scanBtn = el<HTMLButtonElement>("scan-btn");
+  const folderInput = el<HTMLInputElement>("folder-id");
+  const spreadsheetInput = el<HTMLInputElement>("spreadsheet-id");
+  const loadButton = el<HTMLButtonElement>("load-catalog-btn");
   scanBtn.disabled = true;
+  // A scan can update or delete index rows. Invalidate the previous snapshot
+  // before the first asynchronous scan operation so it can never form a queue.
+  catalogSession.invalidate();
+  el<HTMLButtonElement>("create-queue-btn").disabled = true;
+  // A scan can change both index and sync rows. Keep catalog loading from
+  // consuming the intermediate state until the scan has fully completed.
+  folderInput.disabled = true;
+  spreadsheetInput.disabled = true;
+  loadButton.disabled = true;
   // 前回の結果を残したまま失敗すると、新しいフォルダのエラーと前回の件数が同時に
   // 表示され古い件数を今回の結果と誤認しうる（2026-08-19 Codexレビュー指摘）
   el<HTMLUListElement>("result-list").innerHTML = "";
@@ -708,7 +838,11 @@ async function handleScan(): Promise<void> {
     if (isAuthFailure(err)) auth.clearToken();
     setStatus(err instanceof Error ? err.message : String(err), true);
   } finally {
+    catalogOperationGate.release();
     scanBtn.disabled = false;
+    folderInput.disabled = false;
+    spreadsheetInput.disabled = false;
+    loadButton.disabled = false;
   }
 }
 
@@ -753,10 +887,15 @@ function init(): void {
       },
       (error) => setStatus(error instanceof Error ? `再生の再試行に失敗しました: ${error.message}` : "再生の再試行に失敗しました", true)
     );
+    queue = new PlaybackQueue(playback, el<HTMLAudioElement>("audio-player"), (error) => setStatus(error instanceof Error ? error.message : String(error), true));
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
     el<HTMLButtonElement>("pause-btn").addEventListener("click", () => playback?.pause());
+    el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
+    el<HTMLButtonElement>("create-queue-btn").addEventListener("click", createQueueFromFilters);
+    el<HTMLButtonElement>("next-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.next()));
+    el<HTMLButtonElement>("previous-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.previous()));
   });
 }
 

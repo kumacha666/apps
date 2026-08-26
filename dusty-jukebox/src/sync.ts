@@ -42,6 +42,11 @@ export interface SyncState {
   shortcutRootFolderIds?: string;
 }
 
+export type CompletedSyncState = SyncState & {
+  rootFolderId: string;
+  initialScanCompletedAt: string;
+};
+
 // shortcutRootFolderIdsのカンマ区切り文字列⇔配列変換。フォルダIDにカンマは含まれない
 // （Drive APIのファイルIDはURL-safe base64相当の文字集合のため）。
 export function encodeFolderIdList(ids: readonly string[]): string {
@@ -125,6 +130,27 @@ export function parseSyncState(rows: (string | number)[][]): SyncState {
     }
   }
   return state;
+}
+
+// カタログ読み込みでsyncタブを状態として利用できるかを検証する。スキャン時と違い、
+// カタログ読み込みはタブを作成・修復しないため、無関係な同名タブをそのまま解釈しない
+// こと、および初回スキャンが完走するまで部分的な索引を公開しないことが必要になる。
+export function readCompletedSyncStateForCatalog(
+  header: (string | number)[],
+  rows: (string | number)[][]
+): CompletedSyncState {
+  if (!isValidSyncHeader(header)) {
+    throw new Error("索引スプレッドシートの「sync」タブのヘッダー行が想定と一致しません。スプレッドシートIDが正しいか、無関係な「sync」タブが既に存在していないかご確認ください。");
+  }
+
+  const state = parseSyncState(rows);
+  if (!state.rootFolderId) {
+    throw new Error("syncタブにrootFolderIdがありません。先にスキャンしてください。");
+  }
+  if (!state.initialScanCompletedAt) {
+    throw new Error("初回スキャンが完了していません。スキャンを最後まで完了してからカタログを読み込んでください。");
+  }
+  return state as CompletedSyncState;
 }
 
 // 指定したキーだけを更新する（未指定のキーの既存値はそのまま）。値に空文字列を渡すと

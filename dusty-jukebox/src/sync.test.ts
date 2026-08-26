@@ -12,6 +12,7 @@ import {
   parseSyncState,
   persistShortcutRootFolderIds,
   prepareSyncForScan,
+  readCompletedSyncStateForCatalog,
   resetForFullRescan,
   SYNC_TAB_HEADER,
   type SyncTabIO,
@@ -137,6 +138,23 @@ describe("parseSyncState", () => {
       ["scanRunId", "run-new"],
     ]);
     expect(state.scanRunId).toBe("run-new");
+  });
+});
+
+describe("カタログ読み込み用のsync状態", () => {
+  test("無関係な同名syncタブは、行を状態として解析する前に拒否する", () => {
+    expect(() => readCompletedSyncStateForCatalog(
+      ["key", "different-value"],
+      [["rootFolderId", "unrelated-root"], ["initialScanCompletedAt", "2026-08-26T00:00:00.000Z"]]
+    )).toThrow("sync");
+  });
+
+  test("ルート変更後の初回スキャンが中断した状態では、旧ルートの索引と混在しうるカタログを読み込ませない", () => {
+    // prepareSyncForScanが新しいrootFolderIdを保存した直後、フルスキャンが中断した状態を固定する。
+    expect(() => readCompletedSyncStateForCatalog(
+      [...SYNC_TAB_HEADER],
+      [["rootFolderId", "new-root"], ["startPageToken", "new-token"], ["initialScanCompletedAt", ""]]
+    )).toThrow("初回スキャンが完了していません");
   });
 });
 
