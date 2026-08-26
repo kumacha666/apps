@@ -9,10 +9,12 @@
 - `src/catalog.ts` のartist/年/GenreのAND絞り込みと曲単位ソート、`src/queue.ts` の除外・連続再生キューを`main.ts`がDOMに結線する。除外は作成中のキューだけに属し、新しいキュー作成時にリセットされる。PlaybackControllerは変更せず、audioの`ended`はキュー側で次曲へ進める。
 - 既知の制約: 検索窓、Album/Composer等の絞り込み、カテゴリ導出、2種類の絞り込み入口、シャッフル、保存プレイリスト、仮想スクロールは未実装。曲単位ソートのため、同一アルバム内で年・artistが異なると曲が分散しうる。アルバム識別方法は未決事項のまま後続PRで扱う。
 - ユニットテスト: `catalog.test.ts`（パース・override・フィルタ・数値ソート）、`folderPaths.test.ts`（祖先・同時Promise共有・失敗後再取得）、`queue.test.ts`（除外リセット・ended/前後移動・末尾停止）。
-- **2026-08-26、レビュー指摘のうち2件（P1・P2）を修正、残り4件は個人利用（単一端末想定）では発生しにくいと判断し既知の制限として明記**：
+- **2026-08-26、レビュー指摘のうち3件（P1・P2×2）を修正、残り2件は個人利用（単一端末想定）では発生しにくいと判断し既知の制限として明記**：
   - 修正①：`FolderPathResolver`が失敗した祖先フォルダIDを`failedFolderErrors`に記録し、同一カタログ読み込み中は同じ祖先への再要求・再試行を抑止する（複数アルバムが共有する上位フォルダの取得失敗による無限リトライ的挙動を防止）
   - 修正②：`CatalogOperationGate`を追加し、スキャンとカタログ読み込みを相互排他にした（ボタンのdisabled制御だけでなく、`main.ts`の`handleScan()`/`loadCatalog()`双方でゲートを取得できない場合は開始せずエラー表示する）
-  - 既知の制限（未修正）：①ショートカット経由の曲はパス解決ルートにショートカット参照先が含まれず、表示パスに無関係な外側階層が混ざりうる（[review](https://github.com/kumacha666/apps/pull/387#discussion_r3859987331)）／②`shortcutRootFolderIds`のデコード漏れが①と同じ表示問題を引き起こす（[review](https://github.com/kumacha666/apps/pull/387#discussion_r3861987424)）／③フィルターから新しい再生リストを作った際、再生開始待ちだった進行中のキュー移動が無効化されず古い曲IDが書き戻ることがある（[review](https://github.com/kumacha666/apps/pull/387#discussion_r3863813291)）／④index内の重複fileId行があるとキュー再生がその手前で進まなくなる、複数端末同時更新時のみ発生（[review](https://github.com/kumacha666/apps/pull/387#discussion_r3863813296)）
+  - 修正③：`CatalogSession`を追加し、スキャン開始時に読み込み済みカタログを無効化する（無効化後に再生リストを作ろうとすると再読み込みを要求して拒否する）。これにより、読み込み後のスキャンで削除・変更された古いスナップショットから再生リストが作られる不具合を防止
+  - なお、ショートカット経由の曲のパス解決（`shortcutRootFolderIds`のデコードと`FolderPathResolver`への追加ルート指定）は`loadCatalog()`実装時点で既に対応済み（`[rootFolderId, ...decodeFolderIdList(syncState.shortcutRootFolderIds)]`）。過去のレビュー指摘（[review1](https://github.com/kumacha666/apps/pull/387#discussion_r3859987331), [review2](https://github.com/kumacha666/apps/pull/387#discussion_r3861987424)）は解消済みのため既知の制限には含めない
+  - 既知の制限（未修正）：①フィルターから新しい再生リストを作った際、再生開始待ちだった進行中のキュー移動が無効化されず古い曲IDが書き戻ることがある（[review](https://github.com/kumacha666/apps/pull/387#discussion_r3863813291)）／②index内の重複fileId行があるとキュー再生がその手前で進まなくなる、複数端末同時更新時のみ発生（[review](https://github.com/kumacha666/apps/pull/387#discussion_r3863813296)）
 
 ## PWA・Service Workerストリーミング
 
