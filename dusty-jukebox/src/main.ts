@@ -162,11 +162,16 @@ async function loadCatalog(): Promise<void> {
   try {
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
     const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
+    // Unlike scanning, catalog loading must never create or migrate tabs. It
+    // still has to verify the exact schema before positional row parsing.
+    if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
+      throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。スプレッドシートIDが正しいか、無関係な「index」タブが既に存在していないかご確認ください。");
+    }
     const syncState = parseSyncState(await syncIO.readAllRows());
     const rootFolderId = syncState.rootFolderId;
     if (!rootFolderId) { setStatus("syncタブにrootFolderIdがありません。先にスキャンしてください。", true); return; }
     const songs = parseIndexRows(await sheetsIO.listExistingRows());
-    const resolver = new FolderPathResolver(createDriveFolderGetFn(() => auth.ensureAccessToken()), [rootFolderId, ...syncState.shortcutRootFolderIds]);
+    const resolver = new FolderPathResolver(createDriveFolderGetFn(() => auth.ensureAccessToken()), [rootFolderId, ...(syncState.shortcutRootFolderIds ?? [])]);
     const limiter = new ConcurrencyLimiter(6);
     const failedParentIds = new Set<string>();
     let failedPathCount = 0;

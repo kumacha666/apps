@@ -8,7 +8,7 @@ describe("PlaybackQueue", () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b"), song("c")]); queue.exclude("b", true); expect(queue.list().map((s) => s.fileId)).toEqual(["a", "c"]);
     await queue.playAt(0); await queue.next(); await queue.next(); await queue.previous(); audio.listener?.();
-    expect(played).toEqual(["a", "c", "a", "c"]); queue.setList([song("b")]); expect(queue.list().map((s) => s.fileId)).toEqual(["b"]);
+    await vi.waitFor(() => expect(played).toEqual(["a", "c", "a", "c"])); queue.setList([song("b")]); expect(queue.list().map((s) => s.fileId)).toEqual(["b"]);
   });
   test("現在曲より前を除外しても次曲を飛ばさない", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
@@ -23,9 +23,8 @@ describe("PlaybackQueue", () => {
   test("キュー再生の終了時だけ次の曲へ進み、単曲試聴後の終了では進まない", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b")]); await queue.playAt(0); audio.listener?.();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(played).toEqual(["a", "b"]));
     queue.notifyExternalPlaybackStarted(); audio.listener?.();
-    await Promise.resolve();
     expect(played).toEqual(["a", "b"]);
   });
   test("失敗した再生を再試行し、endedの失敗を通知する", async () => {
@@ -33,8 +32,23 @@ describe("PlaybackQueue", () => {
     const play = vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce(undefined).mockRejectedValueOnce(error);
     const queue = new PlaybackQueue({ play }, audio, onError);
     queue.setList([song("a"), song("b")]); await expect(queue.next()).rejects.toThrow("temporary"); await queue.next();
-    audio.listener?.(); await Promise.resolve();
+    audio.listener?.(); await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(error));
     expect(play.mock.calls.map(([id]) => id)).toEqual(["a", "a", "b"]);
-    expect(onError).toHaveBeenCalledWith(error);
+  });
+  test("再生開始中に次へを連続で押すと、異なる曲へ順に進む", async () => {
+    const audio = new Audio(); let resolveFirst: (() => void) | undefined;
+    const firstPlayback = new Promise<void>((resolve) => { resolveFirst = resolve; });
+    const play = vi.fn().mockImplementationOnce(() => firstPlayback).mockResolvedValueOnce(undefined);
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+
+    const firstNext = queue.next();
+    const secondNext = queue.next();
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a"));
+    expect(play).toHaveBeenCalledTimes(1);
+    resolveFirst?.();
+    await Promise.all([firstNext, secondNext]);
+
+    expect(play.mock.calls.map(([id]) => id)).toEqual(["a", "b"]);
   });
 });
