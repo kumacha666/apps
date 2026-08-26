@@ -162,15 +162,16 @@ async function loadCatalog(): Promise<void> {
   try {
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
     const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
-    const rootFolderId = parseSyncState(await syncIO.readAllRows()).rootFolderId;
+    const syncState = parseSyncState(await syncIO.readAllRows());
+    const rootFolderId = syncState.rootFolderId;
     if (!rootFolderId) { setStatus("syncタブにrootFolderIdがありません。先にスキャンしてください。", true); return; }
-    loadedSongs = parseIndexRows(await sheetsIO.listExistingRows());
-    const resolver = new FolderPathResolver(createDriveFolderGetFn(() => auth.ensureAccessToken()), rootFolderId);
+    const songs = parseIndexRows(await sheetsIO.listExistingRows());
+    const resolver = new FolderPathResolver(createDriveFolderGetFn(() => auth.ensureAccessToken()), [rootFolderId, ...syncState.shortcutRootFolderIds]);
     const limiter = new ConcurrencyLimiter(6);
     const failedParentIds = new Set<string>();
     let failedPathCount = 0;
     let authFailure: unknown;
-    await Promise.all(loadedSongs.map(async (song) => {
+    await Promise.all(songs.map(async (song) => {
       await limiter.run(async () => {
         if (authFailure) throw authFailure;
         if (failedParentIds.has(song.parentId)) { failedPathCount += 1; song.folderPath = ""; return; }
@@ -184,9 +185,11 @@ async function loadCatalog(): Promise<void> {
         }
       });
     }));
+    loadedSongs = songs;
     el<HTMLButtonElement>("create-queue-btn").disabled = false;
-    setStatus(`索引から${loadedSongs.length}曲を読み込みました${failedPathCount > 0 ? `（${failedPathCount}件はパス解決に失敗）` : ""}。条件を指定して再生リストを作れます。`);
+    setStatus(`索引から${songs.length}曲を読み込みました${failedPathCount > 0 ? `（${failedPathCount}件はパス解決に失敗）` : ""}。条件を指定して再生リストを作れます。`);
   } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
     setStatus(err instanceof Error ? `索引の読み込みに失敗しました: ${err.message}` : "索引の読み込みに失敗しました", true);
   } finally {
     spreadsheetInput.disabled = false;
@@ -244,6 +247,7 @@ async function handlePlay(): Promise<void> {
 
 async function handleQueuePlayback(action: () => Promise<void> | undefined): Promise<void> {
   try {
+    if (serviceWorkerReady) await serviceWorkerReady;
     await action();
   } catch (err) {
     setStatus(err instanceof Error ? err.message : String(err), true);
@@ -837,7 +841,7 @@ function init(): void {
       },
       (error) => setStatus(error instanceof Error ? `再生の再試行に失敗しました: ${error.message}` : "再生の再試行に失敗しました", true)
     );
-    queue = new PlaybackQueue(playback, el<HTMLAudioElement>("audio-player"));
+    queue = new PlaybackQueue(playback, el<HTMLAudioElement>("audio-player"), (error) => setStatus(error instanceof Error ? error.message : String(error), true));
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
