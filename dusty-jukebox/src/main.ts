@@ -20,6 +20,7 @@ import {
   createDriveListFn,
   createDriveParentsGetFn,
   createDriveFolderGetFn,
+  ConcurrencyLimiter,
   createGetStartPageTokenFn,
   consumeAllChanges,
   isDescendantOfRoot,
@@ -148,23 +149,35 @@ function render(): void {
 function numberOrUndefined(value: string): number | undefined { const n = Number(value); return value.trim() === "" || !Number.isFinite(n) ? undefined : n; }
 function renderQueue(): void {
   const list = el<HTMLUListElement>("catalog-list"); list.innerHTML = "";
-  for (const song of queue?.list() ?? []) { const item = document.createElement("li"); const check = document.createElement("input"); check.type = "checkbox"; check.checked = true;
+  for (const song of queue?.all() ?? []) { const item = document.createElement("li"); const check = document.createElement("input"); check.type = "checkbox"; check.checked = !queue?.isExcluded(song.fileId);
     check.addEventListener("change", () => { queue?.exclude(song.fileId, !check.checked); renderQueue(); });
     item.append(check, ` ${song.title}${song.artist ? ` — ${song.artist}` : ""}${song.album ? ` / ${song.album}` : ""}${song.folderPath ? ` [${song.folderPath}]` : ""}`); list.append(item); }
 }
 async function loadCatalog(): Promise<void> {
-  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  const spreadsheetInput = el<HTMLInputElement>("spreadsheet-id");
+  const loadButton = el<HTMLButtonElement>("load-catalog-btn");
+  const spreadsheetId = spreadsheetInput.value.trim();
   if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
-  const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-  const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
-  const rootFolderId = parseSyncState(await syncIO.readAllRows()).rootFolderId;
-  if (!rootFolderId) { setStatus("syncタブにrootFolderIdがありません。先にスキャンしてください。", true); return; }
-  loadedSongs = parseIndexRows(await sheetsIO.listExistingRows());
-  const resolver = new FolderPathResolver(createDriveFolderGetFn(() => auth.ensureAccessToken()), rootFolderId);
-  // 取得はキャッシュされたPromiseを共有するので、同一フォルダの多数曲もAPI呼び出しは一度だけ。
-  await Promise.all(loadedSongs.map(async (song) => { song.folderPath = await resolver.resolve(song.parentId).catch(() => ""); }));
-  el<HTMLButtonElement>("create-queue-btn").disabled = false;
-  setStatus(`索引から${loadedSongs.length}曲を読み込みました。条件を指定して再生リストを作れます。`);
+  loadButton.disabled = true; spreadsheetInput.disabled = true;
+  try {
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
+    const rootFolderId = parseSyncState(await syncIO.readAllRows()).rootFolderId;
+    if (!rootFolderId) { setStatus("syncタブにrootFolderIdがありません。先にスキャンしてください。", true); return; }
+    loadedSongs = parseIndexRows(await sheetsIO.listExistingRows());
+    const resolver = new FolderPathResolver(createDriveFolderGetFn(() => auth.ensureAccessToken()), rootFolderId);
+    const limiter = new ConcurrencyLimiter(6);
+    await Promise.all(loadedSongs.map(async (song) => {
+      song.folderPath = await limiter.run(() => resolver.resolve(song.parentId)).catch(() => "");
+    }));
+    el<HTMLButtonElement>("create-queue-btn").disabled = false;
+    setStatus(`索引から${loadedSongs.length}曲を読み込みました。条件を指定して再生リストを作れます。`);
+  } catch (err) {
+    setStatus(err instanceof Error ? `索引の読み込みに失敗しました: ${err.message}` : "索引の読み込みに失敗しました", true);
+  } finally {
+    spreadsheetInput.disabled = false;
+    loadButton.disabled = false;
+  }
 }
 function createQueueFromFilters(): void {
   if (!queue) return;
