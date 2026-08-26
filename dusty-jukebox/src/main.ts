@@ -56,6 +56,7 @@ import {
   advanceStartPageToken,
   clearScanRunId,
   createSyncTabIO,
+  decodeFolderIdList,
   isPendingForScanRun,
   isSyncStateCurrent,
   isValidSyncHeader,
@@ -156,9 +157,15 @@ function renderQueue(): void {
 async function loadCatalog(): Promise<void> {
   const spreadsheetInput = el<HTMLInputElement>("spreadsheet-id");
   const loadButton = el<HTMLButtonElement>("load-catalog-btn");
+  const folderInput = el<HTMLInputElement>("folder-id");
+  const scanButton = el<HTMLButtonElement>("scan-btn");
   const spreadsheetId = spreadsheetInput.value.trim();
   if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
+  // Catalog parsing must not observe a sheet while a scan is mutating it.
+  // Disable both operation's controls before the first await so their runs
+  // cannot overlap through two consecutive user actions.
   loadButton.disabled = true; spreadsheetInput.disabled = true;
+  scanButton.disabled = true; folderInput.disabled = true;
   try {
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
     const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
@@ -171,20 +178,20 @@ async function loadCatalog(): Promise<void> {
     const rootFolderId = syncState.rootFolderId;
     if (!rootFolderId) { setStatus("syncタブにrootFolderIdがありません。先にスキャンしてください。", true); return; }
     const songs = parseIndexRows(await sheetsIO.listExistingRows());
-    const resolver = new FolderPathResolver(createDriveFolderGetFn(() => auth.ensureAccessToken()), [rootFolderId, ...(syncState.shortcutRootFolderIds ?? [])]);
+    const resolver = new FolderPathResolver(
+      createDriveFolderGetFn(() => auth.ensureAccessToken()),
+      [rootFolderId, ...decodeFolderIdList(syncState.shortcutRootFolderIds)]
+    );
     const limiter = new ConcurrencyLimiter(6);
-    const failedParentIds = new Set<string>();
     let failedPathCount = 0;
     let authFailure: unknown;
     await Promise.all(songs.map(async (song) => {
       await limiter.run(async () => {
         if (authFailure) throw authFailure;
-        if (failedParentIds.has(song.parentId)) { failedPathCount += 1; song.folderPath = ""; return; }
         try {
           song.folderPath = await resolver.resolve(song.parentId);
         } catch (err) {
           if (isAuthError(err)) { authFailure = err; throw err; }
-          failedParentIds.add(song.parentId);
           failedPathCount += 1;
           song.folderPath = "";
         }
@@ -199,6 +206,8 @@ async function loadCatalog(): Promise<void> {
   } finally {
     spreadsheetInput.disabled = false;
     loadButton.disabled = false;
+    folderInput.disabled = false;
+    scanButton.disabled = false;
   }
 }
 function createQueueFromFilters(): void {
@@ -715,7 +724,15 @@ async function handleScan(): Promise<void> {
     return;
   }
   const scanBtn = el<HTMLButtonElement>("scan-btn");
+  const folderInput = el<HTMLInputElement>("folder-id");
+  const spreadsheetInput = el<HTMLInputElement>("spreadsheet-id");
+  const loadButton = el<HTMLButtonElement>("load-catalog-btn");
   scanBtn.disabled = true;
+  // A scan can change both index and sync rows. Keep catalog loading from
+  // consuming the intermediate state until the scan has fully completed.
+  folderInput.disabled = true;
+  spreadsheetInput.disabled = true;
+  loadButton.disabled = true;
   // 前回の結果を残したまま失敗すると、新しいフォルダのエラーと前回の件数が同時に
   // 表示され古い件数を今回の結果と誤認しうる（2026-08-19 Codexレビュー指摘）
   el<HTMLUListElement>("result-list").innerHTML = "";
@@ -802,6 +819,9 @@ async function handleScan(): Promise<void> {
     setStatus(err instanceof Error ? err.message : String(err), true);
   } finally {
     scanBtn.disabled = false;
+    folderInput.disabled = false;
+    spreadsheetInput.disabled = false;
+    loadButton.disabled = false;
   }
 }
 
