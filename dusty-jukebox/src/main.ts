@@ -61,13 +61,13 @@ import {
   isSyncStateCurrent,
   isValidSyncHeader,
   markInitialScanCompleted,
+  readCompletedSyncStateForCatalog,
   persistShortcutRootFolderIds,
   prepareSyncForScan,
   resetForFullRescan,
   SYNC_SHEET_NAME,
   SYNC_TAB_HEADER,
   type SyncTabIO,
-  parseSyncState,
 } from "./sync";
 
 // drive.tsのisAuthError()（AuthError・DriveHttpError(401)）に加え、main.tsではSheets側の
@@ -174,9 +174,8 @@ async function loadCatalog(): Promise<void> {
     if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
       throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。スプレッドシートIDが正しいか、無関係な「index」タブが既に存在していないかご確認ください。");
     }
-    const syncState = parseSyncState(await syncIO.readAllRows());
+    const syncState = readCompletedSyncStateForCatalog(await syncIO.readHeaderRow(), await syncIO.readAllRows());
     const rootFolderId = syncState.rootFolderId;
-    if (!rootFolderId) { setStatus("syncタブにrootFolderIdがありません。先にスキャンしてください。", true); return; }
     const songs = parseIndexRows(await sheetsIO.listExistingRows());
     const resolver = new FolderPathResolver(
       createDriveFolderGetFn(() => auth.ensureAccessToken()),
