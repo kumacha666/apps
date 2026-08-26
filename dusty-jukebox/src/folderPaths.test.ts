@@ -10,5 +10,10 @@ describe("FolderPathResolver", () => {
   test("失敗した取得はキャッシュせず次回再取得する", async () => {
     const get = vi.fn().mockRejectedValueOnce(new Error("temporary")).mockResolvedValue({ name: "Album", parentId: "root" }); const resolver = new FolderPathResolver(get, "root");
     await expect(resolver.resolve("child")).rejects.toThrow("temporary"); await expect(resolver.resolve("child")).resolves.toBe("Album"); expect(get).toHaveBeenCalledTimes(2);
+  });  test("追加のショートカットルートでも祖先の連結を止める", async () => {
+    const get = vi.fn(async (id: string) => ({ album: { name: "Album", parentId: "shortcut-root" }, "shortcut-root": { name: "Outside", parentId: "outside-parent" } }[id] ?? null));
+    const resolver = new FolderPathResolver(get, ["root", "shortcut-root"]);
+    await expect(resolver.resolve("album")).resolves.toBe("Album");
+    expect(get).toHaveBeenCalledTimes(1);
   });
 });
