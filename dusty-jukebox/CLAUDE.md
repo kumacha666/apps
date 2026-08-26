@@ -16,6 +16,8 @@
   - なお、ショートカット経由の曲のパス解決（`shortcutRootFolderIds`のデコードと`FolderPathResolver`への追加ルート指定）は`loadCatalog()`実装時点で既に対応済み（`[rootFolderId, ...decodeFolderIdList(syncState.shortcutRootFolderIds)]`）。過去のレビュー指摘（[review1](https://github.com/kumacha666/apps/pull/387#discussion_r3859987331), [review2](https://github.com/kumacha666/apps/pull/387#discussion_r3861987424)）は解消済みのため既知の制限には含めない
   - 修正④：`PlaybackQueue`にリスト世代を追加し、リスト差し替え前に開始された移動は、再生開始が後から完了しても新しいリストの`currentFileId`・キュー再生状態を書き戻さないようにした
   - 修正⑤：`parseIndexRows()`で重複`fileId`を先勝ちで除外し、複数デバイスによる一時的な重複行があってもキューへ同じ曲を二度渡さないようにした
+  - 修正⑥：`PlaybackQueue.setList()`で直列化チェーン（`pendingMove`）も新しいリスト用にリセットし、リスト差し替え直後の操作が旧リストの未解決の再生完了を待たなくなるようにした
+  - **既知の制限（未修正、いずれもP2・データ破損や情報漏洩には該当しない再生体験上の不具合）**：①リスト差し替え時、旧リストの`player.play()`が`AbortError`等でreject（世代変更後）すると、新しい曲が正常に再生できていても旧要求のエラーメッセージが表示されることがある（[review](https://github.com/kumacha666/apps/pull/387#discussion_r3864874708)）／②キューの「次へ」連打で移動が`pendingMove`に待機中の状態でファイルID欄から単曲再生を始めると、待機中のキュー移動が後から実行され単曲再生を上書きすることがある（[review](https://github.com/kumacha666/apps/pull/387#discussion_r3864874714)）
 
 ## PWA・Service Workerストリーミング
 
