@@ -1,7 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
 import { PlaybackQueue } from "./queue";
-import type { Song } from "./catalog";
+import { parseIndexRows, type Song } from "./catalog";
+import { INDEX_SHEET_HEADER } from "./sheets";
 const song = (fileId: string): Song => ({ fileId, parentId: "p", title: fileId, artist: "", album: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "" });
+const indexRow = (values: Record<string, string>): string[] => INDEX_SHEET_HEADER.map((header) => values[header] ?? "");
 class Audio { listener: (() => void) | undefined; addEventListener(_: "ended", listener: () => void) { this.listener = listener; } }
 describe("PlaybackQueue", () => {
   test("除外、新しいリストでのリセット、next/previous/ended、最後で停止を扱う", async () => {
@@ -50,5 +52,30 @@ describe("PlaybackQueue", () => {
     await Promise.all([firstNext, secondNext]);
 
     expect(play.mock.calls.map(([id]) => id)).toEqual(["a", "b"]);
+  });
+  test("リスト差し替え後は、待機中だった旧リストの移動を反映しない", async () => {
+    const audio = new Audio(); let resolvePlayback: (() => void) | undefined;
+    const playback = new Promise<void>((resolve) => { resolvePlayback = resolve; });
+    const play = vi.fn().mockImplementationOnce(() => playback).mockResolvedValueOnce(undefined);
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("old-a"), song("old-b")]);
+
+    const oldMove = queue.next();
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a"));
+    queue.setList([song("new-a"), song("new-b")]);
+    resolvePlayback?.();
+    await oldMove;
+    audio.listener?.();
+    expect(play).toHaveBeenCalledTimes(1);
+
+    await queue.next();
+    expect(play.mock.calls.map(([id]) => id)).toEqual(["old-a", "new-a"]);
+  });
+  test("重複を除いたカタログなら次曲へ進める", async () => {
+    const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    const songs = parseIndexRows([indexRow({ fileId: "a", title: "first" }), indexRow({ fileId: "a", title: "duplicate" }), indexRow({ fileId: "b" })]);
+    queue.setList(songs);
+    await queue.next(); await queue.next();
+    expect(played).toEqual(["a", "b"]);
   });
 });

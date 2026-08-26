@@ -16,7 +16,13 @@ export function readOverride(row: Row, field: "title" | "artist" | "album" | "re
 }
 
 export function parseIndexRows(rows: Row[]): Song[] {
-  return rows.filter((row) => cell(row, "fileId") !== "").map((row) => {
+  const fileIds = new Set<string>();
+  return rows.filter((row) => {
+    const fileId = cell(row, "fileId");
+    if (fileId === "" || fileIds.has(fileId)) return false;
+    fileIds.add(fileId);
+    return true;
+  }).map((row) => {
     const fileId = cell(row, "fileId");
     const title = readOverride(row, "title") || fileId;
     return { fileId, parentId: cell(row, "parentId"), title, artist: readOverride(row, "artist"),

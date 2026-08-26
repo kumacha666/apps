@@ -7,6 +7,11 @@ describe("索引行の読み取り", () => {
     const songs = parseIndexRows([row({ fileId: "a", title: "raw", title_override: "Manual", artist: "A", artist_override: "(none)", album: "Al" }), row({ fileId: "fallback" })]);
     expect(songs[0]).toMatchObject({ title: "Manual", artist: "", album: "Al" }); expect(songs[1].title).toBe("fallback");
   });
+  test("同じfileIdは先に現れた行だけを採用する", () => {
+    const songs = parseIndexRows([row({ fileId: "duplicate", title: "first" }), row({ fileId: "duplicate", title: "later" }), row({ fileId: "unique" })]);
+    expect(songs.map((song) => song.fileId)).toEqual(["duplicate", "unique"]);
+    expect(songs[0].title).toBe("first");
+  });
 });
 const song = (v: Partial<Song>): Song => ({ fileId: "id", parentId: "p", title: "t", artist: "", album: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", ...v });
 describe("絞り込みとソート", () => {
