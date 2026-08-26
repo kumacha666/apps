@@ -10,6 +10,7 @@ import { AuthError, DriveAuth } from "./auth";
 import { PlaybackController } from "./playback";
 import { parseIndexRows, filterSongs, sortSongs, type Song } from "./catalog";
 import { CatalogOperationGate } from "./catalogOperationGate";
+import { CatalogSession } from "./catalogSession";
 import { FolderPathResolver } from "./folderPaths";
 import { PlaybackQueue } from "./queue";
 import { registerStreamAuthResponder } from "./streamAuth";
@@ -84,7 +85,7 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 const auth = new DriveAuth();
 let playback: PlaybackController | null = null;
 let queue: PlaybackQueue | null = null;
-let loadedSongs: Song[] = [];
+const catalogSession = new CatalogSession<Song>();
 let serviceWorkerReady: Promise<void> | null = null;
 const catalogOperationGate = new CatalogOperationGate();
 
@@ -202,7 +203,7 @@ async function loadCatalog(): Promise<void> {
         }
       });
     }));
-    loadedSongs = songs;
+    catalogSession.replace(songs);
     el<HTMLButtonElement>("create-queue-btn").disabled = false;
     setStatus(`索引から${songs.length}曲を読み込みました${failedPathCount > 0 ? `（${failedPathCount}件はパス解決に失敗）` : ""}。条件を指定して再生リストを作れます。`);
   } catch (err) {
@@ -218,8 +219,12 @@ async function loadCatalog(): Promise<void> {
 }
 function createQueueFromFilters(): void {
   if (!queue) return;
-  const songs = sortSongs(filterSongs(loadedSongs, { artist: el<HTMLInputElement>("filter-artist").value, genre: el<HTMLInputElement>("filter-genre").value,
-    minYear: numberOrUndefined(el<HTMLInputElement>("filter-min-year").value), maxYear: numberOrUndefined(el<HTMLInputElement>("filter-max-year").value), includeUnknownYear: el<HTMLInputElement>("filter-unknown-year").checked }));
+  const songs = catalogSession.createQueue((loadedSongs) => sortSongs(filterSongs(loadedSongs, { artist: el<HTMLInputElement>("filter-artist").value, genre: el<HTMLInputElement>("filter-genre").value,
+    minYear: numberOrUndefined(el<HTMLInputElement>("filter-min-year").value), maxYear: numberOrUndefined(el<HTMLInputElement>("filter-max-year").value), includeUnknownYear: el<HTMLInputElement>("filter-unknown-year").checked })));
+  if (!songs) {
+    setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストを作成してください。", true);
+    return;
+  }
   queue.setList(songs); renderQueue(); el<HTMLButtonElement>("next-btn").disabled = songs.length === 0; el<HTMLButtonElement>("previous-btn").disabled = songs.length === 0;
   setStatus(`${songs.length}曲の再生リストを作りました。`);
 }
@@ -738,6 +743,10 @@ async function handleScan(): Promise<void> {
   const spreadsheetInput = el<HTMLInputElement>("spreadsheet-id");
   const loadButton = el<HTMLButtonElement>("load-catalog-btn");
   scanBtn.disabled = true;
+  // A scan can update or delete index rows. Invalidate the previous snapshot
+  // before the first asynchronous scan operation so it can never form a queue.
+  catalogSession.invalidate();
+  el<HTMLButtonElement>("create-queue-btn").disabled = true;
   // A scan can change both index and sync rows. Keep catalog loading from
   // consuming the intermediate state until the scan has fully completed.
   folderInput.disabled = true;
