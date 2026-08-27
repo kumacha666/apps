@@ -1,17 +1,23 @@
 import { existsSync } from "fs";
 import { execFileSync } from "child_process";
-import { chromium } from "@playwright/test";
 
-// Keep the build/deploy gate equivalent to the other Playwright-enabled apps,
-// but do not make a source build impossible in minimal/offline environments
-// where Playwright's browser binary is intentionally absent.
+// Keep the build/deploy gate equivalent to the other Playwright-enabled apps.
+// Do not infer Playwright's cache layout here: chromium.executablePath() only
+// identifies the full Chromium binary, while Playwright can run with only its
+// headless shell installed. Outside this sandbox's stable shortcuts, attempt
+// Playwright's own installation command so an unavailable browser fails the
+// build instead of silently skipping the E2E gate.
 const sandboxChromium = "/opt/pw-browsers/chromium";
-const browserPath = process.env.PLAYWRIGHT_CHROMIUM_PATH
-  || (existsSync(sandboxChromium) ? sandboxChromium : chromium.executablePath());
 
-if (!existsSync(browserPath)) {
-  console.warn("Playwright Chromium が見つからないため、E2E はスキップします。");
-  process.exit(0);
+function hasPlaywrightChromium() {
+  if (process.env.PLAYWRIGHT_CHROMIUM_PATH) return true;
+  if (existsSync(sandboxChromium)) return true;
+  return false;
+}
+
+if (!hasPlaywrightChromium()) {
+  console.warn("Playwright Chromiumが見つからないため、npx playwright install chromiumでインストールします…");
+  execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", ["playwright", "install", "chromium"], { stdio: "inherit" });
 }
 
 execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "test:e2e"], { stdio: "inherit" });
