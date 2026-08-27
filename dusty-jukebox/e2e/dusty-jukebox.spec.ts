@@ -14,11 +14,13 @@ async function openCatalog(page: import("@playwright/test").Page) {
 }
 
 test("ログインからスキャンして索引を書き込める", async ({ context, page }) => {
-  const mock = await installGoogleMocks(context);
+  const mock = await installGoogleMocks(context, { initialScanCompleted: false });
   await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: /スキャンして索引/ }).click();
   await expect(page.locator("#result-list")).toContainText("音楽ファイル: 1件");
+  await expect(page.locator("#status")).toContainText("スキャン完了");
+  expect(mock.sheetsWrites).not.toHaveLength(0);
   expect(mock.authFailures).toEqual([]);
 });
 
@@ -29,8 +31,11 @@ test("次へを素早く二回押しても同じ曲を重複要求しない", as
 });
 
 test("初回制御前の再生もService Worker準備後にストリームへ到達する", async ({ context, page }) => {
-  const mock = await installGoogleMocks(context); await page.goto("/"); await login(page);
+  const mock = await installGoogleMocks(context, { delayServiceWorkerActivation: true }); await page.goto("/"); await login(page);
+  await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller === null)).toBe(true);
   await page.locator("#play-file-id").fill("song-1"); await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /stream\/song-1$/);
+  mock.releaseServiceWorker();
   await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
   const status = await page.evaluate(() => fetch("./stream/song-1", { headers: { Range: "bytes=0-1" } }).then((response) => response.status));
   expect(status).toBe(206);

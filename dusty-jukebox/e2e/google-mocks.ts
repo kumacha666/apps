@@ -3,7 +3,14 @@ import type { BrowserContext, Route } from "@playwright/test";
 const TOKEN = "e2e-token";
 const indexHeader = ["fileId", "extension", "parentId", "driveModifiedTime", "lastScannedAt", "title", "title_override", "artist", "artist_override", "albumArtist", "albumArtist_override", "album", "album_override", "composer", "composer_override", "genre", "trackNumber", "discNumber", "releaseYear", "releaseYear_override", "copyrightYear", "releaseType_override", "vocalGender_override", "providerNote_override", "garbledSuspect", "garbledResolved", "extractionFailed", "title_conflictCandidate", "title_hasConflict", "artist_conflictCandidate", "artist_hasConflict", "albumArtist_conflictCandidate", "albumArtist_hasConflict", "composer_conflictCandidate", "composer_hasConflict", "releaseYear_conflictCandidate", "releaseYear_hasConflict", "releaseType_conflictCandidate", "releaseType_hasConflict", "vocalGender_conflictCandidate", "vocalGender_hasConflict", "providerNote_conflictCandidate", "providerNote_hasConflict", "scanRunId"];
 
-export type MockOptions = { invalidSyncHeader?: boolean; delaySheetsReads?: boolean };
+export type MockOptions = {
+  invalidSyncHeader?: boolean;
+  delaySheetsReads?: boolean;
+  /** Start as an uninitialised library so a scan takes the full-scan path. */
+  initialScanCompleted?: boolean;
+  /** Hold the SW script response until the test explicitly releases it. */
+  delayServiceWorkerActivation?: boolean;
+};
 
 /** In-memory GIS, Drive and Sheets boundary. Every authenticated API request is
  * checked here, so a broken token hand-off cannot look like a successful E2E run. */
@@ -12,9 +19,14 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     ["song-1", "mp3", "root", "2026-01-01T00:00:00Z", "", "First song", "", "Artist", "", "", "", "", "", "", "", "Rock", "", "", "2024"],
     ["song-2", "mp3", "root", "2026-01-01T00:00:00Z", "", "Second song", "", "Artist", "", "", "", "", "", "", "", "Rock", "", "", "2024"],
   ];
-  const syncRows = [["startPageToken", "page-1"], ["rootFolderId", "root"], ["initialScanCompletedAt", "2026-01-01T00:00:00Z"], ["scanRunId", ""], ["shortcutRootFolderIds", ""]];
+  const syncRows = [["startPageToken", "page-1"], ["rootFolderId", "root"], ["initialScanCompletedAt", options.initialScanCompleted === false ? "" : "2026-01-01T00:00:00Z"], ["scanRunId", ""], ["shortcutRootFolderIds", ""]];
   const authFailures: string[] = [];
   const streamRequests: string[] = [];
+  const sheetsWrites: Array<{ url: string; method: string }> = [];
+  let releaseServiceWorker = () => {};
+  const serviceWorkerGate = options.delayServiceWorkerActivation
+    ? new Promise<void>((resolve) => { releaseServiceWorker = resolve; })
+    : null;
   // The test data is deliberately not a decodable audio file. Keep native media
   // decoding outside this suite while still exercising the actual SW fetch path.
   await context.addInitScript(() => Object.defineProperty(HTMLMediaElement.prototype, "play", { configurable: true, value: () => Promise.resolve() }));
@@ -26,7 +38,13 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     return false;
   };
 
-  await context.route("https://accounts.google.com/gsi/client", (route) => route.fulfill({ contentType: "application/javascript", body: `window.google={accounts:{oauth2:{initTokenClient:(config)=>({requestAccessToken:()=>config.callback({access_token:'${TOKEN}',expires_in:3600,scope:config.scope})})}}};` }));
+  if (serviceWorkerGate) {
+    await context.route("**/sw.js", async (route) => {
+      await serviceWorkerGate;
+      await route.continue();
+    });
+  }
+  await context.route("https://accounts.google.com/gsi/client", (route) => route.fulfill({ contentType: "application/javascript", body: `window.google={accounts:{oauth2:{initTokenClient:(config)=>{const client={...config};client.requestAccessToken=()=>client.callback({access_token:'${TOKEN}',expires_in:3600,scope:client.scope});return client;}}}};` }));
   await context.route("https://www.googleapis.com/**", async (route) => {
     if (!requireToken(route)) return;
     const url = new URL(route.request().url());
@@ -48,9 +66,12 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       const isSync = url.includes("sync");
       const isHeader = url.includes("1:1") || url.includes("A1:");
       if (route.request().method() === "GET") return json(route, { values: isHeader ? [isSync ? (options.invalidSyncHeader ? ["wrong", "header"] : ["key", "value"]) : indexHeader] : (isSync ? syncRows : indexRows) });
-      if (route.request().method() === "POST" || route.request().method() === "PUT") return json(route, { updatedRows: 1 });
+      if (route.request().method() === "POST" || route.request().method() === "PUT") {
+        sheetsWrites.push({ url, method: route.request().method() });
+        return json(route, { updatedRows: 1 });
+      }
     }
     return json(route, {});
   });
-  return { authFailures, streamRequests };
+  return { authFailures, streamRequests, sheetsWrites, releaseServiceWorker };
 }

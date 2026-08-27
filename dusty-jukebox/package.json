@@ -7,7 +7,7 @@
     "dev": "vite",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "prebuild": "npm test",
+    "prebuild": "npm test && node scripts/test-e2e-if-chromium.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "deploy": "npm run build && cp dist/app.js . && node scripts/update-sw-version.mjs && echo 'Deploy complete. Commit and push to deploy.'"

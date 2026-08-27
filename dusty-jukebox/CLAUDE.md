@@ -28,6 +28,12 @@
 - `src/serviceWorker.test.ts`は素の`sw.js`をVMハーネスで実行し、install/activate、トークンタイムアウト、Range転送・共有ドライブURL、scope導出をテストする。SWを変更した際は必ずこのテストを更新する。
 - `npm run deploy`は`dist/app.js`をルートへコピーし、`scripts/update-sw-version.mjs`でSWキャッシュ名を自動インクリメントする。手動でSWバージョンを変えない。
 
+## Playwright E2E
+
+- `e2e/google-mocks.ts`がGIS、Drive API、Sheets APIをネットワーク境界でモックする。GISのtoken clientは実GISと同様に、戻り値の`callback`を`requestAccessToken()`実行時に参照するため、`DriveAuth`のcallback差し替えを壊さないこと。Drive/Sheetsへの認証済みリクエストとSheets書き込みも記録し、認証・書き込み経路が実行されたことを検証する。
+- `npm run test:e2e`で実行する。Vite開発サーバーにはPlaywrightの`webServer.env`からE2E用クライアントIDを渡し、OS依存のシェル環境変数記法を使わない。Service Workerを有効にした実ブラウザで検証し、SW初回制御待ちを含む再生経路も対象とする。
+- `npm run build`/`npm run deploy`の`prebuild`はユニットテスト後にE2Eも実行する。Chromiumバイナリが存在しない最小・オフライン環境だけは、`scripts/test-e2e-if-chromium.mjs`が明示的な警告を出してE2Eをスキップし、ビルドは続行する。Chromiumがある通常の開発/CI環境ではE2E失敗がビルドを止める。
+
 
 リポジトリルートの `CLAUDE.md` の「AI開発ルール」セクションを必ず参照すること。
 以下は本プロジェクト固有のルール:

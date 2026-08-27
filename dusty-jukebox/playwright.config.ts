@@ -12,7 +12,11 @@ export default defineConfig({
   timeout: 30_000,
   use: { baseURL: "http://localhost:5191", launchOptions },
   webServer: {
-    command: "VITE_GOOGLE_CLIENT_ID=e2e-client VITE_E2E=true npx vite --port 5191",
+    command: "npx vite --port 5191",
+    env: {
+      VITE_GOOGLE_CLIENT_ID: "e2e-client",
+      VITE_E2E: "true",
+    },
     url: "http://localhost:5191",
     reuseExistingServer: false,
     timeout: 30_000,
