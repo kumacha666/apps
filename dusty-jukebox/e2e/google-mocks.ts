@@ -12,6 +12,17 @@ export type MockOptions = {
   delayServiceWorkerActivation?: boolean;
 };
 
+type SheetWrite = {
+  url: string;
+  method: string;
+  sheet: "index" | "sync" | "unknown";
+};
+
+function sheetForRange(range: string | undefined): SheetWrite["sheet"] {
+  const match = range?.match(/^'?((?:index)|(?:sync))'?!/);
+  return match?.[1] === "index" || match?.[1] === "sync" ? match[1] : "unknown";
+}
+
 /** In-memory GIS, Drive and Sheets boundary. Every authenticated API request is
  * checked here, so a broken token hand-off cannot look like a successful E2E run. */
 export async function installGoogleMocks(context: BrowserContext, options: MockOptions = {}) {
@@ -22,7 +33,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const syncRows = [["startPageToken", "page-1"], ["rootFolderId", "root"], ["initialScanCompletedAt", options.initialScanCompleted === false ? "" : "2026-01-01T00:00:00Z"], ["scanRunId", ""], ["shortcutRootFolderIds", ""]];
   const authFailures: string[] = [];
   const streamRequests: string[] = [];
-  const sheetsWrites: Array<{ url: string; method: string }> = [];
+  const sheetsWrites: SheetWrite[] = [];
   let releaseServiceWorker = () => {};
   const serviceWorkerGate = options.delayServiceWorkerActivation
     ? new Promise<void>((resolve) => { releaseServiceWorker = resolve; })
@@ -70,7 +81,9 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
         const rows = match[1] === "sync" ? syncRows : indexRows;
         rows[Number(match[2]) - 2] = [...update.values[0]];
       }
-      sheetsWrites.push({ url, method: route.request().method() });
+      for (const update of body.data ?? []) {
+        sheetsWrites.push({ url, method: route.request().method(), sheet: sheetForRange(update.range) });
+      }
       return json(route, { totalUpdatedRows: body.data?.length ?? 0 });
     }
     if (url.includes("values/")) {
@@ -78,7 +91,8 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       const isHeader = url.includes("1:1") || url.includes("A1:");
       if (route.request().method() === "GET") return json(route, { values: isHeader ? [isSync ? (options.invalidSyncHeader ? ["wrong", "header"] : ["key", "value"]) : [...INDEX_SHEET_HEADER]] : (isSync ? syncRows : indexRows) });
       if (route.request().method() === "POST" || route.request().method() === "PUT") {
-        sheetsWrites.push({ url, method: route.request().method() });
+        const range = url.split("values/")[1];
+        sheetsWrites.push({ url, method: route.request().method(), sheet: sheetForRange(range) });
         return json(route, { updatedRows: 1 });
       }
     }
