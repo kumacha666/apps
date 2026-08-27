@@ -1,7 +1,7 @@
 import type { BrowserContext, Route } from "@playwright/test";
+import { INDEX_SHEET_HEADER } from "../src/sheets";
 
 const TOKEN = "e2e-token";
-const indexHeader = ["fileId", "extension", "parentId", "driveModifiedTime", "lastScannedAt", "title", "title_override", "artist", "artist_override", "albumArtist", "albumArtist_override", "album", "album_override", "composer", "composer_override", "genre", "trackNumber", "discNumber", "releaseYear", "releaseYear_override", "copyrightYear", "releaseType_override", "vocalGender_override", "providerNote_override", "garbledSuspect", "garbledResolved", "extractionFailed", "title_conflictCandidate", "title_hasConflict", "artist_conflictCandidate", "artist_hasConflict", "albumArtist_conflictCandidate", "albumArtist_hasConflict", "composer_conflictCandidate", "composer_hasConflict", "releaseYear_conflictCandidate", "releaseYear_hasConflict", "releaseType_conflictCandidate", "releaseType_hasConflict", "vocalGender_conflictCandidate", "vocalGender_hasConflict", "providerNote_conflictCandidate", "providerNote_hasConflict", "scanRunId"];
 
 export type MockOptions = {
   invalidSyncHeader?: boolean;
@@ -62,10 +62,21 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     const url = decodeURIComponent(route.request().url());
     if (options.delaySheetsReads && route.request().method() === "GET" && url.includes("values/")) await new Promise((resolve) => setTimeout(resolve, 200));
     if (url.includes("?fields=sheets.properties.title")) return json(route, { sheets: [{ properties: { title: "index", sheetId: 1, gridProperties: { columnCount: 60 } } }, { properties: { title: "sync", sheetId: 2, gridProperties: { columnCount: 2 } } }] });
+    if (url.includes("values:batchUpdate") && route.request().method() === "POST") {
+      const body = JSON.parse(route.request().postData() ?? "{}") as { data?: Array<{ range?: string; values?: (string | number)[][] }> };
+      for (const update of body.data ?? []) {
+        const match = update.range?.match(/^'?(index|sync)'?!A(\d+)/);
+        if (!match || !update.values?.[0]) continue;
+        const rows = match[1] === "sync" ? syncRows : indexRows;
+        rows[Number(match[2]) - 2] = [...update.values[0]];
+      }
+      sheetsWrites.push({ url, method: route.request().method() });
+      return json(route, { totalUpdatedRows: body.data?.length ?? 0 });
+    }
     if (url.includes("values/")) {
       const isSync = url.includes("sync");
       const isHeader = url.includes("1:1") || url.includes("A1:");
-      if (route.request().method() === "GET") return json(route, { values: isHeader ? [isSync ? (options.invalidSyncHeader ? ["wrong", "header"] : ["key", "value"]) : indexHeader] : (isSync ? syncRows : indexRows) });
+      if (route.request().method() === "GET") return json(route, { values: isHeader ? [isSync ? (options.invalidSyncHeader ? ["wrong", "header"] : ["key", "value"]) : [...INDEX_SHEET_HEADER]] : (isSync ? syncRows : indexRows) });
       if (route.request().method() === "POST" || route.request().method() === "PUT") {
         sheetsWrites.push({ url, method: route.request().method() });
         return json(route, { updatedRows: 1 });
