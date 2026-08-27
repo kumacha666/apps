@@ -20,7 +20,10 @@ test("ログインからスキャンして索引を書き込める", async ({ co
   await page.getByRole("button", { name: /スキャンして索引/ }).click();
   await expect(page.locator("#result-list")).toContainText("音楽ファイル: 1件");
   await expect(page.locator("#status")).toContainText("スキャン完了");
-  expect(mock.sheetsWrites).toContainEqual(expect.objectContaining({ sheet: "index" }));
+  expect(mock.sheetsWrites).toContainEqual(expect.objectContaining({
+    sheet: "index",
+    values: expect.arrayContaining([expect.arrayContaining(["song-1"])]),
+  }));
   expect(mock.authFailures).toEqual([]);
 });
 

@@ -16,6 +16,7 @@ type SheetWrite = {
   url: string;
   method: string;
   sheet: "index" | "sync" | "unknown";
+  values: (string | number)[][];
 };
 
 function sheetForRange(range: string | undefined): SheetWrite["sheet"] {
@@ -82,7 +83,12 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
         rows[Number(match[2]) - 2] = [...update.values[0]];
       }
       for (const update of body.data ?? []) {
-        sheetsWrites.push({ url, method: route.request().method(), sheet: sheetForRange(update.range) });
+        sheetsWrites.push({
+          url,
+          method: route.request().method(),
+          sheet: sheetForRange(update.range),
+          values: update.values ?? [],
+        });
       }
       return json(route, { totalUpdatedRows: body.data?.length ?? 0 });
     }
@@ -92,7 +98,8 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       if (route.request().method() === "GET") return json(route, { values: isHeader ? [isSync ? (options.invalidSyncHeader ? ["wrong", "header"] : ["key", "value"]) : [...INDEX_SHEET_HEADER]] : (isSync ? syncRows : indexRows) });
       if (route.request().method() === "POST" || route.request().method() === "PUT") {
         const range = url.split("values/")[1];
-        sheetsWrites.push({ url, method: route.request().method(), sheet: sheetForRange(range) });
+        const body = JSON.parse(route.request().postData() ?? "{}") as { values?: (string | number)[][] };
+        sheetsWrites.push({ url, method: route.request().method(), sheet: sheetForRange(range), values: body.values ?? [] });
         return json(route, { updatedRows: 1 });
       }
     }
