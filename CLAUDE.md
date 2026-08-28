@@ -75,9 +75,9 @@
 **Codex向けの固定実行ルール（source of truth、リモート反映経路、完了条件、テスト方針、preflight証跡、デプロイ、PR運用等）は`AGENTS.md`（共通）＋各アプリの`AGENTS.md`（アプリ固有）に記載する。以下の記述は主にClaude Code側の運用手順であり、Codexへの実装指示文はAGENTS.mdの内容を前提として目的・対象・受け入れ条件等のみを書く。**
 
 - appsの実装全般（新規機能・局所的なバグ修正・テスト追加・リファクタリング・CI修正）は Codex が担当する。新規・曖昧な仕様、認証/秘密情報、データ移行、セキュリティ、複数リポジトリの整合は Claude Code の設計判断を先に得てから Codex に渡す
-- Codexへの実装指示文には、目的、対象/非対象、制約、受け入れ条件、実行すべきテスト、参照すべきアプリ固有CLAUDE.md（およびAGENTS.mdがあれば併記）を含める。非公開の背景は実装に必要な最小限だけ handoff または実装指示文に渡す
+- Codexへの実装指示文は、`AGENTS.md`のExecution Contractを前提に、**目的／対象／非対象／expected HEAD／Acceptance Criteria／Tests**を基本とする（expected HEADは作業開始時のremote HEAD取り違え防止のため省略しない）。参照すべきアプリ固有CLAUDE.md（およびAGENTS.mdがあれば併記）や、タスク固有で本当に必要な補足制約・未決事項がある場合のみ追加する。非公開の背景は実装に必要な最小限だけ handoff または実装指示文に渡す
 - **実装指示文の冒頭には「GitHub連携済みのkumacha666/appsを使い、ローカル作業フォルダへの事前接続を待たずGitHub上で直接確認する」旨と、「このタスクはCodexにディスパッチしてください」（通常のWorkチャットではなく正式なCodexタスクとして実行させるため）の2点を明記する**（非公開の`ai-workspace`はhandoffで既にサニタイズ済みの内容だけを含めるため、Codexへの指示文でこのリポジトリ名自体を挙げない。経緯は`ai-workspace/CLAUDE.md`の「振り分けと引き継ぎ」・`projects/honeypaw-lab/RETROSPECTIVES.md`参照）
-- **実装指示文の末尾には「PR作成後、PR番号またはURLを提示すること」を明記する**。Claude CodeはPRの新規作成を自動検知できないため、ユーザーがこの番号をClaude Codeに伝えた時点で監視（`subscribe_pr_activity`）を開始する
+- **実装指示文の末尾には「PR作成後、PR番号またはURLを提示すること」を明記する**。Claude CodeはPRの新規作成を自動検知できないため、ユーザーからこの番号を受け取ることでGitHub上の実体を確認できるようになる（Claude Codeは継続的な監視者ではなくException Handler＋最終Merge Gateとしての役割であり、`subscribe_pr_activity`等は補助シグナルとして使うが、PR確認を依頼された時・例外や矛盾が生じた時・最終Merge Gate判定時にGitHub上の最新状態を確認する）
 - Codexが作るブランチ名は `codex/<topic>`。`claude/<topic>`はClaude Codeが例外的にドキュメント修正等で直接コミットする場合のみ使う（通常の実装では使わない）。いずれも機能ごとに1PRへ絞る
 - **PR作成後、テスト・ビルド・必要なUI検証の結果は最終HEADのSHAと対応付けてPR本文またはコメントに記録する**（本リポジトリはGitHub Actions等のCIが無く、これが無いと「最終HEADのテスト結果を確認する」というマージゲートの手順自体が検証できない）
 - PR作成後の自動レビュー指摘のうち**軽微なもの**は、Codex自身の修正提案機能とユーザーの確認・適用で一次対応する。設計変更・アーキテクチャ判断が要る指摘はユーザーが適用ボタンを押さずClaude Codeへ相談する。修正pushへの再レビュー（自動で再トリガーされない場合は`@codex review`を依頼）が完了してから最終チェックに進む
