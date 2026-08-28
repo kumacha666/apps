@@ -2,19 +2,20 @@
 
 ## 概要
 `kumacha666/apps`（public）は Honeypaw Lab. の公開アプリ置き場。GitHub Pages（カスタムドメイン `honeypawlab.com`、`CNAME` で設定）で各アプリをディレクトリ単位で公開する。
-姉妹リポジトリ `kumacha666/ai-workspace`（private）でブレスト・設計を行い、本リポジトリで実装・公開する。設計・仕様検討の経緯は非公開の姉妹リポジトリ側にあり、本リポジトリからは参照できない。**本リポジトリのみにアクセスするAIエージェント（Codex等）は、本CLAUDE.mdと各アプリの`CLAUDE.md`だけで作業が完結する前提**で運用しており、AI開発ルール（テスト必須化・大規模リファクタリング手順・型システム活用等）は本ファイルの「AI開発ルール」セクションに記載する。
+姉妹リポジトリ `kumacha666/ai-workspace`（private）でブレスト・設計を行い、本リポジトリで実装・公開する。設計・仕様検討の経緯は非公開の姉妹リポジトリ側にあり、本リポジトリからは参照できない。**本リポジトリのみにアクセスするAIエージェント（Codex等）向けの実行ルールは`AGENTS.md`（共通）＋各アプリの`AGENTS.md`（アプリ固有、存在する場合）に記載する**。従来は本ファイルがCodexの実行契約も兼ねていたが、Codex向け実行ルールと本ファイル＝Claude Code向け設計・プロジェクト知識を分離した。現時点ではCodexに必要なルールの一部がまだ本ファイル側に残っているため、CodexはAGENTS.mdに加えて本ファイルおよび対象アプリのCLAUDE.mdも引き続き参照する移行期間中の暫定運用（詳細は`AGENTS.md`参照）。本CLAUDE.mdの「AI開発ルール」セクションの内容も、この移行が完了するまでは実質的にCodex向けルールを兼ねる。
 
 ## リポジトリ構成
 ルートはアプリのランディングページ（`index.html` + `logo.svg`）。各アプリは独立したトップレベルディレクトリに配置され、ビルド不要な静的PWAと、Vite+TypeScriptでビルドするアプリが混在する。
 
 ```
 /index.html         ランディングページ（公開中のアプリのみカード表示）
+/AGENTS.md           Codex向け実行契約（共通）
 /CNAME               GitHub Pages カスタムドメイン (honeypawlab.com)
 /7metch/             パズルゲーム「ナナメッチ」— Vite+TS、ビルド有
 /7metch2/            ナナメッチ系列の新作（開発中）— Vite+TS、ビルド有
 /7metch-tools/       7metch用デバッグ・プレビュー用の単独HTMLツール群
 /combrawl/           カード×オートバトラー・ローグライク「combrawl」（開発中）— Vite+TS、ビルド有
-/dusty-jukebox/      Googleドライブ音楽プレイヤー「DustyJukebox」（開発中・スキャン/索引/単曲再生まで実装済み）— Vite+TS、ビルド有、Playwright e2e有
+/dusty-jukebox/      Googleドライブ音楽プレイヤー「DustyJukebox」（開発中・スキャン/索引/単曲再生まで実装済み）— Vite+TS、ビルド有、Playwright e2e有、AGENTS.md有
 /enblo/              ローグライクバトラー（開発中）— Vite+TS、ビルド有、Playwright e2e有
 /enblo-classic/      enbloの大規模再設計前の完成形（試作品v1）を凍結・独立公開したもの — Vite+TS、ビルド有
 /enblo-tools/        enblo用デバッグ・プレビュー用の単独HTMLツール群
@@ -29,7 +30,7 @@
 
 - ランディングページ（`index.html`）に掲載されているのは現状 `7metch`・`emoji-dm`・`enblo-classic`・`LifeLog`・`marvel-checklist` のみ。他のアプリは未掲載／開発中で、URLを直接踏んで動作確認する運用。`marvel-checklist`のカードアイコンは`icon-192.png`ではなく`/marvel-checklist/icon.svg`を直接参照している（PNGアイコンを持たないため）。新しいアプリを公開する際は `index.html` の `.apps` セクションにカードを追加する。`mori-no-yakai` は実機での動作確認・機能実装が完了済みだが、**身内利用アプリのため意図的に非掲載**（不特定多数への公開を想定していない、2026-07-11判断。`mori-no-yakai/CLAUDE.md`参照）。著作権的な懸念もあり、部屋の新規作成（ホスト操作）は合言葉ゲートで管理者本人に限定している（2026-07-13、`mori-no-yakai/CLAUDE.md`の「部屋作成（ホスト）の合言葉ゲート」参照）。`enblo-classic` は専用PNGアイコン（`icon-192.png`/`icon-512.png`）が未整備のため、ランディングページのカードは絵文字（⚔️）ベースのdata URI SVGアイコンを使用している（LifeLogカードと同じ手法）。`combrawl` も開発中・有料化検討前段階のため`enblo`と同様に意図的に非掲載（URLを直接踏んで確認する運用）。
 - `lifelog/` は2026-07-13、単独リポジトリ `kumacha666/lifelog`（`https://kumacha666.github.io/lifelog/`）から本リポジトリに移行したもの。旧リポジトリは開発終了・クローズ済みで、以後の変更は本ディレクトリ側で行う。データはlocalStorage保存のためoriginをまたいだ自動移行はできない（利用者本人がエクスポート/インポート機能で手動移行）。
-- 各アプリディレクトリに固有の `CLAUDE.md` がある場合（例: `7metch/CLAUDE.md`）は、そのアプリを変更する際に必ず参照・遵守する。アプリ固有の開発ルール・テスト方針・チェックリストはそちらに記載されている。
+- 各アプリディレクトリに固有の `CLAUDE.md` がある場合（例: `7metch/CLAUDE.md`）は、そのアプリを変更する際に必ず参照・遵守する。アプリ固有の開発ルール・テスト方針・チェックリストはそちらに記載されている。アプリ固有の`AGENTS.md`がある場合（現状`dusty-jukebox`のみ）は、Codex向けの実行手順としてそちらも参照する。
 
 ## アプリ種別とアーキテクチャパターン
 
@@ -52,7 +53,7 @@
 - `enblo`/`enblo-classic`/`combrawl`/`7metch`/`dusty-jukebox` は Playwright による E2E テスト（`e2e/`, `npm run test:e2e`）を持つ。画面遷移の疎通確認用で、ユニットテストの代替ではない（`combrawl`は加えて、特性バッジ等の見た目の重なりを座標で検証する回帰テストも持つ。`dusty-jukebox`はGoogle Identity Services/Drive/Sheets APIをPlaywrightの`context.route()`でモックし、Service Workerストリーミングは実ブラウザ機構をそのまま使う。詳細は各アプリの`CLAUDE.md`参照）。`7metch2`/`mori-no-yakai`は未整備
 - **`enblo-classic`は凍結アプリ**。`enblo`の大規模再設計に着手する前の完成形をそのままコピーしたもので、以降は変更しない前提（バグ修正のみ最小対応）
 - **`7metch2`は開発中につきPWA未対応**（`manifest.json`/`sw.js`なし、CSSは`index.html`にインライン）。`npm run deploy` は `dist/game.js` のコピーのみで現状の構成としては完結している。公開時にPWA化とdeployスクリプト拡充（manifest/SWコピー・SWバージョン自動更新）を行うこと
-- **`dusty-jukebox`はソース（`src/`）上はスキャン・索引・単曲再生まで実装済み**（PWA化済み、`manifest.json`/`sw.js`あり。CSSは`index.html`にインライン、`npm run deploy` は `dist/app.js` のコピー＋SWバージョン自動更新（`scripts/update-sw-version.mjs`））。**ただし公開されているルート直下の`dusty-jukebox/app.js`（GitHub Pagesが実際に配信するビルド成果物）は、実クライアントID未設定のまま`npm run deploy`すると機能が丸ごと巻き戻るため長期間更新できていない**。OAuth認証・Drive走査・Sheets索引・`changes.list`差分同期・`scanRunId`によるバッチ再開までは公開バンドルにも反映済みだが、**Service Workerストリーミング＋単曲再生（`src/main.ts`の音声要素・SW登録・`src/playback.ts`のストリームURL生成・ルート直下の手書き`sw.js`のプロキシ処理）は2026-08-25実装のため未反映**で、実クライアントIDを持つ環境で`npm run deploy`するまでGitHub Pages上では利用できない。OAuth認証（トークンモデル、`drive.readonly`+`spreadsheets`スコープ）＋`drive.readonly`でのファイル一覧取得を実装済み（`src/auth.ts`/`src/drive.ts`）。Sheets索引upsertの最小基盤（スキーマ定義＋fileId起点upsert）も実装済み（`src/sheets.ts`）。実Drive `fetchRange`（`drive.ts`の`createDriveFetchRange`）＋タグ抽出（`src/tagExtraction.ts`、`music-metadata`依存）を`main.ts`のスキャンUIとSheets upsertに結線済みで、フォルダ指定→スキャン→タグ抽出→索引書き込みが一気通貫で動く。`index`/`sync`タブが無ければ自動作成する（`src/sheetsSetup.ts`）ため、事前のタブ手動作成は不要になった。`sync`タブ（`startPageToken`/`rootFolderId`/`initialScanCompletedAt`/`scanRunId`）の読み書き基盤も実装済み（`src/sync.ts`）で、CONCEPT.md所定のルート変更・初期化未完了時のトークン取り扱いルールに従う。初回スキャンはバッチ処理・中断再開に対応済み（200件単位でタグ抽出→書き込みを繰り返し、`scanRunId`（不透明なランダムID、複数デバイスの時計ずれに影響されない）をウォーターマークに中断前の処理済みファイルをスキップして再開する、2026-08-20実装・2026-08-21にscanRunStartedAt〈時刻〉からscanRunIdへ変更）。`changes.list`による実際の差分同期の消費・ルート変更後の旧ルート配下行の削除（リコンサイル）も2026-08-21実装済み（初回スキャン完了後は`main.ts`がフルスキャンでなく`changes.list`消費に切り替わる、`src/differentialSync.ts`）。Service Workerストリーミングプロキシ+単曲再生の土台は2026-08-25実装済み（`manifest.json`/`sw.js`追加、PR #381）。絞り込み（artist/年/Genre）・除外・連続再生キューUI（次へ/前へ）も2026-08-25〜26実装済み（索引upsertの重複行マージは2026-08-20実装済み）。アルバム単位の通し再生・保存済みプレイリスト・検索窓・Album/Composer等の追加絞り込みは引き続き未着手。`music-metadata`はフォーマットごとのパーサーを内部で`dynamic import()`するため、`vite.config.js`に`inlineDynamicImports: true`を設定し単一の`dist/app.js`に強制的にまとめている（このアプリの`npm run deploy`が`dist/app.js`1本のみをコピーする前提を壊さないため）。ログイン系機能を有効にするには`.env`に`VITE_GOOGLE_CLIENT_ID`（Web用OAuthクライアントID）の設定が必要（未設定時はビルドで自動的に除去され「未設定」表示になる）。詳細は`dusty-jukebox/CLAUDE.md`参照
+- **`dusty-jukebox`はソース（`src/`）上はスキャン・索引・単曲再生まで実装済み**（PWA化済み、`manifest.json`/`sw.js`あり。CSSは`index.html`にインライン、`npm run deploy` は `dist/app.js` のコピー＋SWバージョン自動更新（`scripts/update-sw-version.mjs`））。**ただし公開されているルート直下の`dusty-jukebox/app.js`（GitHub Pagesが実際に配信するビルド成果物）は、実クライアントID未設定のまま`npm run deploy`すると機能が丸ごと巻き戻るため長期間更新できていない**。OAuth認証・Drive走査・Sheets索引・`changes.list`差分同期・`scanRunId`によるバッチ再開までは公開バンドルにも反映済みだが、**Service Workerストリーミング＋単曲再生（`src/main.ts`の音声要素・SW登録・`src/playback.ts`のストリームURL生成・ルート直下の手書き`sw.js`のプロキシ処理）は2026-08-25実装のため未反映**で、実クライアントIDを持つ環境で`npm run deploy`するまでGitHub Pages上では利用できない。OAuth認証（トークンモデル、`drive.readonly`+`spreadsheets`スコープ）＋`drive.readonly`でのファイル一覧取得を実装済み（`src/auth.ts`/`src/drive.ts`）。Sheets索引upsertの最小基盤（スキーマ定義＋fileId起点upsert）も実装済み（`src/sheets.ts`）。実Drive `fetchRange`（`drive.ts`の`createDriveFetchRange`）＋タグ抽出（`src/tagExtraction.ts`、`music-metadata`依存）を`main.ts`のスキャンUIとSheets upsertに結線済みで、フォルダ指定→スキャン→タグ抽出→索引書き込みが一気通貫で動く。`index`/`sync`タブが無ければ自動作成する（`src/sheetsSetup.ts`）ため、事前のタブ手動作成は不要になった。`sync`タブ（`startPageToken`/`rootFolderId`/`initialScanCompletedAt`/`scanRunId`）の読み書き基盤も実装済み（`src/sync.ts`）で、CONCEPT.md所定のルート変更・初期化未完了時のトークン取り扱いルールに従う。初回スキャンはバッチ処理・中断再開に対応済み（200件単位でタグ抽出→書き込みを繰り返し、`scanRunId`（不透明なランダムID、複数デバイスの時計ずれに影響されない）をウォーターマークに中断前の処理済みファイルをスキップして再開する、2026-08-20実装・2026-08-21にscanRunStartedAt〈時刻〉からscanRunIdへ変更）。`changes.list`による実際の差分同期の消費・ルート変更後の旧ルート配下行の削除（リコンサイル）も2026-08-21実装済み（初回スキャン完了後は`main.ts`がフルスキャンでなく`changes.list`消費に切り替わる、`src/differentialSync.ts`）。Service Workerストリーミングプロキシ+単曲再生の土台は2026-08-25実装済み（`manifest.json`/`sw.js`追加、PR #381）。絞り込み（artist/年/Genre）・除外・連続再生キューUI（次へ/前へ）も2026-08-25〜26実装済み（索引upsertの重複行マージは2026-08-20実装済み）。アルバム単位の通し再生・保存済みプレイリスト・検索窓・Album/Composer等の追加絞り込みは引き続き未着手。`music-metadata`はフォーマットごとのパーサーを内部で`dynamic import()`するため、`vite.config.js`に`inlineDynamicImports: true`を設定し単一の`dist/app.js`に強制的にまとめている（このアプリの`npm run deploy`が`dist/app.js`1本のみをコピーする前提を壊さないため）。ログイン系機能を有効にするには`.env`に`VITE_GOOGLE_CLIENT_ID`（Web用OAuthクライアントID）の設定が必要（未設定時はビルドで自動的に除去され「未設定」表示になる）。詳細は`dusty-jukebox/CLAUDE.md`（アプリ固有CLAUDE.md）および`dusty-jukebox/AGENTS.md`（Codex向け実行手順）参照
 - 詳細なテスト方針・難易度パラメータ・変更時チェックリストはアプリごとの `CLAUDE.md`（例: `7metch/CLAUDE.md`, `7metch2/CLAUDE.md`, `enblo/CLAUDE.md`, `enblo-classic/CLAUDE.md`, `combrawl/CLAUDE.md`）を参照
 
 ### C. 補助ツール
@@ -71,25 +72,30 @@
 
 **appsリポジトリの実装コードはCodexが担い、Claude Codeは書かない**（設計と、実装指示文の作成、PRの最終チェックのみ担当。背景は`ai-workspace/CLAUDE.md`の「AIオーケストレーション」参照）。実装の起動はユーザーがClaude Codeの作った実装指示文をChatGPT Work経由でCodexに渡す形で行う（Claude Codeからの直接タスク割当APIは無いため）。
 
+**Codex向けの固定実行ルール（source of truth、リモート反映経路、完了条件、テスト方針、preflight証跡、デプロイ、PR運用等）は`AGENTS.md`（共通）＋各アプリの`AGENTS.md`（アプリ固有）に記載する。以下の記述は主にClaude Code側の運用手順であり、Codexへの実装指示文はAGENTS.mdの内容を前提として目的・対象・受け入れ条件等のみを書く。**
+
 - appsの実装全般（新規機能・局所的なバグ修正・テスト追加・リファクタリング・CI修正）は Codex が担当する。新規・曖昧な仕様、認証/秘密情報、データ移行、セキュリティ、複数リポジトリの整合は Claude Code の設計判断を先に得てから Codex に渡す
-- Codexへの実装指示文には、目的、対象/非対象、制約、受け入れ条件、実行すべきテスト、参照すべきアプリ固有CLAUDE.mdを含める。非公開の背景は実装に必要な最小限だけ handoff または実装指示文に渡す
+- Codexへの実装指示文の本文は、`AGENTS.md`のExecution Contractを前提に、**目的／対象／非対象／expected HEAD／Acceptance Criteria／Tests**の6項目のみで構成する（expected HEADは作業開始時のremote HEAD取り違え防止のため省略しない）。参照すべきアプリ固有CLAUDE.md（およびAGENTS.mdがあれば併記）やタスク固有の補足制約・未決事項は、独立した追加項目にせず対象／非対象またはAcceptance Criteriaに書き込む。非公開の背景は実装に必要な最小限だけ handoff または実装指示文に渡す。以下2点の「冒頭」「末尾」の定型文は、この6項目本文を挟むディスパッチ用の envelope（ChatGPT Workへの実行指示・完了後の報告依頼）であり、6項目に含めない・追加のセクションとしても数えない
 - **実装指示文の冒頭には「GitHub連携済みのkumacha666/appsを使い、ローカル作業フォルダへの事前接続を待たずGitHub上で直接確認する」旨と、「このタスクはCodexにディスパッチしてください」（通常のWorkチャットではなく正式なCodexタスクとして実行させるため）の2点を明記する**（非公開の`ai-workspace`はhandoffで既にサニタイズ済みの内容だけを含めるため、Codexへの指示文でこのリポジトリ名自体を挙げない。経緯は`ai-workspace/CLAUDE.md`の「振り分けと引き継ぎ」・`projects/honeypaw-lab/RETROSPECTIVES.md`参照）
-- **実装指示文の末尾には「PR作成後、PR番号またはURLを提示すること」を明記する**。Claude CodeはPRの新規作成を自動検知できないため、ユーザーがこの番号をClaude Codeに伝えた時点で監視（`subscribe_pr_activity`）を開始する
+- **実装指示文の末尾には「PR作成後、PR番号またはURLを提示すること」を明記する**。Claude CodeはPRの新規作成を自動検知できないため、ユーザーからこの番号を受け取ることでGitHub上の実体を確認できるようになる（Claude Codeは継続的な監視者ではなくException Handler＋最終Merge Gateとしての役割であり、`subscribe_pr_activity`等は補助シグナルとして使うが、PR確認を依頼された時・例外や矛盾が生じた時・最終Merge Gate判定時にGitHub上の最新状態を確認する）
 - Codexが作るブランチ名は `codex/<topic>`。`claude/<topic>`はClaude Codeが例外的にドキュメント修正等で直接コミットする場合のみ使う（通常の実装では使わない）。いずれも機能ごとに1PRへ絞る
 - **PR作成後、テスト・ビルド・必要なUI検証の結果は最終HEADのSHAと対応付けてPR本文またはコメントに記録する**（本リポジトリはGitHub Actions等のCIが無く、これが無いと「最終HEADのテスト結果を確認する」というマージゲートの手順自体が検証できない）
 - PR作成後の自動レビュー指摘のうち**軽微なもの**は、Codex自身の修正提案機能とユーザーの確認・適用で一次対応する。設計変更・アーキテクチャ判断が要る指摘はユーザーが適用ボタンを押さずClaude Codeへ相談する。修正pushへの再レビュー（自動で再トリガーされない場合は`@codex review`を依頼）が完了してから最終チェックに進む
-- **既存PRのレビュー再トリガー（`@codex review`）はPRコメントで直接行える**（新規タスクの割り当てとは異なりChatGPT Workの中継は不要）。**ただしコードの修正を伴う依頼（`@codex address that feedback`等）はPRコメント経由では行わない**：Codex側のサンドボックスにgit remote・GitHub認証が無くpushできないことが繰り返し確認されており、依頼のたびに失敗して手戻り・トークン消費が発生する。修正が必要な場合は、Claude Codeが新しい実装指示文を作りChatGPT Workの新規セッションで正式なCodexタスクとして依頼する。Claude CodeがCodexのPRに関与するのは、①軽微な指摘そのものへの一次対応（ユーザーの確認・適用）には関与しない、②レビューコメントを伴わない通常のCI失敗、③設計判断を要しない実装上の重大な不具合（correctnessバグ等）はClaude Codeが新しい実装指示文を作りChatGPT Work経由で再対応を依頼する、④Codex側の環境要因で対応できない場合の検知、⑤レビューが片付いた後の最終チェック。設計変更を伴う大きな指摘・アーキテクチャ判断はユーザーに戻す。**再対応依頼のpush後は、CIの再実行（本リポジトリはCIが無いため対象外）と最終HEADに対する再レビューの両方が完了するまで最終チェックへ進まない**
+- **既存PRのレビュー再トリガー（`@codex review`）はPRコメントで直接行える**（新規タスクの割り当てとは異なりChatGPT Workの中継は不要）。**ただしコードの修正を伴う依頼（`@codex address that feedback`等）はPRコメント経由では行わない**：Codex側のサンドボックス内の書き込み経路（git remote・GitHub認証）が利用可能とは限らず、依頼のたびに失敗して手戻り・トークン消費が発生した実績がある（本ファイル`AGENTS.md`の「3. リポジトリへの反映経路」参照）。修正が必要な場合は、Claude Codeが新しい実装指示文を作りChatGPT Workの新規セッションで正式なCodexタスクとして依頼する。Claude CodeがCodexのPRに関与するのは、①軽微な指摘そのものへの一次対応（ユーザーの確認・適用）には関与しない、②レビューコメントを伴わない通常のCI失敗、③設計判断を要しない実装上の重大な不具合（correctnessバグ等）はClaude Codeが新しい実装指示文を作りChatGPT Work経由で再対応を依頼する、④Codex側の環境要因で対応できない場合の検知、⑤レビューが片付いた後の最終チェック。設計変更を伴う大きな指摘・アーキテクチャ判断はユーザーに戻す。**再対応依頼のpush後は、CIの再実行（本リポジトリはCIが無いため対象外）と最終HEADに対する再レビューの両方が完了するまで最終チェックへ進まない**
+- **Codexの自動レビュー（Codex Review Bot）はGitHubのformal review／review threadではなく、PRトップレベルコメントとして投稿される場合がある。**トップレベルコメントには解決済み状態が無いため、直近1件だけでなく、それまでにCodexが投稿した全レビューコメントのうち未対応のcorrectness／regression／data loss・corruption／security／テストのfalse positive・false negativeに該当する指摘が最終HEADに対して残っていないかを確認する。加えて、SHA付きのレビューコメント（「Reviewed commit: `<SHA>`」を含むコメント）のうち**少なくとも1件**が判定時点の最終HEADのSHAと一致することを確認する（一致するものが無ければMerge Readyとしない。過去のSHA付きコメントが古いSHAのままでも、最新HEADに対する一致したコメントが別に存在すれば問題ない）。CodexのP1/P2等のラベルは参考情報として扱い、それ自体を最終判断基準にしない。
+
+  最終HEADのSHAと一致するSHA付きコメントが1件も無い場合（SHA付きコメント自体が0件の場合も、過去の別コミット向けのSHA付きコメントしか無くいずれも最終HEADと不一致の場合も含む。指摘が解消され再レビューがクリーンだと👍リアクションのみでSHA付きコメントが付かないことがあるため、後者は珍しくない）は、PRレベルの👍リアクション（`search_pull_requests`等の`reactions`で件数のみ取得可能）はコミット単位の証跡になり得ないため、件数・反応者のいずれで見てもclean判定の根拠に使わない。`@codex review`を明示的に再依頼した上で、対象HEADに対するSHA付きコメントが新たに投稿されるのを待つ。投稿されない場合はレビュー未確定として扱い、マージ判断が必要であればユーザーへ状況を報告し判断を仰ぐ。
 - **Codexの完了報告は、行番号・リンク付きの詳細な記述であっても実装に反映されていない場合がある**。報告文言だけで完了と判断せず、Claude Codeは対象ブランチをローカルへfetch/worktree checkoutし、`npm test`・`npm run build`を実際に実行し、指摘箇所のソースコードを直接読んで確認してから完了扱いにする
 - **レビュースレッドはCodexが指摘に対応しても自動では解決済みにならない**。Claude Codeが実コード照合で解消を確認した上で`resolve_thread`する
 - **ビルド成果物をコミットするアプリでは、テスト・ビルドの合否だけでなく成果物自体の差分（サイズ・内容）も確認する**。`.env`等の秘密情報が無い実行環境での`npm run deploy`実行は、既存の正しいビルド成果物を劣化ビルドで上書きしうる
-- **完了根拠はGitHub上の実体のみ**とする。対象PRブランチにコミットSHAと差分が実在することを確認してから完了扱いにする（Codexの自己申告・ローカル作業・未pushコミットは完了扱いにしない）。マージゲートは必ず最終HEADのSHA基準で判定し（最終HEADのレビュー結果〈Codexは指摘が無い場合レビューコメントの代わりにPR本文へ👍リアクションのみ付ける。Claude Codeの現行ツールではリアクションを直接取得できないため、コメント・スレッドが0件でもリアクション未確認ならユーザーに画面確認を依頼する〉／未解決のスレッド0件〈outdated化しても最終HEADでの解消根拠が無ければ未解決扱い〉／最終HEADに対応したテスト結果／ビルド成果物差分を確認）、古いコミットへのレビュー結果を流用しない（詳細な経緯・マージゲートの手順は`ai-workspace/CLAUDE.md`の「CodexのPR監視」参照）
+- **完了根拠はGitHub上の実体のみ**とする。対象PRブランチにコミットSHAと差分が実在することを確認してから完了扱いにする（Codexの自己申告・ローカル作業・未pushコミットは完了扱いにしない）。マージゲートは必ず最終HEADのSHA基準で判定し（最終HEADのレビュー結果〈最終HEADと一致するSHA付きReviewコメントが1件以上ある場合はそれをもって確認済みとし、無い場合は上記フォールバック手順の結果を確認する〉／未解決のスレッド0件〈outdated化しても最終HEADでの解消根拠が無ければ未解決扱い〉／最終HEADに対応したテスト結果／ビルド成果物差分を確認）、古いコミットへのレビュー結果を流用しない（詳細な経緯・マージゲートの手順は`ai-workspace/CLAUDE.md`の「CodexのPR監視」参照）
 - **ユーザーがClaude Codeの入力・判断待ちで先に進めなくなった時点（大きな指摘の判断依頼／要件の曖昧さ等の通常の設計相談／Codex側の環境要因のエスカレーション／マージゲート通過でユーザーのマージ待ちになった時／`/code-review`等AIが自分で起動できずユーザーの直接操作が要る時）は、チャット報告に加えて必ず`PushNotification`を送る**。進捗・完了報告・軽微な自律対応では送らない
 
 ## AI開発ルール
 
 2026-06-25のインシデント（1日32PRの高速開発で9件のバグ修正PRが発生）を踏まえた開発ルール。
 
-※本セクションのルール本文は姉妹リポジトリ `ai-workspace/CLAUDE.md` の「AI開発ルール」1〜6と同期管理している。片方を変更する場合は必ず両方を更新すること（両リポジトリにアクセスできるエージェントの責務）。
+※本セクションのルール本文は姉妹リポジトリ `ai-workspace/CLAUDE.md` の「AI開発ルール」1〜6と同期管理している。片方を変更する場合は必ず両方を更新すること（両リポジトリにアクセスできるエージェントの責務）。**このルール本文は`AGENTS.md`「5. テスト・検証」等にも要点が復元されているが、詳細な経緯・背景はこちらを正とする。**
 
 ### 原則: 速度を落とすのではなく、速度に耐えるガードレールを先に構築する
 
@@ -132,7 +138,7 @@
 - 例外: 軽微な修正（typo・ドキュメント・自明な小バグ修正等）に限り、**人間がそのPRを名指しでマージを指示した場合のみ**AIがsquash mergeしてよい。指示なしにAIが自発的にマージすることは禁止
 - mainへのマージで GitHub Pages に自動デプロイ（**GitHub Actionsワークフローは存在しない** — Pages設定がmainブランチ直下を直接配信するシンプルな静的ホスティング構成のため、push即反映）
 - ビルドが必要なアプリ（7metch, 7metch2, enblo, enblo-classic, combrawl, mori-no-yakai）は、コミット前に `npm run deploy` を実行してビルド成果物をルート直下に反映させてからコミットする
-- **コードレビュー**：PR作成後はCodex自動レビューを確認し、最新コミットが未レビューなら `@codex review` を依頼する。appsの実装PRは基本的にCodexが作成するため、`/code-review`はClaude Codeが例外的に直接コミットした場合や高リスク変更の追加セルフレビューとしてのみ使う（通常のCodex実装PRはCodex自動レビュー＋Claude CodeのPR監視でカバーする）。実行した場合はPR本文のTest planに実行有無を明記する。実行を強制する仕組みは無いため、マージ判断をする人間がPR本文で確認する
+- **コードレビュー**：PR作成後はCodex自動レビューを確認し、最新コミットが未レビューなら `@codex review` を依頼する。appsの実装PRは基本的にCodexが作成するため、`/code-review`はClaude Codeが例外的に直接コミットした場合や高リスク変更の追加セルフレビューとしてのみ使う（通常のCodex実装PRはCodex自動レビュー＋Claude CodeのException Handler／最終Merge Gateとしての確認でカバーする）。実行した場合はPR本文のTest planに実行有無を明記する。実行を強制する仕組みは無いため、マージ判断をする人間がPR本文で確認する
   - `/code-review`を行う場合、AIは自分自身で起動できない（`disable-model-invocation`設定）。PR作成後、AIはユーザーに「プロンプト欄への直接入力」を依頼する（コピペでは起動しない）
   - 出力は英語になるため、AIは結果を日本語で要約してから対応方針を提示する
   - `--comment`はGitHub関連ツールにアクセスできず機能しないため付けない。PRへの反映は出力を見たAIが`mcp__github__`ツールで手動投稿する
