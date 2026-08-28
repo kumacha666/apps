@@ -10,7 +10,7 @@ apps/AGENTS.md（共通Execution Contract）を前提とし、本ファイルは
 - デプロイ相当：npm run deploy（ビルド→dist/コピー→SWバージョン更新。実クライアントID（VITE_GOOGLE_CLIENT_ID）が.envに無い環境で実行すると、公開中のビルド成果物を劣化ビルドで上書きするため、.envが無い・ダミーの環境ではnpm run deployを実行しない）
 
 ## Environment evidence（本アプリでの具体項目）
-apps/AGENTS.md「5. 環境依存能力（preflight）」の「適用可能なtest/build/E2E結果」は、本アプリでは以下を指す：
+apps/AGENTS.md「7. 環境依存能力（preflight）」の「適用可能なtest/build/E2E結果」は、本アプリでは以下を指す：
 - npm testの結果（passed・failed・not runのいずれか）
 - npm buildの結果（passed・failed・not runのいずれか）
 - Chromiumの有無（available・unavailable）
