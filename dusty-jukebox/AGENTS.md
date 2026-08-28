@@ -12,7 +12,7 @@ apps/AGENTS.md（共通Execution Contract）を前提とし、本ファイルは
 ## Environment evidence（本アプリでの具体項目）
 apps/AGENTS.md「7. 環境依存能力（preflight）」の「適用可能なtest/build/E2E結果」は、本アプリでは以下を指す：
 - npm testの結果（passed・failed・not runのいずれか）
-- npm buildの結果（passed・failed・not runのいずれか）
+- npm run buildの結果（passed・failed・not runのいずれか）
 - Chromiumの有無（available・unavailable）
 - npm run test:e2e（またはビルド組み込みのE2Eゲート）の結果（passed・failed・not runのいずれか）
 
