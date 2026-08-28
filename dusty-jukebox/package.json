@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "test": "vitest run",
-    "prebuild": "npm test",
+    "test:e2e": "playwright test",
+    "prebuild": "npm test && node scripts/test-e2e-if-chromium.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "deploy": "npm run build && cp dist/app.js . && node scripts/update-sw-version.mjs && echo 'Deploy complete. Commit and push to deploy.'"
@@ -19,6 +20,7 @@
     "@types/node": "^22.0.0",
     "typescript": "^5.5.0",
     "vite": "^5.4.0",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "@playwright/test": "^1.58.2"
   }
 }

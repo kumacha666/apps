@@ -900,3 +900,11 @@ function init(): void {
 }
 
 init();
+
+// Playwright の開発サーバーだけで公開する、画面操作の同期用フック。本番ビルドには
+// VITE_E2E を与えないためこの分岐は到達不能になり、通常利用の API/UI には影響しない。
+if (import.meta.env.VITE_E2E === "true") {
+  (window as Window & { __e2e?: { serviceWorkerReady: () => Promise<void> } }).__e2e = {
+    serviceWorkerReady: () => serviceWorkerReady ?? Promise.resolve(),
+  };
+}
