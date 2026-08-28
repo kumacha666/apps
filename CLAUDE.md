@@ -75,7 +75,7 @@
 **Codex向けの固定実行ルール（source of truth、リモート反映経路、完了条件、テスト方針、preflight証跡、デプロイ、PR運用等）は`AGENTS.md`（共通）＋各アプリの`AGENTS.md`（アプリ固有）に記載する。以下の記述は主にClaude Code側の運用手順であり、Codexへの実装指示文はAGENTS.mdの内容を前提として目的・対象・受け入れ条件等のみを書く。**
 
 - appsの実装全般（新規機能・局所的なバグ修正・テスト追加・リファクタリング・CI修正）は Codex が担当する。新規・曖昧な仕様、認証/秘密情報、データ移行、セキュリティ、複数リポジトリの整合は Claude Code の設計判断を先に得てから Codex に渡す
-- Codexへの実装指示文は、`AGENTS.md`のExecution Contractを前提に、**目的／対象／非対象／expected HEAD／Acceptance Criteria／Tests**を基本とする（expected HEADは作業開始時のremote HEAD取り違え防止のため省略しない）。参照すべきアプリ固有CLAUDE.md（およびAGENTS.mdがあれば併記）や、タスク固有で本当に必要な補足制約・未決事項がある場合のみ追加する。非公開の背景は実装に必要な最小限だけ handoff または実装指示文に渡す
+- Codexへの実装指示文は、`AGENTS.md`のExecution Contractを前提に、**目的／対象／非対象／expected HEAD／Acceptance Criteria／Tests**の6項目のみで構成する（expected HEADは作業開始時のremote HEAD取り違え防止のため省略しない）。参照すべきアプリ固有CLAUDE.md（およびAGENTS.mdがあれば併記）やタスク固有の補足制約・未決事項は、独立した追加項目にせず対象／非対象またはAcceptance Criteriaに書き込む。非公開の背景は実装に必要な最小限だけ handoff または実装指示文に渡す
 - **実装指示文の冒頭には「GitHub連携済みのkumacha666/appsを使い、ローカル作業フォルダへの事前接続を待たずGitHub上で直接確認する」旨と、「このタスクはCodexにディスパッチしてください」（通常のWorkチャットではなく正式なCodexタスクとして実行させるため）の2点を明記する**（非公開の`ai-workspace`はhandoffで既にサニタイズ済みの内容だけを含めるため、Codexへの指示文でこのリポジトリ名自体を挙げない。経緯は`ai-workspace/CLAUDE.md`の「振り分けと引き継ぎ」・`projects/honeypaw-lab/RETROSPECTIVES.md`参照）
 - **実装指示文の末尾には「PR作成後、PR番号またはURLを提示すること」を明記する**。Claude CodeはPRの新規作成を自動検知できないため、ユーザーからこの番号を受け取ることでGitHub上の実体を確認できるようになる（Claude Codeは継続的な監視者ではなくException Handler＋最終Merge Gateとしての役割であり、`subscribe_pr_activity`等は補助シグナルとして使うが、PR確認を依頼された時・例外や矛盾が生じた時・最終Merge Gate判定時にGitHub上の最新状態を確認する）
 - Codexが作るブランチ名は `codex/<topic>`。`claude/<topic>`はClaude Codeが例外的にドキュメント修正等で直接コミットする場合のみ使う（通常の実装では使わない）。いずれも機能ごとに1PRへ絞る
@@ -138,7 +138,7 @@
 - 例外: 軽微な修正（typo・ドキュメント・自明な小バグ修正等）に限り、**人間がそのPRを名指しでマージを指示した場合のみ**AIがsquash mergeしてよい。指示なしにAIが自発的にマージすることは禁止
 - mainへのマージで GitHub Pages に自動デプロイ（**GitHub Actionsワークフローは存在しない** — Pages設定がmainブランチ直下を直接配信するシンプルな静的ホスティング構成のため、push即反映）
 - ビルドが必要なアプリ（7metch, 7metch2, enblo, enblo-classic, combrawl, mori-no-yakai）は、コミット前に `npm run deploy` を実行してビルド成果物をルート直下に反映させてからコミットする
-- **コードレビュー**：PR作成後はCodex自動レビューを確認し、最新コミットが未レビューなら `@codex review` を依頼する。appsの実装PRは基本的にCodexが作成するため、`/code-review`はClaude Codeが例外的に直接コミットした場合や高リスク変更の追加セルフレビューとしてのみ使う（通常のCodex実装PRはCodex自動レビュー＋Claude CodeのPR監視でカバーする）。実行した場合はPR本文のTest planに実行有無を明記する。実行を強制する仕組みは無いため、マージ判断をする人間がPR本文で確認する
+- **コードレビュー**：PR作成後はCodex自動レビューを確認し、最新コミットが未レビューなら `@codex review` を依頼する。appsの実装PRは基本的にCodexが作成するため、`/code-review`はClaude Codeが例外的に直接コミットした場合や高リスク変更の追加セルフレビューとしてのみ使う（通常のCodex実装PRはCodex自動レビュー＋Claude CodeのException Handler／最終Merge Gateとしての確認でカバーする）。実行した場合はPR本文のTest planに実行有無を明記する。実行を強制する仕組みは無いため、マージ判断をする人間がPR本文で確認する
   - `/code-review`を行う場合、AIは自分自身で起動できない（`disable-model-invocation`設定）。PR作成後、AIはユーザーに「プロンプト欄への直接入力」を依頼する（コピペでは起動しない）
   - 出力は英語になるため、AIは結果を日本語で要約してから対応方針を提示する
   - `--comment`はGitHub関連ツールにアクセスできず機能しないため付けない。PRへの反映は出力を見たAIが`mcp__github__`ツールで手動投稿する
