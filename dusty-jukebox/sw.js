@@ -39,24 +39,25 @@ function parseRange(range) {
 }
 
 async function fetchFileSize(fileId, token) {
-  if (fileSizeCache.has(fileId)) return fileSizeCache.get(fileId);
+  let sizeRequest = fileSizeCache.get(fileId);
+  if (!sizeRequest) {
+    sizeRequest = (async () => {
+      const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=size&supportsAllDrives=true`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return null;
+      const size = Number((await response.json()).size);
+      return Number.isSafeInteger(size) && size >= 0 ? size : null;
+    })();
+    fileSizeCache.set(fileId, sizeRequest);
+  }
 
-  const sizeRequest = (async () => {
-    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=size&supportsAllDrives=true`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) return null;
-    const size = Number((await response.json()).size);
-    return Number.isSafeInteger(size) && size >= 0 ? size : null;
-  })();
-
-  fileSizeCache.set(fileId, sizeRequest);
   try {
     const size = await sizeRequest;
-    if (size === null) fileSizeCache.delete(fileId);
+    if (size === null && fileSizeCache.get(fileId) === sizeRequest) fileSizeCache.delete(fileId);
     return size;
   } catch {
-    fileSizeCache.delete(fileId);
+    if (fileSizeCache.get(fileId) === sizeRequest) fileSizeCache.delete(fileId);
     return null;
   }
 }

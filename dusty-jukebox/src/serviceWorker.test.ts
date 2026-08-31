@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 type FetchHandler = (event: { request: Request; clientId: string; respondWith: (response: Promise<Response> | Response) => void }) => void;
 type LifecycleHandler = (event: { waitUntil: (promise: Promise<unknown>) => void }) => void;
@@ -215,6 +215,41 @@ describe("service worker", () => {
     expect(response.headers.get("Content-Range")).toBeNull();
     expect(response.headers.get("Accept-Ranges")).toBeNull();
     expect(messages).not.toContainEqual(expect.objectContaining({ type: "dusty-jukebox:stream-token-rejected" }));
+  });
+
+  test("同時Range要求で共有したファイルサイズ取得が失敗しても両方を中継し、後続要求で再取得する", async () => {
+    const harness = createHarness();
+    harness.clients.set("tab-1", { postMessage: (_message, ports) => ports[0].postMessage({ token: "token" }) });
+    let rejectSizeRequest: ((reason: Error) => void) | undefined;
+    const failedSizeRequest = new Promise<Response>((_resolve, reject) => { rejectSizeRequest = reject; });
+    let sizeRequestCount = 0;
+    harness.setFetchImplementation(async (input) => {
+      if (!String(input).includes("fields=size")) {
+        return new Response("audio", { status: 206, headers: { "Content-Length": "5", "Content-Type": "audio/mpeg" } });
+      }
+      sizeRequestCount += 1;
+      return sizeRequestCount === 1 ? failedSizeRequest : Response.json({ size: "1000" });
+    });
+    harness.run();
+
+    const first = dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1", new Headers({ Range: "bytes=0-4" }));
+    const second = dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1", new Headers({ Range: "bytes=5-9" }));
+    await vi.waitFor(() => expect(sizeRequestCount).toBe(1));
+    rejectSizeRequest?.(new Error("offline"));
+
+    const settledResponses = await Promise.allSettled([first, second]);
+    expect(settledResponses.map(({ status }) => status)).toEqual(["fulfilled", "fulfilled"]);
+    const responses = settledResponses.map((result) => {
+      if (result.status === "rejected") throw result.reason;
+      return result.value;
+    });
+    expect(responses.map((response) => response.status)).toEqual([206, 206]);
+    expect(responses.map((response) => response.headers.get("Content-Range"))).toEqual([null, null]);
+    expect(responses.map((response) => response.headers.get("Accept-Ranges"))).toEqual([null, null]);
+
+    const retry = await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1", new Headers({ Range: "bytes=10-14" }));
+    expect(retry.headers.get("Content-Range")).toBe("bytes 10-14/1000");
+    expect(sizeRequestCount).toBe(2);
   });
 
   test("Range無しの200レスポンスにはAccept-Rangesを付与する", async () => {
