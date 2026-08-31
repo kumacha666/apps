@@ -1,6 +1,7 @@
 import type { Song } from "./catalog";
 export interface AudioEndedLike { addEventListener(type: "ended", listener: () => void): void; }
 export interface PlayerLike { play(fileId: string, position?: number): Promise<void>; }
+export type BeforeQueuePlay = (fileId: string) => void;
 
 export class PlaybackQueue {
   private songs: Song[] = []; private currentFileId: string | null = null; private excluded = new Set<string>(); private isQueuePlayback = false;
@@ -13,7 +14,8 @@ export class PlaybackQueue {
     private readonly player: PlayerLike,
     audio: AudioEndedLike,
     private readonly onError: (error: unknown) => void = () => {},
-    private readonly onEnded: (() => void) | null = null
+    private readonly onEnded: (() => void) | null = null,
+    private readonly onBeforePlay: BeforeQueuePlay = () => {}
   ) {
     audio.addEventListener("ended", () => {
       if (!this.isQueuePlayback) return;
@@ -29,6 +31,9 @@ export class PlaybackQueue {
   list(): Song[] { return this.songs.filter((s) => !this.isExcluded(s.fileId)); }
   currentPlayingFileId(): string | null { return this.currentFileId; }
   private async playAndCommit(fileId: string, generation: number, position?: number): Promise<boolean> {
+    // Register a continuation before the native play promise settles: the
+    // initial stream request can receive a 401 while that promise is pending.
+    this.onBeforePlay(fileId);
     if (position === undefined) await this.player.play(fileId);
     else await this.player.play(fileId, position);
     if (generation !== this.generation) return false;
@@ -48,4 +53,11 @@ export class PlaybackQueue {
   next(): Promise<boolean> { return this.move(async (generation) => { const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId); const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId)); return next ? this.playAndCommit(next.fileId, generation) : false; }); }
   previous(): Promise<boolean> { return this.move(async (generation) => { if (this.currentFileId === null) return false; const currentIndex = this.songs.findIndex((song) => song.fileId === this.currentFileId); for (let index = currentIndex - 1; index >= 0; index -= 1) { const song = this.songs[index]; if (!this.isExcluded(song.fileId)) return this.playAndCommit(song.fileId, generation); } return false; }); }
   resumeCurrent(position: number): Promise<boolean> { return this.move(async (generation) => this.currentFileId ? this.playAndCommit(this.currentFileId, generation, position) : false); }
+  resume(fileId: string, position: number): Promise<boolean> {
+    return this.move(async (generation) =>
+      this.songs.some((song) => song.fileId === fileId) && !this.isExcluded(fileId)
+        ? this.playAndCommit(fileId, generation, position)
+        : false
+    );
+  }
 }
