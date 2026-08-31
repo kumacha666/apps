@@ -8,7 +8,7 @@ export interface PlaybackContinuation {
 interface StreamTokenRequest {
   fileId: string;
   generation: number;
-  token: string;
+  token: string | null;
 }
 
 // Keeps the page-side identity of a stream request.  The Service Worker only
@@ -33,7 +33,7 @@ export class PlaybackContinuationRegistry {
     this.active = null;
   }
 
-  recordTokenRequest(requestId: string, fileId: string, generation: number, token: string): void {
+  recordTokenRequest(requestId: string, fileId: string, generation: number, token: string | null): void {
     this.tokenRequests.set(requestId, { fileId, generation, token });
     // Range requests can be numerous for long tracks. Keep only the recent
     // bounded history needed to correlate a late 401.
