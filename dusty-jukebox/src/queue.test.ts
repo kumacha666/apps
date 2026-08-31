@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { PlaybackQueue } from "./queue";
 import { PlaybackAuthenticationRequiredError } from "./playback";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
+import { PlaybackContinuationRegistry } from "./playbackContinuation";
 import { parseIndexRows, type Song } from "./catalog";
 import { INDEX_SHEET_HEADER } from "./sheets";
 const song = (fileId: string): Song => ({ fileId, parentId: "p", title: fileId, artist: "", album: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "" });
@@ -130,6 +131,24 @@ describe("PlaybackQueue", () => {
     await queue.resumeCurrent(42.25);
 
     expect(play.mock.calls).toEqual([["a"], ["a", 42.25]]);
+  });
+
+  test("最初の曲のnative playが未解決でも、開始前フックが継続情報を登録できる", async () => {
+    const audio = new Audio();
+    let settlePlay!: () => void;
+    const nativePlay = new Promise<void>((resolve) => { settlePlay = resolve; });
+    const registry = new PlaybackContinuationRegistry();
+    const beforePlay = vi.fn((fileId: string) => registry.register({ fileId, generation: 1, resume: async () => true }));
+    const queue = new PlaybackQueue({ play: () => nativePlay }, audio, () => {}, null, beforePlay);
+    queue.setList([song("a")]);
+
+    const move = queue.next();
+    await vi.waitFor(() => expect(beforePlay).toHaveBeenCalledWith("a"));
+    expect(queue.currentPlayingFileId()).toBeNull();
+    registry.recordTokenRequest("first-request", "a", 1, "rejected-token");
+    expect(registry.acceptTokenRejection("first-request", "a", "rejected-token")).not.toBeNull();
+    settlePlay();
+    await expect(move).resolves.toBe(true);
   });
 
   test("自動送り中の認証待ちは次曲を保留し、明示的な継続後に同じ次曲を再開する", async () => {
