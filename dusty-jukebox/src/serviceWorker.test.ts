@@ -13,6 +13,7 @@ interface Harness {
   cachePuts: string[];
   deleted: string[];
   fetchCalls: Array<{ input: unknown; init?: RequestInit }>;
+  setDriveResponseStatus: (status: number) => void;
   timers: Array<() => void>;
   clients: Map<string, { postMessage: (message: unknown, ports: FakePort[]) => void }>;
   run: () => void;
@@ -38,6 +39,7 @@ function createHarness(scope = "https://example.test/dusty-jukebox/"): Harness {
   const cachePuts: string[] = [];
   const deleted: string[] = [];
   const fetchCalls: Array<{ input: unknown; init?: RequestInit }> = [];
+  let driveResponseStatus = 206;
   const timers: Array<() => void> = [];
   const clients = new Map<string, { postMessage: (message: unknown, ports: FakePort[]) => void }>();
 
@@ -79,12 +81,12 @@ function createHarness(scope = "https://example.test/dusty-jukebox/"): Harness {
     },
     fetch: async (input: unknown, init?: RequestInit) => {
       fetchCalls.push({ input, init });
-      return new Response("audio", { status: 206, headers: { "Content-Range": "bytes 0-4/5", "Accept-Ranges": "bytes", "Content-Length": "5", "Content-Type": "audio/mpeg" } });
+      return new Response("audio", { status: driveResponseStatus, headers: { "Content-Range": "bytes 0-4/5", "Accept-Ranges": "bytes", "Content-Length": "5", "Content-Type": "audio/mpeg" } });
     },
     setTimeout: (callback: () => void) => { timers.push(callback); return timers.length; },
     clearTimeout: () => {},
   };
-  return { handlers, cacheKeys, cacheName, cachePrefix, cachePuts, deleted, fetchCalls, timers, clients, run: () => runInNewContext(source, context) };
+  return { handlers, cacheKeys, cacheName, cachePrefix, cachePuts, deleted, fetchCalls, setDriveResponseStatus: (status) => { driveResponseStatus = status; }, timers, clients, run: () => runInNewContext(source, context) };
 }
 
 async function dispatchLifecycle(harness: Harness, type: "install" | "activate"): Promise<void> {
@@ -148,6 +150,24 @@ describe("service worker", () => {
     expect(String(harness.fetchCalls[0].input)).toContain("files/file%2Fid?alt=media&supportsAllDrives=true");
     expect(new Headers(harness.fetchCalls[0].init?.headers).get("Range")).toBe("bytes=0-4");
     expect(new Headers(harness.fetchCalls[0].init?.headers).get("Authorization")).toBe("Bearer access-token");
+  });
+
+  test("Driveが401を返したストリームは要求元タブへトークン拒否を通知する", async () => {
+    const harness = createHarness();
+    const messages: unknown[] = [];
+    harness.setDriveResponseStatus(401);
+    harness.clients.set("tab-1", {
+      postMessage: (message, ports = []) => {
+        messages.push(message);
+        ports[0]?.postMessage({ token: "access-token" });
+      },
+    });
+    harness.run();
+
+    const response = await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/revoked-file");
+
+    expect(response.status).toBe(401);
+    expect(messages).toContainEqual({ type: "dusty-jukebox:stream-token-rejected", fileId: "revoked-file" });
   });
 
   test("登録スコープからストリームパスを導出し、ルート配信でも横取りする", async () => {

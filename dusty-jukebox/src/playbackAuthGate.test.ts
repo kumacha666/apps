@@ -42,4 +42,16 @@ describe("PlaybackAuthenticationGate", () => {
     expect(refreshCount).toBe(1);
     expect(resumed).toEqual(["latest"]);
   });
+
+  test("新しい再生が成功したら古い保留操作を破棄できる", async () => {
+    const resumed: string[] = [];
+    const gate = new PlaybackAuthenticationGate(async () => {});
+
+    gate.defer(async () => { resumed.push("old"); });
+    gate.clear();
+    await gate.continueFromUserGesture();
+
+    expect(resumed).toEqual([]);
+    expect(gate.hasPendingOperation()).toBe(false);
+  });
 });

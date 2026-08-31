@@ -28,13 +28,22 @@ export class PlaybackAuthenticationRequiredError extends Error {
 // 未対応形式なども区別できないため、ここから認証更新や自動リトライは行わない。
 export class PlaybackController {
   private generation = 0;
+  private currentFileId: string | null = null;
+  private rejectedGeneration: number | null = null;
 
   constructor(
     private readonly audio: AudioElementLike,
     private readonly getValidAccessToken: GetValidAccessToken,
     private readonly onPlaybackError: PlaybackErrorHandler = () => {}
   ) {
-    audio.addEventListener("error", () => this.onPlaybackError(new Error("音声を再生できませんでした。ファイルID、形式、アクセス権をご確認ください。")));
+    audio.addEventListener("error", () => {
+      if (this.rejectedGeneration === this.generation) {
+        this.rejectedGeneration = null;
+        this.onPlaybackError(new PlaybackAuthenticationRequiredError());
+        return;
+      }
+      this.onPlaybackError(new Error("音声を再生できませんでした。ファイルID、形式、アクセス権をご確認ください。"));
+    });
     audio.addEventListener("pause", () => { this.generation += 1; });
   }
 
@@ -45,12 +54,25 @@ export class PlaybackController {
     if (!token) throw new PlaybackAuthenticationRequiredError();
     // トークン確認中に停止または別曲の再生が入った場合、古い要求はsrcを変更しない。
     if (this.generation !== playGeneration) return;
+    this.currentFileId = fileId;
     this.audio.src = streamUrl(fileId);
     await this.audio.play();
   }
 
+  // The media element does not expose the HTTP status that made it fail.  The
+  // Service Worker reports a Drive 401 separately; mark only the currently
+  // requested stream so its following media error is not shown as a generic
+  // format/access failure.
+  markStreamTokenRejected(fileId: string): boolean {
+    if (this.currentFileId !== fileId) return false;
+    this.rejectedGeneration = this.generation;
+    return true;
+  }
+
   pause(): void {
     this.generation += 1;
+    this.currentFileId = null;
+    this.rejectedGeneration = null;
     this.audio.pause();
   }
 }

@@ -6,7 +6,7 @@
 
 - `src/catalog.ts` はindexタブの生行を表示用`Song`へ変換する純粋ロジック。`*_override` は空欄＝抽出値、`(none)`＝明示的な空、その他＝補正値の3値として読み取る。titleが最終的にも空ならfileIdを表示する。
 - `src/folderPaths.ts` は親フォルダIDから表示パスを解決する。フォルダごとの進行中Promiseも共有し、取得失敗時はキャッシュを破棄して次回再取得できる。Drive実装は`createDriveFolderGetFn`（`name,parents`、readonly）で提供する。
-- `src/catalog.ts` のartist/年/GenreのAND絞り込みと曲単位ソート、`src/queue.ts` の除外・連続再生キューを`main.ts`がDOMに結線する。除外は作成中のキューだけに属し、新しいキュー作成時にリセットされる。PlaybackControllerは変更せず、audioの`ended`はキュー側で次曲へ進める。
+- `src/catalog.ts` のartist/年/GenreのAND絞り込みと曲単位ソート、`src/queue.ts` の除外・連続再生キューを`main.ts`がDOMに結線する。除外は作成中のキューだけに属し、新しいキュー作成時にリセットされる。audioの`ended`はキュー側から`main.ts`の`handleQueuePlayback()`へ委譲し、手動の次へ/前へと同じ認証継続フローを通す。キュー移動は実際に曲を開始した時だけ`true`を返すため、末尾の次へ等を「再生中」と誤表示しない。
 - 既知の制約: 検索窓、Album/Composer等の絞り込み、カテゴリ導出、2種類の絞り込み入口、シャッフル、保存プレイリスト、仮想スクロールは未実装。曲単位ソートのため、同一アルバム内で年・artistが異なると曲が分散しうる。アルバム識別方法は未決事項のまま後続PRで扱う。
 - ユニットテスト: `catalog.test.ts`（パース・override・フィルタ・数値ソート）、`folderPaths.test.ts`（祖先・同時Promise共有・失敗後再取得）、`queue.test.ts`（除外リセット・ended/前後移動・末尾停止）。
 - **2026-08-26〜27、レビュー指摘5件（P1・P2×4）を修正**：
@@ -23,9 +23,9 @@
 
 - 2026-08-25、PWA化（`manifest.json`・`icon.svg`）と、ルート直下の手書き`sw.js`を追加した。SWはViteのビルド対象外であり、`npm run build`後も`dist/sw.js`を出力しない。アプリシェルはnetwork-firstでキャッシュするが、キャッシュ削除は`dusty-jukebox-`プレフィックスの旧バージョンだけに限定し、同一オリジンの他アプリを消さない。
 - `./stream/<fileId>`はSWが横取りする仮想URL。SWの登録scopeからstreamパスを導出するため、GitHub Pagesの`/dusty-jukebox/`配下とローカルのルート配信の両方で動く。SWは`event.clientId`で要求元タブを特定し、MessageChannelでそのタブだけへトークンを問い合わせる。トークンをメモリ・永続ストレージ・URLへ保存しない。
-- SWはRangeをそのままDrive APIへ転送し、`Authorization: Bearer`と`supportsAllDrives=true`を付与する。応答はストリーミングのまま返し、キャッシュしない。取得失敗・タイムアウトは401としてページへ返し、SW内で再ログインやリトライはしない。
-- `src/streamAuth.ts`はページ側の現在有効なトークンをSWへ応答するが、問い合わせからトークン更新・GISポップアップを発火しない。`src/playback.ts`は`audio.src`を設定する前にページ側で有効トークンを確認し、無い場合は認証が必要なことだけをUI層へ通知する。`src/playbackAuthGate.ts`は失効時の元のplay/next/previous操作を保留し、ユーザーが「認証を更新して続行」ボタンをクリックした時だけGIS更新を開始して、成功後にその操作を再開する。同時クリック・複数の失効検知は1回の更新へ合流する。
-- `src/serviceWorker.test.ts`は素の`sw.js`をVMハーネスで実行し、install/activate、トークンタイムアウト、Range転送・共有ドライブURL、scope導出をテストする。SWを変更した際は必ずこのテストを更新する。
+- SWはRangeをそのままDrive APIへ転送し、`Authorization: Bearer`と`supportsAllDrives=true`を付与する。応答はストリーミングのまま返し、キャッシュしない。Driveが401を返した場合は、`event.clientId`で特定した要求元タブだけへ`stream-token-rejected`メッセージを送る。`<audio>`のerrorイベントはHTTPステータスを公開しないため、このメッセージがキャッシュ済みトークン無効化の唯一の根拠になる。SW内で再ログインやリトライはしない。
+- `src/streamAuth.ts`はページ側の現在有効なトークンをSWへ応答するが、問い合わせからトークン更新・GISポップアップを発火しない。401通知を受けた`main.ts`は`DriveAuth.clearToken()`を呼び、現在の再生だけを`PlaybackAuthenticationGate`へ保留する。`src/playback.ts`は対応するmedia errorを認証待ちとして識別し、汎用の再生エラーで更新UIを上書きしない。`PlaybackAuthenticationGate`は失効時の元のplay/next/previous操作を保留し、ユーザーが「認証を更新して続行」ボタンをクリックした時だけGIS更新を開始して成功後に同じ曲（キューなら正しい次曲）を再開する。新しい再生が成功した時は古い保留操作と通知を破棄する。同時クリック・複数の失効検知は1回の更新へ合流する。
+- `src/serviceWorker.test.ts`は素の`sw.js`をVMハーネスで実行し、install/activate、トークンタイムアウト、Range転送・共有ドライブURL、scope導出、Drive 401の要求元タブ通知をテストする。SWを変更した際は必ずこのテストを更新する。
 - `npm run deploy`は`dist/app.js`をルートへコピーし、`scripts/update-sw-version.mjs`でSWキャッシュ名を自動インクリメントする。手動でSWバージョンを変えない。
 
 ## Playwright E2E
@@ -109,7 +109,8 @@
 3. ~~`rangeTokenizer.ts`用の実Drive `fetchRange`実装、`main.ts`のスキャンUIと`sheets.ts`の結線~~（2026-08-20実装済み、上記参照。「1回で最後まで処理する」素朴な実装であり、次の4は未着手のまま残っている）
 4. ~~`sync`タブ基盤（`startPageToken`/`rootFolderId`/`initialScanCompletedAt`管理）＋`index`/`sync`タブの初回自動作成~~（2026-08-20実装済み、上記参照）。~~索引upsertの重複行マージ（4.3節）~~（2026-08-20実装済み、上記参照）。~~初回スキャンのバッチ処理・中断再開~~（2026-08-20実装済み、下記参照）。~~`changes.list`による実際の差分同期の消費、ルート変更後の旧ルート配下行の削除（リコンサイル）~~（2026-08-21実装済み、下記参照）
 5. ~~Service Workerストリーミングプロキシ+単曲再生の土台~~（2026-08-25実装済み、PR #381。詳細は上記「PWA・Service Workerストリーミング」参照）
-   - **2026-08-31、再生開始前のトークン確保と明示的な認証更新UIを実装**：`PlaybackController`は有効トークンが無い場合に`audio.src`を変更せず、SW問い合わせも読み取り専用応答に変更した。これにより有効トークン時に不要なGIS要求が競合する問題を解消した。失効・失効間近の場合はplay/next/previousを保留し、ユーザーのクリックによる更新完了後に元の操作を再開する。従来のaudio error起点の自動認証・自動再試行は廃止し、2回目の非同期errorもUIへエラー表示するため、既知の積み残し①は解消した。
+   - **2026-08-31、再生開始前のトークン確保と明示的な認証更新UIを実装**：`PlaybackController`は有効トークンが無い場合に`audio.src`を変更せず、SW問い合わせも読み取り専用応答に変更した。これにより有効トークン時に不要なGIS要求が競合する問題を解消した。失効・失効間近の場合はplay/next/previousを保留し、ユーザーのクリックによる更新完了後に元の操作を再開する。従来のaudio error起点の自動認証・自動再試行は廃止した。
+   - **同日、Drive側の期限前401とキュー自動送りを補完**：SWがDriveの401を要求元タブへ通知し、ページ側がキャッシュ済みトークンを無効化して同じ明示更新UIへ誘導するようにした。曲終了時の自動nextも同じ`handleQueuePlayback()`を通るため、失効していた場合は正しい次曲を保留してクリック後に再開する。単曲再生は再生開始の成功後にだけキューを切り離し、成功した新しい再生は古い保留操作を破棄する。
    - **既知の積み残し（P2・マージブロッカーではない）**：`src/main.ts`の一時停止ボタン・`<audio controls>`のネイティブ一時停止のどちらも、押した後にステータス表示（「再生中」）を更新しない。次にこのあたりを触るPRで合わせて対応すること
 6. ~~絞り込み（artist/年/Genre）・除外・連続再生キューUI（次へ/前へ）~~（2026-08-25〜26実装済み、上記「索引ライブラリUI」参照）。アルバム単位の通し再生・保存済みプレイリスト・検索窓・Album/Composer等の追加絞り込みは引き続き未着手
 

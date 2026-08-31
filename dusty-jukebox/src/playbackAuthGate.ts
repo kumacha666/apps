@@ -14,6 +14,12 @@ export class PlaybackAuthenticationGate {
     return this.pendingOperation !== null;
   }
 
+  // A later successful playback makes an older deferred operation obsolete.
+  // Do not let a visible/stale continuation button overwrite the newer song.
+  clear(): void {
+    this.pendingOperation = null;
+  }
+
   continueFromUserGesture(): Promise<void> {
     if (this.refreshInFlight) return this.refreshInFlight;
 

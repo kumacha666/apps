@@ -47,6 +47,21 @@ test("初回制御前の再生もService Worker準備後にストリームへ到
   expect(mock.authFailures).toEqual([]);
 });
 
+test("Driveが期限前のトークンを拒否しても、明示的な認証継続で保留した再生を再開できる", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context, { rejectFirstStreamToken: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#play-file-id").fill("song-1");
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+
+  await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeVisible();
+  await expect.poll(() => mock.streamRequests.length).toBe(1);
+  await page.getByRole("button", { name: "認証を更新して続行" }).click();
+
+  await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeHidden();
+  await expect.poll(() => mock.streamRequests.length).toBeGreaterThan(1);
+  expect(mock.authFailures).toEqual([]);
+});
+
 test("スキャン中のカタログ読み込みは相互排他で拒否される", async ({ context, page }) => {
   await installGoogleMocks(context, { delaySheetsReads: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");

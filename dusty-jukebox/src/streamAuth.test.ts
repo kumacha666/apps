@@ -32,4 +32,14 @@ describe("registerStreamAuthResponder", () => {
 
     expect(messages).toEqual([{ token: null }]);
   });
+
+  test("SWが通知したDriveの401をページ側の無効化処理へ渡す", () => {
+    const { target, dispatch } = createServiceWorkerTarget();
+    const rejected: string[] = [];
+    registerStreamAuthResponder(target, () => "access-token", (fileId) => rejected.push(fileId));
+
+    dispatch({ data: { type: "dusty-jukebox:stream-token-rejected", fileId: "revoked-file" }, ports: [] } as unknown as MessageEvent);
+
+    expect(rejected).toEqual(["revoked-file"]);
+  });
 });

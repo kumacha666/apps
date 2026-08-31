@@ -1,5 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { PlaybackQueue } from "./queue";
+import { PlaybackAuthenticationRequiredError } from "./playback";
+import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { parseIndexRows, type Song } from "./catalog";
 import { INDEX_SHEET_HEADER } from "./sheets";
 const song = (fileId: string): Song => ({ fileId, parentId: "p", title: fileId, artist: "", album: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "" });
@@ -86,7 +88,7 @@ describe("PlaybackQueue", () => {
     await newMove;
 
     resolveOldPlayback?.();
-    await expect(oldMove).resolves.toBeUndefined();
+    await expect(oldMove).resolves.toBe(false);
   });
 
   test("重複を除いたカタログなら次曲へ進める", async () => {
@@ -95,5 +97,60 @@ describe("PlaybackQueue", () => {
     queue.setList(songs);
     await queue.next(); await queue.next();
     expect(played).toEqual(["a", "b"]);
+  });
+
+  test("曲を開始しなかった移動はfalseを返し、UIが再生中と誤表示しないための情報を渡す", async () => {
+    const audio = new Audio();
+    const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a")]);
+
+    expect(await queue.previous()).toBe(false);
+    expect(await queue.next()).toBe(true);
+    expect(await queue.next()).toBe(false);
+  });
+
+  test("endedの自動送りを外側の認証ゲート経由ハンドラへ委譲できる", async () => {
+    const audio = new Audio();
+    const onEnded = vi.fn();
+    const queue = new PlaybackQueue({ play: async () => {} }, audio, () => {}, onEnded);
+    queue.setList([song("a"), song("b")]);
+    await queue.next();
+
+    audio.listener?.();
+
+    expect(onEnded).toHaveBeenCalledTimes(1);
+  });
+
+  test("自動送り中の認証待ちは次曲を保留し、明示的な継続後に同じ次曲を再開する", async () => {
+    const audio = new Audio();
+    const played: string[] = [];
+    const gate = new PlaybackAuthenticationGate(async () => {});
+    const player = {
+      play: vi.fn(async (fileId: string) => {
+        played.push(fileId);
+        if (fileId === "b" && played.filter((id) => id === "b").length === 1) {
+          throw new PlaybackAuthenticationRequiredError();
+        }
+      }),
+    };
+    let queue!: PlaybackQueue;
+    const advance = async () => {
+      try {
+        await queue.next();
+      } catch (error) {
+        if (error instanceof PlaybackAuthenticationRequiredError) gate.defer(advance);
+        else throw error;
+      }
+    };
+    queue = new PlaybackQueue(player, audio, () => {}, () => void advance());
+    queue.setList([song("a"), song("b")]);
+    await queue.next();
+
+    audio.listener?.();
+    await vi.waitFor(() => expect(gate.hasPendingOperation()).toBe(true));
+    await gate.continueFromUserGesture();
+
+    expect(played).toEqual(["a", "b", "b"]);
+    expect(queue.currentPlayingFileId()).toBe("b");
   });
 });

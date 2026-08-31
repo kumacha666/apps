@@ -52,6 +52,13 @@ async function proxyStream(request, fileId, clientId) {
   const range = request.headers.get("Range");
   if (range) headers.Range = range;
   const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers });
+  // HTMLMediaElement#error does not reveal HTTP status. Tell only the page that
+  // issued this request about a rejected bearer token so it can clear its cache
+  // and offer the user-gesture-only continuation flow.
+  if (response.status === 401 && clientId) {
+    const client = await self.clients.get(clientId);
+    client?.postMessage({ type: "dusty-jukebox:stream-token-rejected", fileId });
+  }
   const responseHeaders = new Headers();
   for (const header of ["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type"]) {
     const value = response.headers.get(header);

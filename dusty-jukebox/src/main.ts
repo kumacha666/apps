@@ -88,6 +88,7 @@ const auth = new DriveAuth();
 let playback: PlaybackController | null = null;
 let queue: PlaybackQueue | null = null;
 let playbackAuthGate: PlaybackAuthenticationGate | null = null;
+let activePlaybackContinuation: { fileId: string; resume: () => Promise<boolean> } | null = null;
 const catalogSession = new CatalogSession<Song>();
 let serviceWorkerReady: Promise<void> | null = null;
 const catalogOperationGate = new CatalogOperationGate();
@@ -266,18 +267,38 @@ async function handlePlay(): Promise<void> {
   }
   await handlePlaybackAction(async () => {
     setStatus("Service Worker経由で再生を開始しています...");
-    if (serviceWorkerReady) await serviceWorkerReady;
-    queue?.notifyExternalPlaybackStarted();
-    await currentPlayback.play(fileId);
-    setStatus("再生中");
+    return startExternalPlayback(fileId, currentPlayback);
   });
 }
 
-async function handleQueuePlayback(action: () => Promise<void> | undefined): Promise<void> {
+async function startExternalPlayback(fileId: string, currentPlayback: PlaybackController): Promise<boolean> {
+  if (serviceWorkerReady) await serviceWorkerReady;
+  await currentPlayback.play(fileId);
+  // Do not detach the existing queue until the new file has really reached the
+  // playback controller. A locally-expired token must leave the old queue song
+  // eligible to advance when it ends.
+  queue?.notifyExternalPlaybackStarted();
+  activePlaybackContinuation = {
+    fileId,
+    resume: () => startExternalPlayback(fileId, currentPlayback),
+  };
+  return true;
+}
+
+async function handleQueuePlayback(action: () => Promise<boolean> | undefined): Promise<void> {
   await handlePlaybackAction(async () => {
     if (serviceWorkerReady) await serviceWorkerReady;
-    await action();
-    setStatus("再生中");
+    const started = await action();
+    const fileId = queue?.currentPlayingFileId();
+    if (!started || !fileId || !playback) return false;
+    activePlaybackContinuation = {
+      fileId,
+      // PlaybackQueue already committed this current file before the stream
+      // request can receive its 401, so retry the same track rather than moving
+      // the queue a second time.
+      resume: async () => { await playback?.play(fileId); return true; },
+    };
+    return true;
   });
 }
 
@@ -285,9 +306,16 @@ function setPlaybackAuthNotice(visible: boolean): void {
   el<HTMLParagraphElement>("playback-auth-notice").hidden = !visible;
 }
 
-async function handlePlaybackAction(action: () => Promise<void>): Promise<void> {
+async function handlePlaybackAction(action: () => Promise<boolean>): Promise<void> {
   try {
-    await action();
+    const started = await action();
+    if (started) {
+      // A newer real playback supersedes any deferred operation. This also
+      // removes its notice, so a later click cannot restore an older song.
+      playbackAuthGate?.clear();
+      setPlaybackAuthNotice(false);
+      setStatus("再生中");
+    }
   } catch (err) {
     if (err instanceof PlaybackAuthenticationRequiredError && playbackAuthGate) {
       playbackAuthGate.defer(() => handlePlaybackAction(action));
@@ -297,6 +325,17 @@ async function handlePlaybackAction(action: () => Promise<void>): Promise<void> 
     }
     setStatus(err instanceof Error ? err.message : String(err), true);
   }
+}
+
+function handleStreamTokenRejected(fileId: string): void {
+  // A Drive-side revocation can happen before expiresAt. Clear it immediately
+  // even if this is a stale media error, preventing the next action from
+  // repeatedly sending the rejected bearer token.
+  auth.clearToken();
+  if (!playback?.markStreamTokenRejected(fileId) || activePlaybackContinuation?.fileId !== fileId || !playbackAuthGate) return;
+  playbackAuthGate.defer(() => handlePlaybackAction(activePlaybackContinuation!.resume));
+  setPlaybackAuthNotice(true);
+  setStatus("認証の更新が必要です。下のボタンをクリックして続行してください。", true);
 }
 
 async function continuePlaybackAfterAuthentication(): Promise<void> {
@@ -898,7 +937,7 @@ function init(): void {
   if (!CLIENT_ID) return;
 
   if ("serviceWorker" in navigator) {
-    registerStreamAuthResponder(navigator.serviceWorker, () => auth.getAccessToken());
+    registerStreamAuthResponder(navigator.serviceWorker, () => auth.getAccessToken(), handleStreamTokenRejected);
     serviceWorkerReady = (async () => {
       await navigator.serviceWorker.register("./sw.js");
       await navigator.serviceWorker.ready;
@@ -916,12 +955,24 @@ function init(): void {
     playback = new PlaybackController(
       el<HTMLAudioElement>("audio-player"),
       () => auth.getAccessToken(),
-      (error) => setStatus(error instanceof Error ? error.message : "再生に失敗しました", true)
+      (error) => {
+        // The SW message has already converted a confirmed Drive 401 into the
+        // explicit continuation UI. Do not overwrite it with media's generic
+        // error event, which carries no HTTP status.
+        if (!(error instanceof PlaybackAuthenticationRequiredError)) {
+          setStatus(error instanceof Error ? error.message : "再生に失敗しました", true);
+        }
+      }
     );
     playbackAuthGate = new PlaybackAuthenticationGate(async () => {
       await auth.requestAccessToken({ prompt: "consent" });
     });
-    queue = new PlaybackQueue(playback, el<HTMLAudioElement>("audio-player"), (error) => setStatus(error instanceof Error ? error.message : String(error), true));
+    queue = new PlaybackQueue(
+      playback,
+      el<HTMLAudioElement>("audio-player"),
+      (error) => setStatus(error instanceof Error ? error.message : String(error), true),
+      () => void handleQueuePlayback(() => queue?.next())
+    );
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());

@@ -10,6 +10,8 @@ export type MockOptions = {
   initialScanCompleted?: boolean;
   /** Hold the SW script response until the test explicitly releases it. */
   delayServiceWorkerActivation?: boolean;
+  /** Reject the first otherwise-authenticated media request as a revoked token. */
+  rejectFirstStreamToken?: boolean;
 };
 
 type SheetWrite = {
@@ -34,6 +36,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const syncRows = [["startPageToken", "page-1"], ["rootFolderId", "root"], ["initialScanCompletedAt", options.initialScanCompleted === false ? "" : "2026-01-01T00:00:00Z"], ["scanRunId", ""], ["shortcutRootFolderIds", ""]];
   const authFailures: string[] = [];
   const streamRequests: string[] = [];
+  let remainingStreamTokenRejections = options.rejectFirstStreamToken ? 1 : 0;
   const sheetsWrites: SheetWrite[] = [];
   let releaseServiceWorker = () => {};
   const serviceWorkerGate = options.delayServiceWorkerActivation
@@ -62,7 +65,14 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     const url = new URL(route.request().url());
     if (url.pathname.endsWith("/startPageToken")) return json(route, { startPageToken: "page-1" });
     if (url.pathname.endsWith("/changes")) return json(route, { changes: [], newStartPageToken: "page-2" });
-    if (url.searchParams.get("alt") === "media") { streamRequests.push(route.request().url()); return route.fulfill({ status: 206, contentType: "audio/mpeg", body: "", headers: { "Accept-Ranges": "bytes" } }); }
+    if (url.searchParams.get("alt") === "media") {
+      streamRequests.push(route.request().url());
+      if (remainingStreamTokenRejections > 0) {
+        remainingStreamTokenRejections -= 1;
+        return route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: { message: "revoked token" } }) });
+      }
+      return route.fulfill({ status: 206, contentType: "audio/mpeg", body: "", headers: { "Accept-Ranges": "bytes" } });
+    }
     if (url.pathname.endsWith("/files")) return json(route, { files: [{ id: "song-1", name: "first.mp3", mimeType: "audio/mpeg", parents: ["root"], modifiedTime: "2026-01-01T00:00:00Z" }] });
     const id = url.pathname.split("/").pop();
     if (id === "root") return json(route, { id, name: "Root", mimeType: "application/vnd.google-apps.folder", parents: [], capabilities: { canEdit: true } });

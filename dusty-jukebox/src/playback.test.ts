@@ -94,4 +94,38 @@ describe("PlaybackController", () => {
     expect(errors).toHaveLength(1);
     expect(tokenChecks).toBe(1);
   });
+
+  test("SWから現在のストリームの401が通知された後のaudio errorは認証更新待ちとして伝える", async () => {
+    const audio = new FakeAudio();
+    const errors: unknown[] = [];
+    const playback = new PlaybackController(audio, () => "valid-token", (error) => errors.push(error));
+
+    await playback.play("A");
+    expect(playback.markStreamTokenRejected("A")).toBe(true);
+    audio.emitError();
+
+    expect(errors[0]).toBeInstanceOf(PlaybackAuthenticationRequiredError);
+  });
+
+  test("別の曲に届いた古い401は現在の再生を認証待ちにしない", async () => {
+    const audio = new FakeAudio();
+    const errors: unknown[] = [];
+    const playback = new PlaybackController(audio, () => "valid-token", (error) => errors.push(error));
+
+    await playback.play("A");
+    expect(playback.markStreamTokenRejected("B")).toBe(false);
+    audio.emitError();
+
+    expect(errors[0]).not.toBeInstanceOf(PlaybackAuthenticationRequiredError);
+  });
+
+  test("一時停止後に届いた古い401は認証継続を要求しない", async () => {
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    playback.pause();
+
+    expect(playback.markStreamTokenRejected("A")).toBe(false);
+  });
 });
