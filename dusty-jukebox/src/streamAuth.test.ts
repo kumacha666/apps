@@ -10,7 +10,7 @@ function createServiceWorkerTarget(): { target: ServiceWorkerMessageTarget; disp
 }
 
 describe("registerStreamAuthResponder", () => {
-  test("SWからのトークン要求へensureAccessToken()の結果を返す", async () => {
+  test("SWからのトークン要求へ、更新を発火しない現在のトークンを返す", async () => {
     const { target, dispatch } = createServiceWorkerTarget();
     const messages: unknown[] = [];
     registerStreamAuthResponder(target, async () => "access-token");
@@ -21,10 +21,10 @@ describe("registerStreamAuthResponder", () => {
     expect(messages).toEqual([{ token: "access-token" }]);
   });
 
-  test("未ログイン等で取得できない時はnullを返す", async () => {
+  test("有効なトークンが無い時はnullを返し、認証更新を試みない", async () => {
     const { target, dispatch } = createServiceWorkerTarget();
     const messages: unknown[] = [];
-    registerStreamAuthResponder(target, async () => { throw new Error("not signed in"); });
+    registerStreamAuthResponder(target, () => null);
 
     dispatch({ data: { type: "dusty-jukebox:get-token" }, ports: [{ postMessage: (message: unknown) => messages.push(message) }] } as unknown as MessageEvent);
     await Promise.resolve();

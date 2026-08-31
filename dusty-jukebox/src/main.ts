@@ -8,7 +8,8 @@
 // （runFullScan、フォルダ全体の再帰走査＋バッチ処理・中断再開）を行う。完了後
 // （hasCompletedInitialScan=true）はrunDifferentialSync（changes.list消費）に切り替わる。
 import { AuthError, DriveAuth } from "./auth";
-import { PlaybackController } from "./playback";
+import { PlaybackAuthenticationRequiredError, PlaybackController } from "./playback";
+import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { parseIndexRows, filterSongs, sortSongs, type Song } from "./catalog";
 import { CatalogOperationGate } from "./catalogOperationGate";
 import { CatalogSession } from "./catalogSession";
@@ -86,6 +87,7 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 const auth = new DriveAuth();
 let playback: PlaybackController | null = null;
 let queue: PlaybackQueue | null = null;
+let playbackAuthGate: PlaybackAuthenticationGate | null = null;
 const catalogSession = new CatalogSession<Song>();
 let serviceWorkerReady: Promise<void> | null = null;
 const catalogOperationGate = new CatalogOperationGate();
@@ -132,6 +134,7 @@ function render(): void {
       <button id="play-btn" type="button" disabled>この曲を再生</button>
       <button id="pause-btn" type="button" disabled>一時停止</button>
       <audio id="audio-player" controls></audio>
+      <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
       <section class="catalog">
         <h2>ライブラリ</h2>
         <button id="load-catalog-btn" type="button" disabled>索引から曲一覧を読み込む</button>
@@ -256,27 +259,58 @@ async function handleLogin(): Promise<void> {
 
 async function handlePlay(): Promise<void> {
   const fileId = el<HTMLInputElement>("play-file-id").value.trim();
-  if (!fileId || !playback) {
+  const currentPlayback = playback;
+  if (!fileId || !currentPlayback) {
     setStatus("再生するGoogle DriveファイルIDを入力してください", true);
     return;
   }
-  try {
+  await handlePlaybackAction(async () => {
     setStatus("Service Worker経由で再生を開始しています...");
     if (serviceWorkerReady) await serviceWorkerReady;
     queue?.notifyExternalPlaybackStarted();
-    await playback.play(fileId);
+    await currentPlayback.play(fileId);
     setStatus("再生中");
+  });
+}
+
+async function handleQueuePlayback(action: () => Promise<void> | undefined): Promise<void> {
+  await handlePlaybackAction(async () => {
+    if (serviceWorkerReady) await serviceWorkerReady;
+    await action();
+    setStatus("再生中");
+  });
+}
+
+function setPlaybackAuthNotice(visible: boolean): void {
+  el<HTMLParagraphElement>("playback-auth-notice").hidden = !visible;
+}
+
+async function handlePlaybackAction(action: () => Promise<void>): Promise<void> {
+  try {
+    await action();
   } catch (err) {
+    if (err instanceof PlaybackAuthenticationRequiredError && playbackAuthGate) {
+      playbackAuthGate.defer(() => handlePlaybackAction(action));
+      setPlaybackAuthNotice(true);
+      setStatus("認証の更新が必要です。下のボタンをクリックして続行してください。", true);
+      return;
+    }
     setStatus(err instanceof Error ? err.message : String(err), true);
   }
 }
 
-async function handleQueuePlayback(action: () => Promise<void> | undefined): Promise<void> {
+async function continuePlaybackAfterAuthentication(): Promise<void> {
+  const refreshButton = el<HTMLButtonElement>("playback-auth-refresh-btn");
+  if (!playbackAuthGate?.hasPendingOperation()) return;
+  refreshButton.disabled = true;
   try {
-    if (serviceWorkerReady) await serviceWorkerReady;
-    await action();
+    setStatus("認証を更新中...");
+    await playbackAuthGate.continueFromUserGesture();
   } catch (err) {
-    setStatus(err instanceof Error ? err.message : String(err), true);
+    setStatus(err instanceof Error ? `認証の更新に失敗しました: ${err.message}` : "認証の更新に失敗しました", true);
+  } finally {
+    refreshButton.disabled = false;
+    if (!playbackAuthGate.hasPendingOperation()) setPlaybackAuthNotice(false);
   }
 }
 
@@ -864,7 +898,7 @@ function init(): void {
   if (!CLIENT_ID) return;
 
   if ("serviceWorker" in navigator) {
-    registerStreamAuthResponder(navigator.serviceWorker, () => auth.ensureAccessToken());
+    registerStreamAuthResponder(navigator.serviceWorker, () => auth.getAccessToken());
     serviceWorkerReady = (async () => {
       await navigator.serviceWorker.register("./sw.js");
       await navigator.serviceWorker.ready;
@@ -881,17 +915,18 @@ function init(): void {
     }
     playback = new PlaybackController(
       el<HTMLAudioElement>("audio-player"),
-      async () => {
-        auth.clearToken();
-        return auth.ensureAccessToken();
-      },
-      (error) => setStatus(error instanceof Error ? `再生の再試行に失敗しました: ${error.message}` : "再生の再試行に失敗しました", true)
+      () => auth.getAccessToken(),
+      (error) => setStatus(error instanceof Error ? error.message : "再生に失敗しました", true)
     );
+    playbackAuthGate = new PlaybackAuthenticationGate(async () => {
+      await auth.requestAccessToken({ prompt: "consent" });
+    });
     queue = new PlaybackQueue(playback, el<HTMLAudioElement>("audio-player"), (error) => setStatus(error instanceof Error ? error.message : String(error), true));
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
     el<HTMLButtonElement>("pause-btn").addEventListener("click", () => playback?.pause());
+    el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
     el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
     el<HTMLButtonElement>("create-queue-btn").addEventListener("click", createQueueFromFilters);
     el<HTMLButtonElement>("next-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.next()));

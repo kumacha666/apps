@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { PlaybackController, streamUrl, type AudioElementLike } from "./playback";
+import { PlaybackAuthenticationRequiredError, PlaybackController, streamUrl, type AudioElementLike } from "./playback";
 
 class FakeAudio implements AudioElementLike {
   src = "";
@@ -31,11 +31,6 @@ class FakeAudio implements AudioElementLike {
   }
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  return { promise: new Promise((nextResolve) => { resolve = nextResolve; }), resolve };
-}
-
 describe("streamUrl", () => {
   test("アプリスコープ配下の相対ストリームURLを組み立て、fileIdをエンコードする", () => {
     expect(streamUrl("id/with ? characters")).toBe("./stream/id%2Fwith%20%3F%20characters");
@@ -43,68 +38,60 @@ describe("streamUrl", () => {
 });
 
 describe("PlaybackController", () => {
-  test("再試行中に別曲が選ばれたら古い曲を再開しない", async () => {
+  test("有効なトークンを確認してからsrcを設定し、すぐに再生を開始する", async () => {
     const audio = new FakeAudio();
-    const token = deferred<string>();
-    const playback = new PlaybackController(audio, () => token.promise);
+    const tokenChecks: string[] = [];
+    const playback = new PlaybackController(audio, () => {
+      tokenChecks.push("checked");
+      expect(audio.src).toBe("");
+      return "valid-token";
+    });
 
     await playback.play("A");
-    audio.currentTime = 12;
-    audio.emitError();
-    await Promise.resolve();
-    await playback.play("B");
-    token.resolve("new-token");
-    await Promise.resolve();
-    await Promise.resolve();
 
-    expect(audio.src).toBe(streamUrl("B"));
-    expect(audio.playCount).toBe(2);
+    expect(tokenChecks).toEqual(["checked"]);
+    expect(audio.src).toBe(streamUrl("A"));
+    expect(audio.playCount).toBe(1);
   });
 
-  test("再試行中に停止されたら再生を再開しない", async () => {
+  test("有効なトークンが無い時はsrcを設定せず、認証が必要であることを通知する", async () => {
     const audio = new FakeAudio();
-    const token = deferred<string>();
-    const playback = new PlaybackController(audio, () => token.promise);
+    const playback = new PlaybackController(audio, () => null);
 
-    await playback.play("A");
-    audio.emitError();
-    await Promise.resolve();
+    await expect(playback.play("A")).rejects.toBeInstanceOf(PlaybackAuthenticationRequiredError);
+    expect(audio.src).toBe("");
+    expect(audio.playCount).toBe(0);
+  });
+
+  test("トークン確認中に停止されたら古い要求はsrcを変更しない", async () => {
+    const audio = new FakeAudio();
+    let resolveToken!: (token: string) => void;
+    const token = new Promise<string>((resolve) => { resolveToken = resolve; });
+    const playback = new PlaybackController(audio, () => token);
+
+    // play()はトークン確認中に待機するので、別タスクとして開始する。
+    const pendingPlay = playback.play("B");
     playback.pause();
-    token.resolve("new-token");
-    await Promise.resolve();
-    await Promise.resolve();
+    resolveToken("valid-token");
+    await pendingPlay;
 
-    expect(audio.pauseCount).toBe(1);
-    expect(audio.playCount).toBe(1);
+    expect(audio.src).toBe("");
+    expect(audio.playCount).toBe(0);
   });
 
-  test("ネイティブコントロールで停止されたら再生を再開しない", async () => {
-    const audio = new FakeAudio();
-    const token = deferred<string>();
-    const playback = new PlaybackController(audio, () => token.promise);
-
-    await playback.play("A");
-    audio.emitError();
-    await Promise.resolve();
-    audio.emitPause();
-    token.resolve("new-token");
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(audio.playCount).toBe(1);
-  });
-
-  test("再試行のトークン更新に失敗したらUI用コールバックへ伝える", async () => {
+  test("audio errorは認証更新を自動実行せずUI用コールバックへ伝える", async () => {
     const audio = new FakeAudio();
     const errors: unknown[] = [];
-    const playback = new PlaybackController(audio, async () => { throw new Error("reauth failed"); }, (error) => errors.push(error));
+    let tokenChecks = 0;
+    const playback = new PlaybackController(audio, () => {
+      tokenChecks += 1;
+      return "valid-token";
+    }, (error) => errors.push(error));
 
     await playback.play("A");
     audio.emitError();
-    await Promise.resolve();
-    await Promise.resolve();
 
     expect(errors).toHaveLength(1);
-    expect((errors[0] as Error).message).toBe("reauth failed");
+    expect(tokenChecks).toBe(1);
   });
 });
