@@ -30,4 +30,13 @@ describe("PlaybackContinuationRegistry", () => {
 
     expect(registry.acceptTokenRejection("old-request", "song-a", "token-a")).toBeNull();
   });
+
+  test("ページ側にトークンが無い要求も現在の継続操作へ結び付ける", () => {
+    const registry = new PlaybackContinuationRegistry();
+    const continuation = registry.register({ fileId: "song-a", generation: 4, resume: async () => true });
+
+    registry.recordTokenRequest("missing-token", "song-a", 4, null);
+
+    expect(registry.acceptTokenRejection("missing-token", "song-a", null)).toBe(continuation);
+  });
 });
