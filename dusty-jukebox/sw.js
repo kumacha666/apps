@@ -40,7 +40,7 @@ async function requestToken(clientId, fileId, playbackGeneration) {
     channel.port1.onmessage = (event) => {
       clearTimeout(timeout);
       channel.port1.close();
-      resolve(typeof event.data?.token === "string" && event.data.token ? { token: event.data.token, requestId } : null);
+      resolve({ token: typeof event.data?.token === "string" && event.data.token ? event.data.token : null, requestId });
     };
     const requestId = `${++nextTokenRequestId}`;
     client.postMessage({ type: "dusty-jukebox:get-token", fileId, requestId, playbackGeneration }, [channel.port2]);
@@ -55,7 +55,16 @@ async function proxyStream(request, fileId, clientId) {
   const playbackGeneration = playbackGenerationParam === null ? null : Number(playbackGenerationParam);
   const tokenRequest = await requestToken(clientId, fileId, playbackGeneration);
   const token = tokenRequest?.token;
-  if (!token) return unauthorizedResponse();
+  if (!token) {
+    // A missing page-side token is also an authentication failure.  Report it
+    // with the request id so the page can offer the same user-gesture-only
+    // continuation as it does for a Drive-rejected bearer token.
+    if (clientId && tokenRequest) {
+      const client = await self.clients.get(clientId);
+      client?.postMessage({ type: "dusty-jukebox:stream-token-rejected", fileId, requestId: tokenRequest.requestId });
+    }
+    return unauthorizedResponse();
+  }
 
   const headers = { Authorization: `Bearer ${token}` };
   const range = request.headers.get("Range");
