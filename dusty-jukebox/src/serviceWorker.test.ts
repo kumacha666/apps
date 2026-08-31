@@ -132,6 +132,23 @@ describe("service worker", () => {
     expect((await response).status).toBe(401);
   });
 
+  test("ページ側にトークンが無いストリームも要求元タブへ拒否を通知する", async () => {
+    const harness = createHarness();
+    const messages: unknown[] = [];
+    harness.clients.set("tab-1", {
+      postMessage: (message, ports = []) => {
+        messages.push(message);
+        ports[0]?.postMessage({ token: null });
+      },
+    });
+    harness.run();
+
+    const response = await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/missing-token");
+
+    expect(response.status).toBe(401);
+    expect(messages).toContainEqual({ type: "dusty-jukebox:stream-token-rejected", fileId: "missing-token", requestId: "1" });
+  });
+
   test("RangeとトークンをDriveへ転送し、共有ドライブ対応URLで部分レスポンスを返す", async () => {
     const harness = createHarness();
     harness.clients.set("tab-1", {
