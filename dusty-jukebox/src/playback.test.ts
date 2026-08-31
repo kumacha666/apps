@@ -129,6 +129,21 @@ describe("PlaybackController", () => {
     expect(playback.markStreamTokenRejected("A", playback.currentGeneration())).toBeNull();
   });
 
+  test("ネイティブ操作で一時停止して再開しても、同じストリーム401を認証継続へ結び付ける", async () => {
+    const audio = new FakeAudio();
+    const errors: unknown[] = [];
+    const playback = new PlaybackController(audio, () => "valid-token", (error) => errors.push(error));
+
+    await playback.play("A");
+    const streamGeneration = playback.currentStreamGeneration();
+    audio.emitPause(); // <audio controls> による一時停止（PlaybackController.pause()ではない）
+
+    expect(streamGeneration).not.toBeNull();
+    expect(playback.markStreamTokenRejected("A", streamGeneration!)).toBe(0);
+    audio.emitError();
+    expect(errors[0]).toBeInstanceOf(PlaybackAuthenticationRequiredError);
+  });
+
   test("認証更新後の再生は失効直前の位置から再開する", async () => {
     const audio = new FakeAudio();
     const playback = new PlaybackController(audio, () => "valid-token");
