@@ -48,7 +48,11 @@ async function requestToken(clientId, fileId, playbackGeneration) {
 }
 
 async function proxyStream(request, fileId, clientId) {
-  const playbackGeneration = request.url ? new URL(request.url).searchParams.get("playbackGeneration") : null;
+  const playbackGenerationParam = request.url ? new URL(request.url).searchParams.get("playbackGeneration") : null;
+  // URLSearchParams always yields a string; the page side validates this field
+  // with Number.isInteger(), so a numeric string must be converted here or
+  // every get-token message is silently dropped and all playback 401s.
+  const playbackGeneration = playbackGenerationParam === null ? null : Number(playbackGenerationParam);
   const tokenRequest = await requestToken(clientId, fileId, playbackGeneration);
   const token = tokenRequest?.token;
   if (!token) return unauthorizedResponse();
