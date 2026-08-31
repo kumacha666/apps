@@ -40,13 +40,15 @@
 記録する項目：
 - remote HEAD（確認時点のSHA）
 - 対象アプリのAGENTS.mdおよびタスクで定義された、適用可能なtest/build/E2E結果（passed・failed・not runのいずれか。具体的なコマンド・項目はアプリ固有AGENTS.mdを参照）
+- E2E対応アプリ（package.jsonのscriptsに`test:e2e`が存在するアプリ）では、Chromiumの有無（available・unavailable）、OS依存ライブラリの状態（available・unavailable。unavailableの場合は具体的な不足ライブラリまたはエラー）、および`npm run test:e2e`（またはビルド組み込みのE2Eゲート）の結果（passed・failed・not run。実行コマンド・exit code・主要なエラーを含む）
 - git pushの結果（success・unavailable・authentication failed）
 - remote branchへの反映に実際に使えた経路
 - 作業完了時点のfinal remote HEAD（SHA）
 
 ## 8. E2E（実ブラウザ）テスト
-- 実ブラウザでのE2E実行環境が保証されているとは限らない。実行可能なら実行し、結果を記録する。利用できない場合は「not run」として明記し、実行できなかったことを理由に対応を止めない（コードは実装し、実行確認は別環境に委ねる）。
-- CSS/DOM構造/アニメーションに関わる変更を含むタスクで、対象アプリにPlaywright E2Eがある場合は、既存スイートを実行するだけでなく、境界ケース（要素の重なりが起きやすい状態等）を実際にレンダリングして確認する検証を追加する。E2Eが無いアプリで見た目に関わる変更をした場合は、その旨をPR本文に明記する。
+- package.jsonのscriptsに`test:e2e`が存在するアプリを「E2E対応アプリ」とする。E2E対応アプリでは、Codex Cloud上で`npm run test:e2e`（またはビルド組み込みのE2Eゲート）を原則実行し、結果をpassed・failed・not runのいずれかで記録する。
+- 「not run」は例外であり、コード側の問題ではなくCodex Cloud Environment側の障害で実行できない場合にのみ用いる。ChromiumまたはOS依存ライブラリ等の不足を、具体的なエラー内容・exit codeとともに記録する。E2Eがfailedの場合はfailedとして記録し、not runに置き換えない。
+- CSS/DOM構造/アニメーションに関わる変更を含むタスクで、対象アプリがE2E対応アプリの場合は、既存スイートを実行するだけでなく、境界ケース（要素の重なりが起きやすい状態等）を実際にレンダリングして確認する検証を追加する。E2E非対応アプリで見た目に関わる変更をした場合は、その旨をPR本文に明記する。
 
 ## 9. PR運用
 - ブランチ名はcodex/<topic>。
