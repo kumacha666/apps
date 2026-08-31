@@ -10,15 +10,11 @@ apps/AGENTS.md（共通Execution Contract）を前提とし、本ファイルは
 - デプロイ相当：npm run deploy（ビルド→dist/コピー→SWバージョン更新。実クライアントID（VITE_GOOGLE_CLIENT_ID）が.envに無い環境で実行すると、公開中のビルド成果物を劣化ビルドで上書きするため、.envが無い・ダミーの環境ではnpm run deployを実行しない）
 
 ## Environment evidence（本アプリでの具体項目）
-apps/AGENTS.md「7. 環境依存能力（preflight）」の「適用可能なtest/build/E2E結果」は、本アプリでは以下を指す：
-- npm testの結果（passed・failed・not runのいずれか）
-- npm run buildの結果（passed・failed・not runのいずれか）
-- Chromiumの有無（available・unavailable）
-- npm run test:e2e（またはビルド組み込みのE2Eゲート）の結果（passed・failed・not runのいずれか）
+apps/AGENTS.md「7. 環境依存能力（preflight）」および「8. E2E（実ブラウザ）テスト」を参照する。本アプリはpackage.jsonに`test:e2e`を持つE2E対応アプリであり、共通ルールで定めるChromium・OS依存ライブラリ・E2E結果のEnvironment evidenceを重複なく適用する。加えて、`npm test`および`npm run build`の結果を記録する。
 
 ## Chromium / Playwright
-- このサンドボックスで実Chromiumが利用できるとは限らない。npm run test:e2e（またはビルド組み込みのE2Eゲート）が実行できない場合は、その旨と原因（例：Chromiumインストール不可）を最終報告に明記し、「not run」として扱う。実行できなかったことを理由にコード変更自体を止めない。
-- 実ブラウザでの最終検証はClaude Code側の環境で別途行われる前提。E2Eのコード（e2e/配下）は書くが、自己の実行成功をもって「E2E確認済み」と報告しない。
+- Codex Cloud上で`npm run test:e2e`を実行し、結果を報告してよい。実行不能時のnot runの扱いと記録内容は、apps/AGENTS.md「8. E2E（実ブラウザ）テスト」に従う。
+- apps/CLAUDE.mdの既存の独立検証方針により、Claude Codeが別途独立して再検証する場合がある。
 
 ## モック境界（e2e/google-mocks.ts）
 - Google Identity Services（GIS）、Drive API、Sheets APIはモックする。Service Worker自体（sw.js）は本物のブラウザ機構をそのまま使い、無効化・モック化しない。
