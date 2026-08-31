@@ -24,7 +24,9 @@ function unauthorizedResponse() {
   return new Response("Unauthorized", { status: 401, statusText: "Unauthorized" });
 }
 
-async function requestToken(clientId) {
+let nextTokenRequestId = 0;
+
+async function requestToken(clientId, fileId, playbackGeneration) {
   if (!clientId) return null;
   const client = await self.clients.get(clientId);
   if (!client) return null;
@@ -38,20 +40,43 @@ async function requestToken(clientId) {
     channel.port1.onmessage = (event) => {
       clearTimeout(timeout);
       channel.port1.close();
-      resolve(typeof event.data?.token === "string" && event.data.token ? event.data.token : null);
+      resolve({ token: typeof event.data?.token === "string" && event.data.token ? event.data.token : null, requestId });
     };
-    client.postMessage({ type: "dusty-jukebox:get-token" }, [channel.port2]);
+    const requestId = `${++nextTokenRequestId}`;
+    client.postMessage({ type: "dusty-jukebox:get-token", fileId, requestId, playbackGeneration }, [channel.port2]);
   });
 }
 
 async function proxyStream(request, fileId, clientId) {
-  const token = await requestToken(clientId);
-  if (!token) return unauthorizedResponse();
+  const playbackGenerationParam = request.url ? new URL(request.url).searchParams.get("playbackGeneration") : null;
+  // URLSearchParams always yields a string; the page side validates this field
+  // with Number.isInteger(), so a numeric string must be converted here or
+  // every get-token message is silently dropped and all playback 401s.
+  const playbackGeneration = playbackGenerationParam === null ? null : Number(playbackGenerationParam);
+  const tokenRequest = await requestToken(clientId, fileId, playbackGeneration);
+  const token = tokenRequest?.token;
+  if (!token) {
+    // A missing page-side token is also an authentication failure.  Report it
+    // with the request id so the page can offer the same user-gesture-only
+    // continuation as it does for a Drive-rejected bearer token.
+    if (clientId && tokenRequest) {
+      const client = await self.clients.get(clientId);
+      client?.postMessage({ type: "dusty-jukebox:stream-token-rejected", fileId, requestId: tokenRequest.requestId });
+    }
+    return unauthorizedResponse();
+  }
 
   const headers = { Authorization: `Bearer ${token}` };
   const range = request.headers.get("Range");
   if (range) headers.Range = range;
   const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers });
+  // HTMLMediaElement#error does not reveal HTTP status. Tell only the page that
+  // issued this request about a rejected bearer token so it can clear its cache
+  // and offer the user-gesture-only continuation flow.
+  if (response.status === 401 && clientId) {
+    const client = await self.clients.get(clientId);
+    client?.postMessage({ type: "dusty-jukebox:stream-token-rejected", fileId, requestId: tokenRequest.requestId });
+  }
   const responseHeaders = new Headers();
   for (const header of ["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type"]) {
     const value = response.headers.get(header);

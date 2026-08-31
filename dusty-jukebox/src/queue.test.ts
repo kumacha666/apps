@@ -1,5 +1,8 @@
 import { describe, expect, test, vi } from "vitest";
 import { PlaybackQueue } from "./queue";
+import { PlaybackAuthenticationRequiredError } from "./playback";
+import { PlaybackAuthenticationGate } from "./playbackAuthGate";
+import { PlaybackContinuationRegistry } from "./playbackContinuation";
 import { parseIndexRows, type Song } from "./catalog";
 import { INDEX_SHEET_HEADER } from "./sheets";
 const song = (fileId: string): Song => ({ fileId, parentId: "p", title: fileId, artist: "", album: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "" });
@@ -86,7 +89,7 @@ describe("PlaybackQueue", () => {
     await newMove;
 
     resolveOldPlayback?.();
-    await expect(oldMove).resolves.toBeUndefined();
+    await expect(oldMove).resolves.toBe(false);
   });
 
   test("重複を除いたカタログなら次曲へ進める", async () => {
@@ -95,5 +98,107 @@ describe("PlaybackQueue", () => {
     queue.setList(songs);
     await queue.next(); await queue.next();
     expect(played).toEqual(["a", "b"]);
+  });
+
+  test("曲を開始しなかった移動はfalseを返し、UIが再生中と誤表示しないための情報を渡す", async () => {
+    const audio = new Audio();
+    const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a")]);
+
+    expect(await queue.previous()).toBe(false);
+    expect(await queue.next()).toBe(true);
+    expect(await queue.next()).toBe(false);
+  });
+
+  test("endedの自動送りを外側の認証ゲート経由ハンドラへ委譲できる", async () => {
+    const audio = new Audio();
+    const onEnded = vi.fn();
+    const queue = new PlaybackQueue({ play: async () => {} }, audio, () => {}, onEnded);
+    queue.setList([song("a"), song("b")]);
+    await queue.next();
+
+    audio.listener?.();
+
+    expect(onEnded).toHaveBeenCalledTimes(1);
+  });
+
+  test("現在のキュー曲を指定位置から再開できる", async () => {
+    const audio = new Audio();
+    const play = vi.fn(async () => {});
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a")]);
+    await queue.next();
+    await queue.resumeCurrent(42.25);
+
+    expect(play.mock.calls).toEqual([["a"], ["a", 42.25]]);
+  });
+
+  test("最初の曲のnative playが未解決でも、開始前フックが継続情報を登録できる", async () => {
+    const audio = new Audio();
+    let settlePlay!: () => void;
+    const nativePlay = new Promise<void>((resolve) => { settlePlay = resolve; });
+    const registry = new PlaybackContinuationRegistry();
+    const beforePlay = vi.fn((fileId: string) => registry.register({ fileId, generation: 1, resume: async () => true }));
+    const queue = new PlaybackQueue({ play: () => nativePlay }, audio, () => {}, null, beforePlay);
+    queue.setList([song("a")]);
+
+    const move = queue.next();
+    await vi.waitFor(() => expect(beforePlay).toHaveBeenCalledWith("a"));
+    expect(queue.currentPlayingFileId()).toBeNull();
+    registry.recordTokenRequest("first-request", "a", 1, "rejected-token");
+    expect(registry.acceptTokenRejection("first-request", "a", "rejected-token")).not.toBeNull();
+    settlePlay();
+    await expect(move).resolves.toBe(true);
+  });
+
+  test("認証継続は401後も未解決の元のキュー移動を待たずに再生する", async () => {
+    const audio = new Audio();
+    let settleOriginal!: () => void;
+    const originalPlay = new Promise<void>((resolve) => { settleOriginal = resolve; });
+    const play = vi.fn().mockImplementationOnce(() => originalPlay).mockResolvedValueOnce(undefined);
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a")]);
+
+    const originalMove = queue.next();
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a"));
+    const resumed = queue.resume("a", 12.5);
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", 12.5));
+    await expect(resumed).resolves.toBe(true);
+
+    settleOriginal();
+    await expect(originalMove).resolves.toBe(true);
+  });
+
+  test("自動送り中の認証待ちは次曲を保留し、明示的な継続後に同じ次曲を再開する", async () => {
+    const audio = new Audio();
+    const played: string[] = [];
+    const gate = new PlaybackAuthenticationGate(async () => {});
+    const player = {
+      play: vi.fn(async (fileId: string) => {
+        played.push(fileId);
+        if (fileId === "b" && played.filter((id) => id === "b").length === 1) {
+          throw new PlaybackAuthenticationRequiredError();
+        }
+      }),
+    };
+    let queue!: PlaybackQueue;
+    const advance = async () => {
+      try {
+        await queue.next();
+      } catch (error) {
+        if (error instanceof PlaybackAuthenticationRequiredError) gate.defer(advance);
+        else throw error;
+      }
+    };
+    queue = new PlaybackQueue(player, audio, () => {}, () => void advance());
+    queue.setList([song("a"), song("b")]);
+    await queue.next();
+
+    audio.listener?.();
+    await vi.waitFor(() => expect(gate.hasPendingOperation()).toBe(true));
+    await gate.continueFromUserGesture();
+
+    expect(played).toEqual(["a", "b", "b"]);
+    expect(queue.currentPlayingFileId()).toBe("b");
   });
 });

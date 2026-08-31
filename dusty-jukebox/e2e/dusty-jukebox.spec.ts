@@ -30,20 +30,35 @@ test("ログインからスキャンして索引を書き込める", async ({ co
 test("次へを素早く二回押しても同じ曲を重複要求しない", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
   await page.getByRole("button", { name: "次へ" }).dblclick();
-  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2$/);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
 });
 
 test("初回制御前の再生もService Worker準備後にストリームへ到達する", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { delayServiceWorkerActivation: true }); await page.goto("/"); await login(page);
   await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller === null)).toBe(true);
   await page.locator("#play-file-id").fill("song-1"); await page.getByRole("button", { name: "この曲を再生" }).click();
-  await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /stream\/song-1$/);
+  await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /stream\/song-1(\?|$)/);
   mock.releaseServiceWorker();
   await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
-  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/song-1$/);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/song-1(\?|$)/);
   // The native media loader owns this request. Do not issue a synthetic fetch
   // here: it would add an unrelated request to the same Drive mock counter.
   await expect.poll(() => mock.streamRequests.length).toBeGreaterThan(0);
+  expect(mock.authFailures).toEqual([]);
+});
+
+test("Driveが期限前のトークンを拒否しても、明示的な認証継続で保留した再生を再開できる", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context, { rejectFirstStreamToken: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#play-file-id").fill("song-1");
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+
+  await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeVisible();
+  await expect.poll(() => mock.streamRequests.length).toBe(1);
+  await page.getByRole("button", { name: "認証を更新して続行" }).click();
+
+  await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeHidden();
+  await expect.poll(() => mock.streamRequests.length).toBeGreaterThan(1);
   expect(mock.authFailures).toEqual([]);
 });
 
@@ -65,10 +80,10 @@ test("除外は再生キューへ反映され、戻して作り直すと復帰�
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
   await page.locator("#catalog-list input").first().uncheck();
   await page.getByRole("button", { name: "次へ" }).click();
-  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2$/);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
 
   await page.locator("#catalog-list input").first().check();
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   await page.getByRole("button", { name: "次へ" }).click();
-  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1$/);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 });
