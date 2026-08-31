@@ -15,9 +15,13 @@ function hasPlaywrightChromium() {
   return false;
 }
 
+// Node's CVE-2024-27980 mitigation requires shell: true to invoke a .cmd file
+// directly on Windows, or execFileSync fails with EINVAL before spawning anything.
+const isWindows = process.platform === "win32";
+
 if (!hasPlaywrightChromium()) {
   console.warn("Playwright Chromiumが見つからないため、npx playwright install chromiumでインストールします…");
-  execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", ["playwright", "install", "chromium"], { stdio: "inherit" });
+  execFileSync(isWindows ? "npx.cmd" : "npx", ["playwright", "install", "chromium"], { stdio: "inherit", shell: isWindows });
 }
 
-execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "test:e2e"], { stdio: "inherit" });
+execFileSync(isWindows ? "npm.cmd" : "npm", ["run", "test:e2e"], { stdio: "inherit", shell: isWindows });
