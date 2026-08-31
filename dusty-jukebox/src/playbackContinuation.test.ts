@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { PlaybackContinuationRegistry } from "./playbackContinuation";
+import { continuationGeneration, PlaybackContinuationRegistry } from "./playbackContinuation";
 
 describe("PlaybackContinuationRegistry", () => {
   test("native play()が未解決でも、先に登録された継続操作へ401を結び付けられる", async () => {
@@ -38,5 +38,19 @@ describe("PlaybackContinuationRegistry", () => {
     registry.recordTokenRequest("missing-token", "song-a", 4, null);
 
     expect(registry.acceptTokenRejection("missing-token", "song-a", null)).toBe(continuation);
+  });
+
+  test("別経路がトークンを先にクリアしても現在のストリーム401を受理する", () => {
+    const registry = new PlaybackContinuationRegistry();
+    const continuation = registry.register({ fileId: "song-a", generation: 4, resume: async () => true });
+    registry.recordTokenRequest("request-a", "song-a", 4, "token-a");
+
+    expect(registry.acceptTokenRejection("request-a", "song-a", null)).toBe(continuation);
+  });
+
+  test("新しいsrc確立前は旧stream世代で予測世代を上書きしない", () => {
+    expect(continuationGeneration(8, 7)).toBe(8);
+    expect(continuationGeneration(8, null)).toBe(8);
+    expect(continuationGeneration(8, 8)).toBe(8);
   });
 });

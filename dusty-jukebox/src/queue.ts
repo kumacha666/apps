@@ -41,9 +41,13 @@ export class PlaybackQueue {
     this.isQueuePlayback = true;
     return true;
   }
-  private move(operation: (generation: number) => Promise<boolean>): Promise<boolean> {
+  private move(operation: (generation: number) => Promise<boolean>, replacePending = false): Promise<boolean> {
     const generation = this.generation;
-    const result = this.pendingMove.then(() => generation === this.generation ? operation(generation) : false);
+    // Authentication continuation must not wait behind the original native
+    // play(), which can remain pending after its stream has already returned
+    // 401. Replace that chain while keeping ordinary navigation serialized.
+    const predecessor = replacePending ? Promise.resolve(false) : this.pendingMove;
+    const result = predecessor.then(() => generation === this.generation ? operation(generation) : false);
     // A rejected playback must reject its own caller, but must not prevent a
     // later navigation request from being processed.
     this.pendingMove = result.catch(() => false);
@@ -52,12 +56,13 @@ export class PlaybackQueue {
   playAt(index: number): Promise<boolean> { return this.move(async (generation) => { const list = this.list(); if (index < 0 || index >= list.length) return false; return this.playAndCommit(list[index].fileId, generation); }); }
   next(): Promise<boolean> { return this.move(async (generation) => { const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId); const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId)); return next ? this.playAndCommit(next.fileId, generation) : false; }); }
   previous(): Promise<boolean> { return this.move(async (generation) => { if (this.currentFileId === null) return false; const currentIndex = this.songs.findIndex((song) => song.fileId === this.currentFileId); for (let index = currentIndex - 1; index >= 0; index -= 1) { const song = this.songs[index]; if (!this.isExcluded(song.fileId)) return this.playAndCommit(song.fileId, generation); } return false; }); }
-  resumeCurrent(position: number): Promise<boolean> { return this.move(async (generation) => this.currentFileId ? this.playAndCommit(this.currentFileId, generation, position) : false); }
+  resumeCurrent(position: number): Promise<boolean> { return this.move(async (generation) => this.currentFileId ? this.playAndCommit(this.currentFileId, generation, position) : false, true); }
   resume(fileId: string, position: number): Promise<boolean> {
     return this.move(async (generation) =>
       this.songs.some((song) => song.fileId === fileId) && !this.isExcluded(fileId)
         ? this.playAndCommit(fileId, generation, position)
-        : false
+        : false,
+      true
     );
   }
 }

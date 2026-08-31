@@ -5,6 +5,16 @@ export interface PlaybackContinuation {
   position: number;
 }
 
+// PlaybackController increments its generation before awaiting a token, while
+// currentStreamGeneration still describes the old audio.src until that await
+// completes. Never replace the predicted generation with that older stream.
+export function continuationGeneration(
+  predictedGeneration: number,
+  streamGeneration: number | null
+): number {
+  return streamGeneration === predictedGeneration ? streamGeneration : predictedGeneration;
+}
+
 interface StreamTokenRequest {
   fileId: string;
   generation: number;
@@ -53,7 +63,9 @@ export class PlaybackContinuationRegistry {
     this.tokenRequests.delete(requestId);
     const active = this.active;
     if (!request || !active) return null;
-    if (request.token !== currentToken || request.fileId !== fileId) return null;
+    // A null current token can mean another 401 path already cleared the token;
+    // only a different non-null token proves this request was superseded.
+    if ((currentToken !== null && request.token !== currentToken) || request.fileId !== fileId) return null;
     if (active.fileId !== fileId || active.generation !== request.generation) return null;
     return active;
   }

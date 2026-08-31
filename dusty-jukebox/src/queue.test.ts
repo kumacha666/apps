@@ -151,6 +151,24 @@ describe("PlaybackQueue", () => {
     await expect(move).resolves.toBe(true);
   });
 
+  test("認証継続は401後も未解決の元のキュー移動を待たずに再生する", async () => {
+    const audio = new Audio();
+    let settleOriginal!: () => void;
+    const originalPlay = new Promise<void>((resolve) => { settleOriginal = resolve; });
+    const play = vi.fn().mockImplementationOnce(() => originalPlay).mockResolvedValueOnce(undefined);
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a")]);
+
+    const originalMove = queue.next();
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a"));
+    const resumed = queue.resume("a", 12.5);
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", 12.5));
+    await expect(resumed).resolves.toBe(true);
+
+    settleOriginal();
+    await expect(originalMove).resolves.toBe(true);
+  });
+
   test("自動送り中の認証待ちは次曲を保留し、明示的な継続後に同じ次曲を再開する", async () => {
     const audio = new Audio();
     const played: string[] = [];

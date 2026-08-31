@@ -10,7 +10,7 @@
 import { AuthError, DriveAuth } from "./auth";
 import { PlaybackAuthenticationRequiredError, PlaybackController } from "./playback";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
-import { PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
+import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
 import { parseIndexRows, filterSongs, sortSongs, type Song } from "./catalog";
 import { CatalogOperationGate } from "./catalogOperationGate";
 import { CatalogSession } from "./catalogSession";
@@ -283,7 +283,7 @@ async function startExternalPlayback(fileId: string, currentPlayback: PlaybackCo
     resume: async (position) => startExternalPlaybackAt(fileId, currentPlayback, position),
   });
   const playPromise = currentPlayback.play(fileId);
-  continuation.generation = currentPlayback.currentStreamGeneration() ?? currentPlayback.currentGeneration();
+  continuation.generation = continuationGeneration(continuation.generation, currentPlayback.currentStreamGeneration());
   await playPromise;
   if (!playbackContinuations.isCurrent(continuation) || continuation.generation !== currentPlayback.currentGeneration()) return false;
   // Do not detach the existing queue until the new file has really reached the
@@ -302,7 +302,7 @@ async function startExternalPlaybackAt(fileId: string, currentPlayback: Playback
     resume: async (resumePosition) => startExternalPlaybackAt(fileId, currentPlayback, resumePosition),
   });
   const playPromise = currentPlayback.play(fileId, position);
-  continuation.generation = currentPlayback.currentStreamGeneration() ?? currentPlayback.currentGeneration();
+  continuation.generation = continuationGeneration(continuation.generation, currentPlayback.currentStreamGeneration());
   await playPromise;
   if (!playbackContinuations.isCurrent(continuation) || continuation.generation !== currentPlayback.currentGeneration()) return false;
   queue?.notifyExternalPlaybackStarted();
