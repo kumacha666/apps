@@ -26,13 +26,15 @@ describe("registerStreamAuthResponder", () => {
   test("有効なトークンが無い時はnullを返し、認証更新を試みない", async () => {
     const { target, dispatch } = createServiceWorkerTarget();
     const messages: unknown[] = [];
-    registerStreamAuthResponder(target, () => null);
+    const issued: unknown[] = [];
+    registerStreamAuthResponder(target, () => null, () => {}, (...args) => issued.push(args));
 
     dispatch({ data: { type: "dusty-jukebox:get-token", fileId: "song-a", requestId: "request-a", playbackGeneration: 3 }, ports: [{ postMessage: (message: unknown) => messages.push(message) }] } as unknown as MessageEvent);
     await Promise.resolve();
     await Promise.resolve();
 
     expect(messages).toEqual([{ token: null }]);
+    expect(issued).toEqual([["song-a", "request-a", null, 3]]);
   });
 
   test("SWが通知したDriveの401をページ側の無効化処理へ渡す", () => {
