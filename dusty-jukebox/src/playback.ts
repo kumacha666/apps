@@ -46,7 +46,9 @@ export class PlaybackController {
       }
       this.onPlaybackError(new Error("音声を再生できませんでした。ファイルID、形式、アクセス権をご確認ください。"));
     });
-    audio.addEventListener("pause", () => { this.generation += 1; this.streamGeneration = null; });
+    // A pause emitted by the native <audio controls> does not replace the
+    // stream.  Keep its generation associated with the element so a 401 after
+    // a native pause/resume still reaches the authentication continuation.
   }
 
   async play(fileId: string, position = 0): Promise<void> {
