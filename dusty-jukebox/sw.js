@@ -25,6 +25,41 @@ function unauthorizedResponse() {
 }
 
 let nextTokenRequestId = 0;
+const fileSizeCache = new Map();
+
+function parseRange(range) {
+  const match = /^bytes=(\d+)-(\d*)$/.exec(range ?? "");
+  if (!match) return null;
+  const start = Number(match[1]);
+  const requestedEnd = match[2] ? Number(match[2]) : null;
+  if (!Number.isSafeInteger(start) || (requestedEnd !== null && (!Number.isSafeInteger(requestedEnd) || requestedEnd < start))) {
+    return null;
+  }
+  return { start, requestedEnd };
+}
+
+async function fetchFileSize(fileId, token) {
+  if (fileSizeCache.has(fileId)) return fileSizeCache.get(fileId);
+
+  const sizeRequest = (async () => {
+    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=size&supportsAllDrives=true`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return null;
+    const size = Number((await response.json()).size);
+    return Number.isSafeInteger(size) && size >= 0 ? size : null;
+  })();
+
+  fileSizeCache.set(fileId, sizeRequest);
+  try {
+    const size = await sizeRequest;
+    if (size === null) fileSizeCache.delete(fileId);
+    return size;
+  } catch {
+    fileSizeCache.delete(fileId);
+    return null;
+  }
+}
 
 async function requestToken(clientId, fileId, playbackGeneration) {
   if (!clientId) return null;
@@ -81,6 +116,19 @@ async function proxyStream(request, fileId, clientId) {
   for (const header of ["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type"]) {
     const value = response.headers.get(header);
     if (value) responseHeaders.set(header, value);
+  }
+  if (response.status === 206) {
+    const parsedRange = parseRange(range);
+    const contentLength = Number(response.headers.get("Content-Length"));
+    if (parsedRange && Number.isSafeInteger(contentLength) && contentLength > 0) {
+      const totalSize = await fetchFileSize(fileId, token);
+      if (totalSize !== null) {
+        responseHeaders.set("Content-Range", `bytes ${parsedRange.start}-${parsedRange.start + contentLength - 1}/${totalSize}`);
+        responseHeaders.set("Accept-Ranges", "bytes");
+      }
+    }
+  } else if (response.status === 200) {
+    responseHeaders.set("Accept-Ranges", "bytes");
   }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers: responseHeaders });
 }
