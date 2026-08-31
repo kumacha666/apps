@@ -313,18 +313,18 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined): 
   await handlePlaybackAction(async () => {
     if (serviceWorkerReady) await serviceWorkerReady;
     const started = await action();
-    const fileId = queue?.currentPlayingFileId();
-    if (!started || !fileId || !playback) return false;
-    const generation = playback.currentStreamGeneration() ?? playback.currentGeneration();
-    playbackContinuations.register({
-      fileId,
-      // PlaybackQueue already committed this current file before the stream
-      // request can receive its 401, so retry the same track rather than moving
-      // the queue a second time.
-      resume: async (position) => queue?.currentPlayingFileId() === fileId ? (await queue.resumeCurrent(position)) : false,
-      generation,
-    });
-    return true;
+    return Boolean(started);
+  });
+}
+
+function registerQueuePlaybackContinuation(fileId: string, currentPlayback: PlaybackController): void {
+  // PlaybackQueue invokes this immediately before PlaybackController.play().
+  // Do not wait for the queue to commit currentFileId: a Drive 401 can arrive
+  // while native play() is still pending.
+  playbackContinuations.register({
+    fileId,
+    generation: currentPlayback.currentGeneration() + 1,
+    resume: async (position) => queue?.resume(fileId, position) ?? false,
   });
 }
 
@@ -353,7 +353,7 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
   }
 }
 
-function handleStreamTokenIssued(fileId: string, requestId: string, token: string, generation: number): void {
+function handleStreamTokenIssued(fileId: string, requestId: string, token: string | null, generation: number): void {
   playbackContinuations.recordTokenRequest(requestId, fileId, generation, token);
 }
 
@@ -1004,7 +1004,8 @@ function init(): void {
       playback,
       el<HTMLAudioElement>("audio-player"),
       (error) => setStatus(error instanceof Error ? error.message : String(error), true),
-      () => void handleQueuePlayback(() => queue?.next())
+      () => void handleQueuePlayback(() => queue?.next()),
+      (fileId) => registerQueuePlaybackContinuation(fileId, playback!)
     );
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
