@@ -10,6 +10,7 @@
 import { AuthError, DriveAuth } from "./auth";
 import { PlaybackAuthenticationRequiredError, PlaybackController } from "./playback";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
+import { PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
 import { parseIndexRows, filterSongs, sortSongs, type Song } from "./catalog";
 import { CatalogOperationGate } from "./catalogOperationGate";
 import { CatalogSession } from "./catalogSession";
@@ -88,7 +89,7 @@ const auth = new DriveAuth();
 let playback: PlaybackController | null = null;
 let queue: PlaybackQueue | null = null;
 let playbackAuthGate: PlaybackAuthenticationGate | null = null;
-let activePlaybackContinuation: { fileId: string; resume: () => Promise<boolean> } | null = null;
+const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
 let serviceWorkerReady: Promise<void> | null = null;
 const catalogOperationGate = new CatalogOperationGate();
@@ -273,15 +274,38 @@ async function handlePlay(): Promise<void> {
 
 async function startExternalPlayback(fileId: string, currentPlayback: PlaybackController): Promise<boolean> {
   if (serviceWorkerReady) await serviceWorkerReady;
-  await currentPlayback.play(fileId);
+  // Register first: HTMLMediaElement.play() can remain pending (or reject) while
+  // the first stream request already receives a Drive 401.
+  let continuation!: PlaybackContinuation;
+  continuation = playbackContinuations.register({
+    fileId,
+    generation: currentPlayback.currentGeneration() + 1,
+    resume: async (position) => startExternalPlaybackAt(fileId, currentPlayback, position),
+  });
+  const playPromise = currentPlayback.play(fileId);
+  continuation.generation = currentPlayback.currentStreamGeneration() ?? currentPlayback.currentGeneration();
+  await playPromise;
+  if (!playbackContinuations.isCurrent(continuation) || continuation.generation !== currentPlayback.currentGeneration()) return false;
   // Do not detach the existing queue until the new file has really reached the
   // playback controller. A locally-expired token must leave the old queue song
   // eligible to advance when it ends.
   queue?.notifyExternalPlaybackStarted();
-  activePlaybackContinuation = {
+  return true;
+}
+
+async function startExternalPlaybackAt(fileId: string, currentPlayback: PlaybackController, position: number): Promise<boolean> {
+  if (serviceWorkerReady) await serviceWorkerReady;
+  let continuation!: PlaybackContinuation;
+  continuation = playbackContinuations.register({
     fileId,
-    resume: () => startExternalPlayback(fileId, currentPlayback),
-  };
+    generation: currentPlayback.currentGeneration() + 1,
+    resume: async (resumePosition) => startExternalPlaybackAt(fileId, currentPlayback, resumePosition),
+  });
+  const playPromise = currentPlayback.play(fileId, position);
+  continuation.generation = currentPlayback.currentStreamGeneration() ?? currentPlayback.currentGeneration();
+  await playPromise;
+  if (!playbackContinuations.isCurrent(continuation) || continuation.generation !== currentPlayback.currentGeneration()) return false;
+  queue?.notifyExternalPlaybackStarted();
   return true;
 }
 
@@ -291,13 +315,15 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined): 
     const started = await action();
     const fileId = queue?.currentPlayingFileId();
     if (!started || !fileId || !playback) return false;
-    activePlaybackContinuation = {
+    const generation = playback.currentStreamGeneration() ?? playback.currentGeneration();
+    playbackContinuations.register({
       fileId,
       // PlaybackQueue already committed this current file before the stream
       // request can receive its 401, so retry the same track rather than moving
       // the queue a second time.
-      resume: async () => { await playback?.play(fileId); return true; },
-    };
+      resume: async (position) => queue?.currentPlayingFileId() === fileId ? (await queue.resumeCurrent(position)) : false,
+      generation,
+    });
     return true;
   });
 }
@@ -327,13 +353,20 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
   }
 }
 
-function handleStreamTokenRejected(fileId: string): void {
-  // A Drive-side revocation can happen before expiresAt. Clear it immediately
-  // even if this is a stale media error, preventing the next action from
-  // repeatedly sending the rejected bearer token.
+function handleStreamTokenIssued(fileId: string, requestId: string, token: string, generation: number): void {
+  playbackContinuations.recordTokenRequest(requestId, fileId, generation, token);
+}
+
+function handleStreamTokenRejected(fileId: string, requestId: string): void {
+  const continuation = playbackContinuations.acceptTokenRejection(requestId, fileId, auth.getAccessToken());
+  if (!continuation || !playback || !playbackAuthGate) return;
+  const position = playback.markStreamTokenRejected(fileId, continuation.generation);
+  if (position === null) return;
+  // A Drive-side revocation can happen before expiresAt. Clear only the token
+  // that was actually used by this still-current stream request.
   auth.clearToken();
-  if (!playback?.markStreamTokenRejected(fileId) || activePlaybackContinuation?.fileId !== fileId || !playbackAuthGate) return;
-  playbackAuthGate.defer(() => handlePlaybackAction(activePlaybackContinuation!.resume));
+  continuation.position = position;
+  playbackAuthGate.defer(() => handlePlaybackAction(() => continuation.resume(continuation.position)));
   setPlaybackAuthNotice(true);
   setStatus("認証の更新が必要です。下のボタンをクリックして続行してください。", true);
 }
@@ -937,7 +970,7 @@ function init(): void {
   if (!CLIENT_ID) return;
 
   if ("serviceWorker" in navigator) {
-    registerStreamAuthResponder(navigator.serviceWorker, () => auth.getAccessToken(), handleStreamTokenRejected);
+    registerStreamAuthResponder(navigator.serviceWorker, () => auth.getAccessToken(), handleStreamTokenRejected, handleStreamTokenIssued);
     serviceWorkerReady = (async () => {
       await navigator.serviceWorker.register("./sw.js");
       await navigator.serviceWorker.ready;

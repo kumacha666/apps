@@ -50,7 +50,7 @@ describe("PlaybackController", () => {
     await playback.play("A");
 
     expect(tokenChecks).toEqual(["checked"]);
-    expect(audio.src).toBe(streamUrl("A"));
+    expect(audio.src).toBe(streamUrl("A", playback.currentStreamGeneration() ?? undefined));
     expect(audio.playCount).toBe(1);
   });
 
@@ -101,7 +101,7 @@ describe("PlaybackController", () => {
     const playback = new PlaybackController(audio, () => "valid-token", (error) => errors.push(error));
 
     await playback.play("A");
-    expect(playback.markStreamTokenRejected("A")).toBe(true);
+    expect(playback.markStreamTokenRejected("A", playback.currentGeneration())).toBe(0);
     audio.emitError();
 
     expect(errors[0]).toBeInstanceOf(PlaybackAuthenticationRequiredError);
@@ -113,7 +113,7 @@ describe("PlaybackController", () => {
     const playback = new PlaybackController(audio, () => "valid-token", (error) => errors.push(error));
 
     await playback.play("A");
-    expect(playback.markStreamTokenRejected("B")).toBe(false);
+    expect(playback.markStreamTokenRejected("B", playback.currentGeneration())).toBeNull();
     audio.emitError();
 
     expect(errors[0]).not.toBeInstanceOf(PlaybackAuthenticationRequiredError);
@@ -126,6 +126,17 @@ describe("PlaybackController", () => {
     await playback.play("A");
     playback.pause();
 
-    expect(playback.markStreamTokenRejected("A")).toBe(false);
+    expect(playback.markStreamTokenRejected("A", playback.currentGeneration())).toBeNull();
+  });
+
+  test("認証更新後の再生は失効直前の位置から再開する", async () => {
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.currentTime = 73.5;
+    await playback.play("A", 73.5);
+
+    expect(audio.currentTime).toBe(73.5);
   });
 });

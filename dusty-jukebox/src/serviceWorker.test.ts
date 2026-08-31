@@ -167,7 +167,7 @@ describe("service worker", () => {
     const response = await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/revoked-file");
 
     expect(response.status).toBe(401);
-    expect(messages).toContainEqual({ type: "dusty-jukebox:stream-token-rejected", fileId: "revoked-file" });
+    expect(messages).toContainEqual({ type: "dusty-jukebox:stream-token-rejected", fileId: "revoked-file", requestId: "1" });
   });
 
   test("登録スコープからストリームパスを導出し、ルート配信でも横取りする", async () => {

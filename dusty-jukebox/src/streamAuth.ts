@@ -6,24 +6,39 @@ export interface ServiceWorkerMessageTarget {
   addEventListener(type: "message", listener: (event: MessageEvent) => void): void;
 }
 
-export type StreamTokenRejectedHandler = (fileId: string) => void;
+export type StreamTokenRejectedHandler = (fileId: string, requestId: string) => void;
+export type StreamTokenIssuedHandler = (fileId: string, requestId: string, token: string, playbackGeneration: number) => void;
 
 // Service Workerはトークンを保持しない。各ストリーム要求について、その要求元タブだけに
 // MessageChannelで問い合わせ、現在有効なトークンをその場で返す。
 export function registerStreamAuthResponder(
   serviceWorker: ServiceWorkerMessageTarget,
   getCurrentAccessToken: GetCurrentAccessToken,
-  onTokenRejected: StreamTokenRejectedHandler = () => {}
+  onTokenRejected: StreamTokenRejectedHandler = () => {},
+  onTokenIssued: StreamTokenIssuedHandler = () => {}
 ): void {
   serviceWorker.addEventListener("message", (event) => {
-    if (event.data?.type === "dusty-jukebox:stream-token-rejected" && typeof event.data.fileId === "string") {
-      onTokenRejected(event.data.fileId);
+    if (
+      event.data?.type === "dusty-jukebox:stream-token-rejected" &&
+      typeof event.data.fileId === "string" &&
+      typeof event.data.requestId === "string"
+    ) {
+      onTokenRejected(event.data.fileId, event.data.requestId);
       return;
     }
-    if (event.data?.type !== "dusty-jukebox:get-token" || !event.ports[0]) return;
+    if (
+      event.data?.type !== "dusty-jukebox:get-token" ||
+      typeof event.data.fileId !== "string" ||
+      typeof event.data.requestId !== "string" ||
+      !Number.isInteger(event.data.playbackGeneration) ||
+      !event.ports[0]
+    ) return;
 
     void Promise.resolve(getCurrentAccessToken())
-      .then((token) => event.ports[0].postMessage({ token }))
+      .then((token) => {
+        if (token) onTokenIssued(event.data.fileId, event.data.requestId, token, event.data.playbackGeneration);
+        event.ports[0].postMessage({ token });
+      })
       .catch(() => event.ports[0].postMessage({ token: null }));
   });
 }

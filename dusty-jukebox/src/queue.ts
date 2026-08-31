@@ -1,6 +1,6 @@
 import type { Song } from "./catalog";
 export interface AudioEndedLike { addEventListener(type: "ended", listener: () => void): void; }
-export interface PlayerLike { play(fileId: string): Promise<void>; }
+export interface PlayerLike { play(fileId: string, position?: number): Promise<void>; }
 
 export class PlaybackQueue {
   private songs: Song[] = []; private currentFileId: string | null = null; private excluded = new Set<string>(); private isQueuePlayback = false;
@@ -28,8 +28,9 @@ export class PlaybackQueue {
   all(): Song[] { return [...this.songs]; }
   list(): Song[] { return this.songs.filter((s) => !this.isExcluded(s.fileId)); }
   currentPlayingFileId(): string | null { return this.currentFileId; }
-  private async playAndCommit(fileId: string, generation: number): Promise<boolean> {
-    await this.player.play(fileId);
+  private async playAndCommit(fileId: string, generation: number, position?: number): Promise<boolean> {
+    if (position === undefined) await this.player.play(fileId);
+    else await this.player.play(fileId, position);
     if (generation !== this.generation) return false;
     this.currentFileId = fileId;
     this.isQueuePlayback = true;
@@ -46,4 +47,5 @@ export class PlaybackQueue {
   playAt(index: number): Promise<boolean> { return this.move(async (generation) => { const list = this.list(); if (index < 0 || index >= list.length) return false; return this.playAndCommit(list[index].fileId, generation); }); }
   next(): Promise<boolean> { return this.move(async (generation) => { const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId); const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId)); return next ? this.playAndCommit(next.fileId, generation) : false; }); }
   previous(): Promise<boolean> { return this.move(async (generation) => { if (this.currentFileId === null) return false; const currentIndex = this.songs.findIndex((song) => song.fileId === this.currentFileId); for (let index = currentIndex - 1; index >= 0; index -= 1) { const song = this.songs[index]; if (!this.isExcluded(song.fileId)) return this.playAndCommit(song.fileId, generation); } return false; }); }
+  resumeCurrent(position: number): Promise<boolean> { return this.move(async (generation) => this.currentFileId ? this.playAndCommit(this.currentFileId, generation, position) : false); }
 }

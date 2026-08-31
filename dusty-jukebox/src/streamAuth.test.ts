@@ -13,12 +13,14 @@ describe("registerStreamAuthResponder", () => {
   test("SWからのトークン要求へ、更新を発火しない現在のトークンを返す", async () => {
     const { target, dispatch } = createServiceWorkerTarget();
     const messages: unknown[] = [];
-    registerStreamAuthResponder(target, async () => "access-token");
+    const issued: unknown[] = [];
+    registerStreamAuthResponder(target, async () => "access-token", () => {}, (...args) => issued.push(args));
 
-    dispatch({ data: { type: "dusty-jukebox:get-token" }, ports: [{ postMessage: (message: unknown) => messages.push(message) }] } as unknown as MessageEvent);
+    dispatch({ data: { type: "dusty-jukebox:get-token", fileId: "song-a", requestId: "request-a", playbackGeneration: 3 }, ports: [{ postMessage: (message: unknown) => messages.push(message) }] } as unknown as MessageEvent);
     await Promise.resolve();
 
     expect(messages).toEqual([{ token: "access-token" }]);
+    expect(issued).toEqual([["song-a", "request-a", "access-token", 3]]);
   });
 
   test("有効なトークンが無い時はnullを返し、認証更新を試みない", async () => {
@@ -26,7 +28,7 @@ describe("registerStreamAuthResponder", () => {
     const messages: unknown[] = [];
     registerStreamAuthResponder(target, () => null);
 
-    dispatch({ data: { type: "dusty-jukebox:get-token" }, ports: [{ postMessage: (message: unknown) => messages.push(message) }] } as unknown as MessageEvent);
+    dispatch({ data: { type: "dusty-jukebox:get-token", fileId: "song-a", requestId: "request-a", playbackGeneration: 3 }, ports: [{ postMessage: (message: unknown) => messages.push(message) }] } as unknown as MessageEvent);
     await Promise.resolve();
     await Promise.resolve();
 
@@ -38,7 +40,7 @@ describe("registerStreamAuthResponder", () => {
     const rejected: string[] = [];
     registerStreamAuthResponder(target, () => "access-token", (fileId) => rejected.push(fileId));
 
-    dispatch({ data: { type: "dusty-jukebox:stream-token-rejected", fileId: "revoked-file" }, ports: [] } as unknown as MessageEvent);
+    dispatch({ data: { type: "dusty-jukebox:stream-token-rejected", fileId: "revoked-file", requestId: "request-a" }, ports: [] } as unknown as MessageEvent);
 
     expect(rejected).toEqual(["revoked-file"]);
   });

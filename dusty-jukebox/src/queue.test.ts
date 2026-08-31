@@ -121,6 +121,17 @@ describe("PlaybackQueue", () => {
     expect(onEnded).toHaveBeenCalledTimes(1);
   });
 
+  test("現在のキュー曲を指定位置から再開できる", async () => {
+    const audio = new Audio();
+    const play = vi.fn(async () => {});
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a")]);
+    await queue.next();
+    await queue.resumeCurrent(42.25);
+
+    expect(play.mock.calls).toEqual([["a"], ["a", 42.25]]);
+  });
+
   test("自動送り中の認証待ちは次曲を保留し、明示的な継続後に同じ次曲を再開する", async () => {
     const audio = new Audio();
     const played: string[] = [];

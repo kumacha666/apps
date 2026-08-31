@@ -24,7 +24,9 @@ function unauthorizedResponse() {
   return new Response("Unauthorized", { status: 401, statusText: "Unauthorized" });
 }
 
-async function requestToken(clientId) {
+let nextTokenRequestId = 0;
+
+async function requestToken(clientId, fileId, playbackGeneration) {
   if (!clientId) return null;
   const client = await self.clients.get(clientId);
   if (!client) return null;
@@ -38,14 +40,17 @@ async function requestToken(clientId) {
     channel.port1.onmessage = (event) => {
       clearTimeout(timeout);
       channel.port1.close();
-      resolve(typeof event.data?.token === "string" && event.data.token ? event.data.token : null);
+      resolve(typeof event.data?.token === "string" && event.data.token ? { token: event.data.token, requestId } : null);
     };
-    client.postMessage({ type: "dusty-jukebox:get-token" }, [channel.port2]);
+    const requestId = `${++nextTokenRequestId}`;
+    client.postMessage({ type: "dusty-jukebox:get-token", fileId, requestId, playbackGeneration }, [channel.port2]);
   });
 }
 
 async function proxyStream(request, fileId, clientId) {
-  const token = await requestToken(clientId);
+  const playbackGeneration = request.url ? new URL(request.url).searchParams.get("playbackGeneration") : null;
+  const tokenRequest = await requestToken(clientId, fileId, playbackGeneration);
+  const token = tokenRequest?.token;
   if (!token) return unauthorizedResponse();
 
   const headers = { Authorization: `Bearer ${token}` };
@@ -57,7 +62,7 @@ async function proxyStream(request, fileId, clientId) {
   // and offer the user-gesture-only continuation flow.
   if (response.status === 401 && clientId) {
     const client = await self.clients.get(clientId);
-    client?.postMessage({ type: "dusty-jukebox:stream-token-rejected", fileId });
+    client?.postMessage({ type: "dusty-jukebox:stream-token-rejected", fileId, requestId: tokenRequest.requestId });
   }
   const responseHeaders = new Headers();
   for (const header of ["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type"]) {
