@@ -7,7 +7,10 @@ export interface ServiceWorkerMessageTarget {
 }
 
 export type StreamTokenRejectedHandler = (fileId: string, requestId: string) => void;
-export type StreamTokenIssuedHandler = (fileId: string, requestId: string, token: string, playbackGeneration: number) => void;
+// The request identity is needed even when the page has no usable token: the
+// Service Worker will return 401 and the page must correlate that response to
+// the pending playback continuation.
+export type StreamTokenIssuedHandler = (fileId: string, requestId: string, token: string | null, playbackGeneration: number) => void;
 
 // Service Workerはトークンを保持しない。各ストリーム要求について、その要求元タブだけに
 // MessageChannelで問い合わせ、現在有効なトークンをその場で返す。
@@ -36,7 +39,7 @@ export function registerStreamAuthResponder(
 
     void Promise.resolve(getCurrentAccessToken())
       .then((token) => {
-        if (token) onTokenIssued(event.data.fileId, event.data.requestId, token, event.data.playbackGeneration);
+        onTokenIssued(event.data.fileId, event.data.requestId, token, event.data.playbackGeneration);
         event.ports[0].postMessage({ token });
       })
       .catch(() => event.ports[0].postMessage({ token: null }));
