@@ -1,5 +1,24 @@
 # DustyJukebox — 開発ガイド
 
+## 現在の状態（2026-08-31〜09-01、次セッションへの引き継ぎ）
+
+**実機で実際にGoogle Driveの音楽を再生できる状態に到達した（2026-09-01、PR #398マージ後に確認）。** 実クライアントIDを設定した環境で`npm run deploy`を実行し、2026-08-31にOAuth認証・Drive走査・Sheets索引・差分同期・絞り込み・連続再生キュー・Service Workerストリーミングまで一通り公開バンドル（`dusty-jukebox/app.js`、コミット`aaba428`）に反映したが、**この時点ではまだ実際には一度も再生できなかった**（下記PR #398が原因）。以降、実機検証で2件の致命的なバグが見つかり、いずれも修正・マージ・実機確認済み：
+
+- **PR #392**（`aaba428`より前にマージ済み、`aaba428`のデプロイには反映済み）：再生のたびに強制的に再ログインを要求される認証ループ。根本原因は`sw.js`が`URLSearchParams`由来の`playbackGeneration`を文字列のまま渡し、ページ側の`Number.isInteger()`検証に常に失敗していた型不一致（`src/serviceWorker.test.ts`は`sw.js`本体をVMハーネスで実行し、`src/streamAuth.test.ts`は`streamAuth.ts`本体をimportしてテストしているが、それぞれMessageChannelの相手側をモックしたフェイクとして扱っており、両者間の実際の結線＝メッセージのやり取り自体は検証していなかったため検出できず、実ブラウザE2Eで発見）。加えて認証継続フロー自体（保留中の再生を認証更新後に正しく再開する仕組み）の設計不備も合わせて修正
+- **PR #398**（2026-09-01マージ、`aaba428`のデプロイには未反映。`sw.js`は手書きソースでビルド不要のためマージと同時に公開反映済み）：実際には再生できず「Failed to load because no supported source was found」で必ず失敗する不具合。`sw.js`がGoogle Drive `alt=media`からの206応答を中継する際、`Content-Range`/`Accept-Ranges`ヘッダーはcrossoriginなfetchのCORS safelist外でJavaScriptから読めないため、不完全な206レスポンスをブラウザへ返していたことが原因。**ユニットテストの`fetch`モックでは検出できない類の不具合ではなく（モックで再現・検出は可能）、既存モックがこの欠落状態を再現していなかったために見逃されていた**（今後、Drive等の外部APIをフェッチするコードを書く際は、レスポンスヘッダーの一部がCORS safelist外である可能性を意識し、その欠落状態を明示的にモックしたテストケースを用意すること）
+
+**次セッションで最初に確認すべきこと**：
+- 上記2PRの実機確認は完了しているが、長時間の連続再生・複数タブ・トークン失効を跨いだ操作等の追加シナリオはまだ試せていない
+- 次の機能開発候補（優先度未検討）：アルバム単位の通し再生、保存済みプレイリスト、検索窓、Album/Composer等の追加絞り込み、`extractionFailed`行の再抽出リトライ導線、カタログ補正機能（CONCEPT.md 4.4節）
+- **既知の制限（再生系のみ。この一覧はすべてP2で対応見送り・優先度低だが、稀なエッジケースと常に再現する不具合が混在するため個別に注記する。索引・差分同期系の未解決P1（`reconcileIndexAgainstRoot`のresourceKey保護ショートカット誤判定・関連するサブツリー再走査の欠落等）は本一覧の対象外で、下記「次の実装ステップ」の`changes.list`関連の記録（「見送った」項目群）に別途記載済み）**：
+  1. （稀なエッジケース）`PlaybackQueue.resume()`が置き換えた旧移動の巻き戻り（[review](https://github.com/kumacha666/apps/pull/392#discussion_r3895564027)、下記「PWA・Service Workerストリーミング」参照）
+  2. （稀なエッジケース）アプリの一時停止ボタン→ネイティブ再開での認証相関ロス（同上）
+  3. （稀なエッジケース）Drive上で同一fileIdのままファイルが差し替えられた場合のファイルサイズキャッシュ陳腐化（[review](https://github.com/kumacha666/apps/pull/398#discussion_r3897158136)）
+  4. **（常に再現する）一時停止操作（アプリのボタン・ネイティブコントロールのどちらでも）の後、ステータス表示「再生中」が更新されないまま残る**。稀なケースではなく毎回起きる表示上の不具合（下記「次の実装ステップ」参照）
+  5. （稀なエッジケース、PR #387）リスト差し替え時、旧リストの`player.play()`が`AbortError`等でreject（世代変更後）すると、新しい曲が正常に再生できていても旧要求のエラーメッセージが表示されることがある（下記「索引ライブラリUI」節参照）
+  6. （稀なエッジケース、PR #387）キューの「次へ」連打で移動が`pendingMove`に待機中の状態でファイルID欄から単曲再生を始めると、待機中のキュー移動が後から実行され単曲再生を上書きすることがある（同上）
+- 他の6アプリ（7metch, 7metch2, enblo, enblo-classic, combrawl, mori-no-yakai）のdeployスクリプトは`cp`コマンド依存でWindows非対応のまま（`dusty-jukebox`のみPR #397で対応済み）。Windows環境でそれらをデプロイする必要が生じたら同様の対応が必要
+
 ## 開発ルール
 
 ## 索引ライブラリUI（2026-08-25）
@@ -22,11 +41,18 @@
 ## PWA・Service Workerストリーミング
 
 - 2026-08-25、PWA化（`manifest.json`・`icon.svg`）と、ルート直下の手書き`sw.js`を追加した。SWはViteのビルド対象外であり、`npm run build`後も`dist/sw.js`を出力しない。アプリシェルはnetwork-firstでキャッシュするが、キャッシュ削除は`dusty-jukebox-`プレフィックスの旧バージョンだけに限定し、同一オリジンの他アプリを消さない。
-- `./stream/<fileId>`はSWが横取りする仮想URL。SWの登録scopeからstreamパスを導出するため、GitHub Pagesの`/dusty-jukebox/`配下とローカルのルート配信の両方で動く。SWは`event.clientId`で要求元タブを特定し、MessageChannelでそのタブだけへトークンを問い合わせる。トークンをメモリ・永続ストレージ・URLへ保存しない。
+- `./stream/<fileId>`はSWが横取りする仮想URL。SWの登録scopeからstreamパスを導出するため、GitHub Pagesの`/dusty-jukebox/`配下とローカルのルート配信の両方で動く。SWは`event.clientId`で要求元タブを特定し、MessageChannelでそのタブだけへトークンを問い合わせる。トークンを永続ストレージ・URLへ保存しない。**ただしPR #398（下記）で追加した`fetchFileSize()`のキャッシュ（`fileSizeCache`）は、成功したエントリをfileId＋トークンの組み合わせをキーにSWのメモリ内（`Map`）に保持し続ける**（SWのライフタイム中のみ・永続化はしない。この点で「トークンをメモリに一切保存しない」という以前の記述は不正確だった）。
 - SWはRangeをそのままDrive APIへ転送し、`Authorization: Bearer`と`supportsAllDrives=true`を付与する。応答はストリーミングのまま返し、キャッシュしない。Driveが401を返した場合**とページ側にトークンが無い場合**は、`event.clientId`で特定した要求元タブだけへ`stream-token-rejected`メッセージを送る。`<audio>`のerrorイベントはHTTPステータスを公開しないため、このメッセージがキャッシュ済みトークン無効化の唯一の根拠になる。SW内で再ログインやリトライはしない。
 - `src/streamAuth.ts`はページ側の現在有効なトークンをSWへ応答するが、問い合わせからトークン更新・GISポップアップを発火しない。トークン有無を含む各要求IDを`PlaybackContinuationRegistry`へ記録する。401通知を受けた`main.ts`は`DriveAuth.clearToken()`を呼び、現在の再生だけを`PlaybackAuthenticationGate`へ保留する。キュー操作は`PlaybackQueue`がnative `play()`開始前に継続情報を登録するため、最初の曲送りが401になっても正しい曲を再開できる。`src/playback.ts`はネイティブ音声コントロールによるpause/resumeでは同じストリーム世代を保持し、対応するmedia errorを認証待ちとして識別する。`PlaybackAuthenticationGate`は失効時の元のplay/next/previous操作を保留し、ユーザーが「認証を更新して続行」ボタンをクリックした時だけGIS更新を開始して成功後に同じ曲（キューなら正しい次曲）を再開する。新しい再生が成功した時は古い保留操作と通知を破棄する。同時クリック・複数の失効検知は1回の更新へ合流する。
 - **既知の制限（2026-08-31、PR #392のCodexレビューで指摘・未修正。いずれもP2・データ破損や情報漏洩には該当しない再生体験上のエッジケースで、状態管理・並行処理コードのレビュー指摘は際限なく見つかりうるためここで区切った）**：①`PlaybackQueue.resume()`で拒否された進行中の移動（`pendingMove`）を置き換えても、置き換えられた側の操作自体は無効化されない。曲Aの再生が401で保留中に別の曲Bへ手動切り替えした後、保留していたAの`play()`が遅れて解決すると`currentFileId`がAへ巻き戻り、次の「次へ」操作がBではなくAから進むことがある（[review](https://github.com/kumacha666/apps/pull/392#discussion_r3895564027)は解消済みだが、この派生ケースは残っている）。②アプリの一時停止ボタン（`pause-btn`）で止めた後に`<audio controls>`のネイティブ再開ボタンで再開すると、`PlaybackController.play()`を経由しないため世代情報が復元されず、その後の401が認証継続ボタンではなく汎用エラー表示になる。
-- `src/serviceWorker.test.ts`は素の`sw.js`をVMハーネスで実行し、install/activate、トークンタイムアウト、Range転送・共有ドライブURL、scope導出、Drive 401の要求元タブ通知をテストする。SWを変更した際は必ずこのテストを更新する。
+- **2026-09-01、PR #398：実機で「Failed to load because no supported source was found」により再生が必ず失敗する不具合を修正**。原因は`proxyStream()`がDrive `alt=media`の206応答を中継する際、`Content-Range`/`Accept-Ranges`ヘッダーがクロスオリジンfetchのCORS safelistに含まれずJavaScriptから読めないため、これらのヘッダーが欠落した不完全な206レスポンスをブラウザへ返していたこと（`Content-Type`/`Content-Length`はsafelist対象のため正しく転送できていた）。以下を実装：
+  - `fetchFileSize(fileId, token)`でファイルの合計サイズを`files.get?fields=size`から取得し、fileId＋トークンの組み合わせ（`` `${fileId}:${token}` ``）でService Worker内にキャッシュ（異なるトークン間で401等の認証結果を誤って共有しないため）。`proxyStream()`はこのメタデータ取得の完了を待ってから音声データ応答を返すため、遅延はそのままブロッキング時間になる。取得にはタイムアウト（`FILE_SIZE_TIMEOUT_MS`5秒、`AbortController`）を設け、**このブロッキングを無期限ではなく最大5秒に制限した**（無くしたわけではない）
+  - 実際に返ってきた`Content-Length`（safelist対象で読める）とリクエストの`Range`ヘッダー（通常形式`bytes=N-`・サフィックス形式`bytes=-N`の両方に対応）から、`Content-Range`/`Accept-Ranges`を自前で組み立てて付与
+  - メタデータ取得自体が401を返した場合は、既存の`stream-token-rejected`通知フローに同じ`requestId`で乗せる（音声データ取得の401通知フローとは独立しているため、こちらも別途通知する必要があった）
+  - サイズ取得に失敗した場合（タイムアウト・ネットワークエラー・401以外のエラー）は、例外を投げずに`Content-Range`無しの不完全な206をそのまま中継する（フォールバック。データ自体は取得できているため再生できる可能性を残す）
+  - **既知の制限（対応見送り）**：同一`fileId`のファイルがDrive上で差し替えられても、キャッシュ済みのファイルサイズを再検証しないため、以後の`Content-Range`に古い総サイズが使われる場合がある（[review](https://github.com/kumacha666/apps/pull/398#discussion_r3897158136)）。個人ライブラリの視聴中に同一IDの内容を差し替える運用は極めて稀なため許容
+  - この種の不具合（クロスオリジンレスポンスヘッダーの一部がCORS safelist外でJavaScriptから読めない）はGoogle Drive API等の外部APIをfetchするコードに一般的に当てはまる。既存のE2Eモック（`e2e/google-mocks.ts`）はDrive APIを丸ごとモックしており、この欠落状態自体は再現していなかったため今回は検出できなかった（モックで再現すること自体は可能）。実際に外部APIへ到達する経路を新設する際は、レスポンスヘッダーの可視性を意識し、必要ならその欠落状態を明示的にモックしたテストケースを用意すること
+- `src/serviceWorker.test.ts`は素の`sw.js`をVMハーネスで実行し、install/activate、トークンタイムアウト、Range転送・共有ドライブURL、scope導出、Drive 401の要求元タブ通知、`Content-Range`/`Accept-Ranges`の再構築（通常形式・サフィックス形式・キャッシュ共有・トークン分離・タイムアウトフォールバック）をテストする。SWを変更した際は必ずこのテストを更新する。
 - `npm run deploy`は`dist/app.js`をルートへコピーし、`scripts/update-sw-version.mjs`でSWキャッシュ名を自動インクリメントする。手動でSWバージョンを変えない。
 
 ## Playwright E2E
@@ -99,9 +125,11 @@
 ## ビルド・デプロイ
 
 - `npm run build` — テスト（prebuild）→ ビルド（tsc + vite build）
-- `npm run deploy` — ビルド → `dist/app.js` をルート直下にコピー
+- `npm run deploy` — ビルド → `scripts/copy-dist-app.mjs`（Node標準`fs.copyFileSync`）で`dist/app.js`をルート直下にコピー → SWバージョン自動更新
 - deploy 後にコミットするだけで GitHub Pages にデプロイされる（ただし非掲載・URL直踏み運用。`apps/CLAUDE.md`参照）
 - vite.config.js の entry-rewrite プラグインが `dev` 実行時に root `index.html` の `./app.js` を `./src/main.ts` に書き換える（`7metch`/`7metch2`と同様の仕組み）
+- **2026-08-31、Windows環境での`npm run deploy`失敗を2件修正**（PR #396, #397）：①`scripts/test-e2e-if-chromium.mjs`が`execFileSync`で`npx.cmd`/`npm.cmd`を呼ぶ際、Node.jsのCVE-2024-27980対応により`shell: true`が無いと`EINVAL`で落ちる問題を修正。②`package.json`の`deploy`スクリプトが使っていた`cp`コマンドはWindows標準のcmd/PowerShellに存在しないため、`scripts/copy-dist-app.mjs`に置き換え。**実際にWindows環境で実クライアントIDを設定した`npm run deploy`が成功し、`app.js`（241.76kB）・`sw.js`のコミット・pushまで確認済み**
+- 2026-08-31、実際に`VITE_GOOGLE_CLIENT_ID`を設定した環境で`npm run deploy`を実行し、公開`app.js`（コミット`aaba428`）へ全機能を反映済み（下記「現在の状態」参照）
 
 ## 次の実装ステップ（着手順の目安）
 
@@ -116,6 +144,7 @@
    - **既知の積み残し（P2・マージブロッカーではない）**：`src/main.ts`の一時停止ボタン・`<audio controls>`のネイティブ一時停止のどちらも、押した後にステータス表示（「再生中」）を更新しない。次にこのあたりを触るPRで合わせて対応すること
    - **既知の制限（PR #398、対応見送り）**：同一`fileId`のファイルがDrive上で差し替えられても、Service Workerがキャッシュ済みのファイルサイズを再検証しないため、以後の`Content-Range`に古い総サイズが使われる場合がある。個人ライブラリの視聴中に同一IDの内容を差し替える運用は極めて稀なため許容する。
 6. ~~絞り込み（artist/年/Genre）・除外・連続再生キューUI（次へ/前へ）~~（2026-08-25〜26実装済み、上記「索引ライブラリUI」参照）。アルバム単位の通し再生・保存済みプレイリスト・検索窓・Album/Composer等の追加絞り込みは引き続き未着手
+7. ~~実クライアントIDでの公開デプロイ＋実機での動作確認~~（2026-08-31〜09-01実施。詳細は本ファイル冒頭「現在の状態」参照。PR #392・#398で実機バグ2件を発見・修正し、実際に音楽再生が確認できた）
 
 - **2026-08-20、初回スキャンのバッチ処理・中断再開（着手順の目安4の残り項目の一つ、CONCEPT.md 5節）を実装**。`main.ts`の`handleScan()`が、フォルダ走査で見つかった全ファイルを一度に抽出・書き込みする代わりに、200件単位のバッチに分けてタグ抽出→`upsertIndexRows`書き込みを繰り返す。ブラウザのタブを閉じる・通信が長時間切れる等でスキャンが中断しても、既に書き込み済みのバッチはスプレッドシート側に残る
   - **中断・再開のウォーターマークは`sync`タブの新しいキー`scanRunStartedAt`**（`src/sync.ts`）：`prepareSyncForScan()`が、ルート変更時または新規実行時は現在時刻を新規に書き込み、**前回の実行が完走せず中断していた場合（既に値が設定されている場合）はその値をそのまま再利用する**。スキャン開始時、`main.ts`はindexタブの各行の`lastScannedAt`を読み、`scanRunStartedAt`以降に走査済みの行（＝今回の実行の以前のバッチ、または中断前のセッションで既に処理済み）をスキップ対象として除外してから残りをバッチ処理する。全バッチが完走した時点で`clearScanRunStartedAt()`を呼びウォーターマークをクリアし、次回のスキャンクリックを新しい実行として扱う
