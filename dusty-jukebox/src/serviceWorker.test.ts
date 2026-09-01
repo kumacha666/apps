@@ -350,6 +350,56 @@ describe("service worker", () => {
     expect(messages).toContainEqual({ type: "dusty-jukebox:stream-token-rejected", fileId: "revoked-metadata", requestId: "1" });
   });
 
+  test("同じファイルの同時Range要求でも異なるトークン間ではメタデータの401を共有しない", async () => {
+    const harness = createHarness();
+    const revokedMessages: unknown[] = [];
+    const validMessages: unknown[] = [];
+    harness.clients.set("revoked-tab", {
+      postMessage: (message, ports = []) => {
+        revokedMessages.push(message);
+        ports[0]?.postMessage({ token: "revoked-token" });
+      },
+    });
+    harness.clients.set("valid-tab", {
+      postMessage: (message, ports = []) => {
+        validMessages.push(message);
+        ports[0]?.postMessage({ token: "valid-token" });
+      },
+    });
+    let resolveRevokedMetadata: ((response: Response) => void) | undefined;
+    const revokedMetadata = new Promise<Response>((resolve) => { resolveRevokedMetadata = resolve; });
+    harness.setFetchImplementation(async (input, init) => {
+      if (!String(input).includes("fields=size")) {
+        return new Response("audio", { status: 206, headers: { "Content-Length": "5" } });
+      }
+      const authorization = new Headers(init?.headers).get("Authorization");
+      if (authorization === "Bearer revoked-token") return revokedMetadata;
+      return Response.json({ size: "1000" });
+    });
+    harness.run();
+
+    const revokedResponse = dispatchFetch(
+      harness,
+      "https://example.test/dusty-jukebox/stream/shared-file",
+      new Headers({ Range: "bytes=0-4" }),
+      "revoked-tab"
+    );
+    await vi.waitFor(() => expect(harness.fetchCalls.filter(({ input }) => String(input).includes("fields=size"))).toHaveLength(1));
+    const validResponse = dispatchFetch(
+      harness,
+      "https://example.test/dusty-jukebox/stream/shared-file",
+      new Headers({ Range: "bytes=5-9" }),
+      "valid-tab"
+    );
+    await vi.waitFor(() => expect(harness.fetchCalls.filter(({ input }) => String(input).includes("fields=size"))).toHaveLength(2));
+    resolveRevokedMetadata?.(new Response("Unauthorized", { status: 401 }));
+
+    expect((await revokedResponse).headers.get("Content-Range")).toBeNull();
+    expect((await validResponse).headers.get("Content-Range")).toBe("bytes 5-9/1000");
+    expect(revokedMessages).toContainEqual({ type: "dusty-jukebox:stream-token-rejected", fileId: "shared-file", requestId: "1" });
+    expect(validMessages).not.toContainEqual(expect.objectContaining({ type: "dusty-jukebox:stream-token-rejected" }));
+  });
+
   test("登録スコープからストリームパスを導出し、ルート配信でも横取りする", async () => {
     const harness = createHarness("https://example.test/");
     harness.clients.set("tab-1", { postMessage: (_message, ports) => ports[0].postMessage({ token: "token" }) });

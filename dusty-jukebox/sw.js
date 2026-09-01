@@ -46,7 +46,8 @@ function parseRange(range) {
 }
 
 async function fetchFileSize(fileId, token) {
-  let sizeRequest = fileSizeCache.get(fileId);
+  const cacheKey = `${fileId}:${token}`;
+  let sizeRequest = fileSizeCache.get(cacheKey);
   if (!sizeRequest) {
     sizeRequest = (async () => {
       const controller = new AbortController();
@@ -76,15 +77,15 @@ async function fetchFileSize(fileId, token) {
         clearTimeout(timeout);
       }
     })();
-    fileSizeCache.set(fileId, sizeRequest);
+    fileSizeCache.set(cacheKey, sizeRequest);
   }
 
   try {
     const result = await sizeRequest;
-    if (result.size === null && fileSizeCache.get(fileId) === sizeRequest) fileSizeCache.delete(fileId);
+    if (result.size === null && fileSizeCache.get(cacheKey) === sizeRequest) fileSizeCache.delete(cacheKey);
     return result;
   } catch {
-    if (fileSizeCache.get(fileId) === sizeRequest) fileSizeCache.delete(fileId);
+    if (fileSizeCache.get(cacheKey) === sizeRequest) fileSizeCache.delete(cacheKey);
     return { size: null, tokenRejected: false };
   }
 }
