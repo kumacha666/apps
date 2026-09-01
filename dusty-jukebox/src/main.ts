@@ -334,11 +334,12 @@ function setPlaybackAuthNotice(visible: boolean): void {
 }
 
 function handleNativePlaybackStatus(audio: HTMLAudioElement, eventType: PlaybackStatusEvent): void {
-  // A failed media load can emit pause as part of stopping playback. Preserve
-  // both the explicit authentication prompt and generic media errors instead
-  // of replacing them with an ordinary playback-state message.
-  if (!el<HTMLParagraphElement>("playback-auth-notice").hidden || audio.error !== null) return;
-  setStatus(playbackStatusForEvent(eventType));
+  const status = playbackStatusForEvent(eventType, {
+    hasAuthenticationNotice: !el<HTMLParagraphElement>("playback-auth-notice").hidden,
+    hasMediaError: audio.error !== null,
+    hasEnded: audio.ended,
+  });
+  if (status !== null) setStatus(status);
 }
 
 async function handlePlaybackAction(action: () => Promise<boolean>): Promise<void> {
@@ -1017,7 +1018,7 @@ function init(): void {
       () => void handleQueuePlayback(() => queue?.next()),
       (fileId) => registerQueuePlaybackContinuation(fileId, playback!)
     );
-    audioPlayer.addEventListener("play", () => handleNativePlaybackStatus(audioPlayer, "play"));
+    audioPlayer.addEventListener("playing", () => handleNativePlaybackStatus(audioPlayer, "playing"));
     audioPlayer.addEventListener("pause", () => handleNativePlaybackStatus(audioPlayer, "pause"));
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
