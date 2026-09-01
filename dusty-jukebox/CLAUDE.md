@@ -15,7 +15,7 @@
   2. （稀なエッジケース）アプリの一時停止ボタン→ネイティブ再開での認証相関ロス（同上）
   3. （稀なエッジケース）Drive上で同一fileIdのままファイルが差し替えられた場合のファイルサイズキャッシュ陳腐化（[review](https://github.com/kumacha666/apps/pull/398#discussion_r3897158136)）
   4. **（常に再現する）一時停止操作（アプリのボタン・ネイティブコントロールのどちらでも）の後、ステータス表示「再生中」が更新されないまま残る**。稀なケースではなく毎回起きる表示上の不具合（下記「次の実装ステップ」参照）
-- 他の7アプリのdeployスクリプトは`cp`コマンド依存でWindows非対応のまま（`dusty-jukebox`のみPR #397で対応済み）。Windows環境でそれらをデプロイする必要が生じたら同様の対応が必要
+- 他の6アプリ（7metch, 7metch2, enblo, enblo-classic, combrawl, mori-no-yakai）のdeployスクリプトは`cp`コマンド依存でWindows非対応のまま（`dusty-jukebox`のみPR #397で対応済み）。Windows環境でそれらをデプロイする必要が生じたら同様の対応が必要
 
 ## 開発ルール
 
@@ -39,7 +39,7 @@
 ## PWA・Service Workerストリーミング
 
 - 2026-08-25、PWA化（`manifest.json`・`icon.svg`）と、ルート直下の手書き`sw.js`を追加した。SWはViteのビルド対象外であり、`npm run build`後も`dist/sw.js`を出力しない。アプリシェルはnetwork-firstでキャッシュするが、キャッシュ削除は`dusty-jukebox-`プレフィックスの旧バージョンだけに限定し、同一オリジンの他アプリを消さない。
-- `./stream/<fileId>`はSWが横取りする仮想URL。SWの登録scopeからstreamパスを導出するため、GitHub Pagesの`/dusty-jukebox/`配下とローカルのルート配信の両方で動く。SWは`event.clientId`で要求元タブを特定し、MessageChannelでそのタブだけへトークンを問い合わせる。トークンをメモリ・永続ストレージ・URLへ保存しない。
+- `./stream/<fileId>`はSWが横取りする仮想URL。SWの登録scopeからstreamパスを導出するため、GitHub Pagesの`/dusty-jukebox/`配下とローカルのルート配信の両方で動く。SWは`event.clientId`で要求元タブを特定し、MessageChannelでそのタブだけへトークンを問い合わせる。トークンを永続ストレージ・URLへ保存しない。**ただしPR #398（下記）で追加した`fetchFileSize()`のキャッシュ（`fileSizeCache`）は、成功したエントリをfileId＋トークンの組み合わせをキーにSWのメモリ内（`Map`）に保持し続ける**（SWのライフタイム中のみ・永続化はしない。この点で「トークンをメモリに一切保存しない」という以前の記述は不正確だった）。
 - SWはRangeをそのままDrive APIへ転送し、`Authorization: Bearer`と`supportsAllDrives=true`を付与する。応答はストリーミングのまま返し、キャッシュしない。Driveが401を返した場合**とページ側にトークンが無い場合**は、`event.clientId`で特定した要求元タブだけへ`stream-token-rejected`メッセージを送る。`<audio>`のerrorイベントはHTTPステータスを公開しないため、このメッセージがキャッシュ済みトークン無効化の唯一の根拠になる。SW内で再ログインやリトライはしない。
 - `src/streamAuth.ts`はページ側の現在有効なトークンをSWへ応答するが、問い合わせからトークン更新・GISポップアップを発火しない。トークン有無を含む各要求IDを`PlaybackContinuationRegistry`へ記録する。401通知を受けた`main.ts`は`DriveAuth.clearToken()`を呼び、現在の再生だけを`PlaybackAuthenticationGate`へ保留する。キュー操作は`PlaybackQueue`がnative `play()`開始前に継続情報を登録するため、最初の曲送りが401になっても正しい曲を再開できる。`src/playback.ts`はネイティブ音声コントロールによるpause/resumeでは同じストリーム世代を保持し、対応するmedia errorを認証待ちとして識別する。`PlaybackAuthenticationGate`は失効時の元のplay/next/previous操作を保留し、ユーザーが「認証を更新して続行」ボタンをクリックした時だけGIS更新を開始して成功後に同じ曲（キューなら正しい次曲）を再開する。新しい再生が成功した時は古い保留操作と通知を破棄する。同時クリック・複数の失効検知は1回の更新へ合流する。
 - **既知の制限（2026-08-31、PR #392のCodexレビューで指摘・未修正。いずれもP2・データ破損や情報漏洩には該当しない再生体験上のエッジケースで、状態管理・並行処理コードのレビュー指摘は際限なく見つかりうるためここで区切った）**：①`PlaybackQueue.resume()`で拒否された進行中の移動（`pendingMove`）を置き換えても、置き換えられた側の操作自体は無効化されない。曲Aの再生が401で保留中に別の曲Bへ手動切り替えした後、保留していたAの`play()`が遅れて解決すると`currentFileId`がAへ巻き戻り、次の「次へ」操作がBではなくAから進むことがある（[review](https://github.com/kumacha666/apps/pull/392#discussion_r3895564027)は解消済みだが、この派生ケースは残っている）。②アプリの一時停止ボタン（`pause-btn`）で止めた後に`<audio controls>`のネイティブ再開ボタンで再開すると、`PlaybackController.play()`を経由しないため世代情報が復元されず、その後の401が認証継続ボタンではなく汎用エラー表示になる。
