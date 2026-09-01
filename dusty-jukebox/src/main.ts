@@ -9,6 +9,7 @@
 // （hasCompletedInitialScan=true）はrunDifferentialSync（changes.list消費）に切り替わる。
 import { AuthError, DriveAuth } from "./auth";
 import { PlaybackAuthenticationRequiredError, PlaybackController } from "./playback";
+import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStatus";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
 import { parseIndexRows, filterSongs, sortSongs, type Song } from "./catalog";
@@ -330,6 +331,14 @@ function registerQueuePlaybackContinuation(fileId: string, currentPlayback: Play
 
 function setPlaybackAuthNotice(visible: boolean): void {
   el<HTMLParagraphElement>("playback-auth-notice").hidden = !visible;
+}
+
+function handleNativePlaybackStatus(audio: HTMLAudioElement, eventType: PlaybackStatusEvent): void {
+  // A failed media load can emit pause as part of stopping playback. Preserve
+  // both the explicit authentication prompt and generic media errors instead
+  // of replacing them with an ordinary playback-state message.
+  if (!el<HTMLParagraphElement>("playback-auth-notice").hidden || audio.error !== null) return;
+  setStatus(playbackStatusForEvent(eventType));
 }
 
 async function handlePlaybackAction(action: () => Promise<boolean>): Promise<void> {
@@ -985,8 +994,9 @@ function init(): void {
       setStatus(err instanceof AuthError ? err.message : String(err), true);
       return;
     }
+    const audioPlayer = el<HTMLAudioElement>("audio-player");
     playback = new PlaybackController(
-      el<HTMLAudioElement>("audio-player"),
+      audioPlayer,
       () => auth.getAccessToken(),
       (error) => {
         // The SW message has already converted a confirmed Drive 401 into the
@@ -1002,11 +1012,13 @@ function init(): void {
     });
     queue = new PlaybackQueue(
       playback,
-      el<HTMLAudioElement>("audio-player"),
+      audioPlayer,
       (error) => setStatus(error instanceof Error ? error.message : String(error), true),
       () => void handleQueuePlayback(() => queue?.next()),
       (fileId) => registerQueuePlaybackContinuation(fileId, playback!)
     );
+    audioPlayer.addEventListener("play", () => handleNativePlaybackStatus(audioPlayer, "play"));
+    audioPlayer.addEventListener("pause", () => handleNativePlaybackStatus(audioPlayer, "pause"));
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
