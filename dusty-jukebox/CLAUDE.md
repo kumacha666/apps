@@ -10,11 +10,11 @@
 **次セッションで最初に確認すべきこと**：
 - 上記2PRの実機確認は完了しているが、長時間の連続再生・複数タブ・トークン失効を跨いだ操作等の追加シナリオはまだ試せていない
 - 次の機能開発候補（優先度未検討）：アルバム単位の通し再生、保存済みプレイリスト、検索窓、Album/Composer等の追加絞り込み、`extractionFailed`行の再抽出リトライ導線、カタログ補正機能（CONCEPT.md 4.4節）
-- 既知の制限（すべてP2、データ破損・情報漏洩には該当しない稀なエッジケース。対応は見送り済みでこの先も優先度低）：
-  1. `PlaybackQueue.resume()`が置き換えた旧移動の巻き戻り（[review](https://github.com/kumacha666/apps/pull/392#discussion_r3895564027)、下記「PWA・Service Workerストリーミング」参照）
-  2. アプリの一時停止ボタン→ネイティブ再開での認証相関ロス（同上）
-  3. Drive上で同一fileIdのままファイルが差し替えられた場合のファイルサイズキャッシュ陳腐化（[review](https://github.com/kumacha666/apps/pull/398#discussion_r3897158136)）
-  4. 一時停止操作後にステータス表示（「再生中」）が更新されない（下記「次の実装ステップ」参照）
+- **既知の制限（再生系のみ。この一覧はすべてP2で対応見送り・優先度低だが、稀なエッジケースと常に再現する不具合が混在するため個別に注記する。索引・差分同期系の未解決P1（`reconcileIndexAgainstRoot`のresourceKey保護ショートカット誤判定・関連するサブツリー再走査の欠落等）は本一覧の対象外で、下記「`changes.list`による実際の差分同期の消費」節に別途記載済み）**：
+  1. （稀なエッジケース）`PlaybackQueue.resume()`が置き換えた旧移動の巻き戻り（[review](https://github.com/kumacha666/apps/pull/392#discussion_r3895564027)、下記「PWA・Service Workerストリーミング」参照）
+  2. （稀なエッジケース）アプリの一時停止ボタン→ネイティブ再開での認証相関ロス（同上）
+  3. （稀なエッジケース）Drive上で同一fileIdのままファイルが差し替えられた場合のファイルサイズキャッシュ陳腐化（[review](https://github.com/kumacha666/apps/pull/398#discussion_r3897158136)）
+  4. **（常に再現する）一時停止操作（アプリのボタン・ネイティブコントロールのどちらでも）の後、ステータス表示「再生中」が更新されないまま残る**。稀なケースではなく毎回起きる表示上の不具合（下記「次の実装ステップ」参照）
 - 他の7アプリのdeployスクリプトは`cp`コマンド依存でWindows非対応のまま（`dusty-jukebox`のみPR #397で対応済み）。Windows環境でそれらをデプロイする必要が生じたら同様の対応が必要
 
 ## 開発ルール
@@ -44,7 +44,7 @@
 - `src/streamAuth.ts`はページ側の現在有効なトークンをSWへ応答するが、問い合わせからトークン更新・GISポップアップを発火しない。トークン有無を含む各要求IDを`PlaybackContinuationRegistry`へ記録する。401通知を受けた`main.ts`は`DriveAuth.clearToken()`を呼び、現在の再生だけを`PlaybackAuthenticationGate`へ保留する。キュー操作は`PlaybackQueue`がnative `play()`開始前に継続情報を登録するため、最初の曲送りが401になっても正しい曲を再開できる。`src/playback.ts`はネイティブ音声コントロールによるpause/resumeでは同じストリーム世代を保持し、対応するmedia errorを認証待ちとして識別する。`PlaybackAuthenticationGate`は失効時の元のplay/next/previous操作を保留し、ユーザーが「認証を更新して続行」ボタンをクリックした時だけGIS更新を開始して成功後に同じ曲（キューなら正しい次曲）を再開する。新しい再生が成功した時は古い保留操作と通知を破棄する。同時クリック・複数の失効検知は1回の更新へ合流する。
 - **既知の制限（2026-08-31、PR #392のCodexレビューで指摘・未修正。いずれもP2・データ破損や情報漏洩には該当しない再生体験上のエッジケースで、状態管理・並行処理コードのレビュー指摘は際限なく見つかりうるためここで区切った）**：①`PlaybackQueue.resume()`で拒否された進行中の移動（`pendingMove`）を置き換えても、置き換えられた側の操作自体は無効化されない。曲Aの再生が401で保留中に別の曲Bへ手動切り替えした後、保留していたAの`play()`が遅れて解決すると`currentFileId`がAへ巻き戻り、次の「次へ」操作がBではなくAから進むことがある（[review](https://github.com/kumacha666/apps/pull/392#discussion_r3895564027)は解消済みだが、この派生ケースは残っている）。②アプリの一時停止ボタン（`pause-btn`）で止めた後に`<audio controls>`のネイティブ再開ボタンで再開すると、`PlaybackController.play()`を経由しないため世代情報が復元されず、その後の401が認証継続ボタンではなく汎用エラー表示になる。
 - **2026-09-01、PR #398：実機で「Failed to load because no supported source was found」により再生が必ず失敗する不具合を修正**。原因は`proxyStream()`がDrive `alt=media`の206応答を中継する際、`Content-Range`/`Accept-Ranges`ヘッダーがクロスオリジンfetchのCORS safelistに含まれずJavaScriptから読めないため、これらのヘッダーが欠落した不完全な206レスポンスをブラウザへ返していたこと（`Content-Type`/`Content-Length`はsafelist対象のため正しく転送できていた）。以下を実装：
-  - `fetchFileSize(fileId, token)`でファイルの合計サイズを`files.get?fields=size`から取得し、fileId＋トークンの組み合わせ（`` `${fileId}:${token}` ``）でService Worker内にキャッシュ（異なるトークン間で401等の認証結果を誤って共有しないため）。取得にはタイムアウト（`FILE_SIZE_TIMEOUT_MS`5秒、`AbortController`）を設け、メタデータ取得の遅延が既に取得済みの音声データ応答をブロックしないようにした
+  - `fetchFileSize(fileId, token)`でファイルの合計サイズを`files.get?fields=size`から取得し、fileId＋トークンの組み合わせ（`` `${fileId}:${token}` ``）でService Worker内にキャッシュ（異なるトークン間で401等の認証結果を誤って共有しないため）。`proxyStream()`はこのメタデータ取得の完了を待ってから音声データ応答を返すため、遅延はそのままブロッキング時間になる。取得にはタイムアウト（`FILE_SIZE_TIMEOUT_MS`5秒、`AbortController`）を設け、**このブロッキングを無期限ではなく最大5秒に制限した**（無くしたわけではない）
   - 実際に返ってきた`Content-Length`（safelist対象で読める）とリクエストの`Range`ヘッダー（通常形式`bytes=N-`・サフィックス形式`bytes=-N`の両方に対応）から、`Content-Range`/`Accept-Ranges`を自前で組み立てて付与
   - メタデータ取得自体が401を返した場合は、既存の`stream-token-rejected`通知フローに同じ`requestId`で乗せる（音声データ取得の401通知フローとは独立しているため、こちらも別途通知する必要があった）
   - サイズ取得に失敗した場合（タイムアウト・ネットワークエラー・401以外のエラー）は、例外を投げずに`Content-Range`無しの不完全な206をそのまま中継する（フォールバック。データ自体は取得できているため再生できる可能性を残す）
