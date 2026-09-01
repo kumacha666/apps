@@ -4,6 +4,7 @@ const ASSETS = ["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg
 const APP_SHELL_URLS = new Set(ASSETS.map((asset) => new URL(asset, self.location.href).href));
 const STREAM_PATH_PREFIX = new URL("stream/", self.registration.scope).pathname;
 const TOKEN_TIMEOUT_MS = 5_000;
+const FILE_SIZE_TIMEOUT_MS = 5_000;
 
 self.addEventListener("install", (event) => {
   const requests = ASSETS.map((url) => new Request(url, { cache: "no-cache" }));
@@ -28,38 +29,70 @@ let nextTokenRequestId = 0;
 const fileSizeCache = new Map();
 
 function parseRange(range) {
-  const match = /^bytes=(\d+)-(\d*)$/.exec(range ?? "");
+  const match = /^bytes=(?:(\d+)-(\d*)|-(\d+))$/.exec(range ?? "");
   if (!match) return null;
+  if (match[3] !== undefined) {
+    const suffixLength = Number(match[3]);
+    return Number.isSafeInteger(suffixLength) && suffixLength > 0
+      ? { start: null, requestedEnd: null, suffixLength }
+      : null;
+  }
   const start = Number(match[1]);
   const requestedEnd = match[2] ? Number(match[2]) : null;
   if (!Number.isSafeInteger(start) || (requestedEnd !== null && (!Number.isSafeInteger(requestedEnd) || requestedEnd < start))) {
     return null;
   }
-  return { start, requestedEnd };
+  return { start, requestedEnd, suffixLength: null };
 }
 
 async function fetchFileSize(fileId, token) {
   let sizeRequest = fileSizeCache.get(fileId);
   if (!sizeRequest) {
     sizeRequest = (async () => {
-      const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=size&supportsAllDrives=true`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) return null;
-      const size = Number((await response.json()).size);
-      return Number.isSafeInteger(size) && size >= 0 ? size : null;
+      const controller = new AbortController();
+      let timeout;
+      try {
+        return await Promise.race([
+          (async () => {
+            const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=size&supportsAllDrives=true`, {
+              headers: { Authorization: `Bearer ${token}` },
+              signal: controller.signal,
+            });
+            if (!response.ok) return { size: null, tokenRejected: response.status === 401 };
+            const size = Number((await response.json()).size);
+            return {
+              size: Number.isSafeInteger(size) && size >= 0 ? size : null,
+              tokenRejected: false,
+            };
+          })(),
+          new Promise((resolve) => {
+            timeout = setTimeout(() => {
+              controller.abort();
+              resolve({ size: null, tokenRejected: false });
+            }, FILE_SIZE_TIMEOUT_MS);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
     })();
     fileSizeCache.set(fileId, sizeRequest);
   }
 
   try {
-    const size = await sizeRequest;
-    if (size === null && fileSizeCache.get(fileId) === sizeRequest) fileSizeCache.delete(fileId);
-    return size;
+    const result = await sizeRequest;
+    if (result.size === null && fileSizeCache.get(fileId) === sizeRequest) fileSizeCache.delete(fileId);
+    return result;
   } catch {
     if (fileSizeCache.get(fileId) === sizeRequest) fileSizeCache.delete(fileId);
-    return null;
+    return { size: null, tokenRejected: false };
   }
+}
+
+async function notifyTokenRejected(clientId, fileId, requestId) {
+  if (!clientId) return;
+  const client = await self.clients.get(clientId);
+  client?.postMessage({ type: "dusty-jukebox:stream-token-rejected", fileId, requestId });
 }
 
 async function requestToken(clientId, fileId, playbackGeneration) {
@@ -96,8 +129,7 @@ async function proxyStream(request, fileId, clientId) {
     // with the request id so the page can offer the same user-gesture-only
     // continuation as it does for a Drive-rejected bearer token.
     if (clientId && tokenRequest) {
-      const client = await self.clients.get(clientId);
-      client?.postMessage({ type: "dusty-jukebox:stream-token-rejected", fileId, requestId: tokenRequest.requestId });
+      await notifyTokenRejected(clientId, fileId, tokenRequest.requestId);
     }
     return unauthorizedResponse();
   }
@@ -110,8 +142,7 @@ async function proxyStream(request, fileId, clientId) {
   // issued this request about a rejected bearer token so it can clear its cache
   // and offer the user-gesture-only continuation flow.
   if (response.status === 401 && clientId) {
-    const client = await self.clients.get(clientId);
-    client?.postMessage({ type: "dusty-jukebox:stream-token-rejected", fileId, requestId: tokenRequest.requestId });
+    await notifyTokenRejected(clientId, fileId, tokenRequest.requestId);
   }
   const responseHeaders = new Headers();
   for (const header of ["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type"]) {
@@ -122,9 +153,15 @@ async function proxyStream(request, fileId, clientId) {
     const parsedRange = parseRange(range);
     const contentLength = Number(response.headers.get("Content-Length"));
     if (parsedRange && Number.isSafeInteger(contentLength) && contentLength > 0) {
-      const totalSize = await fetchFileSize(fileId, token);
-      if (totalSize !== null) {
-        responseHeaders.set("Content-Range", `bytes ${parsedRange.start}-${parsedRange.start + contentLength - 1}/${totalSize}`);
+      const sizeResult = await fetchFileSize(fileId, token);
+      if (sizeResult.tokenRejected) {
+        await notifyTokenRejected(clientId, fileId, tokenRequest.requestId);
+      }
+      if (sizeResult.size !== null) {
+        const start = parsedRange.suffixLength === null
+          ? parsedRange.start
+          : Math.max(sizeResult.size - parsedRange.suffixLength, 0);
+        responseHeaders.set("Content-Range", `bytes ${start}-${start + contentLength - 1}/${sizeResult.size}`);
         responseHeaders.set("Accept-Ranges", "bytes");
       }
     }
