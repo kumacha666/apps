@@ -306,35 +306,3 @@ describe("revalidateTrashedFileIds", () => {
   });
 });
 
-describe("createCachedTrashRevalidator", () => {
-  test("同じfileIdは1回だけDriveへ照会する", async () => {
-    const { createCachedTrashRevalidator } = await import("./retryExtraction");
-    const getFile = vi.fn(async (id: string) => ({ id, name: `${id}.mp3`, mimeType: "audio/mpeg", trashed: true }));
-    const isStillTrashed = createCachedTrashRevalidator(getFile);
-    expect(await isStillTrashed(["a", "b"])).toBe(true);
-    expect(await isStillTrashed(["a", "b"])).toBe(true);
-    // 2回目の呼び出しはキャッシュ済みのため、Driveへは"a"/"b"それぞれ1回ずつしか照会しない
-    // （2026-09-02 Codexレビュー指摘：バッチのたびに全件再照会するとDrive呼び出しが
-    // 件数×バッチ数に膨れ上がる問題）。
-    expect(getFile).toHaveBeenCalledTimes(2);
-  });
-
-  test("1件でも復元されていればfalseを返す", async () => {
-    const { createCachedTrashRevalidator } = await import("./retryExtraction");
-    const isStillTrashed = createCachedTrashRevalidator(async (id) => ({
-      id, name: `${id}.mp3`, mimeType: "audio/mpeg", trashed: id !== "restored",
-    }));
-    expect(await isStillTrashed(["still-trashed", "restored"])).toBe(false);
-  });
-
-  test("新しいfileIdが混ざった呼び出しでは、その分だけ追加で照会する", async () => {
-    const { createCachedTrashRevalidator } = await import("./retryExtraction");
-    const getFile = vi.fn(async (id: string) => ({ id, name: `${id}.mp3`, mimeType: "audio/mpeg", trashed: true }));
-    const isStillTrashed = createCachedTrashRevalidator(getFile);
-    await isStillTrashed(["a"]);
-    getFile.mockClear();
-    await isStillTrashed(["a", "b"]);
-    expect(getFile).toHaveBeenCalledTimes(1);
-    expect(getFile).toHaveBeenCalledWith("b");
-  });
-});

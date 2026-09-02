@@ -92,28 +92,6 @@ export async function revalidateTrashedFileIds(
   return results.filter((fileId): fileId is string => fileId !== null);
 }
 
-// removeIndexRowsのisStillCurrentは、書き込みバッチ（既定200件）のたびに「そのバッチで
-// 実際に空欄化しようとしているfileId」だけを渡して呼ばれる（sheets.tsのupdateRowsInBatches
-// 参照、2026-09-02 Codexレビュー指摘：P1で修正）。以前は呼び出し側（main.ts）がバッチに
-// 関係なく毎回trashedFileIds全件を渡していたため、バッチ1で確認した「trashed=true」を
-// 後続の（時間の経った）バッチでもキャッシュ経由でそのまま信用してしまい、その間に復元
-// されたファイルを誤って削除しうる、というTOCTOU窓を意図せず広げてしまっていた。
-// 現在は各fileIdがちょうど1つのバッチにしか属さないため、このキャッシュは基本的に
-// 「同じfileIdを2回照会しない」防御的な意味合いのみを持つ。
-export function createCachedTrashRevalidator(
-  getFile: (fileId: string) => Promise<DriveFile | null>
-): (fileIds: string[]) => Promise<boolean> {
-  const cache = new Map<string, boolean>();
-  return async (fileIds: string[]): Promise<boolean> => {
-    const uncached = fileIds.filter((id) => !cache.has(id));
-    if (uncached.length > 0) {
-      const stillTrashed = new Set(await revalidateTrashedFileIds(uncached, getFile));
-      for (const id of uncached) cache.set(id, stillTrashed.has(id));
-    }
-    return fileIds.every((id) => cache.get(id) === true);
-  };
-}
-
 // リトライ全体のオーケストレーション。ライブラリ全体規模の失敗をまとめてリトライすると
 // タグ抽出だけで数時間かかりうるため、runFullScan（フルスキャン）と同じ「一定件数ごとに
 // タグ抽出→索引への書き込みを行う」バッチ処理にする。全件の抽出が終わるまで一切書き込まない

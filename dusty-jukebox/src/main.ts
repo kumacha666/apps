@@ -39,7 +39,7 @@ import {
 import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
 import { commitInitialChangeReplay, consumeChangesOrHandleExpiry } from "./initialChangeReplay";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
-import { createCachedTrashRevalidator, filterStaleUpsertEntries, retryFailedExtractions } from "./retryExtraction";
+import { filterStaleUpsertEntries, retryFailedExtractions, revalidateTrashedFileIds } from "./retryExtraction";
 import {
   createSheetsIndexIO,
   indexRowsScanState,
@@ -926,7 +926,6 @@ async function handleRetryExtraction(): Promise<void> {
     // リトライの古い抽出結果が新しい差分同期結果を上書きしてしまうデータ整合性の問題）。
     const skippedStaleFileIds: string[] = [];
     let actuallyRemovedCount = 0;
-    const isStillTrashed = createCachedTrashRevalidator(createDriveFileGetFn(() => auth.ensureAccessToken()));
     const result = await retryFailedExtractions(
       fileIds,
       createDriveFileGetFn(() => auth.ensureAccessToken()),
@@ -951,19 +950,25 @@ async function handleRetryExtraction(): Promise<void> {
         // revalidateTrashedFileIdsを外側で先に呼んでから渡す場合より、Drive再確認と
         // 実際の削除書き込みの間に挟まる自前の処理（索引の内部読み取り等）が無くなる
         // （2026-09-02 Codexレビュー指摘、P1）。isStillCurrentにはremoveIndexRows側から
-        // 「そのバッチで実際に空欄化しようとしているfileIdだけ」が渡されるため、ここで
-        // 受け取るfileIds引数（バッチ内サブセット）をそのままisStillTrashedへ渡す。以前は
-        // 外側のtrashedFileIds全件を毎回渡しており、先行バッチで確認した「trashed=true」を
-        // 後続バッチでもキャッシュ経由で信用してしまう意図しないTOCTOU窓があった
-        // （2026-09-02 Codexレビュー指摘、P1）。対象ファイルの一部だけ復元されていた場合は
-        // 誤って一部を消すより安全側に倒し、そのバッチだけ削除を見送る（次回のリトライで
+        // 「そのバッチで実際に空欄化しようとしているfileIdだけ」が渡されるため、バッチの
+        // たびにrevalidateTrashedFileIdsを直接呼び毎回Driveへ再照会する（キャッシュは使わない）。
+        // 以前はfileIdごとの判定結果をキャッシュしていたが、重複行（同じfileIdの索引行が
+        // 複数存在するケース）があるとremoveIndexRowsが同じfileIdを複数のバッチに分けて
+        // 渡すことがあり、先行バッチで確認した「trashed=true」がキャッシュ経由で後続バッチにも
+        // 使い回され、その間に復元されたファイルを誤って削除しうるTOCTOU窓があった
+        // （2026-09-02 Codexレビュー指摘、P1）。バッチ内で同じfileIdが重複する場合に備え
+        // 照会前にSetで重複排除する。対象ファイルの一部だけ復元されていた場合は誤って
+        // 一部を消すより安全側に倒し、そのバッチだけ削除を見送る（次回のリトライで
         // 改めて対象になる）。バッチが複数に分かれうるため削除件数は加算する。判定は
         // バッチごとに独立しているため、onStaleBatch="skip"を指定し、見送ったバッチが
         // あっても後続のまだ本当にtrashedなバッチの削除は継続する（2026-09-02 Codex
         // レビュー指摘、P2。既定の"abort"のままだと、早いバッチで1件でも復元が見つかった
         // 時点で以降の全バッチの削除が打ち切られてしまっていた）。
         await removeIndexRows(sheetsIO, fileIds, async (batchFileIds) => {
-          const allStillTrashed = await isStillTrashed(batchFileIds);
+          const stillTrashed = new Set(
+            await revalidateTrashedFileIds([...new Set(batchFileIds)], createDriveFileGetFn(() => auth.ensureAccessToken()))
+          );
+          const allStillTrashed = batchFileIds.every((id) => stillTrashed.has(id));
           if (allStillTrashed) actuallyRemovedCount += batchFileIds.length;
           return allStillTrashed;
         }, "skip");
