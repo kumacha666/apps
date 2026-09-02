@@ -959,6 +959,35 @@ describe("removeIndexRows", () => {
     expect(io.updateCalls).toHaveLength(1);
     expect(isStillCurrent).toHaveBeenCalledTimes(2);
   });
+
+  test("isStillCurrentにはそのバッチで実際に空欄化しようとしているfileIdだけが渡される（全fileIdではない）（2026-09-02 Codexレビュー指摘：P1。以前は呼び出し元が毎回全fileIdを渡していたため、先行バッチで確認済みの結果を後続バッチでも信用してしまい、その間に復元されたファイルを誤って削除しうるTOCTOU窓があった）", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) =>
+      buildIndexRow({
+        fileId: `f${i}`,
+        fileName: `f${i}.mp3`,
+        parentId: "p",
+        driveModifiedTime: "2026-08-01T00:00:00.000Z",
+        lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+        tags: {},
+        extractionFailed: false,
+      })
+    );
+    const io = makeFakeIO(rows);
+    const receivedBatches: string[][] = [];
+    const isStillCurrent = vi.fn(async (batchFileIds: string[]) => {
+      receivedBatches.push(batchFileIds);
+      return true;
+    });
+    const result = await removeIndexRows(
+      io,
+      Array.from({ length: 250 }, (_, i) => `f${i}`),
+      isStillCurrent
+    );
+    expect(result).toEqual({ removedCount: 250 });
+    expect(receivedBatches).toHaveLength(2);
+    expect(receivedBatches[0]).toEqual(Array.from({ length: 200 }, (_, i) => `f${i}`));
+    expect(receivedBatches[1]).toEqual(Array.from({ length: 50 }, (_, i) => `f${i + 200}`));
+  });
 });
 
 describe("reconcileIndexAgainstRoot", () => {

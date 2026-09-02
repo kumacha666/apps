@@ -16,7 +16,7 @@ function row(overrides: Partial<Record<"fileId" | "scanRunId" | "driveModifiedTi
 
 function noopCallbacks() {
   return {
-    persistBatch: vi.fn().mockResolvedValue(undefined),
+    persistBatch: vi.fn().mockResolvedValue({ staleFileIds: [] }),
     mergeDuplicates: vi.fn().mockResolvedValue(undefined),
     removeTrashed: vi.fn().mockResolvedValue(undefined),
   };
@@ -172,7 +172,10 @@ describe("retryFailedExtractions", () => {
     extract.mockImplementationOnce(buildBatchResult);
     const { retryFailedExtractions } = await import("./retryExtraction");
     const persistedBatchSizes: number[] = [];
-    const persistBatch = vi.fn(async (entries: unknown[]) => { persistedBatchSizes.push(entries.length); });
+    const persistBatch = vi.fn(async (entries: unknown[]) => {
+      persistedBatchSizes.push(entries.length);
+      return { staleFileIds: [] };
+    });
     const mergeDuplicates = vi.fn().mockResolvedValue(undefined);
     const removeTrashed = vi.fn().mockResolvedValue(undefined);
     await retryFailedExtractions(
@@ -204,6 +207,27 @@ describe("retryFailedExtractions", () => {
     expect(persistBatch).not.toHaveBeenCalled();
     expect(mergeDuplicates).not.toHaveBeenCalled();
     expect(removeTrashed).toHaveBeenCalledWith(["trashed"]);
+  });
+
+  test("persistBatchがstaleFileIdsを返した場合、その分をsucceededCount/stillFailedCountから除外する（2026-09-02 Codexレビュー指摘：P2。以前はpersistBatch呼び出し前の抽出結果だけでカウントしており、他デバイスの更新により実際には書き込まれなかったエントリも成功として表示していた）", async () => {
+    extract.mockResolvedValue([
+      { fileId: "ok", row: row({ fileId: "ok", extractionFailed: "FALSE" }) },
+      { fileId: "stale-ok", row: row({ fileId: "stale-ok", extractionFailed: "FALSE" }) },
+      { fileId: "stale-failed", row: row({ fileId: "stale-failed", extractionFailed: "TRUE" }) },
+    ]);
+    const { retryFailedExtractions } = await import("./retryExtraction");
+    const persistBatch = vi.fn().mockResolvedValue({ staleFileIds: ["stale-ok", "stale-failed"] });
+    const mergeDuplicates = vi.fn().mockResolvedValue(undefined);
+    const removeTrashed = vi.fn().mockResolvedValue(undefined);
+    const result = await retryFailedExtractions(
+      ["ok", "stale-ok", "stale-failed"],
+      async (id) => ({ id, name: `${id}.mp3`, mimeType: "audio/mpeg" }),
+      () => async () => new Uint8Array(), () => {},
+      new Map(),
+      persistBatch, mergeDuplicates, removeTrashed
+    );
+    expect(result.succeededCount).toBe(1);
+    expect(result.stillFailedCount).toBe(0);
   });
 
   test("trashedFileIdsが空ならremoveTrashedを呼ばない", async () => {

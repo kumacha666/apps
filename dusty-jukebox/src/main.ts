@@ -948,6 +948,7 @@ async function handleRetryExtraction(): Promise<void> {
         const { fresh, staleFileIds } = filterStaleUpsertEntries(entries, currentRows);
         skippedStaleFileIds.push(...staleFileIds);
         if (fresh.length > 0) await upsertIndexRows(sheetsIO, fresh, currentRows);
+        return { staleFileIds };
       },
       () => mergeDuplicateIndexRows(sheetsIO).then(() => undefined),
       async (fileIds) => {
@@ -955,12 +956,17 @@ async function handleRetryExtraction(): Promise<void> {
         // updateRowsInBatchesが実際のSheets書き込み（io.updateRows）の直前に呼ぶため、
         // revalidateTrashedFileIdsを外側で先に呼んでから渡す場合より、Drive再確認と
         // 実際の削除書き込みの間に挟まる自前の処理（索引の内部読み取り等）が無くなる
+        // （2026-09-02 Codexレビュー指摘、P1）。isStillCurrentにはremoveIndexRows側から
+        // 「そのバッチで実際に空欄化しようとしているfileIdだけ」が渡されるため、ここで
+        // 受け取るfileIds引数（バッチ内サブセット）をそのままisStillTrashedへ渡す。以前は
+        // 外側のtrashedFileIds全件を毎回渡しており、先行バッチで確認した「trashed=true」を
+        // 後続バッチでもキャッシュ経由で信用してしまう意図しないTOCTOU窓があった
         // （2026-09-02 Codexレビュー指摘、P1）。対象ファイルの一部だけ復元されていた場合は
         // 誤って一部を消すより安全側に倒し、そのバッチ全体の削除を見送る（次回のリトライで
-        // 改めて対象になる）。
-        await removeIndexRows(sheetsIO, fileIds, async () => {
-          const allStillTrashed = await isStillTrashed(fileIds);
-          if (allStillTrashed) actuallyRemovedCount = fileIds.length;
+        // 改めて対象になる）。バッチが複数に分かれうるため削除件数は加算する。
+        await removeIndexRows(sheetsIO, fileIds, async (batchFileIds) => {
+          const allStillTrashed = await isStillTrashed(batchFileIds);
+          if (allStillTrashed) actuallyRemovedCount += batchFileIds.length;
           return allStillTrashed;
         });
       }

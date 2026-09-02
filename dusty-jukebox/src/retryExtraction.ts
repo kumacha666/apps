@@ -10,6 +10,10 @@ export interface RetryExtractionSummary {
   stillFailedCount: number;
 }
 
+export interface PersistBatchResult {
+  staleFileIds: string[];
+}
+
 const MAX_CONCURRENT_METADATA_GETS = 4;
 const EXTRACTION_BATCH_SIZE = 200;
 const SCAN_RUN_ID_INDEX = INDEX_SHEET_HEADER.indexOf("scanRunId");
@@ -78,12 +82,14 @@ export async function revalidateTrashedFileIds(
   return results.filter((fileId): fileId is string => fileId !== null);
 }
 
-// removeIndexRowsのisStillCurrentは、書き込みバッチ（既定200件）のたびに同じ完全な
-// fileIds集合で呼ばれる。revalidateTrashedFileIdsをキャッシュ無しでそのまま使うと、
-// 大規模なtrashedリスト（例: 1万件→50バッチ）で毎回全件を再照会し、Drive呼び出しが
-// 件数×バッチ数に膨れ上がってしまう（2026-09-02 Codexレビュー指摘、P2）。fileIdごとの
-// 判定結果をキャッシュし、一度確認したfileIdは再照会しない。実運用でtrashed件数が
-// 既定バッチサイズを超えることは稀なため、通常は1回の照会で完結する。
+// removeIndexRowsのisStillCurrentは、書き込みバッチ（既定200件）のたびに「そのバッチで
+// 実際に空欄化しようとしているfileId」だけを渡して呼ばれる（sheets.tsのupdateRowsInBatches
+// 参照、2026-09-02 Codexレビュー指摘：P1で修正）。以前は呼び出し側（main.ts）がバッチに
+// 関係なく毎回trashedFileIds全件を渡していたため、バッチ1で確認した「trashed=true」を
+// 後続の（時間の経った）バッチでもキャッシュ経由でそのまま信用してしまい、その間に復元
+// されたファイルを誤って削除しうる、というTOCTOU窓を意図せず広げてしまっていた。
+// 現在は各fileIdがちょうど1つのバッチにしか属さないため、このキャッシュは基本的に
+// 「同じfileIdを2回照会しない」防御的な意味合いのみを持つ。
 export function createCachedTrashRevalidator(
   getFile: (fileId: string) => Promise<DriveFile | null>
 ): (fileIds: string[]) => Promise<boolean> {
@@ -105,6 +111,11 @@ export function createCachedTrashRevalidator(
 // 次回リトライがゼロからやり直しになってしまう（2026-09-02 Codexレビュー指摘、P2）。
 // persistBatch: 1バッチ分のUpsertIndexEntry[]を実際に書き込む（呼び出し元でfilterStale
 // UpsertEntries＋upsertIndexRowsを行う想定。書き込み直前の鮮度チェックは呼び出し元の責務のまま）。
+// 呼び出し元は実際に書き込みをスキップしたfileId（staleFileIds）を返す必要がある。
+// これを使って完了サマリーのsucceededCount/stillFailedCountから、鮮度チェックで除外された
+// エントリを差し引く（2026-09-02 Codexレビュー指摘：P2。以前はpersistBatch呼び出し前の
+// 抽出結果だけでカウントしており、他デバイスの更新により実際には書き込まれなかった
+// エントリも「成功」として利用者に表示してしまっていた）。
 // mergeDuplicates／removeTrashedは全バッチ完了後に1回だけ呼ぶ（重複マージは索引全体を
 // 読み直すため、バッチのたびに呼ぶと大規模リトライで無駄なコストが積み上がる）。
 export async function retryFailedExtractions(
@@ -113,7 +124,7 @@ export async function retryFailedExtractions(
   createFetchRangeForFile: (fileId: string, signal: AbortSignal) => FetchRangeFn,
   onProgress: (done: number, total: number) => void,
   existingScanRunIds: Map<string, string>,
-  persistBatch: (entries: UpsertIndexEntry[]) => Promise<void>,
+  persistBatch: (entries: UpsertIndexEntry[]) => Promise<PersistBatchResult>,
   mergeDuplicates: () => Promise<void>,
   removeTrashed: (fileIds: string[]) => Promise<void>,
   batchSize = EXTRACTION_BATCH_SIZE
@@ -160,10 +171,14 @@ export async function retryFailedExtractions(
       const preserved = existingScanRunIds.get(entry.fileId);
       if (preserved !== undefined) entry.row[SCAN_RUN_ID_INDEX] = preserved;
     }
-    const batchStillFailed = batchUpsertEntries.filter(({ row }) => row[EXTRACTION_FAILED_INDEX] === "TRUE").length;
-    stillFailedCount += batchStillFailed;
-    succeededCount += batchUpsertEntries.length - batchStillFailed;
-    if (batchUpsertEntries.length > 0) await persistBatch(batchUpsertEntries);
+    let staleFileIds: string[] = [];
+    if (batchUpsertEntries.length > 0) ({ staleFileIds } = await persistBatch(batchUpsertEntries));
+    const staleFileIdSet = new Set(staleFileIds);
+    for (const entry of batchUpsertEntries) {
+      if (staleFileIdSet.has(entry.fileId)) continue;
+      if (entry.row[EXTRACTION_FAILED_INDEX] === "TRUE") stillFailedCount++;
+      else succeededCount++;
+    }
   }
 
   if (succeededCount + stillFailedCount > 0) await mergeDuplicates();

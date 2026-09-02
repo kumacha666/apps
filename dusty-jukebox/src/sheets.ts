@@ -559,16 +559,23 @@ const WRITE_BATCH_SIZE = 200;
 // 送信された後・後続バッチが送信されるまでの間に別デバイスが同じrootFolderIdのまま
 // トークンを進めて同じ行番号へ正当なデータを書いていると、後続の旧バッチがそのデータを
 // 空欄化で上書きしうる。バッチごとに再確認し、不一致になった時点で残りのバッチを送らない。
+// 呼び出し元にはそのバッチに含まれるfileId一覧を渡す（2026-09-02 Codexレビュー指摘：P1）。
+// retryExtraction.tsのtrashed再確認のように「このバッチで実際に空欄化しようとしている
+// fileIdだけ」を対象に直前revalidateしたい呼び出し元向け。fileIdを使わない呼び出し元
+// （reconcileIndexAgainstRoot等、sync状態のみを見る）は引数を無視してよい。
 async function updateRowsInBatches(
   io: SheetsIndexIO,
-  updates: { rowNumber: number; row: (string | number)[] }[],
-  isStillCurrent?: () => Promise<boolean>
+  updates: { rowNumber: number; row: (string | number)[]; fileId?: string }[],
+  isStillCurrent?: (batchFileIds: string[]) => Promise<boolean>
 ): Promise<number> {
   let written = 0;
   for (let i = 0; i < updates.length; i += WRITE_BATCH_SIZE) {
-    if (isStillCurrent && !(await isStillCurrent())) break;
     const batch = updates.slice(i, i + WRITE_BATCH_SIZE);
-    await io.updateRows(batch);
+    if (isStillCurrent) {
+      const batchFileIds = batch.map((u) => u.fileId).filter((id): id is string => Boolean(id));
+      if (!(await isStillCurrent(batchFileIds))) break;
+    }
+    await io.updateRows(batch.map(({ rowNumber, row }) => ({ rowNumber, row })));
     written += batch.length;
   }
   return written;
@@ -577,16 +584,16 @@ async function updateRowsInBatches(
 export async function removeIndexRows(
   io: SheetsIndexIO,
   fileIds: string[],
-  isStillCurrent?: () => Promise<boolean>
+  isStillCurrent?: (batchFileIds: string[]) => Promise<boolean>
 ): Promise<RemoveIndexRowsResult> {
   if (fileIds.length === 0) return { removedCount: 0 };
   const targets = new Set(fileIds);
   const rows = await io.listExistingRows();
   const blankRow = new Array(INDEX_SHEET_HEADER.length).fill("") as (string | number)[];
-  const updates: { rowNumber: number; row: (string | number)[] }[] = [];
+  const updates: { rowNumber: number; row: (string | number)[]; fileId: string }[] = [];
   rows.forEach((row, i) => {
     const fileId = row[FILE_ID_INDEX];
-    if (fileId && targets.has(String(fileId))) updates.push({ rowNumber: i + 2, row: blankRow });
+    if (fileId && targets.has(String(fileId))) updates.push({ rowNumber: i + 2, row: blankRow, fileId: String(fileId) });
   });
   const written = await updateRowsInBatches(io, updates, isStillCurrent);
   return { removedCount: written };
