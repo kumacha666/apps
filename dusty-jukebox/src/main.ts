@@ -39,7 +39,7 @@ import {
 import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
 import { commitInitialChangeReplay, consumeChangesOrHandleExpiry } from "./initialChangeReplay";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
-import { filterStaleUpsertEntries, persistRetryExtractionResult, retryFailedExtractions } from "./retryExtraction";
+import { filterStaleUpsertEntries, persistRetryExtractionResult, retryFailedExtractions, revalidateTrashedFileIds } from "./retryExtraction";
 import {
   createSheetsIndexIO,
   indexRowsScanState,
@@ -930,16 +930,25 @@ async function handleRetryExtraction(): Promise<void> {
     await persistRetryExtractionResult(
       result,
       async (entries) => {
-        const currentState = indexRowsScanState(await sheetsIO.listExistingRows());
-        const { fresh, staleFileIds } = filterStaleUpsertEntries(entries, currentState);
+        const currentRows = await sheetsIO.listExistingRows();
+        const { fresh, staleFileIds } = filterStaleUpsertEntries(entries, currentRows);
         skippedStaleFileIds.push(...staleFileIds);
         if (fresh.length > 0) await upsertIndexRows(sheetsIO, fresh);
       },
       () => mergeDuplicateIndexRows(sheetsIO).then(() => undefined),
-      (fileIds) => removeIndexRows(sheetsIO, fileIds, async () => {
-        await auth.ensureAccessToken();
-        return true;
-      }).then(() => undefined)
+      async (fileIds) => {
+        // trashed判定はメタデータ取得時点のスナップショットのため、削除の直前にDriveへ
+        // 再照会し、その時点でも実際にtrashed（または削除済み）であるファイルだけを削除する
+        // （2026-09-02 Codexレビュー指摘、P1：抽出中に復元されたファイルの行を誤って
+        // 消してしまうデータ整合性の問題）。
+        const stillTrashed = await revalidateTrashedFileIds(fileIds, createDriveFileGetFn(() => auth.ensureAccessToken()));
+        if (stillTrashed.length > 0) {
+          await removeIndexRows(sheetsIO, stillTrashed, async () => {
+            await auth.ensureAccessToken();
+            return true;
+          });
+        }
+      }
     );
     const staleNotice = skippedStaleFileIds.length > 0 ? `、他デバイスの更新により書き込みスキップ ${skippedStaleFileIds.length}件` : "";
     setStatus(`再抽出完了（成功 ${result.succeededCount}件、再度失敗 ${result.stillFailedCount}件、削除済み ${result.trashedFileIds.length}件、Drive上で見つからずスキップ ${result.removedFileIds.length}件${staleNotice}）`);

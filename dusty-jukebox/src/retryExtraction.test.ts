@@ -146,11 +146,11 @@ describe("retryFailedExtractions", () => {
 });
 
 describe("filterStaleUpsertEntries", () => {
-  test("driveModifiedTimeが一致する行はそのまま残す", async () => {
+  test("driveModifiedTimeが一致し、現在の行もextractionFailed=TRUEのままなら残す", async () => {
     const { filterStaleUpsertEntries } = await import("./retryExtraction");
     const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z" }) };
-    const currentState = new Map([["a", { scanRunId: "", driveModifiedTime: "2026-01-01T00:00:00Z" }]]);
-    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], currentState);
+    const currentRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", extractionFailed: "TRUE" })];
+    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], currentRows);
     expect(fresh).toEqual([entry]);
     expect(staleFileIds).toEqual([]);
   });
@@ -158,8 +158,8 @@ describe("filterStaleUpsertEntries", () => {
   test("driveModifiedTimeが他デバイスの差分同期で変わっていたら除外する", async () => {
     const { filterStaleUpsertEntries } = await import("./retryExtraction");
     const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z" }) };
-    const currentState = new Map([["a", { scanRunId: "", driveModifiedTime: "2026-02-02T00:00:00Z" }]]);
-    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], currentState);
+    const currentRows = [row({ fileId: "a", driveModifiedTime: "2026-02-02T00:00:00Z", extractionFailed: "TRUE" })];
+    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], currentRows);
     expect(fresh).toEqual([]);
     expect(staleFileIds).toEqual(["a"]);
   });
@@ -167,8 +167,32 @@ describe("filterStaleUpsertEntries", () => {
   test("行が既に無くなっていたら除外する", async () => {
     const { filterStaleUpsertEntries } = await import("./retryExtraction");
     const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z" }) };
-    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], new Map());
+    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], []);
     expect(fresh).toEqual([]);
     expect(staleFileIds).toEqual(["a"]);
+  });
+
+  test("同一バージョンでも別デバイスのリトライが先に成功していたら除外する", async () => {
+    // ファイル自体はDrive上で変更されていない（driveModifiedTime一致）が、別デバイスの
+    // 同時リトライが先にextractionFailed=FALSEへ書き込んでいたケース。ここで自分の
+    // （失敗した）結果を書き込むと、既に修正済みの行をTRUEへ巻き戻してしまう。
+    const { filterStaleUpsertEntries } = await import("./retryExtraction");
+    const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", extractionFailed: "TRUE" }) };
+    const currentRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", extractionFailed: "FALSE" })];
+    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], currentRows);
+    expect(fresh).toEqual([]);
+    expect(staleFileIds).toEqual(["a"]);
+  });
+});
+
+describe("revalidateTrashedFileIds", () => {
+  test("削除直前に再確認し、復元されていたファイルは対象から外す", async () => {
+    const { revalidateTrashedFileIds } = await import("./retryExtraction");
+    const result = await revalidateTrashedFileIds(["still-trashed", "restored", "deleted"], async (id) => {
+      if (id === "restored") return { id, name: "restored.mp3", mimeType: "audio/mpeg", trashed: false };
+      if (id === "deleted") return null;
+      return { id, name: `${id}.mp3`, mimeType: "audio/mpeg", trashed: true };
+    });
+    expect(result.sort()).toEqual(["deleted", "still-trashed"]);
   });
 });
