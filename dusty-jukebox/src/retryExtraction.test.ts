@@ -33,7 +33,6 @@ describe("retryFailedExtractions", () => {
       ["gone", "trashed", "live"],
       async (id) => id === "gone" ? null : { id, name: `${id}.mp3`, mimeType: "audio/mpeg", trashed: id === "trashed" },
       () => async () => new Uint8Array(), () => {},
-      new Map(),
       persistBatch, mergeDuplicates, removeTrashed
     );
     expect(result.removedFileIds).toEqual(["gone"]);
@@ -61,7 +60,6 @@ describe("retryFailedExtractions", () => {
         return { id, name: `${id}.mp3`, mimeType: "audio/mpeg" };
       },
       () => async () => new Uint8Array(), () => {},
-      new Map(),
       persistBatch, mergeDuplicates, removeTrashed
     );
     await vi.waitFor(() => expect(active).toBe(4));
@@ -85,7 +83,6 @@ describe("retryFailedExtractions", () => {
           return { id, name: `${id}.mp3`, mimeType: "audio/mpeg" };
         },
         () => async () => new Uint8Array(), () => {},
-        new Map(),
         persistBatch, mergeDuplicates, removeTrashed
       )
     ).rejects.toBeInstanceOf(DriveHttpError);
@@ -93,36 +90,6 @@ describe("retryFailedExtractions", () => {
     // （file-4〜file-9）は決して開始されない。既に並行実行枠を使っていたfile-1〜file-3は
     // 打ち切り前に開始済みのため呼ばれうる。
     expect(started).not.toEqual(expect.arrayContaining(["file-9"]));
-  });
-
-  test("既存のscanRunIdを保持し空欄で上書きしない", async () => {
-    const newRow = row({ fileId: "live", extractionFailed: "FALSE" });
-    extract.mockResolvedValue([{ fileId: "live", row: newRow }]);
-    const { retryFailedExtractions } = await import("./retryExtraction");
-    const { persistBatch, mergeDuplicates, removeTrashed } = noopCallbacks();
-    await retryFailedExtractions(
-      ["live"],
-      async () => ({ id: "live", name: "live.mp3", mimeType: "audio/mpeg" }),
-      () => async () => new Uint8Array(), () => {},
-      new Map([["live", "scan-run-123"]]),
-      persistBatch, mergeDuplicates, removeTrashed
-    );
-    expect(persistBatch.mock.calls[0][0][0].row[INDEX_SHEET_HEADER.indexOf("scanRunId")]).toBe("scan-run-123");
-  });
-
-  test("既存のscanRunIdが無いfileIdは空欄のまま", async () => {
-    const newRow = row({ fileId: "live" });
-    extract.mockResolvedValue([{ fileId: "live", row: newRow }]);
-    const { retryFailedExtractions } = await import("./retryExtraction");
-    const { persistBatch, mergeDuplicates, removeTrashed } = noopCallbacks();
-    await retryFailedExtractions(
-      ["live"],
-      async () => ({ id: "live", name: "live.mp3", mimeType: "audio/mpeg" }),
-      () => async () => new Uint8Array(), () => {},
-      new Map(),
-      persistBatch, mergeDuplicates, removeTrashed
-    );
-    expect(persistBatch.mock.calls[0][0][0].row[INDEX_SHEET_HEADER.indexOf("scanRunId")]).toBe("");
   });
 
   test("再失敗した行をそのまま渡して件数を数える", async () => {
@@ -134,7 +101,6 @@ describe("retryFailedExtractions", () => {
       ["live"],
       async () => ({ id: "live", name: "live.mp3", mimeType: "audio/mpeg" }),
       () => async () => new Uint8Array(), () => {},
-      new Map(),
       persistBatch, mergeDuplicates, removeTrashed
     );
     expect(persistBatch.mock.calls[0][0][0].row).toBe(failedRow);
@@ -150,7 +116,6 @@ describe("retryFailedExtractions", () => {
         ["live"],
         async () => { throw authError; },
         () => async () => new Uint8Array(), () => {},
-        new Map(),
         persistBatch, mergeDuplicates, removeTrashed
       )
     ).rejects.toBe(authError);
@@ -182,7 +147,6 @@ describe("retryFailedExtractions", () => {
       fileIds,
       async (id) => ({ id, name: `${id}.mp3`, mimeType: "audio/mpeg" }),
       () => async () => new Uint8Array(), () => {},
-      new Map(),
       persistBatch, mergeDuplicates, removeTrashed,
       100
     );
@@ -201,7 +165,6 @@ describe("retryFailedExtractions", () => {
       ["trashed"],
       async (id) => ({ id, name: `${id}.mp3`, mimeType: "audio/mpeg", trashed: true }),
       () => async () => new Uint8Array(), () => {},
-      new Map(),
       persistBatch, mergeDuplicates, removeTrashed
     );
     expect(persistBatch).not.toHaveBeenCalled();
@@ -223,11 +186,26 @@ describe("retryFailedExtractions", () => {
       ["ok", "stale-ok", "stale-failed"],
       async (id) => ({ id, name: `${id}.mp3`, mimeType: "audio/mpeg" }),
       () => async () => new Uint8Array(), () => {},
-      new Map(),
       persistBatch, mergeDuplicates, removeTrashed
     );
     expect(result.succeededCount).toBe(1);
     expect(result.stillFailedCount).toBe(0);
+  });
+
+  test("バッチの全エントリがstale判定されて1件も書き込まれなくてもmergeDuplicatesを呼ぶ（2026-09-02 Codexレビュー指摘：P2。以前はsucceededCount+stillFailedCountが0のままmergeDuplicatesがスキップされ、重複行の一方が既に別デバイスで解消済みだったケースで、もう一方の失敗行が以降のリトライでも選ばれ続けてしまっていた）", async () => {
+    extract.mockResolvedValue([{ fileId: "stale", row: row({ fileId: "stale", extractionFailed: "TRUE" }) }]);
+    const { retryFailedExtractions } = await import("./retryExtraction");
+    const persistBatch = vi.fn().mockResolvedValue({ staleFileIds: ["stale"] });
+    const mergeDuplicates = vi.fn().mockResolvedValue(undefined);
+    const removeTrashed = vi.fn().mockResolvedValue(undefined);
+    const result = await retryFailedExtractions(
+      ["stale"],
+      async (id) => ({ id, name: `${id}.mp3`, mimeType: "audio/mpeg" }),
+      () => async () => new Uint8Array(), () => {},
+      persistBatch, mergeDuplicates, removeTrashed
+    );
+    expect(result).toMatchObject({ succeededCount: 0, stillFailedCount: 0 });
+    expect(mergeDuplicates).toHaveBeenCalledTimes(1);
   });
 
   test("trashedFileIdsが空ならremoveTrashedを呼ばない", async () => {
@@ -238,7 +216,6 @@ describe("retryFailedExtractions", () => {
       ["live"],
       async (id) => ({ id, name: `${id}.mp3`, mimeType: "audio/mpeg" }),
       () => async () => new Uint8Array(), () => {},
-      new Map(),
       persistBatch, mergeDuplicates, removeTrashed
     );
     expect(removeTrashed).not.toHaveBeenCalled();
@@ -246,6 +223,24 @@ describe("retryFailedExtractions", () => {
 });
 
 describe("filterStaleUpsertEntries", () => {
+  test("freshと判定したエントリのscanRunIdを、書き込み直前に読んだ現在の行の値で上書きする（2026-09-02 Codexレビュー指摘：P2。以前はリトライ開始時点の1回限りのスナップショットを使っており、開始後に他デバイスが新しいフルスキャンを開始しwatermarkを進めていた場合、その新しい値を古いスナップショットの値で上書きしてしまいうる）", async () => {
+    const { filterStaleUpsertEntries } = await import("./retryExtraction");
+    const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", scanRunId: "old-scan-run" }) };
+    const currentRows = [
+      row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", extractionFailed: "TRUE", scanRunId: "new-scan-run" }),
+    ];
+    const { fresh } = filterStaleUpsertEntries([entry], currentRows);
+    expect(fresh[0].row[INDEX_SHEET_HEADER.indexOf("scanRunId")]).toBe("new-scan-run");
+  });
+
+  test("現在の行にscanRunIdが無ければ空欄で上書きする", async () => {
+    const { filterStaleUpsertEntries } = await import("./retryExtraction");
+    const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", scanRunId: "old-scan-run" }) };
+    const currentRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", extractionFailed: "TRUE" })];
+    const { fresh } = filterStaleUpsertEntries([entry], currentRows);
+    expect(fresh[0].row[INDEX_SHEET_HEADER.indexOf("scanRunId")]).toBe("");
+  });
+
   test("driveModifiedTimeが一致し、現在の行もextractionFailed=TRUEのままなら残す", async () => {
     const { filterStaleUpsertEntries } = await import("./retryExtraction");
     const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z" }) };

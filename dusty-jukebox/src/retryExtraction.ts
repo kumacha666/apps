@@ -31,6 +31,12 @@ const EXTRACTION_FAILED_INDEX = INDEX_SHEET_HEADER.indexOf("extractionFailed");
 // - 現在の行が既にextractionFailed=FALSE（別デバイスが同じ失敗行を同時にリトライして
 //   先に成功していた。ファイル自体は変更されていないためdriveModifiedTimeの比較だけでは
 //   検出できない「同一バージョンの同時リトライ」も、2026-09-02 Codexレビュー指摘で追加）
+// fresh判定されたエントリのscanRunId列は、書き込み直前に読んだcurrentRows側の現在値で
+// 上書きする（2026-09-02 Codexレビュー指摘、P2）。以前はリトライ開始時点で読んだ
+// 1回限りのスナップショット（呼び出し元main.tsのexistingScanRunIds）を使っており、
+// 開始後に他デバイスが新しいフルスキャンを開始し中断中のwatermarkを進めていた場合、
+// その新しいwatermarkを古いスナップショットの値で上書きしてしまいうる。現在の行が
+// 存在しない（stale）エントリは書き込み自体を行わないためscanRunIdの上書きも不要。
 export function filterStaleUpsertEntries(
   entries: UpsertIndexEntry[],
   currentRows: (string | number)[][]
@@ -45,7 +51,11 @@ export function filterStaleUpsertEntries(
     const ours = oursByFileId.get(entry.fileId);
     const alreadyFixed = currentRow ? currentRow[EXTRACTION_FAILED_INDEX] !== "TRUE" : false;
     const isStale = !current || alreadyFixed || (ours !== undefined && current.driveModifiedTime !== ours.driveModifiedTime);
-    if (isStale) staleFileIds.push(entry.fileId);
+    if (isStale) {
+      staleFileIds.push(entry.fileId);
+    } else if (current) {
+      entry.row[SCAN_RUN_ID_INDEX] = current.scanRunId;
+    }
     return !isStale;
   });
   return { fresh, staleFileIds };
@@ -123,7 +133,6 @@ export async function retryFailedExtractions(
   getFile: (fileId: string) => Promise<DriveFile | null>,
   createFetchRangeForFile: (fileId: string, signal: AbortSignal) => FetchRangeFn,
   onProgress: (done: number, total: number) => void,
-  existingScanRunIds: Map<string, string>,
   persistBatch: (entries: UpsertIndexEntry[]) => Promise<PersistBatchResult>,
   mergeDuplicates: () => Promise<void>,
   removeTrashed: (fileIds: string[]) => Promise<void>,
@@ -167,10 +176,6 @@ export async function retryFailedExtractions(
       ""
     );
     done += batch.length;
-    for (const entry of batchUpsertEntries) {
-      const preserved = existingScanRunIds.get(entry.fileId);
-      if (preserved !== undefined) entry.row[SCAN_RUN_ID_INDEX] = preserved;
-    }
     let staleFileIds: string[] = [];
     if (batchUpsertEntries.length > 0) ({ staleFileIds } = await persistBatch(batchUpsertEntries));
     const staleFileIdSet = new Set(staleFileIds);
@@ -181,7 +186,12 @@ export async function retryFailedExtractions(
     }
   }
 
-  if (succeededCount + stillFailedCount > 0) await mergeDuplicates();
+  // succeededCount+stillFailedCountではなくentries.length（抽出を試みた候補が1件でも
+  // あったか）で判定する（2026-09-02 Codexレビュー指摘、P2）。以前の条件だと、バッチの
+  // 全エントリがfilterStaleUpsertEntriesでstale判定され書き込みが1件も行われなかった
+  // 場合（例：重複行の一方が既に別デバイスの成功で解消済み）にmergeDuplicatesがスキップ
+  // され、重複したまま残るもう一方の失敗行が以降のリトライでも選ばれ続けてしまう。
+  if (entries.length > 0) await mergeDuplicates();
   if (trashedFileIds.length > 0) await removeTrashed(trashedFileIds);
 
   return { removedFileIds, trashedFileIds, succeededCount, stillFailedCount };

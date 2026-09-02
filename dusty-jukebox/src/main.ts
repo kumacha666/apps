@@ -916,11 +916,6 @@ async function handleRetryExtraction(): Promise<void> {
     if (!canEdit) {
       throw new Error("索引スプレッドシートへの編集権限がありません。共有設定（編集者権限）をご確認ください。");
     }
-    // リトライ開始前の各行のscanRunIdを保持しておく（retryFailedExtractions内でリトライ成功時に
-    // 空欄で上書きしないようにするため。中断中のフルスキャンのwatermarkを壊さないための対策）。
-    const existingScanRunIds = new Map(
-      [...indexRowsScanState(existingRows)].map(([fileId, state]) => [fileId, state.scanRunId])
-    );
     // handleScan()と同じ方針：これから索引を書き換えるため、実際の変更前にセッションを無効化する。
     // 抽出完了後に無効化すると、書き込みが一部だけ成功して失敗した場合に古いカタログが有効なまま
     // 残り、削除・変更済みの内容から再生リストが作られてしまう恐れがある（2026-09-02 Codex
@@ -937,7 +932,6 @@ async function handleRetryExtraction(): Promise<void> {
       createDriveFileGetFn(() => auth.ensureAccessToken()),
       (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
       (done, total) => setStatus(`再抽出中... (${done}/${total})`),
-      existingScanRunIds,
       async (entries) => {
         // filterStaleUpsertEntriesの判定に使ったスナップショット（currentRows）を
         // upsertIndexRowsのexistingRowsSnapshotへそのまま渡し、内部でのもう一度の
