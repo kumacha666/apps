@@ -988,6 +988,36 @@ describe("removeIndexRows", () => {
     expect(receivedBatches[0]).toEqual(Array.from({ length: 200 }, (_, i) => `f${i}`));
     expect(receivedBatches[1]).toEqual(Array.from({ length: 50 }, (_, i) => `f${i + 200}`));
   });
+
+  test("onStaleBatch='skip'の場合、falseを返したバッチだけ見送り後続バッチの削除は継続する（2026-09-02 Codexレビュー指摘：P2。判定がバッチごとに独立している呼び出し元〈retryExtraction.tsのtrashed再確認〉では、既定の'abort'のままだと早いバッチで1件でも復元が見つかった時点で、まだ本当にtrashedな後続バッチの削除まで巻き込んで打ち切ってしまっていた）", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) =>
+      buildIndexRow({
+        fileId: `f${i}`,
+        fileName: `f${i}.mp3`,
+        parentId: "p",
+        driveModifiedTime: "2026-08-01T00:00:00.000Z",
+        lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+        tags: {},
+        extractionFailed: false,
+      })
+    );
+    const io = makeFakeIO(rows);
+    let calls = 0;
+    const isStillCurrent = vi.fn(async () => {
+      calls += 1;
+      return calls !== 1; // 最初のバッチだけ復元されていたことにして見送る
+    });
+    const result = await removeIndexRows(
+      io,
+      Array.from({ length: 250 }, (_, i) => `f${i}`),
+      isStillCurrent,
+      "skip"
+    );
+    expect(result).toEqual({ removedCount: 50 });
+    expect(io.updateCalls).toHaveLength(1);
+    expect(io.updateCalls[0]).toHaveLength(50);
+    expect(isStillCurrent).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("reconcileIndexAgainstRoot", () => {

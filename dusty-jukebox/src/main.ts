@@ -956,13 +956,17 @@ async function handleRetryExtraction(): Promise<void> {
         // 外側のtrashedFileIds全件を毎回渡しており、先行バッチで確認した「trashed=true」を
         // 後続バッチでもキャッシュ経由で信用してしまう意図しないTOCTOU窓があった
         // （2026-09-02 Codexレビュー指摘、P1）。対象ファイルの一部だけ復元されていた場合は
-        // 誤って一部を消すより安全側に倒し、そのバッチ全体の削除を見送る（次回のリトライで
-        // 改めて対象になる）。バッチが複数に分かれうるため削除件数は加算する。
+        // 誤って一部を消すより安全側に倒し、そのバッチだけ削除を見送る（次回のリトライで
+        // 改めて対象になる）。バッチが複数に分かれうるため削除件数は加算する。判定は
+        // バッチごとに独立しているため、onStaleBatch="skip"を指定し、見送ったバッチが
+        // あっても後続のまだ本当にtrashedなバッチの削除は継続する（2026-09-02 Codex
+        // レビュー指摘、P2。既定の"abort"のままだと、早いバッチで1件でも復元が見つかった
+        // 時点で以降の全バッチの削除が打ち切られてしまっていた）。
         await removeIndexRows(sheetsIO, fileIds, async (batchFileIds) => {
           const allStillTrashed = await isStillTrashed(batchFileIds);
           if (allStillTrashed) actuallyRemovedCount += batchFileIds.length;
           return allStillTrashed;
-        });
+        }, "skip");
       }
     );
     const staleNotice = skippedStaleFileIds.length > 0 ? `、他デバイスの更新により書き込みスキップ ${skippedStaleFileIds.length}件` : "";

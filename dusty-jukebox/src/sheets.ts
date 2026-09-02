@@ -563,17 +563,27 @@ const WRITE_BATCH_SIZE = 200;
 // retryExtraction.tsのtrashed再確認のように「このバッチで実際に空欄化しようとしている
 // fileIdだけ」を対象に直前revalidateしたい呼び出し元向け。fileIdを使わない呼び出し元
 // （reconcileIndexAgainstRoot等、sync状態のみを見る）は引数を無視してよい。
+// onStaleBatch（既定"abort"）：isStillCurrentがfalseを返した場合の扱い。"abort"（既定）は
+// 従来通り残りのバッチを一切送らずに打ち切る（sync状態のように「1つでも不一致なら全体が
+// 信用できない」グローバルな判定向け）。"skip"はそのバッチだけ送らずに次のバッチへ進む
+// （2026-09-02 Codexレビュー指摘：P2。retryExtraction.tsのtrashed再確認のように判定が
+// バッチごとに独立している場合、"abort"のままだと早いバッチで1件でも復元されていた際、
+// まだ本当にtrashedな後続バッチの削除まで巻き込んで打ち切ってしまっていた）。
 async function updateRowsInBatches(
   io: SheetsIndexIO,
   updates: { rowNumber: number; row: (string | number)[]; fileId?: string }[],
-  isStillCurrent?: (batchFileIds: string[]) => Promise<boolean>
+  isStillCurrent?: (batchFileIds: string[]) => Promise<boolean>,
+  onStaleBatch: "abort" | "skip" = "abort"
 ): Promise<number> {
   let written = 0;
   for (let i = 0; i < updates.length; i += WRITE_BATCH_SIZE) {
     const batch = updates.slice(i, i + WRITE_BATCH_SIZE);
     if (isStillCurrent) {
       const batchFileIds = batch.map((u) => u.fileId).filter((id): id is string => Boolean(id));
-      if (!(await isStillCurrent(batchFileIds))) break;
+      if (!(await isStillCurrent(batchFileIds))) {
+        if (onStaleBatch === "abort") break;
+        continue;
+      }
     }
     await io.updateRows(batch.map(({ rowNumber, row }) => ({ rowNumber, row })));
     written += batch.length;
@@ -584,7 +594,8 @@ async function updateRowsInBatches(
 export async function removeIndexRows(
   io: SheetsIndexIO,
   fileIds: string[],
-  isStillCurrent?: (batchFileIds: string[]) => Promise<boolean>
+  isStillCurrent?: (batchFileIds: string[]) => Promise<boolean>,
+  onStaleBatch: "abort" | "skip" = "abort"
 ): Promise<RemoveIndexRowsResult> {
   if (fileIds.length === 0) return { removedCount: 0 };
   const targets = new Set(fileIds);
@@ -595,7 +606,7 @@ export async function removeIndexRows(
     const fileId = row[FILE_ID_INDEX];
     if (fileId && targets.has(String(fileId))) updates.push({ rowNumber: i + 2, row: blankRow, fileId: String(fileId) });
   });
-  const written = await updateRowsInBatches(io, updates, isStillCurrent);
+  const written = await updateRowsInBatches(io, updates, isStillCurrent, onStaleBatch);
   return { removedCount: written };
 }
 
