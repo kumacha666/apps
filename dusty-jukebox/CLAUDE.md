@@ -131,6 +131,7 @@
 - vite.config.js の entry-rewrite プラグインが `dev` 実行時に root `index.html` の `./app.js` を `./src/main.ts` に書き換える（`7metch`/`7metch2`と同様の仕組み）
 - **2026-08-31、Windows環境での`npm run deploy`失敗を2件修正**（PR #396, #397）：①`scripts/test-e2e-if-chromium.mjs`が`execFileSync`で`npx.cmd`/`npm.cmd`を呼ぶ際、Node.jsのCVE-2024-27980対応により`shell: true`が無いと`EINVAL`で落ちる問題を修正。②`package.json`の`deploy`スクリプトが使っていた`cp`コマンドはWindows標準のcmd/PowerShellに存在しないため、`scripts/copy-dist-app.mjs`に置き換え。**実際にWindows環境で実クライアントIDを設定した`npm run deploy`が成功し、`app.js`（241.76kB）・`sw.js`のコミット・pushまで確認済み**
 - 2026-08-31、実際に`VITE_GOOGLE_CLIENT_ID`を設定した環境で`npm run deploy`を実行し、公開`app.js`（コミット`aaba428`）へ全機能を反映済み（下記「現在の状態」参照）
+- **2026-09-02、`VITE_GOOGLE_CLIENT_ID`をCodex Cloud Environmentの環境変数として設定した**（OAuthクライアントIDは秘密情報ではないため、環境変数として設定してよいと判断。詳細は`dusty-jukebox/AGENTS.md`「環境変数」参照）。これにより、PR #370〜#402まで繰り返されてきた「`.env`が無いためnpm run deployを見送り、`src/`のみコミットする」という運用は不要になり、**以降のPRは他のビルドアプリと同様、Codexが`npm run deploy`まで実行し`app.js`等の成果物をコミットに含める想定**。ソースはマージ済みだが公開`app.js`に未反映のまま残っている過去の変更（PR #402の検索窓・Album/Composer絞り込み・アルバム単位の通し再生等）は、次回`npm run deploy`実行時にまとめて反映される見込み
 
 ## 次の実装ステップ（着手順の目安）
 
