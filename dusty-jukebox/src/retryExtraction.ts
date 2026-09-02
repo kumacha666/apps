@@ -27,7 +27,13 @@ const EXTRACTION_FAILED_INDEX = INDEX_SHEET_HEADER.indexOf("extractionFailed");
 // 書き込み直前に読み直した現在の索引の生データ（currentRows）と比較し、以下のいずれかに
 // 該当するエントリを書き込み対象から除外する：
 // - 行自体が既に無い（他プロセスによる削除・リコンサイル）
-// - driveModifiedTimeが変わっている（Drive側でファイルが更新された）
+// - driveModifiedTimeがリトライ開始時点（initialRows）から変わっている（他デバイスの
+//   差分同期がこの区間で同じ行を更新した）。**比較対象はentry自身が今回新しく取得した
+//   driveModifiedTimeではなく、リトライ開始前に読んだinitialRowsの値**（2026-09-02
+//   Codexレビュー指摘：P2で修正。以前はentry側の新しい値と比較していたため、ユーザーが
+//   Drive上でファイルを直接修正してからリトライした場合のように、entry側の値が
+//   initialRowsより新しいだけで他デバイスとの競合が無いケースまで一律staleと誤判定し、
+//   正当な修正結果が索引へ二度と反映されなくなっていた）
 // - 現在の行が既にextractionFailed=FALSE（別デバイスが同じ失敗行を同時にリトライして
 //   先に成功していた。ファイル自体は変更されていないためdriveModifiedTimeの比較だけでは
 //   検出できない「同一バージョンの同時リトライ」も、2026-09-02 Codexレビュー指摘で追加）
@@ -39,18 +45,19 @@ const EXTRACTION_FAILED_INDEX = INDEX_SHEET_HEADER.indexOf("extractionFailed");
 // 存在しない（stale）エントリは書き込み自体を行わないためscanRunIdの上書きも不要。
 export function filterStaleUpsertEntries(
   entries: UpsertIndexEntry[],
-  currentRows: (string | number)[][]
+  currentRows: (string | number)[][],
+  initialRows: (string | number)[][]
 ): { fresh: UpsertIndexEntry[]; staleFileIds: string[] } {
   const currentState = indexRowsScanState(currentRows);
+  const initialState = indexRowsScanState(initialRows);
   const currentRowByFileId = new Map(currentRows.map((row) => [String(row[FILE_ID_INDEX] ?? ""), row]));
-  const oursByFileId = indexRowsScanState(entries.map((entry) => entry.row));
   const staleFileIds: string[] = [];
   const fresh = entries.filter((entry) => {
     const current = currentState.get(entry.fileId);
     const currentRow = currentRowByFileId.get(entry.fileId);
-    const ours = oursByFileId.get(entry.fileId);
+    const initial = initialState.get(entry.fileId);
     const alreadyFixed = currentRow ? currentRow[EXTRACTION_FAILED_INDEX] !== "TRUE" : false;
-    const isStale = !current || alreadyFixed || (ours !== undefined && current.driveModifiedTime !== ours.driveModifiedTime);
+    const isStale = !current || alreadyFixed || (initial !== undefined && current.driveModifiedTime !== initial.driveModifiedTime);
     if (isStale) {
       staleFileIds.push(entry.fileId);
     } else if (current) {

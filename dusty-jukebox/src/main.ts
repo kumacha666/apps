@@ -938,7 +938,7 @@ async function handleRetryExtraction(): Promise<void> {
         // 使う時点とで別々の読み取りになり、その間の一呼吸がガードとは無関係な
         // 追加のTOCTOU窓になってしまう（2026-09-02 Codexレビュー指摘、P1）。
         const currentRows = await sheetsIO.listExistingRows();
-        const { fresh, staleFileIds } = filterStaleUpsertEntries(entries, currentRows);
+        const { fresh, staleFileIds } = filterStaleUpsertEntries(entries, currentRows, existingRows);
         skippedStaleFileIds.push(...staleFileIds);
         if (fresh.length > 0) await upsertIndexRows(sheetsIO, fresh, currentRows);
         return { staleFileIds };
@@ -965,11 +965,16 @@ async function handleRetryExtraction(): Promise<void> {
         // レビュー指摘、P2。既定の"abort"のままだと、早いバッチで1件でも復元が見つかった
         // 時点で以降の全バッチの削除が打ち切られてしまっていた）。
         await removeIndexRows(sheetsIO, fileIds, async (batchFileIds) => {
+          const uniqueBatchFileIds = new Set(batchFileIds);
           const stillTrashed = new Set(
-            await revalidateTrashedFileIds([...new Set(batchFileIds)], createDriveFileGetFn(() => auth.ensureAccessToken()))
+            await revalidateTrashedFileIds([...uniqueBatchFileIds], createDriveFileGetFn(() => auth.ensureAccessToken()))
           );
           const allStillTrashed = batchFileIds.every((id) => stillTrashed.has(id));
-          if (allStillTrashed) actuallyRemovedCount += batchFileIds.length;
+          // 索引に同じfileIdの重複行がある場合、removeIndexRowsは同じfileIdを複数回
+          // batchFileIdsへ含めうる。行数ではなく削除対象となった一意のfileId数を数える
+          // （2026-09-02 Codexレビュー指摘：P2。以前は行数をそのまま加算しており、
+          // 1ファイルの重複行2件を削除しても「削除済み 2件」と誤表示していた）。
+          if (allStillTrashed) actuallyRemovedCount += uniqueBatchFileIds.size;
           return allStillTrashed;
         }, "skip");
       }

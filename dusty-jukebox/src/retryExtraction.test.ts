@@ -226,43 +226,60 @@ describe("filterStaleUpsertEntries", () => {
   test("freshと判定したエントリのscanRunIdを、書き込み直前に読んだ現在の行の値で上書きする（2026-09-02 Codexレビュー指摘：P2。以前はリトライ開始時点の1回限りのスナップショットを使っており、開始後に他デバイスが新しいフルスキャンを開始しwatermarkを進めていた場合、その新しい値を古いスナップショットの値で上書きしてしまいうる）", async () => {
     const { filterStaleUpsertEntries } = await import("./retryExtraction");
     const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", scanRunId: "old-scan-run" }) };
+    const initialRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z" })];
     const currentRows = [
       row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", extractionFailed: "TRUE", scanRunId: "new-scan-run" }),
     ];
-    const { fresh } = filterStaleUpsertEntries([entry], currentRows);
+    const { fresh } = filterStaleUpsertEntries([entry], currentRows, initialRows);
     expect(fresh[0].row[INDEX_SHEET_HEADER.indexOf("scanRunId")]).toBe("new-scan-run");
   });
 
   test("現在の行にscanRunIdが無ければ空欄で上書きする", async () => {
     const { filterStaleUpsertEntries } = await import("./retryExtraction");
     const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", scanRunId: "old-scan-run" }) };
+    const initialRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z" })];
     const currentRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", extractionFailed: "TRUE" })];
-    const { fresh } = filterStaleUpsertEntries([entry], currentRows);
+    const { fresh } = filterStaleUpsertEntries([entry], currentRows, initialRows);
     expect(fresh[0].row[INDEX_SHEET_HEADER.indexOf("scanRunId")]).toBe("");
   });
 
   test("driveModifiedTimeが一致し、現在の行もextractionFailed=TRUEのままなら残す", async () => {
     const { filterStaleUpsertEntries } = await import("./retryExtraction");
     const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z" }) };
+    const initialRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z" })];
     const currentRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", extractionFailed: "TRUE" })];
-    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], currentRows);
+    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], currentRows, initialRows);
     expect(fresh).toEqual([entry]);
     expect(staleFileIds).toEqual([]);
   });
 
-  test("driveModifiedTimeが他デバイスの差分同期で変わっていたら除外する", async () => {
+  test("driveModifiedTimeがリトライ開始時点（initialRows）から他デバイスの差分同期で変わっていたら除外する", async () => {
     const { filterStaleUpsertEntries } = await import("./retryExtraction");
     const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z" }) };
+    const initialRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z" })];
     const currentRows = [row({ fileId: "a", driveModifiedTime: "2026-02-02T00:00:00Z", extractionFailed: "TRUE" })];
-    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], currentRows);
+    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], currentRows, initialRows);
     expect(fresh).toEqual([]);
     expect(staleFileIds).toEqual(["a"]);
+  });
+
+  test("ファイル自体がDrive上で正当に変更されていても、索引側がリトライ開始時点から変わっていなければ書き込む（2026-09-02 Codexレビュー指摘：P2。以前はentry自身の新しいdriveModifiedTimeと現在の索引を比較していたため、ユーザーがDrive上でファイルを直接修正してからリトライした場合のように、他デバイスとの競合が無いのに一律staleと誤判定し、正当な修正結果が索引へ二度と反映されなくなっていた）", async () => {
+    const { filterStaleUpsertEntries } = await import("./retryExtraction");
+    // entryは今回のリトライが新しく取得したdriveModifiedTime（ユーザーの修正後の値）
+    const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-03-03T00:00:00Z", extractionFailed: "FALSE" }) };
+    // initialRowsとcurrentRowsは共にリトライ開始時点の古い値のまま（他デバイスは何も書き込んでいない）
+    const initialRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", extractionFailed: "TRUE" })];
+    const currentRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", extractionFailed: "TRUE" })];
+    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], currentRows, initialRows);
+    expect(fresh).toEqual([entry]);
+    expect(staleFileIds).toEqual([]);
   });
 
   test("行が既に無くなっていたら除外する", async () => {
     const { filterStaleUpsertEntries } = await import("./retryExtraction");
     const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z" }) };
-    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], []);
+    const initialRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z" })];
+    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], [], initialRows);
     expect(fresh).toEqual([]);
     expect(staleFileIds).toEqual(["a"]);
   });
@@ -273,8 +290,9 @@ describe("filterStaleUpsertEntries", () => {
     // （失敗した）結果を書き込むと、既に修正済みの行をTRUEへ巻き戻してしまう。
     const { filterStaleUpsertEntries } = await import("./retryExtraction");
     const entry = { fileId: "a", row: row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", extractionFailed: "TRUE" }) };
+    const initialRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", extractionFailed: "TRUE" })];
     const currentRows = [row({ fileId: "a", driveModifiedTime: "2026-01-01T00:00:00Z", extractionFailed: "FALSE" })];
-    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], currentRows);
+    const { fresh, staleFileIds } = filterStaleUpsertEntries([entry], currentRows, initialRows);
     expect(fresh).toEqual([]);
     expect(staleFileIds).toEqual(["a"]);
   });
