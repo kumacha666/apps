@@ -75,7 +75,7 @@
 
 ## Codex実装運用
 
-**appsリポジトリの実装コードはCodexが担い、Claude Codeは書かない**（設計と、実装指示文の作成、PRの最終チェックのみ担当。背景は`ai-workspace/CLAUDE.md`の「AIオーケストレーション」参照）。実装の起動はユーザーがClaude Codeの作った実装指示文を正式なCodex Cloudタスク画面（`chatgpt.com/codex`）へ直接貼り付ける形で行う（Claude Codeからの直接タスク割当APIは無いため）。**ChatGPT Workは開発フローに使わない**（2026-08-31、v3運用。`kumacha666/apps`のCodex Cloud EnvironmentへのGitHub PAT設定により、Codexタスクから直接git push・PR作成・実ブラウザE2Eが動作することを実証できたため、中継役だったChatGPT Workを廃止した）。
+**appsリポジトリの実装コードはCodexが担い、Claude Codeは書かない**（設計と、実装指示文の作成、PRの最終チェックのみ担当。背景は`ai-workspace/CLAUDE.md`の「AIオーケストレーション」参照）。**2026-09-02、一時的措置：Claude Code側のトークン使用量増加への対応として、実装の一部をClaude Codeが直接担当してよいことにした（都度相談して判断、一律ルール化はしない。詳細・解除条件は非公開の`ai-workspace/CLAUDE.md`参照）。この間もCodex Review Botの自動レビューは全リポジトリ適用のためClaude Code実装分にも付き、それをもって検証済み扱いとする。**実装の起動はユーザーがClaude Codeの作った実装指示文を正式なCodex Cloudタスク画面（`chatgpt.com/codex`）へ直接貼り付ける形で行う（Claude Codeからの直接タスク割当APIは無いため）。**ChatGPT Workは開発フローに使わない**（2026-08-31、v3運用。`kumacha666/apps`のCodex Cloud EnvironmentへのGitHub PAT設定により、Codexタスクから直接git push・PR作成・実ブラウザE2Eが動作することを実証できたため、中継役だったChatGPT Workを廃止した）。
 
 **Codex向けの固定実行ルール（source of truth、リモート反映経路、完了条件、テスト方針、preflight証跡、デプロイ、PR運用等）は`AGENTS.md`（共通）＋各アプリの`AGENTS.md`（アプリ固有）に記載する。以下の記述は主にClaude Code側の運用手順であり、Codexへの実装指示文はAGENTS.mdの内容を前提として目的・対象・受け入れ条件等のみを書く。**
 
