@@ -39,7 +39,7 @@ import {
 import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
 import { commitInitialChangeReplay, consumeChangesOrHandleExpiry } from "./initialChangeReplay";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
-import { retryFailedExtractions } from "./retryExtraction";
+import { persistRetryExtractionResult, retryFailedExtractions } from "./retryExtraction";
 import {
   createSheetsIndexIO,
   indexRowsScanState,
@@ -899,17 +899,31 @@ async function handleRetryExtraction(): Promise<void> {
       setStatus("抽出失敗として記録されている曲はありません。");
       return;
     }
+    setStatus("書き込み先スプレッドシートを確認中...");
+    const capabilitiesGetFn = createDriveCapabilitiesGetFn(() => auth.ensureAccessToken());
+    const { canEdit } = await capabilitiesGetFn(spreadsheetId);
+    if (!canEdit) {
+      throw new Error("索引スプレッドシートへの編集権限がありません。共有設定（編集者権限）をご確認ください。");
+    }
     const result = await retryFailedExtractions(
       fileIds,
       createDriveFileGetFn(() => auth.ensureAccessToken()),
       (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
       (done, total) => setStatus(`再抽出中... (${done}/${total})`)
     );
-    if (result.upsertEntries.length > 0) {
-      await upsertIndexRows(sheetsIO, result.upsertEntries);
+    await persistRetryExtractionResult(
+      result,
+      (entries) => upsertIndexRows(sheetsIO, entries),
+      () => mergeDuplicateIndexRows(sheetsIO).then(() => undefined),
+      (fileIds) => removeIndexRows(sheetsIO, fileIds, async () => {
+        await auth.ensureAccessToken();
+        return true;
+      }).then(() => undefined)
+    );
+    if (result.upsertEntries.length > 0 || result.trashedFileIds.length > 0) {
       catalogSession.invalidate();
     }
-    setStatus(`再抽出完了（成功 ${result.succeededCount}件、再度失敗 ${result.stillFailedCount}件、Drive上で見つからずスキップ ${result.removedFileIds.length}件）`);
+    setStatus(`再抽出完了（成功 ${result.succeededCount}件、再度失敗 ${result.stillFailedCount}件、削除済み ${result.trashedFileIds.length}件、Drive上で見つからずスキップ ${result.removedFileIds.length}件）`);
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
     setStatus(err instanceof Error ? `再抽出に失敗しました: ${err.message}` : "再抽出に失敗しました", true);

@@ -35,6 +35,15 @@ test("抽出失敗曲が0件なら再抽出不要のメッセージを表示す�
   await expect(page.locator("#status")).toHaveText("抽出失敗として記録されている曲はありません。");
 });
 
+test("再抽出は編集権限をタグ取得前に検証する", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context, { extractionFailedCount: 1, spreadsheetCanEdit: false });
+  await page.goto("/"); await login(page);
+  await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "抽出失敗曲の再抽出を試みる" }).click();
+  await expect(page.locator("#status")).toContainText("索引スプレッドシートへの編集権限がありません");
+  expect(mock.driveMetadataRequests).toEqual(["sheet"]);
+});
+
 test("次へを素早く二回押しても同じ曲を重複要求しない", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
   await page.getByRole("button", { name: "次へ" }).dblclick();

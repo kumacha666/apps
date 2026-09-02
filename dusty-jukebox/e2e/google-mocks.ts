@@ -14,6 +14,8 @@ export type MockOptions = {
   rejectFirstStreamToken?: boolean;
   /** Provide multiple albums and deliberately unordered disc/track rows. */
   albumCatalog?: boolean;
+  extractionFailedCount?: number;
+  spreadsheetCanEdit?: boolean;
 };
 
 type SheetWrite = {
@@ -32,7 +34,9 @@ function sheetForRange(range: string | undefined): SheetWrite["sheet"] {
  * checked here, so a broken token hand-off cannot look like a successful E2E run. */
 export async function installGoogleMocks(context: BrowserContext, options: MockOptions = {}) {
   const indexRow = (values: Record<string, string>) => INDEX_SHEET_HEADER.map((header) => values[header] ?? "");
-  const indexRows: string[][] = options.albumCatalog ? [
+  const indexRows: string[][] = options.extractionFailedCount ? Array.from({ length: options.extractionFailedCount }, (_, index) =>
+    indexRow({ fileId: `failed-${index}`, extension: "mp3", parentId: "root", extractionFailed: "TRUE" })
+  ) : options.albumCatalog ? [
     indexRow({ fileId: "album-track-3", extension: "mp3", parentId: "root", title: "Finale", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", discNumber: "2", trackNumber: "1", releaseYear: "2024" }),
     indexRow({ fileId: "other-album", extension: "mp3", parentId: "root", title: "Jazz Song", artist: "Quartet", album: "Blue Notes", composer: "Writer", genre: "Jazz", discNumber: "1", trackNumber: "1", releaseYear: "2020" }),
     indexRow({ fileId: "album-track-2", extension: "mp3", parentId: "root", title: "Scherzo", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", discNumber: "1", trackNumber: "2", releaseYear: "2024" }),
@@ -44,6 +48,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const syncRows = [["startPageToken", "page-1"], ["rootFolderId", "root"], ["initialScanCompletedAt", options.initialScanCompleted === false ? "" : "2026-01-01T00:00:00Z"], ["scanRunId", ""], ["shortcutRootFolderIds", ""]];
   const authFailures: string[] = [];
   const streamRequests: string[] = [];
+  const driveMetadataRequests: string[] = [];
   let remainingStreamTokenRejections = options.rejectFirstStreamToken ? 1 : 0;
   const sheetsWrites: SheetWrite[] = [];
   let releaseServiceWorker = () => {};
@@ -83,8 +88,9 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     }
     if (url.pathname.endsWith("/files")) return json(route, { files: [{ id: "song-1", name: "first.mp3", mimeType: "audio/mpeg", parents: ["root"], modifiedTime: "2026-01-01T00:00:00Z" }] });
     const id = url.pathname.split("/").pop();
+    driveMetadataRequests.push(id ?? "");
     if (id === "root") return json(route, { id, name: "Root", mimeType: "application/vnd.google-apps.folder", parents: [], capabilities: { canEdit: true } });
-    if (id === "sheet") return json(route, { id, name: "Sheet", mimeType: "application/vnd.google-apps.spreadsheet", capabilities: { canEdit: true } });
+    if (id === "sheet") return json(route, { id, name: "Sheet", mimeType: "application/vnd.google-apps.spreadsheet", capabilities: { canEdit: options.spreadsheetCanEdit !== false } });
     if (id?.startsWith("song-") || id?.startsWith("album-track-") || id === "other-album") {
       return json(route, { id, name: `${id}.mp3`, mimeType: "audio/mpeg", size: "1024", parents: ["root"], modifiedTime: "2026-01-01T00:00:00Z", trashed: false });
     }
@@ -126,5 +132,5 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     }
     return json(route, {});
   });
-  return { authFailures, streamRequests, sheetsWrites, releaseServiceWorker };
+  return { authFailures, streamRequests, driveMetadataRequests, sheetsWrites, releaseServiceWorker };
 }

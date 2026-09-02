@@ -16,9 +16,49 @@ describe("retryFailedExtractions", () => {
       async (id) => id === "gone" ? null : { id, name: `${id}.mp3`, mimeType: "audio/mpeg", trashed: id === "trashed" },
       () => async () => new Uint8Array(), () => {}
     );
-    expect(result.removedFileIds).toEqual(["gone", "trashed"]);
+    expect(result.removedFileIds).toEqual(["gone"]);
+    expect(result.trashedFileIds).toEqual(["trashed"]);
     expect(extract.mock.calls[0][0]).toEqual([{ file: expect.objectContaining({ id: "live" }), folderPath: "" }]);
     expect(extract.mock.calls[0][3]).toBe("");
+  });
+
+  test("Driveメタデータ取得を4並列に制限する", async () => {
+    extract.mockResolvedValue([]);
+    let active = 0;
+    let maxActive = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { retryFailedExtractions } = await import("./retryExtraction");
+    const pending = retryFailedExtractions(
+      Array.from({ length: 10 }, (_, index) => `file-${index}`),
+      async (id) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await gate;
+        active -= 1;
+        return { id, name: `${id}.mp3`, mimeType: "audio/mpeg" };
+      },
+      () => async () => new Uint8Array(), () => {}
+    );
+    await vi.waitFor(() => expect(active).toBe(4));
+    release();
+    await pending;
+    expect(maxActive).toBe(4);
+  });
+
+  test("200件単位でupsertと重複マージを行いtrashed行を削除する", async () => {
+    const { persistRetryExtractionResult } = await import("./retryExtraction");
+    const entries = Array.from({ length: 401 }, (_, index) => ({ fileId: `file-${index}`, row: [] }));
+    const calls: string[] = [];
+    const removed: string[][] = [];
+    await persistRetryExtractionResult(
+      { upsertEntries: entries, removedFileIds: ["missing"], trashedFileIds: ["trashed"], succeededCount: 401, stillFailedCount: 0 },
+      async (batch) => { calls.push(`upsert:${batch.length}`); },
+      async () => { calls.push("merge"); },
+      async (ids) => { removed.push(ids); }
+    );
+    expect(calls).toEqual(["upsert:200", "merge", "upsert:200", "merge", "upsert:1", "merge"]);
+    expect(removed).toEqual([["trashed"]]);
   });
 
   test("再失敗した行をそのまま返して件数を数える", async () => {
