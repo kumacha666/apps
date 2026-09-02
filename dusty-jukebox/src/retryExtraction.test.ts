@@ -195,4 +195,18 @@ describe("revalidateTrashedFileIds", () => {
     });
     expect(result.sort()).toEqual(["deleted", "still-trashed"]);
   });
+
+  test("認証エラー後、キュー済みの未着手files.getを打ち切る", async () => {
+    const { revalidateTrashedFileIds } = await import("./retryExtraction");
+    const started: string[] = [];
+    const fileIds = Array.from({ length: 10 }, (_, index) => `file-${index}`);
+    await expect(
+      revalidateTrashedFileIds(fileIds, async (id) => {
+        started.push(id);
+        if (id === "file-0") throw new DriveHttpError(401, "unauthorized");
+        return { id, name: `${id}.mp3`, mimeType: "audio/mpeg", trashed: true };
+      })
+    ).rejects.toBeInstanceOf(DriveHttpError);
+    expect(started).not.toEqual(expect.arrayContaining(["file-9"]));
+  });
 });

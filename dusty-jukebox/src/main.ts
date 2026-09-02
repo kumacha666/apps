@@ -891,9 +891,19 @@ async function handleRetryExtraction(): Promise<void> {
   spreadsheetInput.disabled = true; folderInput.disabled = true;
   try {
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
-      throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。スプレッドシートIDが正しいか、無関係な「index」タブが既に存在していないかご確認ください。");
-    }
+    // handleScan()と同じ方針：27列・45列の旧バージョンindexヘッダーを使っている既存ユーザーが
+    // 一度もスキャンを実行しないまま再抽出ボタンを押しても、有効な旧ヘッダーとして通す
+    // （2026-09-02 Codexレビュー指摘：厳密な一致チェックのみだと、旧スキーマの既存失敗行が
+    // 永久にヘッダー不一致エラーでブロックされ、再抽出のために無関係なスキャンを強制してしまう）。
+    const setupIO = createSpreadsheetSetupIO(spreadsheetId, () => auth.ensureAccessToken());
+    await ensureValidHeader(
+      sheetsIO,
+      setupIO,
+      INDEX_SHEET_NAME,
+      INDEX_SHEET_HEADER,
+      isValidIndexHeader,
+      async (header) => (await migrateLegacyIndexHeaderV1(setupIO, header)) || (await migrateLegacyIndexHeaderV2(setupIO, header))
+    );
     const existingRows = await sheetsIO.listExistingRows();
     const fileIds = listExtractionFailedFileIds(existingRows);
     if (fileIds.length === 0) {
@@ -927,6 +937,7 @@ async function handleRetryExtraction(): Promise<void> {
     // 場合はそのエントリを書き込まずスキップする（2026-09-02 Codexレビュー指摘、P1：
     // リトライの古い抽出結果が新しい差分同期結果を上書きしてしまうデータ整合性の問題）。
     const skippedStaleFileIds: string[] = [];
+    let actuallyRemovedCount = 0;
     await persistRetryExtractionResult(
       result,
       async (entries) => {
@@ -942,6 +953,7 @@ async function handleRetryExtraction(): Promise<void> {
         // （2026-09-02 Codexレビュー指摘、P1：抽出中に復元されたファイルの行を誤って
         // 消してしまうデータ整合性の問題）。
         const stillTrashed = await revalidateTrashedFileIds(fileIds, createDriveFileGetFn(() => auth.ensureAccessToken()));
+        actuallyRemovedCount = stillTrashed.length;
         if (stillTrashed.length > 0) {
           await removeIndexRows(sheetsIO, stillTrashed, async () => {
             await auth.ensureAccessToken();
@@ -951,7 +963,11 @@ async function handleRetryExtraction(): Promise<void> {
       }
     );
     const staleNotice = skippedStaleFileIds.length > 0 ? `、他デバイスの更新により書き込みスキップ ${skippedStaleFileIds.length}件` : "";
-    setStatus(`再抽出完了（成功 ${result.succeededCount}件、再度失敗 ${result.stillFailedCount}件、削除済み ${result.trashedFileIds.length}件、Drive上で見つからずスキップ ${result.removedFileIds.length}件${staleNotice}）`);
+    // 削除済み件数は再確認後の実際の削除数（actuallyRemovedCount）を表示する。
+    // result.trashedFileIds.length（再確認前のスナップショット）をそのまま使うと、
+    // 再確認で復元と判明し実際には削除しなかったファイルまで「削除済み」と誤表示してしまう
+    // （2026-09-02 Codexレビュー指摘、P2）。
+    setStatus(`再抽出完了（成功 ${result.succeededCount}件、再度失敗 ${result.stillFailedCount}件、削除済み ${actuallyRemovedCount}件、Drive上で見つからずスキップ ${result.removedFileIds.length}件${staleNotice}）`);
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
     setStatus(err instanceof Error ? `再抽出に失敗しました: ${err.message}` : "再抽出に失敗しました", true);

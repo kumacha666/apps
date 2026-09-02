@@ -106,11 +106,20 @@ export async function revalidateTrashedFileIds(
   getFile: (fileId: string) => Promise<DriveFile | null>
 ): Promise<string[]> {
   const limiter = new ConcurrencyLimiter(MAX_CONCURRENT_METADATA_GETS);
+  // retryFailedExtractionsと同じ方針：401等の認証エラーが1件でも起きたら、キューに残っている
+  // 未着手のfiles.getを打ち切る（2026-09-02 Codexレビュー指摘、P2）。
+  const controller = new AbortController();
   const results = await Promise.all(
     fileIds.map((fileId) =>
       limiter.run(async (): Promise<string | null> => {
-        const file = await getFile(fileId);
-        return file === null || file.trashed === true ? fileId : null;
+        if (controller.signal.aborted) return null;
+        try {
+          const file = await getFile(fileId);
+          return file === null || file.trashed === true ? fileId : null;
+        } catch (err) {
+          if (isAuthError(err)) controller.abort();
+          throw err;
+        }
       })
     )
   );
