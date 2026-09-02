@@ -39,7 +39,7 @@ import {
 import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
 import { commitInitialChangeReplay, consumeChangesOrHandleExpiry } from "./initialChangeReplay";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
-import { persistRetryExtractionResult, retryFailedExtractions } from "./retryExtraction";
+import { filterStaleUpsertEntries, persistRetryExtractionResult, retryFailedExtractions } from "./retryExtraction";
 import {
   createSheetsIndexIO,
   indexRowsScanState,
@@ -894,7 +894,8 @@ async function handleRetryExtraction(): Promise<void> {
     if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
       throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。スプレッドシートIDが正しいか、無関係な「index」タブが既に存在していないかご確認ください。");
     }
-    const fileIds = listExtractionFailedFileIds(await sheetsIO.listExistingRows());
+    const existingRows = await sheetsIO.listExistingRows();
+    const fileIds = listExtractionFailedFileIds(existingRows);
     if (fileIds.length === 0) {
       setStatus("抽出失敗として記録されている曲はありません。");
       return;
@@ -905,25 +906,43 @@ async function handleRetryExtraction(): Promise<void> {
     if (!canEdit) {
       throw new Error("索引スプレッドシートへの編集権限がありません。共有設定（編集者権限）をご確認ください。");
     }
+    // リトライ開始前の各行のscanRunIdを保持しておく（retryFailedExtractions内でリトライ成功時に
+    // 空欄で上書きしないようにするため。中断中のフルスキャンのwatermarkを壊さないための対策）。
+    const existingScanRunIds = new Map(
+      [...indexRowsScanState(existingRows)].map(([fileId, state]) => [fileId, state.scanRunId])
+    );
+    // handleScan()と同じ方針：これから索引を書き換えるため、実際の変更前にセッションを無効化する。
+    // 抽出完了後に無効化すると、書き込みが一部だけ成功して失敗した場合に古いカタログが有効なまま
+    // 残り、削除・変更済みの内容から再生リストが作られてしまう恐れがある（2026-09-02 Codex
+    // レビュー指摘、P2）。
+    catalogSession.invalidate();
     const result = await retryFailedExtractions(
       fileIds,
       createDriveFileGetFn(() => auth.ensureAccessToken()),
       (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
-      (done, total) => setStatus(`再抽出中... (${done}/${total})`)
+      (done, total) => setStatus(`再抽出中... (${done}/${total})`),
+      existingScanRunIds
     );
+    // バッチ書き込み直前に索引を読み直し、他デバイスの差分同期が同じファイルを先に処理していた
+    // 場合はそのエントリを書き込まずスキップする（2026-09-02 Codexレビュー指摘、P1：
+    // リトライの古い抽出結果が新しい差分同期結果を上書きしてしまうデータ整合性の問題）。
+    const skippedStaleFileIds: string[] = [];
     await persistRetryExtractionResult(
       result,
-      (entries) => upsertIndexRows(sheetsIO, entries),
+      async (entries) => {
+        const currentState = indexRowsScanState(await sheetsIO.listExistingRows());
+        const { fresh, staleFileIds } = filterStaleUpsertEntries(entries, currentState);
+        skippedStaleFileIds.push(...staleFileIds);
+        if (fresh.length > 0) await upsertIndexRows(sheetsIO, fresh);
+      },
       () => mergeDuplicateIndexRows(sheetsIO).then(() => undefined),
       (fileIds) => removeIndexRows(sheetsIO, fileIds, async () => {
         await auth.ensureAccessToken();
         return true;
       }).then(() => undefined)
     );
-    if (result.upsertEntries.length > 0 || result.trashedFileIds.length > 0) {
-      catalogSession.invalidate();
-    }
-    setStatus(`再抽出完了（成功 ${result.succeededCount}件、再度失敗 ${result.stillFailedCount}件、削除済み ${result.trashedFileIds.length}件、Drive上で見つからずスキップ ${result.removedFileIds.length}件）`);
+    const staleNotice = skippedStaleFileIds.length > 0 ? `、他デバイスの更新により書き込みスキップ ${skippedStaleFileIds.length}件` : "";
+    setStatus(`再抽出完了（成功 ${result.succeededCount}件、再度失敗 ${result.stillFailedCount}件、削除済み ${result.trashedFileIds.length}件、Drive上で見つからずスキップ ${result.removedFileIds.length}件${staleNotice}）`);
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
     setStatus(err instanceof Error ? `再抽出に失敗しました: ${err.message}` : "再抽出に失敗しました", true);
