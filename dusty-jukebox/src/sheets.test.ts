@@ -8,6 +8,7 @@ import {
   isLegacyIndexHeaderV1,
   isLegacyIndexHeaderV2,
   isValidIndexHeader,
+  listExtractionFailedFileIds,
   LEGACY_INDEX_SHEET_HEADER_V1,
   LEGACY_INDEX_SHEET_HEADER_V2,
   mergeDuplicateIndexRows,
@@ -43,6 +44,20 @@ function makeFakeIO(
 function indexOf(name: (typeof INDEX_SHEET_HEADER)[number]): number {
   return INDEX_SHEET_HEADER.indexOf(name);
 }
+
+describe("listExtractionFailedFileIds", () => {
+  test("失敗行だけを先勝ちで重複除去し、空IDを除く", () => {
+    const row = (fileId: string, failed: string) => {
+      const values = Array(INDEX_SHEET_HEADER.length).fill("");
+      values[indexOf("fileId")] = fileId;
+      values[indexOf("extractionFailed")] = failed;
+      return values;
+    };
+    expect(listExtractionFailedFileIds([
+      row("failed", "TRUE"), row("ok", "FALSE"), row("failed", "TRUE"), row("", "TRUE"),
+    ])).toEqual(["failed"]);
+  });
+});
 
 describe("buildIndexRow", () => {
   test("列数がINDEX_SHEET_HEADERと一致する", () => {
@@ -942,6 +957,65 @@ describe("removeIndexRows", () => {
     );
     expect(result).toEqual({ removedCount: 200 });
     expect(io.updateCalls).toHaveLength(1);
+    expect(isStillCurrent).toHaveBeenCalledTimes(2);
+  });
+
+  test("isStillCurrentにはそのバッチで実際に空欄化しようとしているfileIdだけが渡される（全fileIdではない）（2026-09-02 Codexレビュー指摘：P1。以前は呼び出し元が毎回全fileIdを渡していたため、先行バッチで確認済みの結果を後続バッチでも信用してしまい、その間に復元されたファイルを誤って削除しうるTOCTOU窓があった）", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) =>
+      buildIndexRow({
+        fileId: `f${i}`,
+        fileName: `f${i}.mp3`,
+        parentId: "p",
+        driveModifiedTime: "2026-08-01T00:00:00.000Z",
+        lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+        tags: {},
+        extractionFailed: false,
+      })
+    );
+    const io = makeFakeIO(rows);
+    const receivedBatches: string[][] = [];
+    const isStillCurrent = vi.fn(async (batchFileIds: string[]) => {
+      receivedBatches.push(batchFileIds);
+      return true;
+    });
+    const result = await removeIndexRows(
+      io,
+      Array.from({ length: 250 }, (_, i) => `f${i}`),
+      isStillCurrent
+    );
+    expect(result).toEqual({ removedCount: 250 });
+    expect(receivedBatches).toHaveLength(2);
+    expect(receivedBatches[0]).toEqual(Array.from({ length: 200 }, (_, i) => `f${i}`));
+    expect(receivedBatches[1]).toEqual(Array.from({ length: 50 }, (_, i) => `f${i + 200}`));
+  });
+
+  test("onStaleBatch='skip'の場合、falseを返したバッチだけ見送り後続バッチの削除は継続する（2026-09-02 Codexレビュー指摘：P2。判定がバッチごとに独立している呼び出し元〈retryExtraction.tsのtrashed再確認〉では、既定の'abort'のままだと早いバッチで1件でも復元が見つかった時点で、まだ本当にtrashedな後続バッチの削除まで巻き込んで打ち切ってしまっていた）", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) =>
+      buildIndexRow({
+        fileId: `f${i}`,
+        fileName: `f${i}.mp3`,
+        parentId: "p",
+        driveModifiedTime: "2026-08-01T00:00:00.000Z",
+        lastScannedAtIso: "2026-08-01T00:00:00.000Z",
+        tags: {},
+        extractionFailed: false,
+      })
+    );
+    const io = makeFakeIO(rows);
+    let calls = 0;
+    const isStillCurrent = vi.fn(async () => {
+      calls += 1;
+      return calls !== 1; // 最初のバッチだけ復元されていたことにして見送る
+    });
+    const result = await removeIndexRows(
+      io,
+      Array.from({ length: 250 }, (_, i) => `f${i}`),
+      isStillCurrent,
+      "skip"
+    );
+    expect(result).toEqual({ removedCount: 50 });
+    expect(io.updateCalls).toHaveLength(1);
+    expect(io.updateCalls[0]).toHaveLength(50);
     expect(isStillCurrent).toHaveBeenCalledTimes(2);
   });
 });

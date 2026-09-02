@@ -387,6 +387,26 @@ export function createDriveGetFn(getAccessToken: () => Promise<string>): DriveGe
   };
 }
 
+export function createDriveFileGetFn(
+  getAccessToken: () => Promise<string>
+): (fileId: string) => Promise<DriveFile | null> {
+  return async (fileId) => {
+    const params = new URLSearchParams({
+      fields: "id,name,mimeType,size,parents,modifiedTime,trashed",
+      supportsAllDrives: "true",
+    });
+    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`;
+    try {
+      const res = await fetchDriveApiWithRetry(url, getAccessToken);
+      return (await res.json()) as DriveFile;
+    } catch (err) {
+      // resourceKey保護された音源は既知の制約により404になりうる。
+      if (err instanceof DriveHttpError && err.status === 404) return null;
+      throw err;
+    }
+  };
+}
+
 // Googleスプレッドシート自体もDriveファイルの一種であるため、Sheets APIを一切呼ばずとも
 // Drive API（drive.readonlyスコープのみで十分）のcapabilities.canEditで書き込み権限の
 // 有無を確認できる。indexタブへの事前検証（readHeaderRow、GETのみ）は「読める」ことしか

@@ -22,6 +22,7 @@ import {
   createChangesListFn,
   createDriveCapabilitiesGetFn,
   createDriveFetchRange,
+  createDriveFileGetFn,
   createDriveGetFn,
   createDriveListFn,
   createDriveParentsGetFn,
@@ -38,6 +39,7 @@ import {
 import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
 import { commitInitialChangeReplay, consumeChangesOrHandleExpiry } from "./initialChangeReplay";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
+import { filterStaleUpsertEntries, retryFailedExtractions, revalidateTrashedFileIds } from "./retryExtraction";
 import {
   createSheetsIndexIO,
   indexRowsScanState,
@@ -50,6 +52,7 @@ import {
   SheetsIndexIO,
   INDEX_SHEET_HEADER,
   INDEX_SHEET_NAME,
+  listExtractionFailedFileIds,
 } from "./sheets";
 import {
   ensureIndexAndSyncTabsExist,
@@ -130,6 +133,7 @@ function render(): void {
       </label>
       <button id="login-btn" type="button">Googleドライブ（読み取り専用）＋スプレッドシートへログイン</button>
       <button id="scan-btn" type="button" disabled>音楽ファイルをスキャンして索引に反映する</button>
+      <button id="retry-extraction-btn" type="button" disabled>抽出失敗曲の再抽出を試みる</button>
       <label class="field">
         <span>試聴するGoogle DriveファイルID</span>
         <input id="play-file-id" type="text" placeholder="Google DriveファイルID" />
@@ -195,6 +199,7 @@ async function loadCatalog(): Promise<void> {
   const loadButton = el<HTMLButtonElement>("load-catalog-btn");
   const folderInput = el<HTMLInputElement>("folder-id");
   const scanButton = el<HTMLButtonElement>("scan-btn");
+  const retryButton = el<HTMLButtonElement>("retry-extraction-btn");
   const spreadsheetId = spreadsheetInput.value.trim();
   if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
   if (!catalogOperationGate.tryAcquire()) {
@@ -205,7 +210,7 @@ async function loadCatalog(): Promise<void> {
   // Disable both operation's controls before the first await so their runs
   // cannot overlap through two consecutive user actions.
   loadButton.disabled = true; spreadsheetInput.disabled = true;
-  scanButton.disabled = true; folderInput.disabled = true;
+  scanButton.disabled = true; retryButton.disabled = true; folderInput.disabled = true;
   try {
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
     const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
@@ -249,6 +254,7 @@ async function loadCatalog(): Promise<void> {
     loadButton.disabled = false;
     folderInput.disabled = false;
     scanButton.disabled = false;
+    retryButton.disabled = false;
   }
 }
 function createQueueFromFilters(): void {
@@ -278,6 +284,7 @@ async function handleLogin(): Promise<void> {
     await auth.requestAccessToken({ prompt: "consent" });
     setStatus("ログイン済み。フォルダIDを入力してスキャンできます。");
     el<HTMLButtonElement>("scan-btn").disabled = false;
+    el<HTMLButtonElement>("retry-extraction-btn").disabled = false;
     el<HTMLButtonElement>("play-btn").disabled = false;
     el<HTMLButtonElement>("pause-btn").disabled = false;
     el<HTMLButtonElement>("load-catalog-btn").disabled = false;
@@ -868,6 +875,142 @@ async function runDifferentialSync(
   return replaySucceeded && committed;
 }
 
+async function handleRetryExtraction(): Promise<void> {
+  const spreadsheetInput = el<HTMLInputElement>("spreadsheet-id");
+  const spreadsheetId = spreadsheetInput.value.trim();
+  if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
+  if (!catalogOperationGate.tryAcquire()) {
+    setStatus("スキャンまたは索引の読み込みが進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  const retryButton = el<HTMLButtonElement>("retry-extraction-btn");
+  const scanButton = el<HTMLButtonElement>("scan-btn");
+  const loadButton = el<HTMLButtonElement>("load-catalog-btn");
+  const folderInput = el<HTMLInputElement>("folder-id");
+  retryButton.disabled = true; scanButton.disabled = true; loadButton.disabled = true;
+  spreadsheetInput.disabled = true; folderInput.disabled = true;
+  try {
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    // handleScan()と同じ方針：27列・45列の旧バージョンindexヘッダーを使っている既存ユーザーが
+    // 一度もスキャンを実行しないまま再抽出ボタンを押しても、有効な旧ヘッダーとして通す
+    // （2026-09-02 Codexレビュー指摘：厳密な一致チェックのみだと、旧スキーマの既存失敗行が
+    // 永久にヘッダー不一致エラーでブロックされ、再抽出のために無関係なスキャンを強制してしまう）。
+    const setupIO = createSpreadsheetSetupIO(spreadsheetId, () => auth.ensureAccessToken());
+    await ensureValidHeader(
+      sheetsIO,
+      setupIO,
+      INDEX_SHEET_NAME,
+      INDEX_SHEET_HEADER,
+      isValidIndexHeader,
+      async (header) => (await migrateLegacyIndexHeaderV1(setupIO, header)) || (await migrateLegacyIndexHeaderV2(setupIO, header))
+    );
+    const existingRows = await sheetsIO.listExistingRows();
+    const fileIds = listExtractionFailedFileIds(existingRows);
+    if (fileIds.length === 0) {
+      setStatus("抽出失敗として記録されている曲はありません。");
+      return;
+    }
+    setStatus("書き込み先スプレッドシートを確認中...");
+    const capabilitiesGetFn = createDriveCapabilitiesGetFn(() => auth.ensureAccessToken());
+    const { canEdit } = await capabilitiesGetFn(spreadsheetId);
+    if (!canEdit) {
+      throw new Error("索引スプレッドシートへの編集権限がありません。共有設定（編集者権限）をご確認ください。");
+    }
+    // handleScan()と同じ方針：これから索引を書き換えるため、実際の変更前にセッションを無効化する。
+    // 抽出完了後に無効化すると、書き込みが一部だけ成功して失敗した場合に古いカタログが有効なまま
+    // 残り、削除・変更済みの内容から再生リストが作られてしまう恐れがある（2026-09-02 Codex
+    // レビュー指摘、P2）。
+    catalogSession.invalidate();
+    // タグ抽出中に他デバイスの差分同期が同じファイルを先に処理していた場合、書き込み直前に
+    // 索引を読み直しそのエントリを書き込まずスキップする（2026-09-02 Codexレビュー指摘、P1：
+    // リトライの古い抽出結果が新しい差分同期結果を上書きしてしまうデータ整合性の問題）。
+    const skippedStaleFileIds: string[] = [];
+    const removedTrashedFileIds = new Set<string>();
+    const incompletelyRemovedTrashedFileIds = new Set<string>();
+    const result = await retryFailedExtractions(
+      fileIds,
+      createDriveFileGetFn(() => auth.ensureAccessToken()),
+      (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
+      (done, total) => setStatus(`再抽出中... (${done}/${total})`),
+      async (entries) => {
+        // filterStaleUpsertEntriesの判定に使ったスナップショット（currentRows）を
+        // upsertIndexRowsのexistingRowsSnapshotへそのまま渡し、内部でのもう一度の
+        // listExistingRows()を省く。渡さない場合、判定時点と実際にmergeWithExistingが
+        // 使う時点とで別々の読み取りになり、その間の一呼吸がガードとは無関係な
+        // 追加のTOCTOU窓になってしまう（2026-09-02 Codexレビュー指摘、P1）。
+        const currentRows = await sheetsIO.listExistingRows();
+        const { fresh, staleFileIds } = filterStaleUpsertEntries(entries, currentRows, existingRows);
+        skippedStaleFileIds.push(...staleFileIds);
+        if (fresh.length > 0) await upsertIndexRows(sheetsIO, fresh, currentRows);
+        return { staleFileIds };
+      },
+      () => mergeDuplicateIndexRows(sheetsIO).then(() => undefined),
+      async (fileIds) => {
+        // trashed再確認をremoveIndexRowsのisStillCurrentコールバックへ移す。isStillCurrentは
+        // updateRowsInBatchesが実際のSheets書き込み（io.updateRows）の直前に呼ぶため、
+        // revalidateTrashedFileIdsを外側で先に呼んでから渡す場合より、Drive再確認と
+        // 実際の削除書き込みの間に挟まる自前の処理（索引の内部読み取り等）が無くなる
+        // （2026-09-02 Codexレビュー指摘、P1）。isStillCurrentにはremoveIndexRows側から
+        // 「そのバッチで実際に空欄化しようとしているfileIdだけ」が渡されるため、バッチの
+        // たびにrevalidateTrashedFileIdsを直接呼び毎回Driveへ再照会する（キャッシュは使わない）。
+        // 以前はfileIdごとの判定結果をキャッシュしていたが、重複行（同じfileIdの索引行が
+        // 複数存在するケース）があるとremoveIndexRowsが同じfileIdを複数のバッチに分けて
+        // 渡すことがあり、先行バッチで確認した「trashed=true」がキャッシュ経由で後続バッチにも
+        // 使い回され、その間に復元されたファイルを誤って削除しうるTOCTOU窓があった
+        // （2026-09-02 Codexレビュー指摘、P1）。バッチ内で同じfileIdが重複する場合に備え
+        // 照会前にSetで重複排除する。対象ファイルの一部だけ復元されていた場合は誤って
+        // 一部を消すより安全側に倒し、そのバッチだけ削除を見送る（次回のリトライで
+        // 改めて対象になる）。バッチが複数に分かれうるため削除件数は加算する。判定は
+        // バッチごとに独立しているため、onStaleBatch="skip"を指定し、見送ったバッチが
+        // あっても後続のまだ本当にtrashedなバッチの削除は継続する（2026-09-02 Codex
+        // レビュー指摘、P2。既定の"abort"のままだと、早いバッチで1件でも復元が見つかった
+        // 時点で以降の全バッチの削除が打ち切られてしまっていた）。
+        await removeIndexRows(sheetsIO, fileIds, async (batchFileIds) => {
+          const uniqueBatchFileIds = new Set(batchFileIds);
+          const stillTrashed = new Set(
+            await revalidateTrashedFileIds([...uniqueBatchFileIds], createDriveFileGetFn(() => auth.ensureAccessToken()))
+          );
+          const allStillTrashed = batchFileIds.every((id) => stillTrashed.has(id));
+          // 索引に同じfileIdの重複行があり、かつそれが200件バッチの境界を跨ぐ場合、
+          // 同じfileIdが複数バッチのbatchFileIdsに分かれて登場しうる。バッチ内だけで
+          // 重複排除して件数を加算すると、この場合に同じfileIdを2回以上数えてしまう
+          // （2026-09-02 Codexレビュー指摘：P2。以前の修正はバッチ内の重複排除のみで、
+          // バッチを跨いだ重複には対応していなかった）。リトライ全体で確認できたfileIdを
+          // 1つのSetへ蓄積し、最後にその件数を報告する。
+          // さらに、重複行の一方のバッチだけ成功しもう一方のバッチが見送られた場合、
+          // そのfileIdはまだ完全には削除されていない（次回のリトライで改めて選ばれる）ため、
+          // 「削除済み」に数えてはいけない（2026-09-02 Codexレビュー指摘：P2。以前は
+          // 成功したバッチのfileIdを無条件でremovedTrashedFileIdsへ加算しており、他の
+          // バッチで同じfileIdが見送られていても「削除済み」と誤表示していた）。
+          // 見送られたバッチに含まれるfileIdは別のSetへ記録し、最終報告時に除外する。
+          if (allStillTrashed) {
+            for (const id of uniqueBatchFileIds) removedTrashedFileIds.add(id);
+          } else {
+            for (const id of uniqueBatchFileIds) incompletelyRemovedTrashedFileIds.add(id);
+          }
+          return allStillTrashed;
+        }, "skip");
+      }
+    );
+    const staleNotice = skippedStaleFileIds.length > 0 ? `、他デバイスの更新により書き込みスキップ ${skippedStaleFileIds.length}件` : "";
+    // 削除済み件数は再確認後の実際の削除数（removedTrashedFileIds、一意のfileId基準）を
+    // 表示する。result.trashedFileIds.length（再確認前のスナップショット）をそのまま
+    // 使うと、再確認で復元と判明し実際には削除しなかったファイルまで「削除済み」と
+    // 誤表示してしまう（2026-09-02 Codexレビュー指摘、P2）。重複行の一方のバッチだけ
+    // 成功しもう一方が見送られたfileId（incompletelyRemovedTrashedFileIds）は、まだ
+    // 完全には削除されていないため件数から除外する（2026-09-02 Codexレビュー指摘、P2）。
+    const actuallyRemovedCount = [...removedTrashedFileIds].filter((id) => !incompletelyRemovedTrashedFileIds.has(id)).length;
+    setStatus(`再抽出完了（成功 ${result.succeededCount}件、再度失敗 ${result.stillFailedCount}件、削除済み ${actuallyRemovedCount}件、Drive上で見つからずスキップ ${result.removedFileIds.length}件${staleNotice}）`);
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `再抽出に失敗しました: ${err.message}` : "再抽出に失敗しました", true);
+  } finally {
+    catalogOperationGate.release();
+    retryButton.disabled = false; scanButton.disabled = false; loadButton.disabled = false;
+    spreadsheetInput.disabled = false; folderInput.disabled = false;
+  }
+}
+
 async function handleScan(): Promise<void> {
   const folderId = el<HTMLInputElement>("folder-id").value.trim();
   const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
@@ -887,7 +1030,9 @@ async function handleScan(): Promise<void> {
   const folderInput = el<HTMLInputElement>("folder-id");
   const spreadsheetInput = el<HTMLInputElement>("spreadsheet-id");
   const loadButton = el<HTMLButtonElement>("load-catalog-btn");
+  const retryButton = el<HTMLButtonElement>("retry-extraction-btn");
   scanBtn.disabled = true;
+  retryButton.disabled = true;
   // A scan can update or delete index rows. Invalidate the previous snapshot
   // before the first asynchronous scan operation so it can never form a queue.
   catalogSession.invalidate();
@@ -987,6 +1132,7 @@ async function handleScan(): Promise<void> {
     folderInput.disabled = false;
     spreadsheetInput.disabled = false;
     loadButton.disabled = false;
+    retryButton.disabled = false;
   }
 }
 
@@ -1050,6 +1196,7 @@ function init(): void {
     audioPlayer.addEventListener("pause", () => handleNativePlaybackStatus(audioPlayer, "pause"));
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
+    el<HTMLButtonElement>("retry-extraction-btn").addEventListener("click", () => void handleRetryExtraction());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
     el<HTMLButtonElement>("pause-btn").addEventListener("click", () => playback?.pause());
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
