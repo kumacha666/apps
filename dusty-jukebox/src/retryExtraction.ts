@@ -3,8 +3,7 @@ import type { FetchRangeFn } from "./rangeTokenizer";
 import { INDEX_SHEET_HEADER, indexRowsScanState, type UpsertIndexEntry } from "./sheets";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
 
-export interface RetryExtractionResult {
-  upsertEntries: UpsertIndexEntry[];
+export interface RetryExtractionSummary {
   removedFileIds: string[];
   trashedFileIds: string[];
   succeededCount: number;
@@ -12,57 +11,10 @@ export interface RetryExtractionResult {
 }
 
 const MAX_CONCURRENT_METADATA_GETS = 4;
+const EXTRACTION_BATCH_SIZE = 200;
 const SCAN_RUN_ID_INDEX = INDEX_SHEET_HEADER.indexOf("scanRunId");
 const FILE_ID_INDEX = INDEX_SHEET_HEADER.indexOf("fileId");
 const EXTRACTION_FAILED_INDEX = INDEX_SHEET_HEADER.indexOf("extractionFailed");
-
-// existingScanRunIds: fileId -> このリトライ開始前に行が持っていたscanRunId。retry自体は
-// sync.tsのscanRunId概念（フルスキャンのバッチ処理・中断再開のウォーターマーク）とは無関係の
-// 単発操作のため、リトライ成功時にscanRunId列を空欄で上書きしてしまうと、中断中のフルスキャンが
-// 既に処理済みだったファイルの watermark が消え、再開時に不要な再抽出が走ってしまう
-// （2026-09-02 Codexレビュー指摘、P2）。空欄で上書きする代わりに、リトライ前の値をそのまま
-// 保持することで、フルスキャン側のwatermark判定に影響を与えないようにする。
-export async function retryFailedExtractions(
-  fileIds: string[],
-  getFile: (fileId: string) => Promise<DriveFile | null>,
-  createFetchRangeForFile: (fileId: string, signal: AbortSignal) => FetchRangeFn,
-  onProgress: (done: number, total: number) => void,
-  existingScanRunIds: Map<string, string> = new Map()
-): Promise<RetryExtractionResult> {
-  const limiter = new ConcurrencyLimiter(MAX_CONCURRENT_METADATA_GETS);
-  // 401等の認証エラーが1件でも起きたら、ConcurrencyLimiterのキューに残っている未着手の
-  // files.getを打ち切る（drive.tsのlistAudioFilesRecursive・tagExtraction.tsの
-  // extractAndBuildIndexEntriesと同じ方針）。打ち切らないと、呼び出し元がトークンを
-  // クリアした後もバックグラウンドで無効なトークンのままAPIを叩き続けてしまう
-  // （2026-09-02 Codexレビュー指摘、P2）。
-  const controller = new AbortController();
-  const files = await Promise.all(
-    fileIds.map((fileId) =>
-      limiter.run(async (): Promise<DriveFile | null> => {
-        if (controller.signal.aborted) return null;
-        try {
-          return await getFile(fileId);
-        } catch (err) {
-          if (isAuthError(err)) controller.abort();
-          throw err;
-        }
-      })
-    )
-  );
-  const removedFileIds = fileIds.filter((_, index) => !files[index]);
-  const trashedFileIds = fileIds.filter((_, index) => files[index]?.trashed === true);
-  const entries = files
-    .filter((file): file is DriveFile => Boolean(file && !file.trashed))
-    .map((file) => ({ file, folderPath: "" }));
-  const upsertEntries = await extractAndBuildIndexEntries(entries, createFetchRangeForFile, onProgress, "");
-  for (const entry of upsertEntries) {
-    const preserved = existingScanRunIds.get(entry.fileId);
-    if (preserved !== undefined) entry.row[SCAN_RUN_ID_INDEX] = preserved;
-  }
-  const failedIndex = INDEX_SHEET_HEADER.indexOf("extractionFailed");
-  const stillFailedCount = upsertEntries.filter(({ row }) => row[failedIndex] === "TRUE").length;
-  return { upsertEntries, removedFileIds, trashedFileIds, succeededCount: upsertEntries.length - stillFailedCount, stillFailedCount };
-}
 
 // リトライは抽出に時間がかかるため、開始時に読んだ索引スナップショットは書き込み時点では
 // 古くなっている可能性がある。他デバイスの差分同期が同じファイルを先に処理していた場合、
@@ -126,20 +78,96 @@ export async function revalidateTrashedFileIds(
   return results.filter((fileId): fileId is string => fileId !== null);
 }
 
-export async function persistRetryExtractionResult(
-  result: RetryExtractionResult,
-  upsertBatch: (entries: UpsertIndexEntry[]) => Promise<void>,
+// removeIndexRowsのisStillCurrentは、書き込みバッチ（既定200件）のたびに同じ完全な
+// fileIds集合で呼ばれる。revalidateTrashedFileIdsをキャッシュ無しでそのまま使うと、
+// 大規模なtrashedリスト（例: 1万件→50バッチ）で毎回全件を再照会し、Drive呼び出しが
+// 件数×バッチ数に膨れ上がってしまう（2026-09-02 Codexレビュー指摘、P2）。fileIdごとの
+// 判定結果をキャッシュし、一度確認したfileIdは再照会しない。実運用でtrashed件数が
+// 既定バッチサイズを超えることは稀なため、通常は1回の照会で完結する。
+export function createCachedTrashRevalidator(
+  getFile: (fileId: string) => Promise<DriveFile | null>
+): (fileIds: string[]) => Promise<boolean> {
+  const cache = new Map<string, boolean>();
+  return async (fileIds: string[]): Promise<boolean> => {
+    const uncached = fileIds.filter((id) => !cache.has(id));
+    if (uncached.length > 0) {
+      const stillTrashed = new Set(await revalidateTrashedFileIds(uncached, getFile));
+      for (const id of uncached) cache.set(id, stillTrashed.has(id));
+    }
+    return fileIds.every((id) => cache.get(id) === true);
+  };
+}
+
+// リトライ全体のオーケストレーション。ライブラリ全体規模の失敗をまとめてリトライすると
+// タグ抽出だけで数時間かかりうるため、runFullScan（フルスキャン）と同じ「一定件数ごとに
+// タグ抽出→索引への書き込みを行う」バッチ処理にする。全件の抽出が終わるまで一切書き込まない
+// 実装だと、認証切れ・タブを閉じる・通信断等で中断した場合にそれまでの抽出結果が丸ごと失われ、
+// 次回リトライがゼロからやり直しになってしまう（2026-09-02 Codexレビュー指摘、P2）。
+// persistBatch: 1バッチ分のUpsertIndexEntry[]を実際に書き込む（呼び出し元でfilterStale
+// UpsertEntries＋upsertIndexRowsを行う想定。書き込み直前の鮮度チェックは呼び出し元の責務のまま）。
+// mergeDuplicates／removeTrashedは全バッチ完了後に1回だけ呼ぶ（重複マージは索引全体を
+// 読み直すため、バッチのたびに呼ぶと大規模リトライで無駄なコストが積み上がる）。
+export async function retryFailedExtractions(
+  fileIds: string[],
+  getFile: (fileId: string) => Promise<DriveFile | null>,
+  createFetchRangeForFile: (fileId: string, signal: AbortSignal) => FetchRangeFn,
+  onProgress: (done: number, total: number) => void,
+  existingScanRunIds: Map<string, string>,
+  persistBatch: (entries: UpsertIndexEntry[]) => Promise<void>,
   mergeDuplicates: () => Promise<void>,
   removeTrashed: (fileIds: string[]) => Promise<void>,
-  batchSize = 200
-): Promise<void> {
-  for (let offset = 0; offset < result.upsertEntries.length; offset += batchSize) {
-    await upsertBatch(result.upsertEntries.slice(offset, offset + batchSize));
+  batchSize = EXTRACTION_BATCH_SIZE
+): Promise<RetryExtractionSummary> {
+  const limiter = new ConcurrencyLimiter(MAX_CONCURRENT_METADATA_GETS);
+  // 401等の認証エラーが1件でも起きたら、ConcurrencyLimiterのキューに残っている未着手の
+  // files.getを打ち切る（drive.tsのlistAudioFilesRecursive・tagExtraction.tsの
+  // extractAndBuildIndexEntriesと同じ方針）。打ち切らないと、呼び出し元がトークンを
+  // クリアした後もバックグラウンドで無効なトークンのままAPIを叩き続けてしまう
+  // （2026-09-02 Codexレビュー指摘、P2）。
+  const controller = new AbortController();
+  const files = await Promise.all(
+    fileIds.map((fileId) =>
+      limiter.run(async (): Promise<DriveFile | null> => {
+        if (controller.signal.aborted) return null;
+        try {
+          return await getFile(fileId);
+        } catch (err) {
+          if (isAuthError(err)) controller.abort();
+          throw err;
+        }
+      })
+    )
+  );
+  const removedFileIds = fileIds.filter((_, index) => !files[index]);
+  const trashedFileIds = fileIds.filter((_, index) => files[index]?.trashed === true);
+  const entries = files
+    .filter((file): file is DriveFile => Boolean(file && !file.trashed))
+    .map((file) => ({ file, folderPath: "" }));
+
+  let succeededCount = 0;
+  let stillFailedCount = 0;
+  let done = 0;
+  for (let offset = 0; offset < entries.length; offset += batchSize) {
+    const batch = entries.slice(offset, offset + batchSize);
+    const batchUpsertEntries = await extractAndBuildIndexEntries(
+      batch,
+      createFetchRangeForFile,
+      (batchDone) => onProgress(done + batchDone, entries.length),
+      ""
+    );
+    done += batch.length;
+    for (const entry of batchUpsertEntries) {
+      const preserved = existingScanRunIds.get(entry.fileId);
+      if (preserved !== undefined) entry.row[SCAN_RUN_ID_INDEX] = preserved;
+    }
+    const batchStillFailed = batchUpsertEntries.filter(({ row }) => row[EXTRACTION_FAILED_INDEX] === "TRUE").length;
+    stillFailedCount += batchStillFailed;
+    succeededCount += batchUpsertEntries.length - batchStillFailed;
+    if (batchUpsertEntries.length > 0) await persistBatch(batchUpsertEntries);
   }
-  // 重複マージ（mergeDuplicateIndexRows）は索引全体を読み直して走査するため、バッチのたびに
-  // 呼ぶと大規模リトライ（数千〜1万件規模）で索引全体の読み取りが繰り返し発生し、レイテンシと
-  // Sheets APIのクォータを浪費する（2026-09-02 Codexレビュー指摘、P2）。全バッチ完了後に1回だけ
-  // 実行すれば十分（重複が生じるのは書き込みの競合時であり、バッチ単位で即座に解消する必要はない）。
-  if (result.upsertEntries.length > 0) await mergeDuplicates();
-  if (result.trashedFileIds.length > 0) await removeTrashed(result.trashedFileIds);
+
+  if (succeededCount + stillFailedCount > 0) await mergeDuplicates();
+  if (trashedFileIds.length > 0) await removeTrashed(trashedFileIds);
+
+  return { removedFileIds, trashedFileIds, succeededCount, stillFailedCount };
 }

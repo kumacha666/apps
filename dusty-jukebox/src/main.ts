@@ -39,7 +39,7 @@ import {
 import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
 import { commitInitialChangeReplay, consumeChangesOrHandleExpiry } from "./initialChangeReplay";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
-import { filterStaleUpsertEntries, persistRetryExtractionResult, retryFailedExtractions, revalidateTrashedFileIds } from "./retryExtraction";
+import { createCachedTrashRevalidator, filterStaleUpsertEntries, retryFailedExtractions } from "./retryExtraction";
 import {
   createSheetsIndexIO,
   indexRowsScanState,
@@ -926,20 +926,18 @@ async function handleRetryExtraction(): Promise<void> {
     // 残り、削除・変更済みの内容から再生リストが作られてしまう恐れがある（2026-09-02 Codex
     // レビュー指摘、P2）。
     catalogSession.invalidate();
+    // タグ抽出中に他デバイスの差分同期が同じファイルを先に処理していた場合、書き込み直前に
+    // 索引を読み直しそのエントリを書き込まずスキップする（2026-09-02 Codexレビュー指摘、P1：
+    // リトライの古い抽出結果が新しい差分同期結果を上書きしてしまうデータ整合性の問題）。
+    const skippedStaleFileIds: string[] = [];
+    let actuallyRemovedCount = 0;
+    const isStillTrashed = createCachedTrashRevalidator(createDriveFileGetFn(() => auth.ensureAccessToken()));
     const result = await retryFailedExtractions(
       fileIds,
       createDriveFileGetFn(() => auth.ensureAccessToken()),
       (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
       (done, total) => setStatus(`再抽出中... (${done}/${total})`),
-      existingScanRunIds
-    );
-    // バッチ書き込み直前に索引を読み直し、他デバイスの差分同期が同じファイルを先に処理していた
-    // 場合はそのエントリを書き込まずスキップする（2026-09-02 Codexレビュー指摘、P1：
-    // リトライの古い抽出結果が新しい差分同期結果を上書きしてしまうデータ整合性の問題）。
-    const skippedStaleFileIds: string[] = [];
-    let actuallyRemovedCount = 0;
-    await persistRetryExtractionResult(
-      result,
+      existingScanRunIds,
       async (entries) => {
         // filterStaleUpsertEntriesの判定に使ったスナップショット（currentRows）を
         // upsertIndexRowsのexistingRowsSnapshotへそのまま渡し、内部でのもう一度の
@@ -961,8 +959,7 @@ async function handleRetryExtraction(): Promise<void> {
         // 誤って一部を消すより安全側に倒し、そのバッチ全体の削除を見送る（次回のリトライで
         // 改めて対象になる）。
         await removeIndexRows(sheetsIO, fileIds, async () => {
-          const stillTrashed = await revalidateTrashedFileIds(fileIds, createDriveFileGetFn(() => auth.ensureAccessToken()));
-          const allStillTrashed = stillTrashed.length === fileIds.length;
+          const allStillTrashed = await isStillTrashed(fileIds);
           if (allStillTrashed) actuallyRemovedCount = fileIds.length;
           return allStillTrashed;
         });
