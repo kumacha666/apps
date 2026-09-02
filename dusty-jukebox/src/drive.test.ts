@@ -4,6 +4,7 @@ import {
   listFolderChildren,
   createDriveListFn,
   createDriveGetFn,
+  createDriveFileGetFn,
   createDriveCapabilitiesGetFn,
   createGetStartPageTokenFn,
   createChangesListFn,
@@ -22,6 +23,28 @@ import {
   type DriveParentsGetFn,
 } from "./drive";
 import { AuthError } from "./auth";
+
+describe("createDriveFileGetFn", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("files.getのメタデータを返す", async () => {
+    const file = { id: "song", name: "song.mp3", mimeType: "audio/mpeg", parents: ["root"] };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(file), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(createDriveFileGetFn(async () => "token")("song")).resolves.toEqual(file);
+    expect(fetchMock.mock.calls[0][0]).toContain("fields=id%2Cname%2CmimeType%2Csize%2Cparents%2CmodifiedTime%2Ctrashed");
+  });
+
+  test("404はnullを返す", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("missing", { status: 404 })));
+    await expect(createDriveFileGetFn(async () => "token")("gone")).resolves.toBeNull();
+  });
+
+  test("401はDriveHttpErrorを投げる", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("unauthorized", { status: 401 })));
+    await expect(createDriveFileGetFn(async () => "token")("song")).rejects.toMatchObject({ status: 401 });
+  });
+});
 
 // フォルダID -> 直接の子（ファイル・フォルダ混在）のフェイクツリー。
 // 3.1節の実データ構成（アーティスト/アルバム階層＋非楽曲ファイルの混在）を模したサンプル。

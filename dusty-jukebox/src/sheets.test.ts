@@ -8,6 +8,7 @@ import {
   isLegacyIndexHeaderV1,
   isLegacyIndexHeaderV2,
   isValidIndexHeader,
+  listExtractionFailedFileIds,
   LEGACY_INDEX_SHEET_HEADER_V1,
   LEGACY_INDEX_SHEET_HEADER_V2,
   mergeDuplicateIndexRows,
@@ -43,6 +44,20 @@ function makeFakeIO(
 function indexOf(name: (typeof INDEX_SHEET_HEADER)[number]): number {
   return INDEX_SHEET_HEADER.indexOf(name);
 }
+
+describe("listExtractionFailedFileIds", () => {
+  test("失敗行だけを先勝ちで重複除去し、空IDを除く", () => {
+    const row = (fileId: string, failed: string) => {
+      const values = Array(INDEX_SHEET_HEADER.length).fill("");
+      values[indexOf("fileId")] = fileId;
+      values[indexOf("extractionFailed")] = failed;
+      return values;
+    };
+    expect(listExtractionFailedFileIds([
+      row("failed", "TRUE"), row("ok", "FALSE"), row("failed", "TRUE"), row("", "TRUE"),
+    ])).toEqual(["failed"]);
+  });
+});
 
 describe("buildIndexRow", () => {
   test("列数がINDEX_SHEET_HEADERと一致する", () => {

@@ -85,6 +85,9 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     const id = url.pathname.split("/").pop();
     if (id === "root") return json(route, { id, name: "Root", mimeType: "application/vnd.google-apps.folder", parents: [], capabilities: { canEdit: true } });
     if (id === "sheet") return json(route, { id, name: "Sheet", mimeType: "application/vnd.google-apps.spreadsheet", capabilities: { canEdit: true } });
+    if (id?.startsWith("song-") || id?.startsWith("album-track-") || id === "other-album") {
+      return json(route, { id, name: `${id}.mp3`, mimeType: "audio/mpeg", size: "1024", parents: ["root"], modifiedTime: "2026-01-01T00:00:00Z", trashed: false });
+    }
     return json(route, { id, name: id, mimeType: "application/vnd.google-apps.folder", parents: ["root"] });
   });
   await context.route("https://sheets.googleapis.com/**", async (route) => {

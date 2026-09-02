@@ -133,6 +133,19 @@ const PARENT_ID_INDEX = INDEX_SHEET_HEADER.indexOf("parentId");
 const DRIVE_MODIFIED_TIME_INDEX = INDEX_SHEET_HEADER.indexOf("driveModifiedTime");
 const SCAN_RUN_ID_INDEX = INDEX_SHEET_HEADER.indexOf("scanRunId");
 
+export function listExtractionFailedFileIds(rows: (string | number)[][]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const row of rows) {
+    const fileId = String(row[FILE_ID_INDEX] ?? "");
+    if (row[EXTRACTION_FAILED_INDEX] === "TRUE" && fileId && !seen.has(fileId)) {
+      seen.add(fileId);
+      result.push(fileId);
+    }
+  }
+  return result;
+}
+
 // 抽出タグとfileId起点upsertに必要な最小限の入力。_override列は4.2節の方針通り、
 // スキャナは絶対に書き込まない（新規行では空欄のまま作成する）。文字化け自動修復（4.4節）・
 // 巨大ファイルのタイムアウト救済（5節）はこのPRの範囲外で、garbledResolved/extractionFailedは

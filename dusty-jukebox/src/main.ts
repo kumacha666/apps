@@ -22,6 +22,7 @@ import {
   createChangesListFn,
   createDriveCapabilitiesGetFn,
   createDriveFetchRange,
+  createDriveFileGetFn,
   createDriveGetFn,
   createDriveListFn,
   createDriveParentsGetFn,
@@ -38,6 +39,7 @@ import {
 import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
 import { commitInitialChangeReplay, consumeChangesOrHandleExpiry } from "./initialChangeReplay";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
+import { retryFailedExtractions } from "./retryExtraction";
 import {
   createSheetsIndexIO,
   indexRowsScanState,
@@ -50,6 +52,7 @@ import {
   SheetsIndexIO,
   INDEX_SHEET_HEADER,
   INDEX_SHEET_NAME,
+  listExtractionFailedFileIds,
 } from "./sheets";
 import {
   ensureIndexAndSyncTabsExist,
@@ -130,6 +133,7 @@ function render(): void {
       </label>
       <button id="login-btn" type="button">Googleドライブ（読み取り専用）＋スプレッドシートへログイン</button>
       <button id="scan-btn" type="button" disabled>音楽ファイルをスキャンして索引に反映する</button>
+      <button id="retry-extraction-btn" type="button" disabled>抽出失敗曲の再抽出を試みる</button>
       <label class="field">
         <span>試聴するGoogle DriveファイルID</span>
         <input id="play-file-id" type="text" placeholder="Google DriveファイルID" />
@@ -195,6 +199,7 @@ async function loadCatalog(): Promise<void> {
   const loadButton = el<HTMLButtonElement>("load-catalog-btn");
   const folderInput = el<HTMLInputElement>("folder-id");
   const scanButton = el<HTMLButtonElement>("scan-btn");
+  const retryButton = el<HTMLButtonElement>("retry-extraction-btn");
   const spreadsheetId = spreadsheetInput.value.trim();
   if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
   if (!catalogOperationGate.tryAcquire()) {
@@ -205,7 +210,7 @@ async function loadCatalog(): Promise<void> {
   // Disable both operation's controls before the first await so their runs
   // cannot overlap through two consecutive user actions.
   loadButton.disabled = true; spreadsheetInput.disabled = true;
-  scanButton.disabled = true; folderInput.disabled = true;
+  scanButton.disabled = true; retryButton.disabled = true; folderInput.disabled = true;
   try {
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
     const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
@@ -249,6 +254,7 @@ async function loadCatalog(): Promise<void> {
     loadButton.disabled = false;
     folderInput.disabled = false;
     scanButton.disabled = false;
+    retryButton.disabled = false;
   }
 }
 function createQueueFromFilters(): void {
@@ -278,6 +284,7 @@ async function handleLogin(): Promise<void> {
     await auth.requestAccessToken({ prompt: "consent" });
     setStatus("ログイン済み。フォルダIDを入力してスキャンできます。");
     el<HTMLButtonElement>("scan-btn").disabled = false;
+    el<HTMLButtonElement>("retry-extraction-btn").disabled = false;
     el<HTMLButtonElement>("play-btn").disabled = false;
     el<HTMLButtonElement>("pause-btn").disabled = false;
     el<HTMLButtonElement>("load-catalog-btn").disabled = false;
@@ -868,6 +875,51 @@ async function runDifferentialSync(
   return replaySucceeded && committed;
 }
 
+async function handleRetryExtraction(): Promise<void> {
+  const spreadsheetInput = el<HTMLInputElement>("spreadsheet-id");
+  const spreadsheetId = spreadsheetInput.value.trim();
+  if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
+  if (!catalogOperationGate.tryAcquire()) {
+    setStatus("スキャンまたは索引の読み込みが進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  const retryButton = el<HTMLButtonElement>("retry-extraction-btn");
+  const scanButton = el<HTMLButtonElement>("scan-btn");
+  const loadButton = el<HTMLButtonElement>("load-catalog-btn");
+  const folderInput = el<HTMLInputElement>("folder-id");
+  retryButton.disabled = true; scanButton.disabled = true; loadButton.disabled = true;
+  spreadsheetInput.disabled = true; folderInput.disabled = true;
+  try {
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
+      throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。スプレッドシートIDが正しいか、無関係な「index」タブが既に存在していないかご確認ください。");
+    }
+    const fileIds = listExtractionFailedFileIds(await sheetsIO.listExistingRows());
+    if (fileIds.length === 0) {
+      setStatus("抽出失敗として記録されている曲はありません。");
+      return;
+    }
+    const result = await retryFailedExtractions(
+      fileIds,
+      createDriveFileGetFn(() => auth.ensureAccessToken()),
+      (fileId, signal) => createDriveFetchRange(fileId, () => auth.ensureAccessToken(), { signal }),
+      (done, total) => setStatus(`再抽出中... (${done}/${total})`)
+    );
+    if (result.upsertEntries.length > 0) {
+      await upsertIndexRows(sheetsIO, result.upsertEntries);
+      catalogSession.invalidate();
+    }
+    setStatus(`再抽出完了（成功 ${result.succeededCount}件、再度失敗 ${result.stillFailedCount}件、Drive上で見つからずスキップ ${result.removedFileIds.length}件）`);
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `再抽出に失敗しました: ${err.message}` : "再抽出に失敗しました", true);
+  } finally {
+    catalogOperationGate.release();
+    retryButton.disabled = false; scanButton.disabled = false; loadButton.disabled = false;
+    spreadsheetInput.disabled = false; folderInput.disabled = false;
+  }
+}
+
 async function handleScan(): Promise<void> {
   const folderId = el<HTMLInputElement>("folder-id").value.trim();
   const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
@@ -887,7 +939,9 @@ async function handleScan(): Promise<void> {
   const folderInput = el<HTMLInputElement>("folder-id");
   const spreadsheetInput = el<HTMLInputElement>("spreadsheet-id");
   const loadButton = el<HTMLButtonElement>("load-catalog-btn");
+  const retryButton = el<HTMLButtonElement>("retry-extraction-btn");
   scanBtn.disabled = true;
+  retryButton.disabled = true;
   // A scan can update or delete index rows. Invalidate the previous snapshot
   // before the first asynchronous scan operation so it can never form a queue.
   catalogSession.invalidate();
@@ -987,6 +1041,7 @@ async function handleScan(): Promise<void> {
     folderInput.disabled = false;
     spreadsheetInput.disabled = false;
     loadButton.disabled = false;
+    retryButton.disabled = false;
   }
 }
 
@@ -1050,6 +1105,7 @@ function init(): void {
     audioPlayer.addEventListener("pause", () => handleNativePlaybackStatus(audioPlayer, "pause"));
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
+    el<HTMLButtonElement>("retry-extraction-btn").addEventListener("click", () => void handleRetryExtraction());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
     el<HTMLButtonElement>("pause-btn").addEventListener("click", () => playback?.pause());
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
