@@ -87,3 +87,20 @@ test("除外は再生キューへ反映され、戻して作り直すと復帰�
   await page.getByRole("button", { name: "次へ" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 });
+
+test("検索で曲を絞り込み、アルバムをdisc/track順のキューに設定できる", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.locator("#filter-query").fill("jazz");
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(1);
+  await expect(page.locator("#catalog-list")).toContainText("Jazz Song");
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony — Orchestra（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await expect(page.locator("#catalog-list li")).toHaveText([/Opening/, /Scherzo/, /Finale/]);
+});

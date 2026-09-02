@@ -12,7 +12,7 @@ import { PlaybackAuthenticationRequiredError, PlaybackController } from "./playb
 import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStatus";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
-import { parseIndexRows, filterSongs, sortSongs, type Song } from "./catalog";
+import { parseIndexRows, filterSongs, groupSongsByAlbum, sortSongs, type AlbumGroup, type Song } from "./catalog";
 import { CatalogOperationGate } from "./catalogOperationGate";
 import { CatalogSession } from "./catalogSession";
 import { FolderPathResolver } from "./folderPaths";
@@ -141,13 +141,18 @@ function render(): void {
       <section class="catalog">
         <h2>ライブラリ</h2>
         <button id="load-catalog-btn" type="button" disabled>索引から曲一覧を読み込む</button>
+        <label class="field"><span>検索</span><input id="filter-query" type="search" placeholder="タイトル・アーティスト・アルバム・作曲者を検索" /></label>
         <label class="field"><span>アーティスト</span><input id="filter-artist" type="search" /></label>
+        <label class="field"><span>アルバム</span><input id="filter-album" type="search" /></label>
+        <label class="field"><span>作曲者</span><input id="filter-composer" type="search" /></label>
         <div class="filter-years"><label>年（最小）<input id="filter-min-year" type="number" /></label><label>年（最大）<input id="filter-max-year" type="number" /></label></div>
         <label class="field"><span>カテゴリ（Genre）</span><input id="filter-genre" type="search" /></label>
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
         <div><button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button></div>
         <ul id="catalog-list" class="result-list"></ul>
+        <h3>アルバム</h3>
+        <ul id="album-list" class="result-list"></ul>
       </section>
       <p id="status" class="status"></p>
       <ul id="result-list" class="result-list"></ul>
@@ -163,6 +168,21 @@ function renderQueue(): void {
   for (const song of queue?.all() ?? []) { const item = document.createElement("li"); const check = document.createElement("input"); check.type = "checkbox"; check.checked = !queue?.isExcluded(song.fileId);
     check.addEventListener("change", () => { queue?.exclude(song.fileId, !check.checked); renderQueue(); });
     item.append(check, ` ${song.title}${song.artist ? ` — ${song.artist}` : ""}${song.album ? ` / ${song.album}` : ""}${song.folderPath ? ` [${song.folderPath}]` : ""}`); list.append(item); }
+}
+function renderAlbumGroups(groups: AlbumGroup[]): void {
+  const list = el<HTMLUListElement>("album-list"); list.innerHTML = "";
+  for (const group of groups) {
+    const item = document.createElement("li");
+    const label = `${group.album} — ${group.albumArtist}（${group.songs.length}曲） `;
+    const button = document.createElement("button"); button.type = "button"; button.textContent = "このアルバムを再生";
+    button.addEventListener("click", () => {
+      if (!queue) return;
+      queue.setList(group.songs); renderQueue();
+      el<HTMLButtonElement>("next-btn").disabled = group.songs.length === 0; el<HTMLButtonElement>("previous-btn").disabled = group.songs.length === 0;
+      setStatus(`${group.album}の${group.songs.length}曲を再生リストに設定しました。`);
+    });
+    item.append(label, button); list.append(item);
+  }
 }
 async function loadCatalog(): Promise<void> {
   const spreadsheetInput = el<HTMLInputElement>("spreadsheet-id");
@@ -211,6 +231,7 @@ async function loadCatalog(): Promise<void> {
       });
     }));
     catalogSession.replace(songs);
+    renderAlbumGroups(groupSongsByAlbum(songs));
     el<HTMLButtonElement>("create-queue-btn").disabled = false;
     setStatus(`索引から${songs.length}曲を読み込みました${failedPathCount > 0 ? `（${failedPathCount}件はパス解決に失敗）` : ""}。条件を指定して再生リストを作れます。`);
   } catch (err) {
@@ -226,7 +247,8 @@ async function loadCatalog(): Promise<void> {
 }
 function createQueueFromFilters(): void {
   if (!queue) return;
-  const songs = catalogSession.createQueue((loadedSongs) => sortSongs(filterSongs(loadedSongs, { artist: el<HTMLInputElement>("filter-artist").value, genre: el<HTMLInputElement>("filter-genre").value,
+  const songs = catalogSession.createQueue((loadedSongs) => sortSongs(filterSongs(loadedSongs, { query: el<HTMLInputElement>("filter-query").value, artist: el<HTMLInputElement>("filter-artist").value,
+    album: el<HTMLInputElement>("filter-album").value, composer: el<HTMLInputElement>("filter-composer").value, genre: el<HTMLInputElement>("filter-genre").value,
     minYear: numberOrUndefined(el<HTMLInputElement>("filter-min-year").value), maxYear: numberOrUndefined(el<HTMLInputElement>("filter-max-year").value), includeUnknownYear: el<HTMLInputElement>("filter-unknown-year").checked })));
   if (!songs) {
     setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストを作成してください。", true);

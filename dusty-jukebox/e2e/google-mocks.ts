@@ -12,6 +12,8 @@ export type MockOptions = {
   delayServiceWorkerActivation?: boolean;
   /** Reject the first otherwise-authenticated media request as a revoked token. */
   rejectFirstStreamToken?: boolean;
+  /** Provide multiple albums and deliberately unordered disc/track rows. */
+  albumCatalog?: boolean;
 };
 
 type SheetWrite = {
@@ -29,9 +31,15 @@ function sheetForRange(range: string | undefined): SheetWrite["sheet"] {
 /** In-memory GIS, Drive and Sheets boundary. Every authenticated API request is
  * checked here, so a broken token hand-off cannot look like a successful E2E run. */
 export async function installGoogleMocks(context: BrowserContext, options: MockOptions = {}) {
-  const indexRows: string[][] = [
-    ["song-1", "mp3", "root", "2026-01-01T00:00:00Z", "", "First song", "", "Artist", "", "", "", "", "", "", "", "Rock", "", "", "2024"],
-    ["song-2", "mp3", "root", "2026-01-01T00:00:00Z", "", "Second song", "", "Artist", "", "", "", "", "", "", "", "Rock", "", "", "2024"],
+  const indexRow = (values: Record<string, string>) => INDEX_SHEET_HEADER.map((header) => values[header] ?? "");
+  const indexRows: string[][] = options.albumCatalog ? [
+    indexRow({ fileId: "album-track-3", extension: "mp3", parentId: "root", title: "Finale", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", discNumber: "2", trackNumber: "1", releaseYear: "2024" }),
+    indexRow({ fileId: "other-album", extension: "mp3", parentId: "root", title: "Jazz Song", artist: "Quartet", album: "Blue Notes", composer: "Writer", genre: "Jazz", discNumber: "1", trackNumber: "1", releaseYear: "2020" }),
+    indexRow({ fileId: "album-track-2", extension: "mp3", parentId: "root", title: "Scherzo", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", discNumber: "1", trackNumber: "2", releaseYear: "2024" }),
+    indexRow({ fileId: "album-track-1", extension: "mp3", parentId: "root", title: "Opening", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", discNumber: "1", trackNumber: "1", releaseYear: "2024" }),
+  ] : [
+    indexRow({ fileId: "song-1", extension: "mp3", parentId: "root", driveModifiedTime: "2026-01-01T00:00:00Z", title: "First song", artist: "Artist", genre: "Rock", releaseYear: "2024" }),
+    indexRow({ fileId: "song-2", extension: "mp3", parentId: "root", driveModifiedTime: "2026-01-01T00:00:00Z", title: "Second song", artist: "Artist", genre: "Rock", releaseYear: "2024" }),
   ];
   const syncRows = [["startPageToken", "page-1"], ["rootFolderId", "root"], ["initialScanCompletedAt", options.initialScanCompleted === false ? "" : "2026-01-01T00:00:00Z"], ["scanRunId", ""], ["shortcutRootFolderIds", ""]];
   const authFailures: string[] = [];
