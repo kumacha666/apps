@@ -941,25 +941,31 @@ async function handleRetryExtraction(): Promise<void> {
     await persistRetryExtractionResult(
       result,
       async (entries) => {
+        // filterStaleUpsertEntriesの判定に使ったスナップショット（currentRows）を
+        // upsertIndexRowsのexistingRowsSnapshotへそのまま渡し、内部でのもう一度の
+        // listExistingRows()を省く。渡さない場合、判定時点と実際にmergeWithExistingが
+        // 使う時点とで別々の読み取りになり、その間の一呼吸がガードとは無関係な
+        // 追加のTOCTOU窓になってしまう（2026-09-02 Codexレビュー指摘、P1）。
         const currentRows = await sheetsIO.listExistingRows();
         const { fresh, staleFileIds } = filterStaleUpsertEntries(entries, currentRows);
         skippedStaleFileIds.push(...staleFileIds);
-        if (fresh.length > 0) await upsertIndexRows(sheetsIO, fresh);
+        if (fresh.length > 0) await upsertIndexRows(sheetsIO, fresh, currentRows);
       },
       () => mergeDuplicateIndexRows(sheetsIO).then(() => undefined),
       async (fileIds) => {
-        // trashed判定はメタデータ取得時点のスナップショットのため、削除の直前にDriveへ
-        // 再照会し、その時点でも実際にtrashed（または削除済み）であるファイルだけを削除する
-        // （2026-09-02 Codexレビュー指摘、P1：抽出中に復元されたファイルの行を誤って
-        // 消してしまうデータ整合性の問題）。
-        const stillTrashed = await revalidateTrashedFileIds(fileIds, createDriveFileGetFn(() => auth.ensureAccessToken()));
-        actuallyRemovedCount = stillTrashed.length;
-        if (stillTrashed.length > 0) {
-          await removeIndexRows(sheetsIO, stillTrashed, async () => {
-            await auth.ensureAccessToken();
-            return true;
-          });
-        }
+        // trashed再確認をremoveIndexRowsのisStillCurrentコールバックへ移す。isStillCurrentは
+        // updateRowsInBatchesが実際のSheets書き込み（io.updateRows）の直前に呼ぶため、
+        // revalidateTrashedFileIdsを外側で先に呼んでから渡す場合より、Drive再確認と
+        // 実際の削除書き込みの間に挟まる自前の処理（索引の内部読み取り等）が無くなる
+        // （2026-09-02 Codexレビュー指摘、P1）。対象ファイルの一部だけ復元されていた場合は
+        // 誤って一部を消すより安全側に倒し、そのバッチ全体の削除を見送る（次回のリトライで
+        // 改めて対象になる）。
+        await removeIndexRows(sheetsIO, fileIds, async () => {
+          const stillTrashed = await revalidateTrashedFileIds(fileIds, createDriveFileGetFn(() => auth.ensureAccessToken()));
+          const allStillTrashed = stillTrashed.length === fileIds.length;
+          if (allStillTrashed) actuallyRemovedCount = fileIds.length;
+          return allStillTrashed;
+        });
       }
     );
     const staleNotice = skippedStaleFileIds.length > 0 ? `、他デバイスの更新により書き込みスキップ ${skippedStaleFileIds.length}件` : "";
