@@ -926,6 +926,7 @@ async function handleRetryExtraction(): Promise<void> {
     // リトライの古い抽出結果が新しい差分同期結果を上書きしてしまうデータ整合性の問題）。
     const skippedStaleFileIds: string[] = [];
     const removedTrashedFileIds = new Set<string>();
+    const incompletelyRemovedTrashedFileIds = new Set<string>();
     const result = await retryFailedExtractions(
       fileIds,
       createDriveFileGetFn(() => auth.ensureAccessToken()),
@@ -976,7 +977,17 @@ async function handleRetryExtraction(): Promise<void> {
           // （2026-09-02 Codexレビュー指摘：P2。以前の修正はバッチ内の重複排除のみで、
           // バッチを跨いだ重複には対応していなかった）。リトライ全体で確認できたfileIdを
           // 1つのSetへ蓄積し、最後にその件数を報告する。
-          if (allStillTrashed) for (const id of uniqueBatchFileIds) removedTrashedFileIds.add(id);
+          // さらに、重複行の一方のバッチだけ成功しもう一方のバッチが見送られた場合、
+          // そのfileIdはまだ完全には削除されていない（次回のリトライで改めて選ばれる）ため、
+          // 「削除済み」に数えてはいけない（2026-09-02 Codexレビュー指摘：P2。以前は
+          // 成功したバッチのfileIdを無条件でremovedTrashedFileIdsへ加算しており、他の
+          // バッチで同じfileIdが見送られていても「削除済み」と誤表示していた）。
+          // 見送られたバッチに含まれるfileIdは別のSetへ記録し、最終報告時に除外する。
+          if (allStillTrashed) {
+            for (const id of uniqueBatchFileIds) removedTrashedFileIds.add(id);
+          } else {
+            for (const id of uniqueBatchFileIds) incompletelyRemovedTrashedFileIds.add(id);
+          }
           return allStillTrashed;
         }, "skip");
       }
@@ -985,8 +996,11 @@ async function handleRetryExtraction(): Promise<void> {
     // 削除済み件数は再確認後の実際の削除数（removedTrashedFileIds、一意のfileId基準）を
     // 表示する。result.trashedFileIds.length（再確認前のスナップショット）をそのまま
     // 使うと、再確認で復元と判明し実際には削除しなかったファイルまで「削除済み」と
-    // 誤表示してしまう（2026-09-02 Codexレビュー指摘、P2）。
-    setStatus(`再抽出完了（成功 ${result.succeededCount}件、再度失敗 ${result.stillFailedCount}件、削除済み ${removedTrashedFileIds.size}件、Drive上で見つからずスキップ ${result.removedFileIds.length}件${staleNotice}）`);
+    // 誤表示してしまう（2026-09-02 Codexレビュー指摘、P2）。重複行の一方のバッチだけ
+    // 成功しもう一方が見送られたfileId（incompletelyRemovedTrashedFileIds）は、まだ
+    // 完全には削除されていないため件数から除外する（2026-09-02 Codexレビュー指摘、P2）。
+    const actuallyRemovedCount = [...removedTrashedFileIds].filter((id) => !incompletelyRemovedTrashedFileIds.has(id)).length;
+    setStatus(`再抽出完了（成功 ${result.succeededCount}件、再度失敗 ${result.stillFailedCount}件、削除済み ${actuallyRemovedCount}件、Drive上で見つからずスキップ ${result.removedFileIds.length}件${staleNotice}）`);
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
     setStatus(err instanceof Error ? `再抽出に失敗しました: ${err.message}` : "再抽出に失敗しました", true);

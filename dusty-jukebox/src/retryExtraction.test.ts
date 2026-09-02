@@ -126,9 +126,17 @@ describe("retryFailedExtractions", () => {
     // 実装だと、認証切れ・タブを閉じる等で中断すると成果が丸ごと失われる
     // （2026-09-02 Codexレビュー指摘、P2）。runFullScanと同じくバッチ単位で
     // 抽出→persistBatchを繰り返すことを検証する。
+    // 抽出結果を先に全バッチ分作ってからpersistBatchを3回まとめて呼ぶ実装（中断すると
+    // 成果が丸ごと失われる、元の不具合と同じ挙動）でも、call countとバッチサイズだけを
+    // 見る検証では偽陽性になる（2026-09-02 Codexレビュー指摘：P1）。extractとpersistBatch
+    // 双方の呼び出しを単一のcallOrderへ記録し、"extract","persist"が交互に並ぶこと
+    // （＝各バッチの抽出直後に必ずそのバッチのpersistBatchが呼ばれ、次のバッチの抽出が
+    // 始まる前に完了していること）を直接検証する。
     const fileIds = Array.from({ length: 250 }, (_, index) => `file-${index}`);
+    const callOrder: string[] = [];
     const batchSizes: number[] = [];
     const buildBatchResult = (entries: { file: { id: string } }[]) => {
+      callOrder.push("extract");
       batchSizes.push(entries.length);
       return entries.map(({ file }) => ({ fileId: file.id, row: row({ fileId: file.id }) }));
     };
@@ -138,6 +146,7 @@ describe("retryFailedExtractions", () => {
     const { retryFailedExtractions } = await import("./retryExtraction");
     const persistedBatchSizes: number[] = [];
     const persistBatch = vi.fn(async (entries: unknown[]) => {
+      callOrder.push("persist");
       persistedBatchSizes.push(entries.length);
       return { staleFileIds: [] };
     });
@@ -152,8 +161,7 @@ describe("retryFailedExtractions", () => {
     );
     expect(batchSizes).toEqual([100, 100, 50]);
     expect(persistedBatchSizes).toEqual([100, 100, 50]);
-    // persistBatchは各バッチの抽出直後に呼ばれる（全バッチの抽出完了を待たない）ことを、
-    // extractの呼び出し回数とpersistBatchの呼び出し回数が同期していることで確認する。
+    expect(callOrder).toEqual(["extract", "persist", "extract", "persist", "extract", "persist"]);
     expect(extract).toHaveBeenCalledTimes(3);
     expect(mergeDuplicates).toHaveBeenCalledTimes(1);
   });
