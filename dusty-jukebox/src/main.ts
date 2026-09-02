@@ -177,9 +177,15 @@ function renderAlbumGroups(groups: AlbumGroup[]): void {
     const button = document.createElement("button"); button.type = "button"; button.textContent = "このアルバムを再生";
     button.addEventListener("click", () => {
       if (!queue) return;
-      queue.setList(group.songs); renderQueue();
-      el<HTMLButtonElement>("next-btn").disabled = group.songs.length === 0; el<HTMLButtonElement>("previous-btn").disabled = group.songs.length === 0;
-      setStatus(`${group.album}の${group.songs.length}曲を再生リストに設定しました。`);
+      const songs = catalogSession.createQueue(() => group.songs);
+      if (!songs) {
+        setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストを作成してください。", true);
+        return;
+      }
+      queue.setList(songs); renderQueue();
+      el<HTMLButtonElement>("next-btn").disabled = songs.length === 0; el<HTMLButtonElement>("previous-btn").disabled = songs.length === 0;
+      setStatus(`${group.album}の${songs.length}曲を再生リストに設定しました。`);
+      void handleQueuePlayback(() => queue?.playAt(0));
     });
     item.append(label, button); list.append(item);
   }

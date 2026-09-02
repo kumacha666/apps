@@ -46,6 +46,14 @@ describe("絞り込みとソート", () => {
   });
 });
 describe("アルバムグルーピング", () => {
+  test("同じアルバムと代表アーティストでもparentIdが異なれば別グループにする", () => {
+    const groups = groupSongsByAlbum([
+      song({ fileId: "original", parentId: "release-original", album: "Same Album", artist: "Track Artist", albumArtist: "Album Artist" }),
+      song({ fileId: "remaster", parentId: "release-remaster", album: "Same Album", artist: "Other Track Artist", albumArtist: "Album Artist" }),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.songs.map((item) => item.fileId))).toEqual([["original"], ["remaster"]]);
+  });
   test("代表アーティストでまとめ、空アルバムを除外し、グループと曲を規定順に並べる", () => {
     const groups = groupSongsByAlbum([
       song({ fileId: "non-numeric", album: "Beta", artist: "Track Artist", albumArtist: "Various", discNumber: "x", trackNumber: "1" }),

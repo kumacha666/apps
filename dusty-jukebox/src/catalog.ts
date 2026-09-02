@@ -65,7 +65,7 @@ export function groupSongsByAlbum(songs: Song[]): AlbumGroup[] {
     const album = song.album.trim();
     if (!album) continue;
     const albumArtist = song.albumArtist.trim() || song.artist.trim();
-    const key = JSON.stringify([album, albumArtist]);
+    const key = JSON.stringify([album, albumArtist, song.parentId]);
     const group = groups.get(key) ?? { album, albumArtist, songs: [] };
     group.songs.push(song);
     groups.set(key, group);
