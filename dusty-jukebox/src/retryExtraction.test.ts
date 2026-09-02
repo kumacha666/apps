@@ -121,22 +121,21 @@ describe("retryFailedExtractions", () => {
     ).rejects.toBe(authError);
   });
 
-  test("抽出をバッチ単位で進め、バッチごとに逐次persistBatchを呼ぶ", async () => {
+  test("抽出をバッチ単位で進め、各バッチのpersistBatchの完了を待ってから次のバッチの抽出を始める", async () => {
     // ライブラリ全体規模の失敗をリトライする場合、全件の抽出が終わるまで一切書き込まない
     // 実装だと、認証切れ・タブを閉じる等で中断すると成果が丸ごと失われる
     // （2026-09-02 Codexレビュー指摘、P2）。runFullScanと同じくバッチ単位で
     // 抽出→persistBatchを繰り返すことを検証する。
-    // 抽出結果を先に全バッチ分作ってからpersistBatchを3回まとめて呼ぶ実装（中断すると
-    // 成果が丸ごと失われる、元の不具合と同じ挙動）でも、call countとバッチサイズだけを
-    // 見る検証では偽陽性になる（2026-09-02 Codexレビュー指摘：P1）。extractとpersistBatch
-    // 双方の呼び出しを単一のcallOrderへ記録し、"extract","persist"が交互に並ぶこと
-    // （＝各バッチの抽出直後に必ずそのバッチのpersistBatchが呼ばれ、次のバッチの抽出が
-    // 始まる前に完了していること）を直接検証する。
+    // 単純にcallOrder配列へ"extract"/"persist"を記録するだけの検証（2026-09-02の
+    // 前回修正）は、persistBatchの呼び出し自体は各バッチの抽出直後に行われるが、その
+    // 完了（await）を待たずに次のバッチの抽出を始めてしまう実装でも、記録の push は
+    // 呼び出し開始時点で同期的に走るため偽陽性になる（2026-09-02 Codexレビュー指摘：
+    // P1、追加）。persistBatchが解決するまで意図的に保留する（deferred）実装にし、
+    // 保留中は次のバッチの抽出が始まらないこと（extractの呼び出し回数が増えないこと）を
+    // 明示的に確認してから解決させる、という手順を3バッチぶん繰り返して検証する。
     const fileIds = Array.from({ length: 250 }, (_, index) => `file-${index}`);
-    const callOrder: string[] = [];
     const batchSizes: number[] = [];
     const buildBatchResult = (entries: { file: { id: string } }[]) => {
-      callOrder.push("extract");
       batchSizes.push(entries.length);
       return entries.map(({ file }) => ({ fileId: file.id, row: row({ fileId: file.id }) }));
     };
@@ -145,23 +144,32 @@ describe("retryFailedExtractions", () => {
     extract.mockImplementationOnce(buildBatchResult);
     const { retryFailedExtractions } = await import("./retryExtraction");
     const persistedBatchSizes: number[] = [];
-    const persistBatch = vi.fn(async (entries: unknown[]) => {
-      callOrder.push("persist");
-      persistedBatchSizes.push(entries.length);
-      return { staleFileIds: [] };
+    const releasers: (() => void)[] = [];
+    const persistBatch = vi.fn((entries: unknown[]) => {
+      persistedBatchSizes.push((entries as unknown[]).length);
+      return new Promise<{ staleFileIds: string[] }>((resolve) => {
+        releasers.push(() => resolve({ staleFileIds: [] }));
+      });
     });
     const mergeDuplicates = vi.fn().mockResolvedValue(undefined);
     const removeTrashed = vi.fn().mockResolvedValue(undefined);
-    await retryFailedExtractions(
+    const pending = retryFailedExtractions(
       fileIds,
       async (id) => ({ id, name: `${id}.mp3`, mimeType: "audio/mpeg" }),
       () => async () => new Uint8Array(), () => {},
       persistBatch, mergeDuplicates, removeTrashed,
       100
     );
+    for (let batchIndex = 0; batchIndex < 3; batchIndex++) {
+      await vi.waitFor(() => expect(extract).toHaveBeenCalledTimes(batchIndex + 1));
+      await vi.waitFor(() => expect(persistBatch).toHaveBeenCalledTimes(batchIndex + 1));
+      // このバッチのpersistBatchがまだ解決していない間、次のバッチの抽出は始まらない
+      expect(extract).toHaveBeenCalledTimes(batchIndex + 1);
+      releasers[batchIndex]();
+    }
+    await pending;
     expect(batchSizes).toEqual([100, 100, 50]);
     expect(persistedBatchSizes).toEqual([100, 100, 50]);
-    expect(callOrder).toEqual(["extract", "persist", "extract", "persist", "extract", "persist"]);
     expect(extract).toHaveBeenCalledTimes(3);
     expect(mergeDuplicates).toHaveBeenCalledTimes(1);
   });
