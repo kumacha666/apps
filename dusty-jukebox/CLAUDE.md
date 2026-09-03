@@ -40,13 +40,14 @@
   - 修正⑥：`PlaybackQueue.setList()`で直列化チェーン（`pendingMove`）も新しいリスト用にリセットし、リスト差し替え直後の操作が旧リストの未解決の再生完了を待たなくなるようにした
   - **既知の制限（未修正、いずれもP2・データ破損や情報漏洩には該当しない再生体験上の不具合）**：①リスト差し替え時、旧リストの`player.play()`が`AbortError`等でreject（世代変更後）すると、新しい曲が正常に再生できていても旧要求のエラーメッセージが表示されることがある（[review](https://github.com/kumacha666/apps/pull/387#discussion_r3864874708)）／②キューの「次へ」連打で移動が`pendingMove`に待機中の状態でファイルID欄から単曲再生を始めると、待機中のキュー移動が後から実行され単曲再生を上書きすることがある（[review](https://github.com/kumacha666/apps/pull/387#discussion_r3864874714)）
 
-## 保存済みプレイリスト（2026-09-03）
+## 保存済みプレイリスト（2026-09-03、PR #406）
 
 CONCEPT.md 4.3節「絞り込み→除外→保存という操作フローで作る「保存済みプレイリスト」機能」を実装。`src/playlists.ts`が`playlists`（`playlistId, name, createdAt, updatedAt`）・`playlist_tracks`（`playlistId, order, fileId`、1プレイリスト＝複数行の縦持ち）の2タブへの読み書きを担う。`sheetsSetup.ts`の`ensurePlaylistsTabsExist`が両タブを（index/syncタブとは独立して）ユーザーが初めてプレイリスト機能を使おうとした時点で自動作成する。
 
 - **orderキー**：CONCEPT.md 4.3節の設計通り`${Date.now()}-${batchSeq}-${deviceRandomId}`（`playlists.ts`の`makeOrderKey`）。比較は辞書順ではなくタイムスタンプ・batchSeqをそれぞれ数値パースして行う（`compareOrderKeys`、桁あふれ対策）。`deviceRandomId`はアプリ起動時に1回だけ生成し（`generateDeviceRandomId`、main.tsが保持）、以降の保存操作すべてで使い回す。
 - **MVPの範囲**：新規プレイリストとしての保存（`createPlaylist`、現在の再生キューの並び順＝除外を除いた表示順をそのまま曲リストとして保存）・一覧表示（名前・収録曲数）・再生キューへの読み込み（`fileIdsForPlaylist`で保存順のfileId列を取り出し、現在読み込み済みのカタログ＝`catalogSession`と突き合わせて`Song`へ変換、索引から見つからない曲はスキップしてスキップ件数を表示）・削除（`deletePlaylist`、プレイリスト行・収録曲行の両方を全列空欄化、他のfileId系タブと同じ「削除の代わりに空欄化」方式）。
 - **次PR以降に持ち越したもの**：既存プレイリストへの曲の追加・並べ替え・改名（`sheets.ts`の`updateRowsInBatches`を`RowUpdateWriter`型で汎用化済みのため、実装自体は小さい見込み）。TOCTOU（読み取りと書き込みの間に別デバイスが同じプレイリストを編集する競合）は、index/syncタブと同じ「事前防止ではなく事後の整合」という本アプリ全体の方針の範囲内として未対応のまま許容する。
+- **2026-09-03、レビュー指摘を受けて2件修正**：①`deletePlaylist`は当初「プレイリスト本体（playlists）を先に空欄化→収録曲行（playlist_tracks）を後で空欄化」という順序だったが、本体の空欄化成功直後に収録曲側の書き込みが失敗すると、一覧からは消えているのに収録曲行だけが孤児として残り、UIから再削除できなくなる問題があった。**収録曲行を先に空欄化し、本体行は最後に空欄化する順序へ修正**（収録曲側が失敗しても本体行はまだ一覧に残るため、同じ削除操作をやり直せる。収録曲の空欄化は既に空欄の行を再度空欄化するだけなので冪等）。②削除ボタンに確認が無く即削除だったため、保存プレイリストがUndo無しのユーザーデータであることを踏まえ`window.confirm`による確認を追加した。
 - ユニットテスト：`playlists.test.ts`（ヘッダー検証・行パース・orderキー生成/比較・`fileIdsForPlaylist`の並び順と重複解決・`createPlaylist`/`deletePlaylist`のフェイクIOに対する書き込み内容）、`sheetsSetup.test.ts`（`ensurePlaylistsTabsExist`のタブ有無に応じた作成分岐、index/syncタブとの独立性）。E2E（`e2e/dusty-jukebox.spec.ts`「再生リストをプレイリストとして保存し...」）は保存→一覧表示→キューへの読み込み→削除の一連の流れを検証する。これに伴い`e2e/google-mocks.ts`のSheets APIモックを、index/syncタブ限定の実装から任意のタブ名を扱える汎用実装（タブ名→データ行/ヘッダー行のストア）へ書き換えた（appendが実際にタブへ行を追加するようになった点が従来との主な違い。既存のindex/syncタブを使うテストの挙動は変えていない）。
 - **実ブラウザでの動作確認はまだできていない**：これまでの多くのPRと同じ理由（実クライアントIDがこのセッションには無いため`npm run deploy`を見送り、`src/`・`e2e/`のみコミットした。次回`npm run deploy`実行時にまとめて公開バンドルへ反映される）。
 

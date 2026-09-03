@@ -141,6 +141,12 @@ test("再生リストをプレイリストとして保存し、一覧から読�
   await expect(page.locator("#catalog-list li")).toHaveCount(2);
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 
+  // 削除は取り消せないため確認ダイアログを挟む。キャンセルすれば削除されないことをまず確認する。
+  page.once("dialog", (dialog) => void dialog.dismiss());
+  await page.getByRole("button", { name: "削除" }).click();
+  await expect(page.locator("#playlist-list li")).toHaveCount(1);
+
+  page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: "削除" }).click();
   await expect(page.locator("#status")).toContainText("プレイリストを削除しました");
   await expect(page.locator("#playlist-list li")).toHaveCount(0);

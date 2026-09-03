@@ -192,4 +192,30 @@ describe("deletePlaylist", () => {
     expect(io.updatePlaylistCalls).toEqual([]);
     expect(io.updateTrackCalls).toEqual([]);
   });
+
+  test("収録曲行を先に空欄化し、その後にプレイリスト本体の行を空欄化する", async () => {
+    const io = makeFakeIO();
+    io.playlistRows.push(["p1", "対象", "c", "u"]);
+    io.trackRows.push(["p1", "1000-0-dev", "song-1"]);
+    const callOrder: string[] = [];
+    const originalUpdateTrack = io.updatePlaylistTrackRows.bind(io);
+    const originalUpdatePlaylist = io.updatePlaylistRows.bind(io);
+    io.updatePlaylistTrackRows = async (updates) => { callOrder.push("tracks"); return originalUpdateTrack(updates); };
+    io.updatePlaylistRows = async (updates) => { callOrder.push("playlist"); return originalUpdatePlaylist(updates); };
+
+    await deletePlaylist(io, "p1");
+    expect(callOrder).toEqual(["tracks", "playlist"]);
+  });
+
+  test("収録曲行の空欄化が失敗した場合、プレイリスト本体の行は一覧に残り再削除できる（孤児行を防ぐ順序）", async () => {
+    const io = makeFakeIO();
+    io.playlistRows.push(["p1", "対象", "c", "u"]);
+    io.trackRows.push(["p1", "1000-0-dev", "song-1"]);
+    io.updatePlaylistTrackRows = async () => { throw new Error("network error"); };
+
+    await expect(deletePlaylist(io, "p1")).rejects.toThrow("network error");
+    // 本体行はまだ空欄化されていない＝一覧から消えていない＝再度削除操作をやり直せる。
+    expect(io.playlistRows).toEqual([["p1", "対象", "c", "u"]]);
+    expect(io.updatePlaylistCalls).toEqual([]);
+  });
 });

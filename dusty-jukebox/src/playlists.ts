@@ -172,17 +172,14 @@ export async function createPlaylist(
 
 // プレイリストと収録曲行を両方とも空欄化する（sheets.tsのremoveIndexRowsと同じ、行削除の
 // 代わりに全列空欄化する方式。Sheets APIに行削除用のnumeric sheetIdを保持しないDI設計のため）。
+//
+// 収録曲行（playlist_tracks）を先に空欄化し、その後にプレイリスト本体（playlists）の行を
+// 空欄化する。逆順（本体を先に消す）だと、本体の空欄化が成功した直後に収録曲側の書き込みが
+// 通信エラー等で失敗した場合、一覧からは消えているのに収録曲行だけが孤児として残り、
+// UIから再度削除する手段が無くなってしまう（2026-09-03 レビュー指摘）。この順序なら、
+// 収録曲側で失敗しても本体行はまだ一覧に残っているため、ユーザーが同じ削除操作をやり直せば
+// 良い（収録曲の空欄化は既に空欄の行を再度空欄化するだけなので冪等）。
 export async function deletePlaylist(io: PlaylistsIO, playlistId: string): Promise<void> {
-  const playlistRows = await io.listPlaylists();
-  const blankPlaylistRow = new Array(PLAYLISTS_SHEET_HEADER.length).fill("") as (string | number)[];
-  const playlistUpdates = playlistRows
-    .map((row, i) => ({ rowNumber: i + 2, row }))
-    .filter(({ row }) => String(row[0] ?? "") === playlistId)
-    .map(({ rowNumber }) => ({ rowNumber, row: blankPlaylistRow }));
-  if (playlistUpdates.length > 0) {
-    await updateRowsInBatches({ updateRows: io.updatePlaylistRows }, playlistUpdates);
-  }
-
   const trackRows = await io.listPlaylistTracks();
   const blankTrackRow = new Array(PLAYLIST_TRACKS_SHEET_HEADER.length).fill("") as (string | number)[];
   const trackUpdates = trackRows
@@ -191,6 +188,16 @@ export async function deletePlaylist(io: PlaylistsIO, playlistId: string): Promi
     .map(({ rowNumber }) => ({ rowNumber, row: blankTrackRow }));
   if (trackUpdates.length > 0) {
     await updateRowsInBatches({ updateRows: io.updatePlaylistTrackRows }, trackUpdates);
+  }
+
+  const playlistRows = await io.listPlaylists();
+  const blankPlaylistRow = new Array(PLAYLISTS_SHEET_HEADER.length).fill("") as (string | number)[];
+  const playlistUpdates = playlistRows
+    .map((row, i) => ({ rowNumber: i + 2, row }))
+    .filter(({ row }) => String(row[0] ?? "") === playlistId)
+    .map(({ rowNumber }) => ({ rowNumber, row: blankPlaylistRow }));
+  if (playlistUpdates.length > 0) {
+    await updateRowsInBatches({ updateRows: io.updatePlaylistRows }, playlistUpdates);
   }
 }
 

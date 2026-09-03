@@ -267,7 +267,12 @@ function renderPlaylistList(): void {
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
     deleteButton.textContent = "削除";
-    deleteButton.addEventListener("click", () => void handleDeletePlaylist(playlist.playlistId));
+    deleteButton.addEventListener("click", () => {
+      // 元に戻せない操作のため、誤クリックによる意図しない削除を避ける確認を挟む。
+      if (window.confirm(`プレイリスト「${playlist.name}」を削除しますか？この操作は取り消せません。`)) {
+        void handleDeletePlaylist(playlist.playlistId);
+      }
+    });
     item.append(label, loadButton, deleteButton);
     list.append(item);
   }
