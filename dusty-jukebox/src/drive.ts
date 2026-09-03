@@ -159,6 +159,15 @@ export class ConcurrencyLimiter {
 // 参照先）の場合に渡す。differentialSync.tsのフォルダ変更イベント処理で、そのショートカットの
 // targetResourceKeyをそのままこの走査のルートへ引き継ぐために必要（2026-08-21 Codexレビュー
 // 指摘：P2。渡さないとfiles.listが404になり、差分同期がそのサブツリーを毎回再試行し続ける）。
+// folderEntries: 走査中に発見した「実体としてのフォルダ」（ショートカットは含まない）のid→
+// {name,真の親フォルダID}を集める出力用引数（failedFolders/shortcutTargetFolderIdsと同じ、
+// 呼び出し元が渡したMapを変更する方式）。files.list応答は各子の`parents`を追加コストゼロで
+// 既に含んでいる（fields参照）ため、この走査ついでにfolderCache.tsの`folders`タブへの
+// キャッシュ元データとして収集する（2026-09-03、起動時のfolderPaths.ts解決がDrive APIを
+// 曲ごとに叩いていた問題への対処）。ショートカット自体の`parents`はターゲットフォルダの
+// 真の親とは無関係なため対象外（ショートカットのターゲットは差分同期・main.tsが
+// shortcutRootFolderIdsとして別途「追加のルート」扱いする。folderPaths.tsのresolve()は
+// ルート自身の名前を辿らないため、ショートカットのターゲット自身のエントリは元々不要）。
 export async function listAudioFilesRecursive(
   list: DriveListFn,
   folderId: string,
@@ -166,7 +175,8 @@ export async function listAudioFilesRecursive(
   failedFolders: string[] = [],
   maxConcurrentLists = DEFAULT_MAX_CONCURRENT_LISTS,
   shortcutTargetFolderIds: Set<string> = new Set(),
-  rootResourceKey?: string
+  rootResourceKey?: string,
+  folderEntries: Map<string, { name: string; parentId: string }> = new Map()
 ): Promise<AudioFileEntry[]> {
   const limiter = new ConcurrencyLimiter(maxConcurrentLists);
   const controller = new AbortController();
@@ -185,7 +195,8 @@ export async function listAudioFilesRecursive(
       controller,
       visited,
       rootResourceKey,
-      shortcutTargetFolderIds
+      shortcutTargetFolderIds,
+      folderEntries
     );
   } finally {
     // 正常終了時は既に全タスクが完了しているため実質no-opだが、想定外の経路で
@@ -204,7 +215,8 @@ async function listAudioFilesRecursiveInternal(
   controller: AbortController,
   visited: Set<string>,
   resourceKey: string | undefined,
-  shortcutTargetFolderIds: Set<string>
+  shortcutTargetFolderIds: Set<string>,
+  folderEntries: Map<string, { name: string; parentId: string }>
 ): Promise<AudioFileEntry[]> {
   let children: DriveFile[];
   try {
@@ -234,6 +246,9 @@ async function listAudioFilesRecursiveInternal(
     let targetResourceKey: string | undefined;
     if (file.mimeType === FOLDER_MIME_TYPE) {
       targetFolderId = file.id;
+      // fileの`parents`はfiles.list応答に既に含まれる（真の親、このfileを列挙した`folderId`と
+      // 一致するはず）。欠落時は走査元のfolderIdへ安全側でフォールバックする。
+      folderEntries.set(file.id, { name: file.name, parentId: file.parents?.[0] ?? folderId });
     } else if (
       file.mimeType === SHORTCUT_MIME_TYPE &&
       file.shortcutDetails?.targetMimeType === FOLDER_MIME_TYPE &&
@@ -264,7 +279,8 @@ async function listAudioFilesRecursiveInternal(
           controller,
           visited,
           targetResourceKey,
-          shortcutTargetFolderIds
+          shortcutTargetFolderIds,
+          folderEntries
         )
       );
     }

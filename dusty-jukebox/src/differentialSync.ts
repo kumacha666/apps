@@ -57,6 +57,28 @@ function folderTarget(file: NonNullable<DriveChange["file"]>): { id: string; res
   return { id: file.shortcutDetails.targetId, resourceKey: file.shortcutDetails.targetResourceKey };
 }
 
+// folderCache.tsの`folders`タブへ直接反映できる、フォルダ自身の変更（リネーム・移動）を
+// changes.list応答から抜き出す。listSubtreeによるサブツリー再走査は、変更があったフォルダの
+// *配下*の子フォルダは再発見できるが、そのフォルダ自身のid→{name,親ID}は
+// listAudioFilesRecursiveの「ルート自身のエントリは記録しない」設計（folderPaths.tsのresolve()が
+// ルート自身の名前を辿らないことに対応）により再走査だけでは更新されない。changes.listの
+// change.file自体が既にリネーム後の名前・移動後のparentsを持っているため（fields参照）、
+// 追加のDrive呼び出し無しでここから直接反映できる。
+// ショートカット経由の変更（targetFolderId）は対象外：change.fileのparentsはショートカット
+// アイテム自身の親であり、ターゲットフォルダの真の親とは無関係なため（drive.tsの
+// listAudioFilesRecursiveの同種コメント参照。ターゲット自身はrootFolderIdと同格の「追加の
+// ルート」として扱われ、resolve()はルート自身の名前を辿らないため、そもそも不要）。
+export function folderCacheUpdatesFromChanges(changes: DriveChange[]): Map<string, { name: string; parentId: string }> {
+  const updates = new Map<string, { name: string; parentId: string }>();
+  for (const change of changes) {
+    const file = change.file;
+    if (change.removed || !file || file.trashed) continue;
+    if (file.mimeType !== FOLDER_MIME_TYPE) continue;
+    updates.set(file.id, { name: file.name, parentId: file.parents?.[0] ?? "" });
+  }
+  return updates;
+}
+
 function needsExtraction(entry: AudioFileEntry, existingScanState: Map<string, IndexRowScanState>): boolean {
   const existing = existingScanState.get(entry.file.id);
   if (!existing) return true;
