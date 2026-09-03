@@ -122,6 +122,13 @@ const deviceRandomId = generateDeviceRandomId();
 // 直近にloadPlaylists()で読み込んだ一覧（一覧表示・読み込み・削除で使い回す）。
 let loadedPlaylists: Playlist[] = [];
 let loadedPlaylistTracks: PlaylistTrackRow[] = [];
+// 一覧を読み込んだ時点のスプレッドシートID。削除操作はこれを使う（2026-09-03 Codexレビュー
+// 指摘：P2）。「スプレッドシートAから一覧を読み込んだ後、入力欄をBへ書き換えてから
+// （一覧を再読み込みせずに）削除ボタンを押す」と、削除操作の対象スプレッドシートをその時点の
+// 入力欄の値（B）から読み取ってしまうと、Aの行を消すつもりがBへ削除要求を送ってしまう
+// （通常Bには一致する行が無いため`deletePlaylist`は静かに成功し、UIはAの項目が消えたかのように
+// 見せてしまう）。一覧を読み込んだ時点のスプレッドシートIDを保持し、削除は常にそちらへ送る。
+let loadedPlaylistsSpreadsheetId: string | null = null;
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -283,6 +290,7 @@ async function loadPlaylists(spreadsheetId: string): Promise<void> {
   await ensurePlaylistTabsReady(spreadsheetId, playlistsIO);
   loadedPlaylists = parsePlaylistRows(await playlistsIO.listPlaylists());
   loadedPlaylistTracks = parsePlaylistTrackRows(await playlistsIO.listPlaylistTracks());
+  loadedPlaylistsSpreadsheetId = spreadsheetId;
   renderPlaylistList();
 }
 
@@ -355,17 +363,35 @@ async function handleLoadPlaylistIntoQueue(playlistId: string): Promise<void> {
   el<HTMLButtonElement>("previous-btn").disabled = songs.length === 0;
   const missingCount = orderedFileIds.length - songs.length;
   setStatus(`プレイリストから${songs.length}曲を再生リストに設定しました${missingCount > 0 ? `（${missingCount}曲は現在の索引に見つかりませんでした）` : ""}。`);
-  if (songs.length > 0) void handleQueuePlayback(() => queue?.playAt(0));
+  if (songs.length > 0) {
+    void handleQueuePlayback(() => queue?.playAt(0));
+  } else {
+    // queue.setList()は音声要素を止めないため、プレイリストの全曲が現在の索引から消えていた
+    // 場合、UIは「0曲・キュー操作は無効」を表示する一方で、直前のキューの曲が鳴り続けてしまう
+    // （2026-09-03 Codexレビュー指摘：P2）。再生中のものを明示的に一時停止する。
+    playback?.pause();
+  }
 }
 
 async function handleDeletePlaylist(playlistId: string): Promise<void> {
-  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
-  if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
+  // 一覧を読み込んだ時点のスプレッドシートIDへ削除を送る（入力欄の現在値ではない）。
+  // 入力欄を書き換えてから一覧を再読み込みせずに削除ボタンを押した場合、無関係な
+  // スプレッドシートへ削除要求を送ってしまう問題があった（2026-09-03 Codexレビュー指摘：P2）。
+  const spreadsheetId = loadedPlaylistsSpreadsheetId;
+  if (!spreadsheetId) { setStatus("先にプレイリスト一覧を読み込んでください", true); return; }
   try {
     const playlistsIO = playlistsSpreadsheetIO(spreadsheetId);
     await deletePlaylist(playlistsIO, playlistId);
-    await loadPlaylists(spreadsheetId);
-    setStatus("プレイリストを削除しました。");
+    // handleSavePlaylistと同じ理由：deletePlaylist()が成功した時点で削除は確定しているため、
+    // 以降のloadPlaylists()（一覧再読み込み）の失敗を「削除に失敗しました」として報告しては
+    // ならない（2026-09-03 Codexレビュー指摘：P3）。
+    try {
+      await loadPlaylists(spreadsheetId);
+      setStatus("プレイリストを削除しました。");
+    } catch (refreshErr) {
+      if (isAuthFailure(refreshErr)) auth.clearToken();
+      setStatus("プレイリストは削除済みですが、一覧の更新に失敗しました。「プレイリスト一覧を更新」をお試しください。", true);
+    }
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
     setStatus(err instanceof Error ? `プレイリストの削除に失敗しました: ${err.message}` : "プレイリストの削除に失敗しました", true);

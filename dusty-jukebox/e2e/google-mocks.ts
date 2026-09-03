@@ -17,6 +17,8 @@ export type MockOptions = {
   albumCatalog?: boolean;
   extractionFailedCount?: number;
   spreadsheetCanEdit?: boolean;
+  /** Pre-seed the playlists/playlist_tracks tabs (e.g. a playlist referencing fileIds no longer in the index). */
+  seedPlaylists?: { playlistId: string; name: string; fileIds: string[] }[];
 };
 
 type SheetWrite = {
@@ -55,7 +57,9 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   // （空タブとして最初から存在する扱い。ensurePlaylistsTabsExistの自動作成分岐は
   // 「タブ一覧確認済み・追加スキップ」の疎通確認にとどめ、addSheet系のE2E検証はユニット
   // テスト（sheetsSetup.test.ts）側でカバーする）。
-  const sheetData: Record<string, (string | number)[][]> = { index: indexRows, sync: syncRows, playlists: [], playlist_tracks: [] };
+  const seededPlaylistRows = (options.seedPlaylists ?? []).map((p) => [p.playlistId, p.name, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"]);
+  const seededTrackRows = (options.seedPlaylists ?? []).flatMap((p) => p.fileIds.map((fileId, i) => [p.playlistId, `1000-${i}-e2e`, fileId]));
+  const sheetData: Record<string, (string | number)[][]> = { index: indexRows, sync: syncRows, playlists: seededPlaylistRows, playlist_tracks: seededTrackRows };
   const sheetHeaders: Record<string, (string | number)[]> = {
     index: [...INDEX_SHEET_HEADER],
     sync: options.invalidSyncHeader ? ["wrong", "header"] : ["key", "value"],
@@ -77,7 +81,22 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     : null;
   // The test data is deliberately not a decodable audio file. Keep native media
   // decoding outside this suite while still exercising the actual SW fetch path.
-  await context.addInitScript(() => Object.defineProperty(HTMLMediaElement.prototype, "play", { configurable: true, value: () => Promise.resolve() }));
+  // play() is fully replaced (not wrapped), so the native `paused` flag never
+  // reflects app-driven playback here. Track pause() calls explicitly via
+  // window.__e2ePauseCalls so tests can verify a real pause was requested
+  // (e.g. stopping playback when a loaded playlist resolves to zero songs).
+  await context.addInitScript(() => {
+    Object.defineProperty(HTMLMediaElement.prototype, "play", { configurable: true, value: () => Promise.resolve() });
+    (window as unknown as { __e2ePauseCalls: number }).__e2ePauseCalls = 0;
+    const originalPause = HTMLMediaElement.prototype.pause;
+    Object.defineProperty(HTMLMediaElement.prototype, "pause", {
+      configurable: true,
+      value: function (this: HTMLMediaElement, ...args: []) {
+        (window as unknown as { __e2ePauseCalls: number }).__e2ePauseCalls += 1;
+        return originalPause.apply(this, args);
+      },
+    });
+  });
   const json = (route: Route, value: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
   const requireToken = (route: Route) => {
     if (route.request().headers().authorization === `Bearer ${TOKEN}`) return true;

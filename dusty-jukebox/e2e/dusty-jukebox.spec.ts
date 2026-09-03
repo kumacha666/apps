@@ -152,6 +152,46 @@ test("再生リストをプレイリストとして保存し、一覧から読�
   await expect(page.locator("#playlist-list li")).toHaveCount(0);
 });
 
+test("プレイリスト一覧の読み込み後に入力欄のスプレッドシートIDを変えても、削除は読み込み時のIDへ送られる", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.locator("#playlist-name").fill("テストリスト");
+  await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
+  await expect(page.locator("#playlist-list li")).toHaveCount(1);
+
+  // 一覧を再読み込みせずに入力欄だけを別のスプレッドシートIDへ書き換えてから削除する。
+  await page.locator("#spreadsheet-id").fill("other-sheet");
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "削除" }).click();
+  await expect(page.locator("#status")).toContainText("プレイリストを削除しました");
+
+  const wroteToOtherSheet = mock.sheetsWrites.some((w) => w.url.includes("/spreadsheets/other-sheet/"));
+  expect(wroteToOtherSheet).toBe(false);
+  const wroteToOriginalSheet = mock.sheetsWrites.some((w) => w.url.includes("/spreadsheets/sheet/") && w.sheet === "playlist_tracks");
+  expect(wroteToOriginalSheet).toBe(true);
+});
+
+test("読み込んだプレイリストの全曲が索引から消えていた場合、直前の再生を止める", async ({ context, page }) => {
+  // このプレイリストの収録曲（vanished-song）は現在の索引（song-1/song-2のみ）に存在しない
+  // 状態を、事前にplaylist_tracksタブへ直接シードして再現する（アプリのUI操作だけでは、
+  // 保存した曲が索引から消えた状態を作れないため）。
+  await installGoogleMocks(context, { seedPlaylists: [{ playlistId: "p-vanished", name: "消えた曲", fileIds: ["vanished-song"] }] });
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  await page.getByRole("button", { name: "プレイリスト一覧を更新" }).click();
+  await expect(page.locator("#playlist-list")).toContainText("消えた曲（1曲）");
+  const pauseCallsBefore = await page.evaluate(() => (window as unknown as { __e2ePauseCalls: number }).__e2ePauseCalls);
+  await page.getByRole("button", { name: "読み込んで再生リストにする" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(0);
+  // play()を丸ごと差し替えているため、HTMLMediaElement.pausedはこの環境では常にtrueのまま
+  // 変化せず検証にならない。代わりにpause()が実際に呼ばれたことをカウンタで確認する
+  // （google-mocks.tsの__e2ePauseCalls参照。直前の曲が鳴り続けていないことの検証）。
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2ePauseCalls: number }).__e2ePauseCalls)).toBeGreaterThan(pauseCallsBefore);
+});
+
 test("スキャン開始後のアルバム再生は再読み込みエラーになりキューを変更しない", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true, delaySheetsReads: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
