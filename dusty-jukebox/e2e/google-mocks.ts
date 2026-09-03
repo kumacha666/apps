@@ -21,6 +21,8 @@ export type MockOptions = {
   seedPlaylists?: { playlistId: string; name: string; fileIds: string[] }[];
   /** Hold every playlists/playlist_tracks list-read (GET) until the test releases it via releasePlaylistsReadsAt(). */
   gatePlaylistsListReads?: boolean;
+  /** Hold every playlists/playlist_tracks append (POST) until the test releases it via releaseAllPlaylistsAppends(). */
+  gatePlaylistsAppends?: boolean;
 };
 
 type SheetWrite = {
@@ -78,6 +80,8 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   let remainingStreamTokenRejections = options.rejectFirstStreamToken ? 1 : 0;
   const sheetsWrites: SheetWrite[] = [];
   const pendingPlaylistsReads: (() => void)[] = [];
+  const pendingPlaylistsAppends: (() => void)[] = [];
+  let playlistsAppendsReleased = false;
   let releaseServiceWorker = () => {};
   const serviceWorkerGate = options.delayServiceWorkerActivation
     ? new Promise<void>((resolve) => { releaseServiceWorker = resolve; })
@@ -206,6 +210,12 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
         return json(route, { updatedRows: 1 });
       }
       if (method === "POST") {
+        // loadPlaylists()の世代予約がユーザー操作の開始順を正しく反映することを検証する
+        // テスト専用のゲート。createPlaylist()（playlists/playlist_tracksタブへのappend）を
+        // 意図的に長引かせ、その間に別の一覧更新操作を完了させられるようにする。
+        if (options.gatePlaylistsAppends && !playlistsAppendsReleased && (sheetName === "playlists" || sheetName === "playlist_tracks")) {
+          await new Promise<void>((resolve) => pendingPlaylistsAppends.push(resolve));
+        }
         // values:append。実際に対象タブの末尾へ行を追加する（保存済みプレイリスト機能の
         // 保存→一覧表示→読み込みという一連の流れを実データで検証するために必要）。
         const body = JSON.parse(route.request().postData() ?? "{}") as { values?: (string | number)[][] };
@@ -227,6 +237,10 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       if (resolve) { pendingPlaylistsReads.splice(i, 1); resolve(); }
     }
   };
+  const releaseAllPlaylistsAppends = () => {
+    playlistsAppendsReleased = true;
+    while (pendingPlaylistsAppends.length > 0) pendingPlaylistsAppends.shift()!();
+  };
   return {
     authFailures,
     streamRequests,
@@ -235,5 +249,6 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     releaseServiceWorker,
     pendingPlaylistsReadCount,
     releasePlaylistsReadsAt,
+    releaseAllPlaylistsAppends,
   };
 }

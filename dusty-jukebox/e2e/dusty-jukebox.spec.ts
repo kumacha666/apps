@@ -234,6 +234,35 @@ test("重なったプレイリスト一覧読み込みは、後から開始し�
   await expect.poll(() => getCommitCount()).toBe(1);
 });
 
+test("保存中の一覧自動更新は、保存操作の開始より後に始まった手動更新の結果を上書きしない", async ({ context, page }) => {
+  // createPlaylist()（playlists/playlist_tracksタブへのappend）を意図的に長引かせる。
+  const mock = await installGoogleMocks(context, { gatePlaylistsAppends: true });
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  const getCommitCount = () => page.evaluate(() => (window as unknown as { __e2e: { getPlaylistsCommitCount: () => number } }).__e2e.getPlaylistsCommitCount());
+
+  // 保存操作を開始する（先発の操作）。createPlaylist()のappendがゲートで保留されるため、
+  // handleSavePlaylistはcreatePlaylist()を待ったまま進まない（ボタンはdisabledのまま）。
+  await page.locator("#playlist-name").fill("先発の保存");
+  await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
+  await expect(page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" })).toBeDisabled();
+
+  // 保存操作の開始より後に、手動更新（後発の操作）を実行して完了させる。「一覧が0件」は
+  // 何もロードしていない初期状態でも成り立ってしまい待機条件として使えないため、
+  // コミット回数が実際に1件増えるまで待つことで、手動更新が本当に完了したことを確認する。
+  await page.getByRole("button", { name: "プレイリスト一覧を更新" }).click();
+  await expect.poll(() => getCommitCount()).toBe(1);
+  await expect(page.locator("#playlist-list li")).toHaveCount(0);
+
+  // 保留していた保存のappendを解放し、保存を完了させる。保存操作の自動更新は、手動更新より
+  // 先に開始した（＝より古い世代を予約した）ため、後発の手動更新の結果（0件）を上書きしては
+  // ならない＝コミット回数は1のまま増えないはずである。
+  mock.releaseAllPlaylistsAppends();
+  await expect(page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" })).toBeEnabled();
+  await expect(page.locator("#playlist-list li")).toHaveCount(0);
+  expect(await getCommitCount()).toBe(1);
+});
+
 test("スキャン開始後のアルバム再生は再読み込みエラーになりキューを変更しない", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true, delaySheetsReads: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
