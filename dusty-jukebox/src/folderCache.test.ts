@@ -106,6 +106,22 @@ describe("upsertFolderCacheEntries", () => {
     expect(io.appendCalls[2].length).toBe(50);
   });
 
+  test("insertOnly=trueの場合、既存folderIdは値が異なっていても更新しない。新規folderIdの追記のみ行う", async () => {
+    const io = makeFakeIO([
+      ["f1", "Artist", "root"],
+      ["f2", "OldAlbumName", "f1"],
+    ]);
+    const discovered = new Map<string, FolderCacheEntry>([
+      ["f2", { name: "NewAlbumName", parentId: "f1" }], // 既存だが値が異なる → insertOnlyでは更新しない
+      ["f3", { name: "NewSong", parentId: "f1" }], // 新規 → 追記する
+    ]);
+
+    await upsertFolderCacheEntries(io, discovered, undefined, true);
+
+    expect(io.updateCalls).toEqual([]);
+    expect(io.appendCalls).toEqual([[["f3", "NewSong", "f1"]]]);
+  });
+
   test("existingRowsSnapshotを渡した場合はlistExistingRowsを呼ばない", async () => {
     const io = makeFakeIO([]);
     const listSpy = vi.spyOn(io, "listExistingRows");

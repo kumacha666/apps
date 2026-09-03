@@ -72,10 +72,19 @@ export interface FolderCacheIO extends FolderCacheReadIO, RowUpdateWriter {
 // 新規行が一度に発生しうるため、更新・追記のどちらもsheets.tsのWRITE_BATCH_SIZE単位に分割する
 // （1回のvalues:batchUpdate/values:appendに数千行を積むとリクエストサイズ上限・クォータで
 // 途中失敗しやすいため、既存のupsertIndexRows/updateRowsInBatchesと同じ方針を踏襲する）。
+// insertOnly: trueの場合、既に存在するfolderIdは（値が異なっていても）一切更新しない、新規
+// folderIdの追記のみ行う（2026-09-03、ChatGPTレビュー指摘）。loadCatalog()のセルフヒーリング
+// 書き戻し専用のモード：discoveredに入るのはこの読み込み開始時点でキャッシュに無かった
+// folderIdだけだが、Driveから取得した値自体も「書き込み時点で最新」とは限らない（長時間かかる
+// 読み込みの最中に、別デバイスのスキャン・差分同期・別の読み込みがそのfolderIdを新規に書き込む
+// 競合がありうる）。書き込み時点で既に存在するなら、それは途中で誰か（より新しい情報源）が
+// 書いたものなので、そちらを優先し上書きしない。スキャン・差分同期からの通常のupsert（実際の
+// Drive上のフォルダ構造の変更を反映する）は従来通り更新も行う（insertOnly省略時=false）。
 export async function upsertFolderCacheEntries(
   io: FolderCacheIO,
   discovered: Map<string, FolderCacheEntry>,
-  existingRowsSnapshot?: (string | number)[][]
+  existingRowsSnapshot?: (string | number)[][],
+  insertOnly = false
 ): Promise<void> {
   if (discovered.size === 0) return;
   const existingRows = existingRowsSnapshot ?? (await io.listExistingRows());
@@ -87,7 +96,7 @@ export async function upsertFolderCacheEntries(
     const existing = existingByFolderId.get(folderId);
     if (!existing) {
       toAppend.push(buildFolderCacheRow(folderId, entry));
-    } else if (existing.entry.name !== entry.name || existing.entry.parentId !== entry.parentId) {
+    } else if (!insertOnly && (existing.entry.name !== entry.name || existing.entry.parentId !== entry.parentId)) {
       toUpdate.push({ rowNumber: existing.rowNumber, row: buildFolderCacheRow(folderId, entry) });
     }
   }

@@ -596,8 +596,12 @@ async function loadCatalog(): Promise<void> {
     // Driveへ実際に問い合わせて新規解決できた分だけを`folders`タブへ書き戻す。次回以降の
     // 読み込みが速くなるセルフヒーリング。`folders`タブの用意自体に失敗していた場合は書き込まない
     // （上記の作成試行がフォールバック済みのため、遅いが正しい今回の結果はそのまま使う）。
+    // insertOnly=true：書き込み時点で既に存在するfolderIdは上書きしない（この読み込みが長時間
+    // かかる間に、別デバイスのスキャン・差分同期・別の読み込みがそのfolderIdをより新しい値で
+    // 既に書き込んでいた場合、この読み込みが開始時点のDrive応答＝相対的に古い値で巻き戻すことを
+    // 防ぐ。persistFolderCache参照、2026-09-03 ChatGPTレビュー指摘）。
     // 書き込み失敗はこの読み込み自体を失敗させない（persistFolderCache内でcatch済み）。
-    if (foldersTabReady) await persistFolderCache(spreadsheetId, newlyResolvedFromDrive);
+    if (foldersTabReady) await persistFolderCache(spreadsheetId, newlyResolvedFromDrive, undefined, true);
     catalogSession.replace(songs);
     loadedCatalogSpreadsheetId = spreadsheetId;
     renderAlbumGroups(groupSongsByAlbum(songs));
@@ -812,11 +816,16 @@ function renderResults(entries: AudioFileEntry[], failedFolders: string[]): void
 // 揃える。2026-09-03、ChatGPTレビュー指摘：以前はこのチェックが無く、別デバイスが既に新しい
 // root/tokenへ切り替えていても、そのことに気づく前にfoldersタブへ書き込んでしまっていた）。
 // loadCatalog（起動時の読み込み）からの呼び出しはscanRunId等の実行所有権という概念自体を
-// 持たないため渡さない。
+// 持たないため渡さない。代わりにinsertOnly=trueを渡す：Driveから取得した値も「書き込み時点で
+// 最新」とは限らない（この読み込みが長時間かかる間に、別デバイスのスキャン・差分同期・別の
+// 読み込みが同じfolderIdを新規に書き込む競合がありうる）ため、loadCatalogからの書き戻しは
+// 既存行を上書きしない（folderCache.tsのupsertFolderCacheEntries参照、2026-09-03
+// ChatGPTレビュー指摘）。
 async function persistFolderCache(
   spreadsheetId: string,
   folderEntries: Map<string, { name: string; parentId?: string }>,
-  isStillCurrent?: () => Promise<boolean>
+  isStillCurrent?: () => Promise<boolean>,
+  insertOnly = false
 ): Promise<void> {
   if (folderEntries.size === 0) return;
   try {
@@ -827,7 +836,7 @@ async function persistFolderCache(
     if (!isValidFoldersHeader(await folderCacheIO.readHeaderRow())) return;
     const normalized = new Map<string, FolderCacheEntry>();
     for (const [id, entry] of folderEntries) normalized.set(id, { name: entry.name, parentId: entry.parentId ?? "" });
-    await upsertFolderCacheEntries(folderCacheIO, normalized);
+    await upsertFolderCacheEntries(folderCacheIO, normalized, undefined, insertOnly);
   } catch (err) {
     console.error("フォルダキャッシュの更新に失敗しました（次回のスキャンで自己修復します）", err);
   }
