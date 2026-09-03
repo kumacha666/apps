@@ -15,7 +15,7 @@ import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackCont
 import { parseIndexRows, filterSongs, groupSongsByAlbum, sortSongs, type AlbumGroup, type Song } from "./catalog";
 import { CatalogOperationGate } from "./catalogOperationGate";
 import { CatalogSession } from "./catalogSession";
-import { FolderPathResolver } from "./folderPaths";
+import { FolderPathResolver, type FolderGetFn, type FolderMeta } from "./folderPaths";
 import {
   createCacheFirstFolderGetFn,
   createFolderCacheIO,
@@ -538,25 +538,44 @@ async function loadCatalog(): Promise<void> {
     // フォルダパス解決はfolderCache.tsの`folders`タブ（スキャン・差分同期が書き込むキャッシュ）を
     // 優先し、キャッシュに無い分だけDriveへ問い合わせる（2026-09-03、実機利用で判明：曲ごとに
     // 毎回Driveへ祖先フォルダを1階層ずつ問い合わせる従来方式は、数千フォルダ規模の実ライブラリで
-    // 起動のたびに5分以上かかっていた）。`folders`タブが未作成・ヘッダー不一致の場合は、
-    // loadCatalogがタブを作成・移行しないという既存方針（このファイル冒頭のコメント参照）を
-    // 保つため、キャッシュ無し＝従来通りDriveのみでの解決にフォールバックする（新規ユーザーの
-    // 初回読み込み・まだ一度もこの機能実装後にスキャンしていないスプレッドシート向け）。
+    // 起動のたびに5分以上かかっていた）。`folders`タブがまだ無い場合はここで作成する（index/sync
+    // タブと異なり、ヘッダー3列固定で内容の解釈に幅が無い純粋なキャッシュのため、`loadCatalog`が
+    // 作成しても安全と判断。無関係な既存「folders」タブがあった場合はensureFoldersTabExists自身が
+    // 一切触れず、その後のヘッダー検証で弾かれてキャッシュ無し＝Drive解決のみにフォールバックする。
+    // これにより、この機能の実装後まだ一度もスキャンしていない既存ユーザーも、1回のloadCatalogで
+    // 以後は高速化されるようになる。2026-09-03、ChatGPTレビュー指摘：タブ未作成のままだと
+    // 次にスキャンするまで高速化の恩恵を受けられず、今回の目的〈起動時間短縮〉と直接矛盾していた）。
     let folderCache = new Map<string, FolderCacheEntry>();
     let foldersTabReady = false;
     try {
+      const setupIO = createSpreadsheetSetupIO(spreadsheetId, () => auth.ensureAccessToken());
+      await ensureFoldersTabExists(setupIO);
       const folderCacheIO = createFolderCacheIO(spreadsheetId, () => auth.ensureAccessToken());
       if (isValidFoldersHeader(await folderCacheIO.readHeaderRow())) {
         folderCache = parseFolderCacheEntries(await folderCacheIO.listExistingRows());
         foldersTabReady = true;
       }
     } catch {
-      // フォルダキャッシュは最適化に過ぎないため、読み取り自体に失敗してもDriveのみでの
+      // フォルダキャッシュは最適化に過ぎないため、読み取り・作成自体に失敗してもDriveのみでの
       // 解決（従来通り、遅いが正しい）に静かにフォールバックする。
     }
 
+    // キャッシュに無くDriveへ実際に問い合わせて新規に解決できたエントリだけを追跡する（cache-first
+    // ゲッター自体が返す値には、このloadCatalog開始時点で読んだ既存キャッシュの値もそのまま
+    // 含まれてしまうため、それらと区別する必要がある。2026-09-03、ChatGPTレビュー指摘：
+    // 区別せずに全件を書き戻すと、この読み込みが長時間かかる間に他デバイスがスキャン・差分同期で
+    // 該当フォルダの新しい名前をキャッシュへ書き込んでいた場合、この読み込みが開始時点で読んだ
+    // 古い値でそれを上書き＝巻き戻してしまう。Drive解決した値は「その時点のDrive上の実際の値」
+    // であり巻き戻しの心配が無いため、こちらだけを書き戻し対象にする）。
+    const newlyResolvedFromDrive = new Map<string, FolderMeta>();
+    const liveGetFolder = createDriveFolderGetFn(() => auth.ensureAccessToken());
+    const trackingGetFolder: FolderGetFn = async (folderId) => {
+      const meta = await liveGetFolder(folderId);
+      if (meta) newlyResolvedFromDrive.set(folderId, meta);
+      return meta;
+    };
     const resolver = new FolderPathResolver(
-      createCacheFirstFolderGetFn(folderCache, createDriveFolderGetFn(() => auth.ensureAccessToken())),
+      createCacheFirstFolderGetFn(folderCache, trackingGetFolder),
       [rootFolderId, ...decodeFolderIdList(syncState.shortcutRootFolderIds)]
     );
     const limiter = new ConcurrencyLimiter(6);
@@ -574,11 +593,11 @@ async function loadCatalog(): Promise<void> {
         }
       });
     }));
-    // 今回Driveへ実際に問い合わせて解決できた分（キャッシュに既にあった分は同じ値のため
-    // upsertFolderCacheEntries側で自然にスキップされる）を`folders`タブへ書き戻す。次回以降の
-    // 読み込みが速くなるセルフヒーリング。`folders`タブ自体が無い場合は作成しない（上記方針通り、
-    // 次回スキャン時に作成・反映される）。書き込み失敗はこの読み込み自体を失敗させない。
-    if (foldersTabReady) await persistFolderCache(spreadsheetId, resolver.resolvedEntries());
+    // Driveへ実際に問い合わせて新規解決できた分だけを`folders`タブへ書き戻す。次回以降の
+    // 読み込みが速くなるセルフヒーリング。`folders`タブの用意自体に失敗していた場合は書き込まない
+    // （上記の作成試行がフォールバック済みのため、遅いが正しい今回の結果はそのまま使う）。
+    // 書き込み失敗はこの読み込み自体を失敗させない（persistFolderCache内でcatch済み）。
+    if (foldersTabReady) await persistFolderCache(spreadsheetId, newlyResolvedFromDrive);
     catalogSession.replace(songs);
     loadedCatalogSpreadsheetId = spreadsheetId;
     renderAlbumGroups(groupSongsByAlbum(songs));
@@ -788,9 +807,20 @@ function renderResults(entries: AudioFileEntry[], failedFolders: string[]): void
 // これはあくまで起動時間短縮のための最適化キャッシュであり、書き込みに失敗してもスキャン
 // 自体は失敗として扱わない（次回のスキャン・差分同期で自己修復する。folders タブが既に
 // 存在するが無関係な内容の場合は静かにスキップする＝index/syncタブのような例外は投げない）。
-async function persistFolderCache(spreadsheetId: string, folderEntries: Map<string, { name: string; parentId?: string }>): Promise<void> {
+// isStillCurrent: スキャン・差分同期からの呼び出しでは、書き込み直前にroot/tokenの所有権を
+// 再確認するために渡す（sync.tsのisSyncStateCurrent、index側の書き込みで既に徹底している対策と
+// 揃える。2026-09-03、ChatGPTレビュー指摘：以前はこのチェックが無く、別デバイスが既に新しい
+// root/tokenへ切り替えていても、そのことに気づく前にfoldersタブへ書き込んでしまっていた）。
+// loadCatalog（起動時の読み込み）からの呼び出しはscanRunId等の実行所有権という概念自体を
+// 持たないため渡さない。
+async function persistFolderCache(
+  spreadsheetId: string,
+  folderEntries: Map<string, { name: string; parentId?: string }>,
+  isStillCurrent?: () => Promise<boolean>
+): Promise<void> {
   if (folderEntries.size === 0) return;
   try {
+    if (isStillCurrent && !(await isStillCurrent())) return;
     const setupIO = createSpreadsheetSetupIO(spreadsheetId, () => auth.ensureAccessToken());
     await ensureFoldersTabExists(setupIO);
     const folderCacheIO = createFolderCacheIO(spreadsheetId, () => auth.ensureAccessToken());
@@ -824,7 +854,7 @@ async function runFullScan(
   const folderEntries = new Map<string, { name: string; parentId: string }>();
   const entries = await listAudioFilesRecursive(listFn, folderId, "", failedFolders, undefined, shortcutTargetFolderIds, undefined, folderEntries);
   renderResults(entries, failedFolders);
-  await persistFolderCache(spreadsheetId, folderEntries);
+  await persistFolderCache(spreadsheetId, folderEntries, () => isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken, scanRunId }));
 
   // 前回の実行（このscanRunId）で既に処理済み、かつDrive側で以後更新されていないファイルは
   // スキップする。中断・再開時にタグ抽出（重い処理）をやり直さないための判定
@@ -1094,7 +1124,9 @@ async function runDifferentialSync(
   // 書き込む。後者を後にマージし、同じfolderIdが両方にあってもサブツリー再走査側の値を優先する
   // 理由は無いため、単純に上書き（実際にはほぼ同じ値のはず）。
   for (const [id, entry] of folderCacheUpdatesFromChanges(changes)) folderEntries.set(id, entry);
-  await persistFolderCache(spreadsheetId, folderEntries);
+  await persistFolderCache(spreadsheetId, folderEntries, () =>
+    isSyncStateCurrent(syncIO, { rootFolderId: folderId, startPageToken, scanRunId: initialCompletion?.scanRunId })
+  );
 
   // タグ抽出（数十秒以上かかりうる）の後、破壊的・追加的な書き込み（アップサート・削除・
   // リコンサイル）の直前に、差分同期を開始した時点のroot/tokenがまだ現在のsync状態と
