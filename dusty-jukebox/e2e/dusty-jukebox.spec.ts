@@ -287,6 +287,33 @@ test("保存中に次のプレイリスト名を入力し始めても、保存�
   await expect(page.locator("#playlist-name")).toHaveValue("次の入力中の名前");
 });
 
+test("前後に空白があるプレイリスト名でも、保存完了後に入力欄をきちんと空欄化する", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.locator("#playlist-name").fill(" 空白付きの名前 ");
+  await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
+  await expect(page.locator("#status")).toContainText("を保存しました");
+  await expect(page.locator("#playlist-name")).toHaveValue("");
+});
+
+test("曲一覧とプレイリスト一覧が別のスプレッドシートから読み込まれている場合、読み込んで再生リストにする操作を拒否する", async ({ context, page }) => {
+  // 両方とも同じモックデータストア（実際にはスプレッドシートIDを区別しない）を参照するため、
+  // このテストではID不一致の「ガード」自体が働くことだけを検証する（内容の食い違いではなく）。
+  await installGoogleMocks(context, { seedPlaylists: [{ playlistId: "p1", name: "別シート由来", fileIds: ["song-1"] }] });
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  // 一覧を再読み込みせずに入力欄だけを別のスプレッドシートIDへ書き換えてから、そのIDで
+  // プレイリスト一覧を読み込む。
+  await page.locator("#spreadsheet-id").fill("other-sheet");
+  await page.getByRole("button", { name: "プレイリスト一覧を更新" }).click();
+  await expect(page.locator("#playlist-list li")).toHaveCount(1);
+
+  await page.getByRole("button", { name: "読み込んで再生リストにする" }).click();
+  await expect(page.locator("#status")).toContainText("曲一覧とプレイリスト一覧が別のスプレッドシートから読み込まれています");
+  // キューは変更されず、直前の状態のまま（除外反映前のカタログ一覧が空のまま）であることを確認する。
+  await expect(page.locator("#catalog-list li")).toHaveCount(2);
+});
+
 test("スキャン開始後のアルバム再生は再読み込みエラーになりキューを変更しない", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true, delaySheetsReads: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");

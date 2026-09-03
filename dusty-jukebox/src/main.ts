@@ -114,6 +114,14 @@ let queue: PlaybackQueue | null = null;
 let playbackAuthGate: PlaybackAuthenticationGate | null = null;
 const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
+// catalogSessionへ最後に読み込んだ（有効な）曲一覧の出所スプレッドシートID。プレイリストの
+// 読み込んで再生リストにする操作は、この値がloadedPlaylistsSpreadsheetIdと一致する場合のみ
+// 許可する（2026-09-03 Codexレビュー指摘：P2。カタログをAから読み込んだ後、一覧を
+// 再読み込みせずに入力欄をBへ書き換えてBのプレイリスト一覧を読み込むと、Bの保存済みfileIdを
+// Aのカタログに対して解決してしまい、実際には存在する曲を「索引に見つかりませんでした」と
+// 誤表示したり、最悪キューを空にして再生を止めてしまう）。catalogSession自体が無効化
+// （invalidate）される箇所すべてでnullに戻す。
+let loadedCatalogSpreadsheetId: string | null = null;
 let serviceWorkerReady: Promise<void> | null = null;
 const catalogOperationGate = new CatalogOperationGate();
 // アプリ起動時に1回だけ生成し、以降のプレイリスト保存操作すべてで使い回す
@@ -352,7 +360,11 @@ async function handleRefreshPlaylists(): Promise<void> {
     if (committed) setStatus(`プレイリスト${loadedPlaylists.length}件を読み込みました。`);
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
-    setStatus(err instanceof Error ? `プレイリスト一覧の読み込みに失敗しました: ${err.message}` : "プレイリスト一覧の読み込みに失敗しました", true);
+    // 対象スプレッドシートが既に切り替えられていれば、より新しい操作のステータス表示を
+    // このエラーで上書きしない（2026-09-03 Codexレビュー指摘：P2。成功時の抑制と対称）。
+    if (spreadsheetId === currentPlaylistsTargetSpreadsheetId) {
+      setStatus(err instanceof Error ? `プレイリスト一覧の読み込みに失敗しました: ${err.message}` : "プレイリスト一覧の読み込みに失敗しました", true);
+    }
   } finally {
     button.disabled = false;
   }
@@ -387,7 +399,10 @@ async function handleSavePlaylist(): Promise<void> {
     // nameInput.value === name（保存開始時点の名前のまま）の場合のみ空欄に戻す。await中に
     // ユーザーが次のプレイリスト名を入力し始めていた場合、その入力を消してしまわないため
     // （2026-09-03 Codexレビュー指摘：P2）。
-    if (nameInput.value === name) nameInput.value = "";
+    // 前後の空白はnameが既にtrim済みのため、比較もtrimしてから行う（2026-09-03 Codex
+    // レビュー指摘：P3。入力欄の値が" Road "等の場合、trim済みnameとの単純な===比較は
+    // 常に不一致になり、ユーザーが何も変更していなくても入力欄が空欄化されなくなっていた）。
+    if (nameInput.value.trim() === name) nameInput.value = "";
     try {
       const committed = await loadPlaylists(spreadsheetId);
       // 対象スプレッドシートが既に切り替えられ一覧の反映が破棄された場合、より新しい操作が
@@ -398,7 +413,11 @@ async function handleSavePlaylist(): Promise<void> {
       if (committed) setStatus(`プレイリスト「${name}」（${fileIds.length}曲）を保存しました。`);
     } catch (refreshErr) {
       if (isAuthFailure(refreshErr)) auth.clearToken();
-      setStatus(`プレイリスト「${name}」（${fileIds.length}曲）は保存済みですが、一覧の更新に失敗しました。「プレイリスト一覧を更新」をお試しください。`, true);
+      // 対象スプレッドシートが既に切り替えられていれば、より新しい操作のステータス表示を
+      // このエラーで上書きしない（2026-09-03 Codexレビュー指摘：P2）。
+      if (spreadsheetId === currentPlaylistsTargetSpreadsheetId) {
+        setStatus(`プレイリスト「${name}」（${fileIds.length}曲）は保存済みですが、一覧の更新に失敗しました。「プレイリスト一覧を更新」をお試しください。`, true);
+      }
     }
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
@@ -410,6 +429,15 @@ async function handleSavePlaylist(): Promise<void> {
 
 async function handleLoadPlaylistIntoQueue(playlistId: string): Promise<void> {
   if (!queue) return;
+  // 読み込み済みカタログとプレイリスト一覧が別のスプレッドシートに由来している場合は拒否する
+  // （2026-09-03 Codexレビュー指摘：P2）。カタログをAから読み込んだ後、一覧を再読み込みせずに
+  // 入力欄をBへ書き換えてBのプレイリスト一覧を読み込むと、Bの保存済みfileIdをAのカタログに
+  // 対して解決してしまい、実際には存在する曲を「索引に見つかりませんでした」と誤表示したり、
+  // 最悪キューを空にして再生を止めてしまう。
+  if (loadedCatalogSpreadsheetId === null || loadedCatalogSpreadsheetId !== loadedPlaylistsSpreadsheetId) {
+    setStatus("曲一覧とプレイリスト一覧が別のスプレッドシートから読み込まれています。両方を同じスプレッドシートIDで読み込み直してからお試しください。", true);
+    return;
+  }
   const orderedFileIds = fileIdsForPlaylist(loadedPlaylistTracks, playlistId);
   const songs = catalogSession.createQueue((loadedSongs) => {
     const byFileId = new Map(loadedSongs.map((song) => [song.fileId, song]));
@@ -457,7 +485,11 @@ async function handleDeletePlaylist(playlistId: string): Promise<void> {
       if (committed) setStatus("プレイリストを削除しました。");
     } catch (refreshErr) {
       if (isAuthFailure(refreshErr)) auth.clearToken();
-      setStatus("プレイリストは削除済みですが、一覧の更新に失敗しました。「プレイリスト一覧を更新」をお試しください。", true);
+      // 対象スプレッドシートが既に切り替えられていれば、より新しい操作のステータス表示を
+      // このエラーで上書きしない（2026-09-03 Codexレビュー指摘：P2）。
+      if (spreadsheetId === currentPlaylistsTargetSpreadsheetId) {
+        setStatus("プレイリストは削除済みですが、一覧の更新に失敗しました。「プレイリスト一覧を更新」をお試しください。", true);
+      }
     }
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
@@ -513,6 +545,7 @@ async function loadCatalog(): Promise<void> {
       });
     }));
     catalogSession.replace(songs);
+    loadedCatalogSpreadsheetId = spreadsheetId;
     renderAlbumGroups(groupSongsByAlbum(songs));
     el<HTMLButtonElement>("create-queue-btn").disabled = false;
     setStatus(`索引から${songs.length}曲を読み込みました${failedPathCount > 0 ? `（${failedPathCount}件はパス解決に失敗）` : ""}。条件を指定して再生リストを作れます。`);
@@ -1192,6 +1225,7 @@ async function handleRetryExtraction(): Promise<void> {
     // 残り、削除・変更済みの内容から再生リストが作られてしまう恐れがある（2026-09-02 Codex
     // レビュー指摘、P2）。
     catalogSession.invalidate();
+    loadedCatalogSpreadsheetId = null;
     // タグ抽出中に他デバイスの差分同期が同じファイルを先に処理していた場合、書き込み直前に
     // 索引を読み直しそのエントリを書き込まずスキップする（2026-09-02 Codexレビュー指摘、P1：
     // リトライの古い抽出結果が新しい差分同期結果を上書きしてしまうデータ整合性の問題）。
@@ -1307,6 +1341,7 @@ async function handleScan(): Promise<void> {
   // A scan can update or delete index rows. Invalidate the previous snapshot
   // before the first asynchronous scan operation so it can never form a queue.
   catalogSession.invalidate();
+  loadedCatalogSpreadsheetId = null;
   el<HTMLButtonElement>("create-queue-btn").disabled = true;
   // A scan can change both index and sync rows. Keep catalog loading from
   // consuming the intermediate state until the scan has fully completed.
