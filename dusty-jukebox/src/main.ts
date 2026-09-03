@@ -129,6 +129,18 @@ let loadedPlaylistTracks: PlaylistTrackRow[] = [];
 // （通常Bには一致する行が無いため`deletePlaylist`は静かに成功し、UIはAの項目が消えたかのように
 // 見せてしまう）。一覧を読み込んだ時点のスプレッドシートIDを保持し、削除は常にそちらへ送る。
 let loadedPlaylistsSpreadsheetId: string | null = null;
+// loadPlaylists()の呼び出しごとにインクリメントする世代カウンタ（2026-09-03 Codexレビュー
+// 指摘：P2）。保存直後の自動更新と手動の「プレイリスト一覧を更新」等、複数のloadPlaylists()
+// 呼び出しが重なりうる。各呼び出しは自分のPromiseチェーン内でloadedPlaylists/
+// loadedPlaylistTracks/loadedPlaylistsSpreadsheetIdの3つを順に代入するため、先に開始した
+// 呼び出しが後で完了すると、後から開始して先に完了した（より新しい）呼び出しの結果を、
+// 古いデータで部分的に上書きしてしまいうる（例：後発の呼び出しがloadedPlaylistsまで
+// 書き終えた直後に、先発の呼び出しがloadedPlaylistTracks/loadedPlaylistsSpreadsheetIdだけを
+// 上書きし、一覧の名前と収録曲・削除対象が別々のスプレッドシートのものに食い違う）。
+// 呼び出し開始時に採番した世代が、実際に書き込む直前でも依然として最新であることを確認して
+// からのみ3フィールドをまとめて（コミットとして）反映する。最新でなくなっていた場合は
+// 自分の結果を静かに破棄する（より新しい呼び出しの結果を尊重する）。
+let playlistsLoadGeneration = 0;
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -285,12 +297,23 @@ function renderPlaylistList(): void {
   }
 }
 
+// E2Eテスト（overlapping loadPlaylists()呼び出しがgenerationガードで正しく破棄されることの
+// 検証）専用のコミット回数カウンタ。本番の挙動には一切影響しない（VITE_E2E時のみ意味を持つ）。
+let playlistsCommitCountForE2E = 0;
+
 async function loadPlaylists(spreadsheetId: string): Promise<void> {
+  const generation = ++playlistsLoadGeneration;
   const playlistsIO = playlistsSpreadsheetIO(spreadsheetId);
   await ensurePlaylistTabsReady(spreadsheetId, playlistsIO);
-  loadedPlaylists = parsePlaylistRows(await playlistsIO.listPlaylists());
-  loadedPlaylistTracks = parsePlaylistTrackRows(await playlistsIO.listPlaylistTracks());
+  const playlists = parsePlaylistRows(await playlistsIO.listPlaylists());
+  const playlistTracks = parsePlaylistTrackRows(await playlistsIO.listPlaylistTracks());
+  // 3フィールドへの代入直前に、自分が依然として最新の呼び出しかどうかを確認する。後から
+  // 開始した別の呼び出しが既に完了していれば、自分の（相対的に古い）結果は破棄する。
+  if (generation !== playlistsLoadGeneration) return;
+  loadedPlaylists = playlists;
+  loadedPlaylistTracks = playlistTracks;
   loadedPlaylistsSpreadsheetId = spreadsheetId;
+  playlistsCommitCountForE2E += 1;
   renderPlaylistList();
 }
 
@@ -1418,7 +1441,18 @@ init();
 // Playwright の開発サーバーだけで公開する、画面操作の同期用フック。本番ビルドには
 // VITE_E2E を与えないためこの分岐は到達不能になり、通常利用の API/UI には影響しない。
 if (import.meta.env.VITE_E2E === "true") {
-  (window as Window & { __e2e?: { serviceWorkerReady: () => Promise<void> } }).__e2e = {
+  (
+    window as Window & {
+      __e2e?: {
+        serviceWorkerReady: () => Promise<void>;
+        loadPlaylists: (spreadsheetId: string) => Promise<void>;
+        getPlaylistsCommitCount: () => number;
+      };
+    }
+  ).__e2e = {
     serviceWorkerReady: () => serviceWorkerReady ?? Promise.resolve(),
+    // overlapping loadPlaylists()呼び出しのgenerationガードを直接検証するためのフック。
+    loadPlaylists: (spreadsheetId: string) => loadPlaylists(spreadsheetId),
+    getPlaylistsCommitCount: () => playlistsCommitCountForE2E,
   };
 }

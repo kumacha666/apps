@@ -161,14 +161,21 @@ test("プレイリスト一覧の読み込み後に入力欄のスプレッド�
 
   // 一覧を再読み込みせずに入力欄だけを別のスプレッドシートIDへ書き換えてから削除する。
   await page.locator("#spreadsheet-id").fill("other-sheet");
+  // 保存時のappendも記録に含まれてしまい「playlist_tracksへの書き込みがある」だけでは削除
+  // 自体を検証したことにならないため、削除クリック直前でスナップショットしてから比較する
+  // （2026-09-03 Codexレビュー指摘：P1。以前のアサーションは削除処理を完全にスキップしても
+  // 素通りしてしまっていた）。
+  const writesBeforeDelete = mock.sheetsWrites.length;
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: "削除" }).click();
   await expect(page.locator("#status")).toContainText("プレイリストを削除しました");
 
-  const wroteToOtherSheet = mock.sheetsWrites.some((w) => w.url.includes("/spreadsheets/other-sheet/"));
-  expect(wroteToOtherSheet).toBe(false);
-  const wroteToOriginalSheet = mock.sheetsWrites.some((w) => w.url.includes("/spreadsheets/sheet/") && w.sheet === "playlist_tracks");
-  expect(wroteToOriginalSheet).toBe(true);
+  // 削除（deletePlaylist）は`values:batchUpdate`で行毎に空欄化する。曲の追記
+  // （`values/A1:append`）とはURLパスが異なるため区別できる。
+  const deleteWrites = mock.sheetsWrites.slice(writesBeforeDelete).filter((w) => w.url.includes("values:batchUpdate"));
+  expect(deleteWrites.length).toBeGreaterThan(0);
+  expect(deleteWrites.every((w) => w.url.includes("/spreadsheets/sheet/"))).toBe(true);
+  expect(deleteWrites.some((w) => w.url.includes("/spreadsheets/other-sheet/"))).toBe(false);
 });
 
 test("読み込んだプレイリストの全曲が索引から消えていた場合、直前の再生を止める", async ({ context, page }) => {
@@ -190,6 +197,41 @@ test("読み込んだプレイリストの全曲が索引から消えていた�
   // 変化せず検証にならない。代わりにpause()が実際に呼ばれたことをカウンタで確認する
   // （google-mocks.tsの__e2ePauseCalls参照。直前の曲が鳴り続けていないことの検証）。
   await expect.poll(() => page.evaluate(() => (window as unknown as { __e2ePauseCalls: number }).__e2ePauseCalls)).toBeGreaterThan(pauseCallsBefore);
+});
+
+test("重なったプレイリスト一覧読み込みは、後から開始した方だけをコミットする（先に開始した読み込みが後で完了しても上書きしない）", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context, { gatePlaylistsListReads: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#spreadsheet-id").fill("sheet");
+
+  const getCommitCount = () => page.evaluate(() => (window as unknown as { __e2e: { getPlaylistsCommitCount: () => number } }).__e2e.getPlaylistsCommitCount());
+  const callLoadPlaylists = () => page.evaluate(() => (window as unknown as { __e2e: { loadPlaylists: (id: string) => Promise<void> } }).__e2e.loadPlaylists("sheet"));
+
+  // listPlaylists→listPlaylistTracksは同一呼び出し内で直列（await）のため、1回の呼び出しに
+  // つき同時に保留されるのは常に1件。呼び出しA（先に開始）のlistPlaylistsが保留される。
+  const callA = callLoadPlaylists();
+  await expect.poll(() => mock.pendingPlaylistsReadCount()).toBe(1);
+  // 呼び出しB（後から開始）のlistPlaylistsも保留される（Aはまだ保留中のまま）。
+  const callB = callLoadPlaylists();
+  await expect.poll(() => mock.pendingPlaylistsReadCount()).toBe(2);
+
+  // BのlistPlaylists（インデックス1）を解放するとBはlistPlaylistTracksへ進み、それも保留される。
+  mock.releasePlaylistsReadsAt([1]);
+  await expect.poll(() => mock.pendingPlaylistsReadCount()).toBe(2);
+  // BのlistPlaylistTracks（残っている方のインデックス1）を解放し、Bを完了させる。
+  mock.releasePlaylistsReadsAt([1]);
+  await callB;
+  await expect.poll(() => getCommitCount()).toBe(1);
+
+  // ここでAのlistPlaylists（インデックス0）を解放するとAはlistPlaylistTracksへ進む。
+  mock.releasePlaylistsReadsAt([0]);
+  await expect.poll(() => mock.pendingPlaylistsReadCount()).toBe(1);
+  // Aのlistplaylistracksを解放しAを完了させる。Aは先に開始したが後から完了する
+  // （＝もはや最新の呼び出しではない）ため、generationガードによりコミットされないはずである。
+  mock.releasePlaylistsReadsAt([0]);
+  await callA;
+  // Aの完了後もコミット回数はBの1回のまま増えないことを確認する（Aの結果が破棄されたことの検証）。
+  await expect.poll(() => getCommitCount()).toBe(1);
 });
 
 test("スキャン開始後のアルバム再生は再読み込みエラーになりキューを変更しない", async ({ context, page }) => {

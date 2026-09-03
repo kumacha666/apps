@@ -19,6 +19,8 @@ export type MockOptions = {
   spreadsheetCanEdit?: boolean;
   /** Pre-seed the playlists/playlist_tracks tabs (e.g. a playlist referencing fileIds no longer in the index). */
   seedPlaylists?: { playlistId: string; name: string; fileIds: string[] }[];
+  /** Hold every playlists/playlist_tracks list-read (GET) until the test releases it via releasePlaylistsReadsAt(). */
+  gatePlaylistsListReads?: boolean;
 };
 
 type SheetWrite = {
@@ -75,6 +77,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const driveMetadataRequests: string[] = [];
   let remainingStreamTokenRejections = options.rejectFirstStreamToken ? 1 : 0;
   const sheetsWrites: SheetWrite[] = [];
+  const pendingPlaylistsReads: (() => void)[] = [];
   let releaseServiceWorker = () => {};
   const serviceWorkerGate = options.delayServiceWorkerActivation
     ? new Promise<void>((resolve) => { releaseServiceWorker = resolve; })
@@ -186,6 +189,13 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       const sheetName = sheetNameForRange(rangeSegment);
       const isHeader = url.includes("1:1") || url.includes("A1:");
       if (method === "GET") {
+        // loadPlaylists()のgenerationガード（main.ts）を検証するテスト専用のゲート。
+        // playlists/playlist_tracksタブのA2:...読み取り（listPlaylists/listPlaylistTracks）だけを
+        // 対象に、テストが明示的に解放するまで応答を保留する。解放順序を操作することで
+        // 「先に開始した読み込みが後で完了する」状況を確定的に再現できる。
+        if (options.gatePlaylistsListReads && (sheetName === "playlists" || sheetName === "playlist_tracks") && !isHeader) {
+          await new Promise<void>((resolve) => pendingPlaylistsReads.push(resolve));
+        }
         return json(route, { values: isHeader ? [sheetHeaders[sheetName] ?? []] : (sheetData[sheetName] ?? []) });
       }
       if (method === "PUT") {
@@ -207,5 +217,23 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     }
     return json(route, {});
   });
-  return { authFailures, streamRequests, driveMetadataRequests, sheetsWrites, releaseServiceWorker };
+  // gatePlaylistsListReads用：現在保留中の読み取りの件数と、インデックス指定での解放。
+  // indexは登録順（listPlaylists→listPlaylistTracksの順で各呼び出しにつき2件ずつ積まれる）。
+  const pendingPlaylistsReadCount = () => pendingPlaylistsReads.length;
+  const releasePlaylistsReadsAt = (indexes: number[]) => {
+    // 後ろのインデックスから外すことで、前のインデックスがずれない。
+    for (const i of [...indexes].sort((a, b) => b - a)) {
+      const resolve = pendingPlaylistsReads[i];
+      if (resolve) { pendingPlaylistsReads.splice(i, 1); resolve(); }
+    }
+  };
+  return {
+    authFailures,
+    streamRequests,
+    driveMetadataRequests,
+    sheetsWrites,
+    releaseServiceWorker,
+    pendingPlaylistsReadCount,
+    releasePlaylistsReadsAt,
+  };
 }
