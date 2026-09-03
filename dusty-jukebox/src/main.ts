@@ -728,11 +728,6 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined): 
   await handlePlaybackAction(async () => {
     if (serviceWorkerReady) await serviceWorkerReady;
     const started = await action();
-    // クリック再生・次へ/前へ・自動再生（曲の自然終了）のいずれも同じ経路を通るため、ここで
-    // 一括してキュー表示（再生中のハイライト・「再生中」ラベル）を更新する（2026-09-03、
-    // 実機利用フィードバック：再生リストの曲をクリックしても再生できない・再生中の曲が
-    // どれか分からない、という2点への対応）。失敗時（started=false）でも再描画自体は無害。
-    renderQueue();
     return Boolean(started);
   });
 }
@@ -770,6 +765,14 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
       playbackAuthGate?.clear();
       setPlaybackAuthNotice(false);
       setStatus("再生中");
+      // キュー表示（再生中のハイライト・「再生中」ラベル）の更新は、この関数が実際の
+      // 再生開始経路の唯一の合流点であるここで行う。handleQueuePlayback()（クリック・次へ/前へ・
+      // 曲の自然終了）だけでなく、handleStreamTokenRejected()の認証継続再開
+      // （playbackAuthGate.defer(() => handlePlaybackAction(() => continuation.resume(...)))）も
+      // handleQueuePlayback()を経由せずここへ合流するため、以前handleQueuePlayback内にだけ
+      // 置いていた再描画呼び出しでは、Drive 401→認証継続で再開したキュー曲の表示が
+      // 更新されないまま残っていた（2026-09-03、レビュー指摘）。
+      renderQueue();
     }
   } catch (err) {
     if (err instanceof PlaybackAuthenticationRequiredError && playbackAuthGate) {

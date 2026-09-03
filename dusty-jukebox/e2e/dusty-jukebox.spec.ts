@@ -124,6 +124,23 @@ test("再生リストの曲をクリックするとその曲が再生され、�
   await expect(items.nth(1)).not.toHaveClass(/now-playing/);
 });
 
+test("再生リストの曲クリックがDrive側401で保留になっても、認証継続後の再生中の曲名表示と行のハイライトが正しい（2026-09-03 レビュー指摘：handleStreamTokenRejected()の認証継続はhandleQueuePlayback()を経由しないため、独立した再描画経路が必要）", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context, { rejectFirstStreamToken: true });
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  const items = page.locator("#catalog-list li");
+  await items.nth(1).locator(".song-link").click(); // 曲B（Second song）。最初のストリーム要求が401で保留になる
+  await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeVisible();
+
+  await page.getByRole("button", { name: "認証を更新して続行" }).click();
+  await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeHidden();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+  await expect(page.locator("#now-playing")).toContainText("Second song");
+  await expect(items.nth(1)).toHaveClass(/now-playing/);
+  await expect(items.nth(0)).not.toHaveClass(/now-playing/);
+  expect(mock.authFailures).toEqual([]);
+});
+
 test("検索で曲を絞り込み、アルバムをdisc/track順のキューに設定して再生できる", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
