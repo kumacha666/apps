@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { PlaybackQueue } from "./queue";
+import { PlaybackQueue, queueRowViews, songDisplayLabel, nowPlayingLabel } from "./queue";
 import { PlaybackAuthenticationRequiredError } from "./playback";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { PlaybackContinuationRegistry } from "./playbackContinuation";
@@ -200,5 +200,54 @@ describe("PlaybackQueue", () => {
 
     expect(played).toEqual(["a", "b", "b"]);
     expect(queue.currentPlayingFileId()).toBe("b");
+  });
+});
+
+describe("queueRowViews", () => {
+  test("除外されていない曲だけがlistIndexを持ち、list()と同じ順序で採番される", () => {
+    const songs = [song("a"), song("b"), song("c")];
+    const excluded = new Set(["b"]);
+    const views = queueRowViews(songs, (fileId) => excluded.has(fileId), null);
+    expect(views.map((v) => ({ fileId: v.song.fileId, excluded: v.excluded, listIndex: v.listIndex }))).toEqual([
+      { fileId: "a", excluded: false, listIndex: 0 },
+      { fileId: "b", excluded: true, listIndex: null },
+      { fileId: "c", excluded: false, listIndex: 1 },
+    ]);
+  });
+
+  test("listIndexは実際にPlaybackQueue.playAt()が受け付けるインデックスと一致する", async () => {
+    const played: string[] = [];
+    const audio = new Audio();
+    const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    const songs = [song("a"), song("b"), song("c")];
+    queue.setList(songs);
+    queue.exclude("a", true);
+    const views = queueRowViews(songs, (fileId) => queue.isExcluded(fileId), queue.currentPlayingFileId());
+    const cView = views.find((v) => v.song.fileId === "c")!;
+    await queue.playAt(cView.listIndex!);
+    expect(played).toEqual(["c"]);
+  });
+
+  test("currentFileIdと一致する曲のisCurrentがtrueになる", () => {
+    const songs = [song("a"), song("b")];
+    const views = queueRowViews(songs, () => false, "b");
+    expect(views.map((v) => v.isCurrent)).toEqual([false, true]);
+  });
+});
+
+describe("songDisplayLabel / nowPlayingLabel", () => {
+  test("タイトルのみの曲はタイトルだけを表示する", () => {
+    const bare: Song = { fileId: "x", parentId: "p", title: "Title", artist: "", album: "", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "" };
+    expect(songDisplayLabel(bare)).toBe("Title");
+  });
+
+  test("アーティスト・アルバム・フォルダパスがあれば連結する", () => {
+    const full: Song = { fileId: "x", parentId: "p", title: "Title", artist: "Artist", album: "Album", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", folderPath: "A / B" };
+    expect(songDisplayLabel(full)).toBe("Title — Artist / Album [A / B]");
+  });
+
+  test("nowPlayingLabelは曲が無ければ空文字列、あれば「再生中: 」を前置する", () => {
+    expect(nowPlayingLabel(undefined)).toBe("");
+    expect(nowPlayingLabel(song("a"))).toBe("再生中: a");
   });
 });

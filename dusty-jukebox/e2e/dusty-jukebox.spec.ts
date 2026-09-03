@@ -105,6 +105,25 @@ test("除外は再生キューへ反映され、戻して作り直すと復帰�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 });
 
+test("再生リストの曲をクリックするとその曲が再生され、再生中の曲名表示と行のハイライトが更新される", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+
+  const items = page.locator("#catalog-list li");
+  await expect(items).toHaveCount(2);
+  await items.nth(1).locator(".song-link").click();
+
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+  await expect(page.locator("#now-playing")).toContainText("Second song");
+  await expect(items.nth(1)).toHaveClass(/now-playing/);
+  await expect(items.nth(0)).not.toHaveClass(/now-playing/);
+
+  await items.nth(0).locator(".song-link").click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  await expect(page.locator("#now-playing")).toContainText("First song");
+  await expect(items.nth(0)).toHaveClass(/now-playing/);
+  await expect(items.nth(1)).not.toHaveClass(/now-playing/);
+});
+
 test("検索で曲を絞り込み、アルバムをdisc/track順のキューに設定して再生できる", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
