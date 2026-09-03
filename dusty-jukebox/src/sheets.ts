@@ -551,7 +551,7 @@ export interface RemoveIndexRowsResult {
 // 経路でも抵触しうる：同一同期区間で大量の音源が個別に削除・ゴミ箱移動・ルート外移動された
 // 場合、removedFileIdsに対応する全行が1回のリクエストに入り、リクエストサイズ・処理時間の
 // 上限で失敗しうる）。main.tsのフルスキャンと同じBATCH_SIZE（200）を踏襲する。
-const WRITE_BATCH_SIZE = 200;
+export const WRITE_BATCH_SIZE = 200;
 
 // isStillCurrent（省略可）：各バッチのio.updateRows呼び出し直前に再確認するコールバック
 // （2026-08-23 Codexレビュー指摘：P1）。以前はreconcileIndexAgainstRootが呼び出し全体の
@@ -569,8 +569,15 @@ const WRITE_BATCH_SIZE = 200;
 // （2026-09-02 Codexレビュー指摘：P2。retryExtraction.tsのtrashed再確認のように判定が
 // バッチごとに独立している場合、"abort"のままだと早いバッチで1件でも復元されていた際、
 // まだ本当にtrashedな後続バッチの削除まで巻き込んで打ち切ってしまっていた）。
-async function updateRowsInBatches(
-  io: SheetsIndexIO,
+// io引数はSheetsIndexIO全体ではなくupdateRowsのみを要求する（構造的部分型）。playlists.tsが
+// playlists/playlist_tracksタブの更新にもこのバッチ分割ロジックを再利用するための最小要件
+// （2026-09-03追加、保存済みプレイリスト機能）。
+export interface RowUpdateWriter {
+  updateRows(updates: { rowNumber: number; row: (string | number)[] }[]): Promise<void>;
+}
+
+export async function updateRowsInBatches(
+  io: RowUpdateWriter,
   updates: { rowNumber: number; row: (string | number)[]; fileId?: string }[],
   isStillCurrent?: (batchFileIds: string[]) => Promise<boolean>,
   onStaleBatch: "abort" | "skip" = "abort"

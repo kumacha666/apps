@@ -1,5 +1,6 @@
 import type { BrowserContext, Route } from "@playwright/test";
 import { INDEX_SHEET_HEADER } from "../src/sheets";
+import { PLAYLISTS_SHEET_HEADER, PLAYLIST_TRACKS_SHEET_HEADER } from "../src/playlists";
 
 const TOKEN = "e2e-token";
 
@@ -16,18 +17,26 @@ export type MockOptions = {
   albumCatalog?: boolean;
   extractionFailedCount?: number;
   spreadsheetCanEdit?: boolean;
+  /** Pre-seed the playlists/playlist_tracks tabs (e.g. a playlist referencing fileIds no longer in the index). */
+  seedPlaylists?: { playlistId: string; name: string; fileIds: string[] }[];
+  /** Hold every playlists/playlist_tracks list-read (GET) until the test releases it via releasePlaylistsReadsAt(). */
+  gatePlaylistsListReads?: boolean;
+  /** Hold every playlists/playlist_tracks append (POST) until the test releases it via releaseAllPlaylistsAppends(). */
+  gatePlaylistsAppends?: boolean;
 };
 
 type SheetWrite = {
   url: string;
   method: string;
-  sheet: "index" | "sync" | "unknown";
+  sheet: string;
   values: (string | number)[][];
 };
 
-function sheetForRange(range: string | undefined): SheetWrite["sheet"] {
-  const match = range?.match(/^'?((?:index)|(?:sync))'?!/);
-  return match?.[1] === "index" || match?.[1] === "sync" ? match[1] : "unknown";
+// 任意のタブ名を許容する（元々はindex/syncのみを想定していたが、playlists/playlist_tracks
+// タブ（保存済みプレイリスト機能）を実際に読み書きして検証するため汎用化した）。
+function sheetNameForRange(range: string | undefined): string {
+  const match = range?.match(/^'?([^'!]+)'?!/);
+  return match?.[1] ?? "unknown";
 }
 
 /** In-memory GIS, Drive and Sheets boundary. Every authenticated API request is
@@ -46,18 +55,55 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     indexRow({ fileId: "song-2", extension: "mp3", parentId: "root", driveModifiedTime: "2026-01-01T00:00:00Z", title: "Second song", artist: "Artist", genre: "Rock", releaseYear: "2024" }),
   ];
   const syncRows = [["startPageToken", "page-1"], ["rootFolderId", "root"], ["initialScanCompletedAt", options.initialScanCompleted === false ? "" : "2026-01-01T00:00:00Z"], ["scanRunId", ""], ["shortcutRootFolderIds", ""]];
+
+  // タブ名→データ行/ヘッダー行の汎用ストア。index/syncは元々の固定配列をそのまま使い、
+  // playlists/playlist_tracksは保存済みプレイリスト機能のE2E検証のために追加した
+  // （空タブとして最初から存在する扱い。ensurePlaylistsTabsExistの自動作成分岐は
+  // 「タブ一覧確認済み・追加スキップ」の疎通確認にとどめ、addSheet系のE2E検証はユニット
+  // テスト（sheetsSetup.test.ts）側でカバーする）。
+  const seededPlaylistRows = (options.seedPlaylists ?? []).map((p) => [p.playlistId, p.name, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"]);
+  const seededTrackRows = (options.seedPlaylists ?? []).flatMap((p) => p.fileIds.map((fileId, i) => [p.playlistId, `1000-${i}-e2e`, fileId]));
+  const sheetData: Record<string, (string | number)[][]> = { index: indexRows, sync: syncRows, playlists: seededPlaylistRows, playlist_tracks: seededTrackRows };
+  const sheetHeaders: Record<string, (string | number)[]> = {
+    index: [...INDEX_SHEET_HEADER],
+    sync: options.invalidSyncHeader ? ["wrong", "header"] : ["key", "value"],
+    playlists: [...PLAYLISTS_SHEET_HEADER],
+    playlist_tracks: [...PLAYLIST_TRACKS_SHEET_HEADER],
+  };
+  const existingTitles = new Set(["index", "sync", "playlists", "playlist_tracks"]);
+  let nextSheetId = 5;
+  const sheetIds: Record<string, number> = { index: 1, sync: 2, playlists: 3, playlist_tracks: 4 };
+
   const authFailures: string[] = [];
   const streamRequests: string[] = [];
   const driveMetadataRequests: string[] = [];
   let remainingStreamTokenRejections = options.rejectFirstStreamToken ? 1 : 0;
   const sheetsWrites: SheetWrite[] = [];
+  const pendingPlaylistsReads: (() => void)[] = [];
+  const pendingPlaylistsAppends: (() => void)[] = [];
+  let playlistsAppendsReleased = false;
   let releaseServiceWorker = () => {};
   const serviceWorkerGate = options.delayServiceWorkerActivation
     ? new Promise<void>((resolve) => { releaseServiceWorker = resolve; })
     : null;
   // The test data is deliberately not a decodable audio file. Keep native media
   // decoding outside this suite while still exercising the actual SW fetch path.
-  await context.addInitScript(() => Object.defineProperty(HTMLMediaElement.prototype, "play", { configurable: true, value: () => Promise.resolve() }));
+  // play() is fully replaced (not wrapped), so the native `paused` flag never
+  // reflects app-driven playback here. Track pause() calls explicitly via
+  // window.__e2ePauseCalls so tests can verify a real pause was requested
+  // (e.g. stopping playback when a loaded playlist resolves to zero songs).
+  await context.addInitScript(() => {
+    Object.defineProperty(HTMLMediaElement.prototype, "play", { configurable: true, value: () => Promise.resolve() });
+    (window as unknown as { __e2ePauseCalls: number }).__e2ePauseCalls = 0;
+    const originalPause = HTMLMediaElement.prototype.pause;
+    Object.defineProperty(HTMLMediaElement.prototype, "pause", {
+      configurable: true,
+      value: function (this: HTMLMediaElement, ...args: []) {
+        (window as unknown as { __e2ePauseCalls: number }).__e2ePauseCalls += 1;
+        return originalPause.apply(this, args);
+      },
+    });
+  });
   const json = (route: Route, value: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
   const requireToken = (route: Route) => {
     if (route.request().headers().authorization === `Bearer ${TOKEN}`) return true;
@@ -99,38 +145,110 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   await context.route("https://sheets.googleapis.com/**", async (route) => {
     if (!requireToken(route)) return;
     const url = decodeURIComponent(route.request().url());
-    if (options.delaySheetsReads && route.request().method() === "GET" && url.includes("values/")) await new Promise((resolve) => setTimeout(resolve, 200));
-    if (url.includes("?fields=sheets.properties.title")) return json(route, { sheets: [{ properties: { title: "index", sheetId: 1, gridProperties: { columnCount: 60 } } }, { properties: { title: "sync", sheetId: 2, gridProperties: { columnCount: 2 } } }] });
-    if (url.includes("values:batchUpdate") && route.request().method() === "POST") {
+    const method = route.request().method();
+    if (options.delaySheetsReads && method === "GET" && url.includes("values/")) await new Promise((resolve) => setTimeout(resolve, 200));
+    if (url.includes("?fields=sheets.properties.title")) {
+      return json(route, {
+        sheets: [...existingTitles].map((title) => ({
+          properties: { title, sheetId: sheetIds[title], gridProperties: { columnCount: sheetHeaders[title]?.length ?? 26 } },
+        })),
+      });
+    }
+    // スプレッドシート単位のbatchUpdate（addSheet、タブ追加）。values:batchUpdate（行データの
+    // 更新）とはURLパスが異なる（前者に"/values"を含まない）ため区別できる。
+    if (url.endsWith(":batchUpdate") && !url.includes("/values:batchUpdate") && method === "POST") {
+      const body = JSON.parse(route.request().postData() ?? "{}") as {
+        requests?: Array<{ addSheet?: { properties?: { title?: string } } }>;
+      };
+      for (const req of body.requests ?? []) {
+        const title = req.addSheet?.properties?.title;
+        if (title && !existingTitles.has(title)) {
+          existingTitles.add(title);
+          sheetIds[title] = nextSheetId++;
+          sheetData[title] ??= [];
+        }
+      }
+      return json(route, {});
+    }
+    if (url.includes("values:batchUpdate") && method === "POST") {
       const body = JSON.parse(route.request().postData() ?? "{}") as { data?: Array<{ range?: string; values?: (string | number)[][] }> };
       for (const update of body.data ?? []) {
-        const match = update.range?.match(/^'?(index|sync)'?!A(\d+)/);
+        const match = update.range?.match(/^'?([^'!]+)'?!A(\d+)/);
         if (!match || !update.values?.[0]) continue;
-        const rows = match[1] === "sync" ? syncRows : indexRows;
+        const rows = (sheetData[match[1]] ??= []);
         rows[Number(match[2]) - 2] = [...update.values[0]];
       }
       for (const update of body.data ?? []) {
         sheetsWrites.push({
           url,
-          method: route.request().method(),
-          sheet: sheetForRange(update.range),
+          method,
+          sheet: sheetNameForRange(update.range),
           values: update.values ?? [],
         });
       }
       return json(route, { totalUpdatedRows: body.data?.length ?? 0 });
     }
     if (url.includes("values/")) {
-      const isSync = url.includes("sync");
+      const rangeSegment = url.split("values/")[1]?.split("?")[0].split(":")[0] ?? "";
+      const sheetName = sheetNameForRange(rangeSegment);
       const isHeader = url.includes("1:1") || url.includes("A1:");
-      if (route.request().method() === "GET") return json(route, { values: isHeader ? [isSync ? (options.invalidSyncHeader ? ["wrong", "header"] : ["key", "value"]) : [...INDEX_SHEET_HEADER]] : (isSync ? syncRows : indexRows) });
-      if (route.request().method() === "POST" || route.request().method() === "PUT") {
-        const range = url.split("values/")[1];
+      if (method === "GET") {
+        // loadPlaylists()のgenerationガード（main.ts）を検証するテスト専用のゲート。
+        // playlists/playlist_tracksタブのA2:...読み取り（listPlaylists/listPlaylistTracks）だけを
+        // 対象に、テストが明示的に解放するまで応答を保留する。解放順序を操作することで
+        // 「先に開始した読み込みが後で完了する」状況を確定的に再現できる。
+        if (options.gatePlaylistsListReads && (sheetName === "playlists" || sheetName === "playlist_tracks") && !isHeader) {
+          await new Promise<void>((resolve) => pendingPlaylistsReads.push(resolve));
+        }
+        return json(route, { values: isHeader ? [sheetHeaders[sheetName] ?? []] : (sheetData[sheetName] ?? []) });
+      }
+      if (method === "PUT") {
+        // writeHeaderRow（タブ初回自動作成のヘッダー書き込み）専用。
         const body = JSON.parse(route.request().postData() ?? "{}") as { values?: (string | number)[][] };
-        sheetsWrites.push({ url, method: route.request().method(), sheet: sheetForRange(range), values: body.values ?? [] });
+        if (isHeader && body.values?.[0]) sheetHeaders[sheetName] = [...body.values[0]];
+        sheetsWrites.push({ url, method, sheet: sheetName, values: body.values ?? [] });
         return json(route, { updatedRows: 1 });
+      }
+      if (method === "POST") {
+        // loadPlaylists()の世代予約がユーザー操作の開始順を正しく反映することを検証する
+        // テスト専用のゲート。createPlaylist()（playlists/playlist_tracksタブへのappend）を
+        // 意図的に長引かせ、その間に別の一覧更新操作を完了させられるようにする。
+        if (options.gatePlaylistsAppends && !playlistsAppendsReleased && (sheetName === "playlists" || sheetName === "playlist_tracks")) {
+          await new Promise<void>((resolve) => pendingPlaylistsAppends.push(resolve));
+        }
+        // values:append。実際に対象タブの末尾へ行を追加する（保存済みプレイリスト機能の
+        // 保存→一覧表示→読み込みという一連の流れを実データで検証するために必要）。
+        const body = JSON.parse(route.request().postData() ?? "{}") as { values?: (string | number)[][] };
+        const rows = (sheetData[sheetName] ??= []);
+        rows.push(...(body.values ?? []));
+        sheetsWrites.push({ url, method, sheet: sheetName, values: body.values ?? [] });
+        return json(route, { updates: { updatedRows: body.values?.length ?? 0 } });
       }
     }
     return json(route, {});
   });
-  return { authFailures, streamRequests, driveMetadataRequests, sheetsWrites, releaseServiceWorker };
+  // gatePlaylistsListReads用：現在保留中の読み取りの件数と、インデックス指定での解放。
+  // indexは登録順（listPlaylists→listPlaylistTracksの順で各呼び出しにつき2件ずつ積まれる）。
+  const pendingPlaylistsReadCount = () => pendingPlaylistsReads.length;
+  const releasePlaylistsReadsAt = (indexes: number[]) => {
+    // 後ろのインデックスから外すことで、前のインデックスがずれない。
+    for (const i of [...indexes].sort((a, b) => b - a)) {
+      const resolve = pendingPlaylistsReads[i];
+      if (resolve) { pendingPlaylistsReads.splice(i, 1); resolve(); }
+    }
+  };
+  const releaseAllPlaylistsAppends = () => {
+    playlistsAppendsReleased = true;
+    while (pendingPlaylistsAppends.length > 0) pendingPlaylistsAppends.shift()!();
+  };
+  return {
+    authFailures,
+    streamRequests,
+    driveMetadataRequests,
+    sheetsWrites,
+    releaseServiceWorker,
+    pendingPlaylistsReadCount,
+    releasePlaylistsReadsAt,
+    releaseAllPlaylistsAppends,
+  };
 }

@@ -19,6 +19,7 @@
 
 import { columnLetter, createSheetsFetch, INDEX_SHEET_HEADER, INDEX_SHEET_NAME, isLegacyIndexHeaderV1, isLegacyIndexHeaderV2 } from "./sheets";
 import { SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
+import { PLAYLISTS_SHEET_HEADER, PLAYLISTS_SHEET_NAME, PLAYLIST_TRACKS_SHEET_HEADER, PLAYLIST_TRACKS_SHEET_NAME } from "./playlists";
 
 // スプレッドシートのタブ一覧確認・タブ追加・ヘッダー行書き込みをDIするインターフェース
 // （drive.ts/sheets.tsと同じDI方針）。
@@ -70,6 +71,15 @@ export async function ensureIndexAndSyncTabsExist(io: SpreadsheetSetupIO): Promi
   const titles = new Set(await io.listSheetTitles());
   await ensureTabExists(io, INDEX_SHEET_NAME, INDEX_SHEET_HEADER, titles);
   await ensureTabExists(io, SYNC_SHEET_NAME, SYNC_TAB_HEADER, titles);
+}
+
+// 保存済みプレイリスト機能（playlists.ts）専用。ensureIndexAndSyncTabsExistと同じ「既存タブには
+// 一切触れない」方針だが、index/syncタブとは呼び出しタイミングが異なる（スキャン開始前ではなく、
+// ユーザーが初めてプレイリスト機能を使おうとした時点でmain.tsから呼ぶ）ため独立した関数にする。
+export async function ensurePlaylistsTabsExist(io: SpreadsheetSetupIO): Promise<void> {
+  const titles = new Set(await io.listSheetTitles());
+  await ensureTabExists(io, PLAYLISTS_SHEET_NAME, PLAYLISTS_SHEET_HEADER, titles);
+  await ensureTabExists(io, PLAYLIST_TRACKS_SHEET_NAME, PLAYLIST_TRACKS_SHEET_HEADER, titles);
 }
 
 // ヘッダー行を読んで検証する、というensureIndexAndSyncTabsExist呼び出し後にindex/syncタブ

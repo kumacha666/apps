@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   ensureIndexAndSyncTabsExist,
+  ensurePlaylistsTabsExist,
   ensureValidHeader,
   createSpreadsheetSetupIO,
   migrateLegacyIndexHeaderV1,
@@ -9,6 +10,7 @@ import {
 } from "./sheetsSetup";
 import { INDEX_SHEET_HEADER, INDEX_SHEET_NAME, LEGACY_INDEX_SHEET_HEADER_V1, LEGACY_INDEX_SHEET_HEADER_V2 } from "./sheets";
 import { SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
+import { PLAYLISTS_SHEET_HEADER, PLAYLISTS_SHEET_NAME, PLAYLIST_TRACKS_SHEET_HEADER, PLAYLIST_TRACKS_SHEET_NAME } from "./playlists";
 
 function makeFakeIO(
   existingTitles: string[],
@@ -115,6 +117,35 @@ describe("ensureIndexAndSyncTabsExist", () => {
       throw new Error("permission denied");
     };
     await expect(ensureIndexAndSyncTabsExist(io)).rejects.toThrow("permission denied");
+  });
+});
+
+describe("ensurePlaylistsTabsExist", () => {
+  test("両タブとも存在しない場合、両方作成しヘッダー行を書く", async () => {
+    const io = makeFakeIO([]);
+    await ensurePlaylistsTabsExist(io);
+
+    expect(io.addCalls).toEqual([
+      { title: PLAYLISTS_SHEET_NAME, columnCount: PLAYLISTS_SHEET_HEADER.length },
+      { title: PLAYLIST_TRACKS_SHEET_NAME, columnCount: PLAYLIST_TRACKS_SHEET_HEADER.length },
+    ]);
+    expect(io.headerCalls).toEqual([
+      { sheetName: PLAYLISTS_SHEET_NAME, header: PLAYLISTS_SHEET_HEADER },
+      { sheetName: PLAYLIST_TRACKS_SHEET_NAME, header: PLAYLIST_TRACKS_SHEET_HEADER },
+    ]);
+  });
+
+  test("両タブとも既に存在する場合は一切触れない（index/syncタブとは独立して判定する）", async () => {
+    const io = makeFakeIO([PLAYLISTS_SHEET_NAME, PLAYLIST_TRACKS_SHEET_NAME]);
+    await ensurePlaylistsTabsExist(io);
+    expect(io.addCalls).toEqual([]);
+    expect(io.headerCalls).toEqual([]);
+  });
+
+  test("index/syncタブが既にあってもplaylists系タブとは独立して作成される", async () => {
+    const io = makeFakeIO([INDEX_SHEET_NAME, SYNC_SHEET_NAME]);
+    await ensurePlaylistsTabsExist(io);
+    expect(io.addCalls.map((c) => c.title)).toEqual([PLAYLISTS_SHEET_NAME, PLAYLIST_TRACKS_SHEET_NAME]);
   });
 });
 
