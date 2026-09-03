@@ -164,6 +164,26 @@ describe("createPlaylist", () => {
     await createPlaylist(io, "空のリスト", [], "dev", 1000, () => "p1");
     expect(io.trackRows).toEqual([]);
   });
+
+  test("収録曲行を先に書き込み、プレイリスト本体の行は最後に追記する", async () => {
+    const io = makeFakeIO();
+    const callOrder: string[] = [];
+    const originalAppendTrack = io.appendPlaylistTrackRows.bind(io);
+    const originalAppendPlaylist = io.appendPlaylistRows.bind(io);
+    io.appendPlaylistTrackRows = async (rows) => { callOrder.push("tracks"); return originalAppendTrack(rows); };
+    io.appendPlaylistRows = async (rows) => { callOrder.push("playlist"); return originalAppendPlaylist(rows); };
+
+    await createPlaylist(io, "お気に入り", ["song-1"], "dev", 1000, () => "p1");
+    expect(callOrder).toEqual(["tracks", "playlist"]);
+  });
+
+  test("収録曲行の書き込みが失敗した場合、プレイリスト本体の行は追記されず一覧に現れない（保存やり直しで再開可能にするため）", async () => {
+    const io = makeFakeIO();
+    io.appendPlaylistTrackRows = async () => { throw new Error("network error"); };
+
+    await expect(createPlaylist(io, "お気に入り", ["song-1"], "dev", 1000, () => "p1")).rejects.toThrow("network error");
+    expect(io.playlistRows).toEqual([]);
+  });
 });
 
 describe("deletePlaylist", () => {

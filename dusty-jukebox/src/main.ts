@@ -316,9 +316,20 @@ async function handleSavePlaylist(): Promise<void> {
     const playlistsIO = playlistsSpreadsheetIO(spreadsheetId);
     await ensurePlaylistTabsReady(spreadsheetId, playlistsIO);
     await createPlaylist(playlistsIO, name, fileIds, deviceRandomId);
+    // createPlaylist()が正常終了した時点で保存は確定している（playlists.tsのcreatePlaylist
+    // コメント参照：収録曲行を先に書き終えてから本体行を追記するため、resolveした＝両方とも
+    // 書き込み済み）。この後のloadPlaylists()（一覧再読み込み）はUI表示の更新でしかないため、
+    // 失敗を「保存に失敗しました」として同じcatchで報告してはならない（2026-09-03 Codex
+    // レビュー指摘：P2。保存自体は成功しているのに失敗と誤表示すると、ユーザーが同じ名前で
+    // 再度保存し直し、新しいUUIDで重複したプレイリストを作ってしまう）。
     nameInput.value = "";
-    await loadPlaylists(spreadsheetId);
-    setStatus(`プレイリスト「${name}」（${fileIds.length}曲）を保存しました。`);
+    try {
+      await loadPlaylists(spreadsheetId);
+      setStatus(`プレイリスト「${name}」（${fileIds.length}曲）を保存しました。`);
+    } catch (refreshErr) {
+      if (isAuthFailure(refreshErr)) auth.clearToken();
+      setStatus(`プレイリスト「${name}」（${fileIds.length}曲）は保存済みですが、一覧の更新に失敗しました。「プレイリスト一覧を更新」をお試しください。`, true);
+    }
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
     setStatus(err instanceof Error ? `プレイリストの保存に失敗しました: ${err.message}` : "プレイリストの保存に失敗しました", true);

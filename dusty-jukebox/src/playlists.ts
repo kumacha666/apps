@@ -150,6 +150,17 @@ async function appendInBatches(append: (rows: (string | number)[][]) => Promise<
 
 // 新規プレイリストとして保存する。fileIdsは現在の再生キューの並び順（除外を除いた表示順）を
 // そのまま渡す想定。
+//
+// 収録曲行（playlist_tracks）を先にすべて書き込み、プレイリスト本体（playlists）の行は最後に
+// 追記する（2026-09-03 Codexレビュー指摘：P2）。逆順（本体を先に追記）だと、本体行が見えている
+// のに収録曲側の追記（200件単位のバッチ）が途中で失敗した場合、一覧には「一部の曲しか
+// 入っていない壊れたプレイリスト」が表示されてしまう。しかも`generatePlaylistId`は呼び出す
+// たびに新しいUUIDを生成するため、保存をやり直しても同じプレイリストへ追記する形では再開でき
+// ず、代わりに別の新しいプレイリストが作られ、壊れた方はSheets上に残り続けてしまう。
+// この順序であれば、収録曲側の書き込みが失敗した時点ではまだplaylistsタブに本体行が存在しない
+// ため、そのプレイリストは一覧に一切表示されない（収録曲行だけが不可視のまま残る、他の
+// fileId系タブの「事後の整合」方針と同じ許容範囲）。保存をやり直せば新しいUUIDで最初から
+// 正常に作り直せる。
 export async function createPlaylist(
   io: PlaylistsIO,
   name: string,
@@ -159,14 +170,14 @@ export async function createPlaylist(
   generatePlaylistId: () => string = () => crypto.randomUUID()
 ): Promise<string> {
   const playlistId = generatePlaylistId();
-  const nowIso = new Date(nowMs).toISOString();
-  await io.appendPlaylistRows([buildPlaylistRow({ playlistId, name, createdAtIso: nowIso, updatedAtIso: nowIso })]);
   if (fileIds.length > 0) {
     await appendInBatches(
       (rows) => io.appendPlaylistTrackRows(rows),
       buildPlaylistTrackRows({ playlistId, fileIds, nowMs, deviceRandomId })
     );
   }
+  const nowIso = new Date(nowMs).toISOString();
+  await io.appendPlaylistRows([buildPlaylistRow({ playlistId, name, createdAtIso: nowIso, updatedAtIso: nowIso })]);
   return playlistId;
 }
 
