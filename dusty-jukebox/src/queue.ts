@@ -66,3 +66,35 @@ export class PlaybackQueue {
     );
   }
 }
+
+// 索引ライブラリUI（main.tsのrenderQueue）向けの純粋な表示計算。DOM操作自体はmain.tsに残すが、
+// 「除外されていない曲だけがplayAt()のインデックス対象になる」「どの行が再生中か」という
+// ロジック自体は切り出してテストする（AI開発ルール1：DOM操作を含むからという理由だけでテスト
+// 対象外にしない）。2026-09-03、実機利用フィードバック：再生リストの曲をクリックしても再生
+// できない・再生中の曲がどれか分からない、という2点への対応。
+export interface QueueRowView {
+  song: Song;
+  excluded: boolean;
+  // playAt()に渡すインデックス（list()＝除外されていない曲だけを数えた位置）。除外中の曲はnull
+  // （クリックしても再生できない。除外を解除してから再生する運用のため）。
+  listIndex: number | null;
+  isCurrent: boolean;
+}
+
+export function queueRowViews(songs: Song[], isExcluded: (fileId: string) => boolean, currentFileId: string | null): QueueRowView[] {
+  let listIndex = 0;
+  return songs.map((song) => {
+    const excluded = isExcluded(song.fileId);
+    const view: QueueRowView = { song, excluded, listIndex: excluded ? null : listIndex, isCurrent: song.fileId === currentFileId };
+    if (!excluded) listIndex += 1;
+    return view;
+  });
+}
+
+export function songDisplayLabel(song: Song): string {
+  return `${song.title}${song.artist ? ` — ${song.artist}` : ""}${song.album ? ` / ${song.album}` : ""}${song.folderPath ? ` [${song.folderPath}]` : ""}`;
+}
+
+export function nowPlayingLabel(song: Song | undefined): string {
+  return song ? `再生中: ${songDisplayLabel(song)}` : "";
+}

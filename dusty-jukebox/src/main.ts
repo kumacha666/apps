@@ -24,7 +24,7 @@ import {
   upsertFolderCacheEntries,
   type FolderCacheEntry,
 } from "./folderCache";
-import { PlaybackQueue } from "./queue";
+import { PlaybackQueue, queueRowViews, songDisplayLabel, nowPlayingLabel } from "./queue";
 import { registerStreamAuthResponder } from "./streamAuth";
 import {
   createChangesListFn,
@@ -192,6 +192,7 @@ function render(): void {
       <button id="play-btn" type="button" disabled>この曲を再生</button>
       <button id="pause-btn" type="button" disabled>一時停止</button>
       <audio id="audio-player" controls></audio>
+      <p id="now-playing" class="status"></p>
       <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
       <section class="catalog">
         <h2>ライブラリ</h2>
@@ -227,9 +228,25 @@ function render(): void {
 function numberOrUndefined(value: string): number | undefined { const n = Number(value); return value.trim() === "" || !Number.isFinite(n) ? undefined : n; }
 function renderQueue(): void {
   const list = el<HTMLUListElement>("catalog-list"); list.innerHTML = "";
-  for (const song of queue?.all() ?? []) { const item = document.createElement("li"); const check = document.createElement("input"); check.type = "checkbox"; check.checked = !queue?.isExcluded(song.fileId);
-    check.addEventListener("change", () => { queue?.exclude(song.fileId, !check.checked); renderQueue(); });
-    item.append(check, ` ${song.title}${song.artist ? ` — ${song.artist}` : ""}${song.album ? ` / ${song.album}` : ""}${song.folderPath ? ` [${song.folderPath}]` : ""}`); list.append(item); }
+  const currentFileId = queue?.currentPlayingFileId() ?? null;
+  const rows = queueRowViews(queue?.all() ?? [], (fileId) => queue?.isExcluded(fileId) ?? false, currentFileId);
+  for (const row of rows) {
+    const item = document.createElement("li"); item.className = "queue-item";
+    if (row.isCurrent) item.classList.add("now-playing");
+    const check = document.createElement("input"); check.type = "checkbox"; check.checked = !row.excluded;
+    check.addEventListener("change", () => { queue?.exclude(row.song.fileId, !check.checked); renderQueue(); });
+    item.append(check, " ");
+    const label = document.createElement("span"); label.textContent = songDisplayLabel(row.song);
+    if (row.listIndex !== null) {
+      // 除外されていない曲だけクリックで再生できる（listIndex参照）。除外中の曲は
+      // playAt()のインデックス対象外のため、除外を解除してから再生する運用とする。
+      label.className = "song-link";
+      label.addEventListener("click", () => void handleQueuePlayback(() => queue?.playAt(row.listIndex!)));
+    }
+    item.append(label);
+    list.append(item);
+  }
+  el<HTMLParagraphElement>("now-playing").textContent = nowPlayingLabel(rows.find((r) => r.isCurrent)?.song);
 }
 function renderAlbumGroups(groups: AlbumGroup[]): void {
   const list = el<HTMLUListElement>("album-list"); list.innerHTML = "";
@@ -748,6 +765,14 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
       playbackAuthGate?.clear();
       setPlaybackAuthNotice(false);
       setStatus("再生中");
+      // キュー表示（再生中のハイライト・「再生中」ラベル）の更新は、この関数が実際の
+      // 再生開始経路の唯一の合流点であるここで行う。handleQueuePlayback()（クリック・次へ/前へ・
+      // 曲の自然終了）だけでなく、handleStreamTokenRejected()の認証継続再開
+      // （playbackAuthGate.defer(() => handlePlaybackAction(() => continuation.resume(...)))）も
+      // handleQueuePlayback()を経由せずここへ合流するため、以前handleQueuePlayback内にだけ
+      // 置いていた再描画呼び出しでは、Drive 401→認証継続で再開したキュー曲の表示が
+      // 更新されないまま残っていた（2026-09-03、レビュー指摘）。
+      renderQueue();
     }
   } catch (err) {
     if (err instanceof PlaybackAuthenticationRequiredError && playbackAuthGate) {
