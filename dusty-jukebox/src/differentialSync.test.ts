@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
+import { applyShortcutChangesToExtraRootFolderIds, folderCacheUpdatesFromChanges, planDifferentialSync } from "./differentialSync";
 import type { AudioFileEntry, DriveChange } from "./drive";
 import type { IndexRowScanState } from "./sheets";
 
@@ -381,5 +381,45 @@ describe("applyShortcutChangesToExtraRootFolderIds", () => {
     await applyShortcutChangesToExtraRootFolderIds(changes, extraRootFolderIds, async () => true, invalidateCache);
     expect(invalidateCache).toHaveBeenCalledTimes(2);
     expect([...extraRootFolderIds].sort()).toEqual(["targetA", "targetB"]);
+  });
+});
+
+describe("folderCacheUpdatesFromChanges", () => {
+  test("フォルダのリネーム・移動をfolderId→{name,真の親ID}として抽出する", () => {
+    const changes: DriveChange[] = [
+      { fileId: "f1", removed: false, file: { id: "f1", name: "New Name", mimeType: "application/vnd.google-apps.folder", parents: ["newParent"] } },
+    ];
+    expect(folderCacheUpdatesFromChanges(changes)).toEqual(new Map([["f1", { name: "New Name", parentId: "newParent" }]]));
+  });
+
+  test("parentsが欠落している場合は空文字列にフォールバックする", () => {
+    const changes: DriveChange[] = [folderChange("f1", "Renamed")];
+    expect(folderCacheUpdatesFromChanges(changes)).toEqual(new Map([["f1", { name: "Renamed", parentId: "" }]]));
+  });
+
+  test("removed=true・trashed=true・フォルダ以外の変更は対象外", () => {
+    const changes: DriveChange[] = [
+      { fileId: "f1", removed: true },
+      { fileId: "f2", removed: false, file: { id: "f2", name: "Trashed Folder", mimeType: "application/vnd.google-apps.folder", trashed: true, parents: ["root"] } },
+      { fileId: "f3", removed: false, file: audioFile("f3") },
+    ];
+    expect(folderCacheUpdatesFromChanges(changes)).toEqual(new Map());
+  });
+
+  test("フォルダを指すショートカットの変更は対象外（ショートカットのparentsはターゲットの真の親と無関係なため）", () => {
+    const changes: DriveChange[] = [
+      {
+        fileId: "s1",
+        removed: false,
+        file: {
+          id: "s1",
+          name: "Folder (shortcut)",
+          mimeType: "application/vnd.google-apps.shortcut",
+          parents: ["root"],
+          shortcutDetails: { targetId: "target1", targetMimeType: "application/vnd.google-apps.folder" },
+        },
+      },
+    ];
+    expect(folderCacheUpdatesFromChanges(changes)).toEqual(new Map());
   });
 });

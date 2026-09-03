@@ -242,6 +242,44 @@ describe("listAudioFilesRecursive", () => {
     expect([...shortcutTargetFolderIds]).toEqual(["wands"]);
   });
 
+  test("folderEntries出力引数に、実体としてのフォルダのid→{name,真の親ID}を集める。ショートカットは対象外（2026-09-03、folderCache.tsの`folders`タブキャッシュ元データ）", async () => {
+    const tree: Record<string, DriveFile[]> = {
+      root: [
+        { id: "wands", name: "WANDS", mimeType: "application/vnd.google-apps.folder", parents: ["root"] },
+        {
+          id: "shortcut-to-various",
+          name: "VARIOUS (shortcut)",
+          mimeType: "application/vnd.google-apps.shortcut",
+          // ショートカットアイテム自身のparentsは"root"だが、ターゲット(various)の真の親とは無関係
+          parents: ["root"],
+          shortcutDetails: { targetId: "various", targetMimeType: "application/vnd.google-apps.folder" },
+        },
+      ],
+      wands: [{ id: "w1", name: "01.mp3", mimeType: "audio/mpeg", parents: ["wands"] }],
+      various: [{ id: "v1", name: "02.mp3", mimeType: "audio/mpeg", parents: ["various"] }],
+    };
+    const list: DriveListFn = async (folderId) => ({ files: tree[folderId] ?? [] });
+    const folderEntries = new Map<string, { name: string; parentId: string }>();
+    await listAudioFilesRecursive(list, "root", "", [], undefined, new Set(), undefined, folderEntries);
+
+    expect(folderEntries.get("wands")).toEqual({ name: "WANDS", parentId: "root" });
+    // ショートカットのターゲット(various)自身のエントリは記録しない（真の親が不明なうえ、
+    // resolve()はルート自身の名前を辿らないためショートカットのターゲットは「追加のルート」
+    // として扱われ、そもそも不要）
+    expect(folderEntries.has("various")).toBe(false);
+    expect(folderEntries.has("shortcut-to-various")).toBe(false); // ショートカット自体はフォルダではない
+  });
+
+  test("filesのparentsが欠落している場合は走査元のfolderIdへ安全側でフォールバックする", async () => {
+    const tree: Record<string, DriveFile[]> = {
+      root: [{ id: "child", name: "Child", mimeType: "application/vnd.google-apps.folder" }], // parents省略
+    };
+    const list: DriveListFn = async (folderId) => ({ files: tree[folderId] ?? [] });
+    const folderEntries = new Map<string, { name: string; parentId: string }>();
+    await listAudioFilesRecursive(list, "root", "", [], undefined, new Set(), undefined, folderEntries);
+    expect(folderEntries.get("child")).toEqual({ name: "Child", parentId: "root" });
+  });
+
   test("ファイルを指すショートカットは走査対象に含めない（フォルダショートカットのみ解決する）", async () => {
     const tree: Record<string, DriveFile[]> = {
       root: [

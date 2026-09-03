@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  ensureFoldersTabExists,
   ensureIndexAndSyncTabsExist,
   ensurePlaylistsTabsExist,
   ensureValidHeader,
@@ -11,6 +12,7 @@ import {
 import { INDEX_SHEET_HEADER, INDEX_SHEET_NAME, LEGACY_INDEX_SHEET_HEADER_V1, LEGACY_INDEX_SHEET_HEADER_V2 } from "./sheets";
 import { SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 import { PLAYLISTS_SHEET_HEADER, PLAYLISTS_SHEET_NAME, PLAYLIST_TRACKS_SHEET_HEADER, PLAYLIST_TRACKS_SHEET_NAME } from "./playlists";
+import { FOLDERS_SHEET_HEADER, FOLDERS_SHEET_NAME } from "./folderCache";
 
 function makeFakeIO(
   existingTitles: string[],
@@ -146,6 +148,22 @@ describe("ensurePlaylistsTabsExist", () => {
     const io = makeFakeIO([INDEX_SHEET_NAME, SYNC_SHEET_NAME]);
     await ensurePlaylistsTabsExist(io);
     expect(io.addCalls.map((c) => c.title)).toEqual([PLAYLISTS_SHEET_NAME, PLAYLIST_TRACKS_SHEET_NAME]);
+  });
+});
+
+describe("ensureFoldersTabExists", () => {
+  test("タブが無ければ作成しヘッダー行を書く", async () => {
+    const io = makeFakeIO([]);
+    await ensureFoldersTabExists(io);
+    expect(io.addCalls).toEqual([{ title: FOLDERS_SHEET_NAME, columnCount: FOLDERS_SHEET_HEADER.length }]);
+    expect(io.headerCalls).toEqual([{ sheetName: FOLDERS_SHEET_NAME, header: FOLDERS_SHEET_HEADER }]);
+  });
+
+  test("既に存在する場合は一切触れない（index/sync/playlists系タブとは独立して判定する）", async () => {
+    const io = makeFakeIO([FOLDERS_SHEET_NAME]);
+    await ensureFoldersTabExists(io);
+    expect(io.addCalls).toEqual([]);
+    expect(io.headerCalls).toEqual([]);
   });
 });
 

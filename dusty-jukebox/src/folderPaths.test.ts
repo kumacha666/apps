@@ -28,4 +28,24 @@ describe("FolderPathResolver", () => {
     await expect(resolver.resolve("album")).resolves.toBe("Album");
     expect(get).toHaveBeenCalledTimes(1);
   });
+
+  test("resolvedEntries()は実際にgetFolderが返した値を保持し、失敗・null応答は含まない", async () => {
+    const get = vi.fn(async (id: string) => {
+      if (id === "child") return { name: "Album", parentId: "artist" };
+      if (id === "artist") return { name: "Artist", parentId: "root" };
+      if (id === "missing") return null;
+      throw new Error("boom");
+    });
+    const resolver = new FolderPathResolver(get, "root");
+    await resolver.resolve("child");
+    await expect(resolver.resolve("missing")).resolves.toBe("");
+    await expect(resolver.resolve("failing")).rejects.toThrow("boom");
+
+    expect(resolver.resolvedEntries()).toEqual(
+      new Map([
+        ["child", { name: "Album", parentId: "artist" }],
+        ["artist", { name: "Artist", parentId: "root" }],
+      ])
+    );
+  });
 });

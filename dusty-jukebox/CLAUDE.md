@@ -11,6 +11,19 @@
 **次セッションで最初に確認すべきこと**：
 - 上記3PR（#392, #398, #400）の実機確認は完了しているが、長時間の連続再生・複数タブ・トークン失効を跨いだ操作等の追加シナリオはまだ試せていない
 - ~~保存済みプレイリスト~~（2026-09-03実装、下記「保存済みプレイリスト」節参照）・~~`extractionFailed`行の再抽出リトライ導線~~（PR #404実装済み）に続き、次の機能開発候補（優先度未検討）：カタログ補正機能（CONCEPT.md 4.4節）
+- **2026-09-03、実機利用フィードバックを受けて着手（開発体制#39）**：起動時のフォルダパス解決の高速化（下記「フォルダ名キャッシュ」節）を実装。加えて、実機利用で判明した使いづらさの指摘が複数あり、優先度順に対応予定：②再生リストの曲クリックで再生・現在再生中の曲表示・キュー内ハイライト、③Bluetooth/OSメディアキー（Media Session API）対応、④検索/絞り込みUI刷新（項目整理・候補一覧／オートコンプリート・仮想スクロール・気分に合わせたランダム再生・シングル/B面等の柔軟な絞り込み）。詳細はhandoffではなく本セッションの会話ログ参照（②③④は本PRの時点で未着手）
+
+## フォルダ名キャッシュ（2026-09-03）
+
+**実機利用で判明**：`loadCatalog()`（「索引から曲一覧を読み込む」）は起動のたびに曲ごとフォルダパスをDrive API（`files.get`を祖先方向へ1階層ずつ）で解決していたため、数千フォルダ規模の実ライブラリでは起動のたびに5分以上かかっていた（索引自体の読み込みは1回のSheets API呼び出しで一瞬）。プレイヤーとして実用に耐えないレベルの問題。
+
+- `listAudioFilesRecursive`（drive.ts）はフォルダ走査中、`files.list`応答（`fields=...,parents`）から各フォルダの真の親IDを追加コストゼロで既に得ている。これを`folders`タブ（新規、`folderId, name, parentId`の3列、`folderCache.ts`）へキャッシュし、`loadCatalog()`はキャッシュ優先＋キャッシュに無い分だけDrive解決（`createCacheFirstFolderGetFn`）に変更した。
+- 書き込みタイミング：①フルスキャン完了時（`listAudioFilesRecursive`が発見した全フォルダ）、②差分同期の`listSubtree`（フォルダ変更イベントで再走査したサブツリー配下の子フォルダ）、③フォルダ自身のリネーム・移動は`changes.list`応答（`change.file.name`/`parents`）から`differentialSync.ts`の`folderCacheUpdatesFromChanges`で直接反映（サブツリー再走査だけでは「変更があったフォルダ自身」のエントリは更新されないため。`listAudioFilesRecursive`はルート自身の名前を記録しない設計＝`FolderPathResolver.resolve()`がルート自身の名前を辿らないことに対応するための仕様のため）、④`loadCatalog()`自身も、キャッシュに無くDriveへ実際に問い合わせて解決できた分をセルフヒーリングとして`folders`タブへ書き戻す（`FolderPathResolver.resolvedEntries()`）。いずれも`upsertFolderCacheEntries`が既存値との差分のみ書き込む（変化が無ければAPIを呼ばない）。
+- ショートカット経由のフォルダ（`shortcutRootFolderIds`）は対象外：ショートカットアイテム自身の`parents`はターゲットフォルダの真の親と無関係なため、ターゲット自身のキャッシュエントリは作らない。ターゲットは元々`FolderPathResolver`の「追加のルート」として扱われ、ルート自身の名前は辿らないため、そもそも不要（既存の`shortcutRootFolderIds`の仕組みと整合）。
+- `folders`タブは`loadCatalog()`からは作成しない（index/syncタブと同じ既存方針を維持）。タブが無い・ヘッダー不一致の場合はキャッシュ無し＝従来通りDrive解決のみにフォールバックする（次回スキャンで自動的にタブが作成され、以降は速くなる）。書き込み失敗（`persistFolderCache`）はスキャン・差分同期・読み込みのいずれも失敗させない（次回の自己修復に委ねる）。
+- **既知の制限**：この機能の初回展開後、まだ一度もスキャン・差分同期・読み込みを行っていないスプレッドシートは、次にloadCatalog()するまで従来通り遅い（`folders`タブがまだ無いため）。1回でもスキャンまたは読み込みを実行すればキャッシュが作られ、以降は速くなる。
+- ユニットテスト：`folderCache.test.ts`（ヘッダー検証・行パース・差分upsert・バッチ分割・cache-firstゲッター）、`drive.test.ts`（`folderEntries`出力引数の収集、ショートカット除外、`parents`欠落時のフォールバック）、`folderPaths.test.ts`（`resolvedEntries()`）、`differentialSync.test.ts`（`folderCacheUpdatesFromChanges`）、`sheetsSetup.test.ts`（`ensureFoldersTabExists`）。
+- **E2Eでの直接検証は無し**：既存のPlaywrightモック（`e2e/google-mocks.ts`）の`files.list`応答は固定でフォルダ階層を持たないため（`root`直下に音声ファイル1件のみ）、今回のスキャンではフォルダが1件も発見されず`persistFolderCache`が空マップで即returnする経路しか通らない。folders タブへの実際の書き込み経路自体は上記ユニットテストでカバーしているが、E2Eモックの`files.list`応答をフォルダ階層ありに拡張する対応は次PR以降の課題として据え置いた（他の既存E2Eテストが依存する固定レスポンスへの影響範囲を今回は広げなかった）。
 - **既知の制限（再生系・再抽出リトライ系。この一覧はすべて稀なエッジケースのP2で対応見送り・優先度低。索引・差分同期系の未解決P1（`reconcileIndexAgainstRoot`のresourceKey保護ショートカット誤判定・関連するサブツリー再走査の欠落等）は本一覧の対象外で、下記「次の実装ステップ」の`changes.list`関連の記録（「見送った」項目群）に別途記載済み）**：
   1. （稀なエッジケース）`PlaybackQueue.resume()`が置き換えた旧移動の巻き戻り（[review](https://github.com/kumacha666/apps/pull/392#discussion_r3895564027)、下記「PWA・Service Workerストリーミング」参照）
   2. （稀なエッジケース）アプリの一時停止ボタン→ネイティブ再開での認証相関ロス（同上）

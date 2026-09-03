@@ -16,6 +16,14 @@ import { parseIndexRows, filterSongs, groupSongsByAlbum, sortSongs, type AlbumGr
 import { CatalogOperationGate } from "./catalogOperationGate";
 import { CatalogSession } from "./catalogSession";
 import { FolderPathResolver } from "./folderPaths";
+import {
+  createCacheFirstFolderGetFn,
+  createFolderCacheIO,
+  isValidFoldersHeader,
+  parseFolderCacheEntries,
+  upsertFolderCacheEntries,
+  type FolderCacheEntry,
+} from "./folderCache";
 import { PlaybackQueue } from "./queue";
 import { registerStreamAuthResponder } from "./streamAuth";
 import {
@@ -36,7 +44,7 @@ import {
   isAuthError,
   type AudioFileEntry,
 } from "./drive";
-import { applyShortcutChangesToExtraRootFolderIds, planDifferentialSync } from "./differentialSync";
+import { applyShortcutChangesToExtraRootFolderIds, folderCacheUpdatesFromChanges, planDifferentialSync } from "./differentialSync";
 import { commitInitialChangeReplay, consumeChangesOrHandleExpiry } from "./initialChangeReplay";
 import { extractAndBuildIndexEntries } from "./tagExtraction";
 import { filterStaleUpsertEntries, retryFailedExtractions, revalidateTrashedFileIds } from "./retryExtraction";
@@ -55,6 +63,7 @@ import {
   listExtractionFailedFileIds,
 } from "./sheets";
 import {
+  ensureFoldersTabExists,
   ensureIndexAndSyncTabsExist,
   ensurePlaylistsTabsExist,
   ensureValidHeader,
@@ -525,8 +534,29 @@ async function loadCatalog(): Promise<void> {
     const syncState = readCompletedSyncStateForCatalog(await syncIO.readHeaderRow(), await syncIO.readAllRows());
     const rootFolderId = syncState.rootFolderId;
     const songs = parseIndexRows(await sheetsIO.listExistingRows());
+
+    // フォルダパス解決はfolderCache.tsの`folders`タブ（スキャン・差分同期が書き込むキャッシュ）を
+    // 優先し、キャッシュに無い分だけDriveへ問い合わせる（2026-09-03、実機利用で判明：曲ごとに
+    // 毎回Driveへ祖先フォルダを1階層ずつ問い合わせる従来方式は、数千フォルダ規模の実ライブラリで
+    // 起動のたびに5分以上かかっていた）。`folders`タブが未作成・ヘッダー不一致の場合は、
+    // loadCatalogがタブを作成・移行しないという既存方針（このファイル冒頭のコメント参照）を
+    // 保つため、キャッシュ無し＝従来通りDriveのみでの解決にフォールバックする（新規ユーザーの
+    // 初回読み込み・まだ一度もこの機能実装後にスキャンしていないスプレッドシート向け）。
+    let folderCache = new Map<string, FolderCacheEntry>();
+    let foldersTabReady = false;
+    try {
+      const folderCacheIO = createFolderCacheIO(spreadsheetId, () => auth.ensureAccessToken());
+      if (isValidFoldersHeader(await folderCacheIO.readHeaderRow())) {
+        folderCache = parseFolderCacheEntries(await folderCacheIO.listExistingRows());
+        foldersTabReady = true;
+      }
+    } catch {
+      // フォルダキャッシュは最適化に過ぎないため、読み取り自体に失敗してもDriveのみでの
+      // 解決（従来通り、遅いが正しい）に静かにフォールバックする。
+    }
+
     const resolver = new FolderPathResolver(
-      createDriveFolderGetFn(() => auth.ensureAccessToken()),
+      createCacheFirstFolderGetFn(folderCache, createDriveFolderGetFn(() => auth.ensureAccessToken())),
       [rootFolderId, ...decodeFolderIdList(syncState.shortcutRootFolderIds)]
     );
     const limiter = new ConcurrencyLimiter(6);
@@ -544,6 +574,11 @@ async function loadCatalog(): Promise<void> {
         }
       });
     }));
+    // 今回Driveへ実際に問い合わせて解決できた分（キャッシュに既にあった分は同じ値のため
+    // upsertFolderCacheEntries側で自然にスキップされる）を`folders`タブへ書き戻す。次回以降の
+    // 読み込みが速くなるセルフヒーリング。`folders`タブ自体が無い場合は作成しない（上記方針通り、
+    // 次回スキャン時に作成・反映される）。書き込み失敗はこの読み込み自体を失敗させない。
+    if (foldersTabReady) await persistFolderCache(spreadsheetId, resolver.resolvedEntries());
     catalogSession.replace(songs);
     loadedCatalogSpreadsheetId = spreadsheetId;
     renderAlbumGroups(groupSongsByAlbum(songs));
@@ -747,13 +782,35 @@ function renderResults(entries: AudioFileEntry[], failedFolders: string[]): void
 // バッチ処理・中断再開（着手順の目安5）で索引に書き込む。完了時にリコンサイル
 // （reconcileIndexAgainstRoot）とショートカット参照先フォルダIDの永続化も行う
 // （2026-08-21 Codexレビュー指摘：P1、下記参照）。
+// フォルダ名キャッシュ（folderCache.ts）への書き込み。起動時のloadCatalog()がDriveへ曲ごとに
+// フォルダパスを問い合わせていた（実ライブラリで5分以上かかっていた）問題への対処で、
+// スキャン・差分同期のついでに発見したフォルダのid→{name,親ID}をタブへ反映する。
+// これはあくまで起動時間短縮のための最適化キャッシュであり、書き込みに失敗してもスキャン
+// 自体は失敗として扱わない（次回のスキャン・差分同期で自己修復する。folders タブが既に
+// 存在するが無関係な内容の場合は静かにスキップする＝index/syncタブのような例外は投げない）。
+async function persistFolderCache(spreadsheetId: string, folderEntries: Map<string, { name: string; parentId?: string }>): Promise<void> {
+  if (folderEntries.size === 0) return;
+  try {
+    const setupIO = createSpreadsheetSetupIO(spreadsheetId, () => auth.ensureAccessToken());
+    await ensureFoldersTabExists(setupIO);
+    const folderCacheIO = createFolderCacheIO(spreadsheetId, () => auth.ensureAccessToken());
+    if (!isValidFoldersHeader(await folderCacheIO.readHeaderRow())) return;
+    const normalized = new Map<string, FolderCacheEntry>();
+    for (const [id, entry] of folderEntries) normalized.set(id, { name: entry.name, parentId: entry.parentId ?? "" });
+    await upsertFolderCacheEntries(folderCacheIO, normalized);
+  } catch (err) {
+    console.error("フォルダキャッシュの更新に失敗しました（次回のスキャンで自己修復します）", err);
+  }
+}
+
 async function runFullScan(
   sheetsIO: SheetsIndexIO,
   syncIO: SyncTabIO,
   folderId: string,
   driveId: string | undefined,
   startPageToken: string,
-  scanRunId: string
+  scanRunId: string,
+  spreadsheetId: string
 ): Promise<void> {
   setStatus("スキャン中...（フォルダ構成によっては時間がかかります）");
   const listFn = createDriveListFn(() => auth.ensureAccessToken());
@@ -764,8 +821,10 @@ async function runFullScan(
   // リコンサイルがrootFolderIdと同格の追加のルートとして扱えるようにする
   // （2026-08-21 Codexレビュー指摘：P1）。
   const shortcutTargetFolderIds = new Set<string>();
-  const entries = await listAudioFilesRecursive(listFn, folderId, "", failedFolders, undefined, shortcutTargetFolderIds);
+  const folderEntries = new Map<string, { name: string; parentId: string }>();
+  const entries = await listAudioFilesRecursive(listFn, folderId, "", failedFolders, undefined, shortcutTargetFolderIds, undefined, folderEntries);
   renderResults(entries, failedFolders);
+  await persistFolderCache(spreadsheetId, folderEntries);
 
   // 前回の実行（このscanRunId）で既に処理済み、かつDrive側で以後更新されていないファイルは
   // スキップする。中断・再開時にタグ抽出（重い処理）をやり直さないための判定
@@ -904,6 +963,7 @@ async function runFullScan(
         driveId,
         startPageToken,
         [...shortcutTargetFolderIds],
+        spreadsheetId,
         { completedAt: new Date().toISOString(), scanRunId }
       );
       // 差分再生でフォルダ取得失敗・410・別デバイスとの競合が発生した場合は、初回一覧と
@@ -939,6 +999,7 @@ async function runDifferentialSync(
   driveId: string | undefined,
   startPageToken: string,
   shortcutRootFolderIds: string[],
+  spreadsheetId: string,
   initialCompletion?: { completedAt: string; scanRunId: string }
 ): Promise<boolean> {
   setStatus("前回からの変更を確認中...");
@@ -978,6 +1039,7 @@ async function runDifferentialSync(
     isDescendantOfRoot(getParentsFn, parentIds, folderId, ancestryCache, extraRootFolderIds);
   const listFn = createDriveListFn(() => auth.ensureAccessToken());
   const failedFolders: string[] = [];
+  const folderEntries = new Map<string, { name: string; parentId: string }>();
 
   // フルスキャンでのみ永続化されるextraRootFolderIdsは、差分同期中に発生したショートカットの
   // 追加・削除・移動をまだ反映していない。このまま使うと、今回新しく追加されたショートカット
@@ -1021,12 +1083,18 @@ async function runDifferentialSync(
     // 破棄する（変化が無ければ既存のキャッシュは引き続き有効なため、無条件clearより安価）。
     listSubtree: async (targetFolderId, resourceKey) => {
       const sizeBefore = extraRootFolderIds.size;
-      const entries = await listAudioFilesRecursive(listFn, targetFolderId, "", failedFolders, 3, extraRootFolderIds, resourceKey);
+      const entries = await listAudioFilesRecursive(listFn, targetFolderId, "", failedFolders, 3, extraRootFolderIds, resourceKey, folderEntries);
       if (extraRootFolderIds.size !== sizeBefore) ancestryCache.clear();
       return entries;
     },
     existingScanState: scanStateByFileId,
   });
+  // フォルダ自身のリネーム・移動はchanges.list応答から直接反映できる（folderCacheUpdatesFromChanges
+  // 参照）。listSubtreeが発見した子フォルダのエントリ（folderEntries、上記）と統合してまとめて
+  // 書き込む。後者を後にマージし、同じfolderIdが両方にあってもサブツリー再走査側の値を優先する
+  // 理由は無いため、単純に上書き（実際にはほぼ同じ値のはず）。
+  for (const [id, entry] of folderCacheUpdatesFromChanges(changes)) folderEntries.set(id, entry);
+  await persistFolderCache(spreadsheetId, folderEntries);
 
   // タグ抽出（数十秒以上かかりうる）の後、破壊的・追加的な書き込み（アップサート・削除・
   // リコンサイル）の直前に、差分同期を開始した時点のroot/tokenがまだ現在のsync状態と
@@ -1421,9 +1489,9 @@ async function handleScan(): Promise<void> {
     );
 
     if (prep.hasCompletedInitialScan) {
-      await runDifferentialSync(sheetsIO, syncIO, folderId, driveId, prep.startPageToken, prep.shortcutRootFolderIds);
+      await runDifferentialSync(sheetsIO, syncIO, folderId, driveId, prep.startPageToken, prep.shortcutRootFolderIds, spreadsheetId);
     } else {
-      await runFullScan(sheetsIO, syncIO, folderId, driveId, prep.startPageToken, prep.scanRunId);
+      await runFullScan(sheetsIO, syncIO, folderId, driveId, prep.startPageToken, prep.scanRunId, spreadsheetId);
     }
   } catch (err) {
     // 401（トークン取り消し等）は、ローカルのexpiresAtがまだ有効に見えていても

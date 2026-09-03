@@ -20,6 +20,7 @@
 import { columnLetter, createSheetsFetch, INDEX_SHEET_HEADER, INDEX_SHEET_NAME, isLegacyIndexHeaderV1, isLegacyIndexHeaderV2 } from "./sheets";
 import { SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 import { PLAYLISTS_SHEET_HEADER, PLAYLISTS_SHEET_NAME, PLAYLIST_TRACKS_SHEET_HEADER, PLAYLIST_TRACKS_SHEET_NAME } from "./playlists";
+import { FOLDERS_SHEET_HEADER, FOLDERS_SHEET_NAME } from "./folderCache";
 
 // スプレッドシートのタブ一覧確認・タブ追加・ヘッダー行書き込みをDIするインターフェース
 // （drive.ts/sheets.tsと同じDI方針）。
@@ -80,6 +81,15 @@ export async function ensurePlaylistsTabsExist(io: SpreadsheetSetupIO): Promise<
   const titles = new Set(await io.listSheetTitles());
   await ensureTabExists(io, PLAYLISTS_SHEET_NAME, PLAYLISTS_SHEET_HEADER, titles);
   await ensureTabExists(io, PLAYLIST_TRACKS_SHEET_NAME, PLAYLIST_TRACKS_SHEET_HEADER, titles);
+}
+
+// フォルダ名キャッシュ（folderCache.ts）専用。index/syncタブと同じ「既存タブには一切触れない」
+// 方針だが、呼び出しタイミングが異なる（スキャン完了時、フォルダエントリを実際に書き込む
+// 直前にmain.tsから呼ぶ）ため独立した関数にする。起動時間短縮のための最適化キャッシュであり、
+// 呼び出し元は失敗してもスキャン自体を失敗させない想定（main.ts参照）。
+export async function ensureFoldersTabExists(io: SpreadsheetSetupIO): Promise<void> {
+  const titles = new Set(await io.listSheetTitles());
+  await ensureTabExists(io, FOLDERS_SHEET_NAME, FOLDERS_SHEET_HEADER, titles);
 }
 
 // ヘッダー行を読んで検証する、というensureIndexAndSyncTabsExist呼び出し後にindex/syncタブ
