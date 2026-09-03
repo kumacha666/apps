@@ -129,18 +129,8 @@ let loadedPlaylistTracks: PlaylistTrackRow[] = [];
 // （通常Bには一致する行が無いため`deletePlaylist`は静かに成功し、UIはAの項目が消えたかのように
 // 見せてしまう）。一覧を読み込んだ時点のスプレッドシートIDを保持し、削除は常にそちらへ送る。
 let loadedPlaylistsSpreadsheetId: string | null = null;
-// loadPlaylists()の呼び出しごとにインクリメントする世代カウンタ（2026-09-03 Codexレビュー
-// 指摘：P2）。保存直後の自動更新と手動の「プレイリスト一覧を更新」等、複数のloadPlaylists()
-// 呼び出しが重なりうる。各呼び出しは自分のPromiseチェーン内でloadedPlaylists/
-// loadedPlaylistTracks/loadedPlaylistsSpreadsheetIdの3つを順に代入するため、先に開始した
-// 呼び出しが後で完了すると、後から開始して先に完了した（より新しい）呼び出しの結果を、
-// 古いデータで部分的に上書きしてしまいうる（例：後発の呼び出しがloadedPlaylistsまで
-// 書き終えた直後に、先発の呼び出しがloadedPlaylistTracks/loadedPlaylistsSpreadsheetIdだけを
-// 上書きし、一覧の名前と収録曲・削除対象が別々のスプレッドシートのものに食い違う）。
-// 呼び出し開始時に採番した世代が、実際に書き込む直前でも依然として最新であることを確認して
-// からのみ3フィールドをまとめて（コミットとして）反映する。最新でなくなっていた場合は
-// 自分の結果を静かに破棄する（より新しい呼び出しの結果を尊重する）。
-let playlistsLoadGeneration = 0;
+// loadPlaylists()の複数呼び出しが重なった場合の整合性は、下記reservePlaylistsLoadTarget/
+// loadPlaylists本体のコメント参照。
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -297,52 +287,69 @@ function renderPlaylistList(): void {
   }
 }
 
-// E2Eテスト（overlapping loadPlaylists()呼び出しがgenerationガードで正しく破棄されることの
-// 検証）専用のコミット回数カウンタ。本番の挙動には一切影響しない（VITE_E2E時のみ意味を持つ）。
+// E2Eテスト（overlapping loadPlaylists()呼び出しが正しく破棄・コミットされることの検証）
+// 専用のコミット回数カウンタ。本番の挙動には一切影響しない（VITE_E2E時のみ意味を持つ）。
 let playlistsCommitCountForE2E = 0;
 
-// 呼び出し元（handleRefreshPlaylists/handleSavePlaylist/handleDeletePlaylist）が、実際に
-// loadPlaylists()を呼ぶより前の、操作を開始した最初の同期的なタイミングで呼ぶ。世代の
-// 割り当てをloadPlaylists()呼び出し自体の直前まで遅らせると、採番順がユーザー操作の順序と
-// 一致しなくなる（2026-09-03 Codexレビュー指摘：P2。保存操作Aが`createPlaylist()`の完了を
-// 待っている間に、ユーザーが別のスプレッドシートBへ切り替えて手動更新を完了させても、Aの
-// 保存完了後に呼ばれるloadPlaylists()がその時点で初めて世代を採番すると、操作の開始順ではなく
-// 「実際にloadPlaylists()に到達した順」で世代が決まってしまい、後から操作したBの結果を、
-// 先に操作を始めたが完了が遅れたAの結果で上書きしてしまう）。操作の入口で予約しておけば、
-// どちらのcreatePlaylist/deletePlaylistが先に終わっても、採番順は常にユーザー操作の開始順を
-// 反映する。
-function reservePlaylistsLoadGeneration(): number {
-  return ++playlistsLoadGeneration;
+// 「ユーザーが最後に指定した対象スプレッドシートID」。呼び出し元（handleRefreshPlaylists/
+// handleSavePlaylist/handleDeletePlaylist）が、実際にloadPlaylists()を呼ぶより前の、操作を
+// 開始した最初の同期的なタイミングで呼ぶ（2026-09-03 Codexレビュー指摘：P2。保存操作Aが
+// `createPlaylist()`の完了を待っている間に、ユーザーが別のスプレッドシートBへ切り替えて
+// 手動更新を完了させても、Aの保存完了後に初めて対象を記録すると、操作の開始順ではなく
+// 「実際にloadPlaylists()に到達した順」で対象が決まってしまい、後から操作したBの結果を、
+// 先に操作を始めたが完了が遅れたAの結果で上書きしてしまう）。
+//
+// 単調増加する世代番号ではなく対象スプレッドシートIDそのもので比較する（2026-09-03 さらに
+// Codexレビュー指摘：P2。世代番号方式だと、同じスプレッドシートに対する2つの読み込みが
+// 重なった場合（例：保存操作自身の自動更新と、それと並行して押された手動更新）、後から
+// 開始した方が先に完了していったん表示された後、先に開始したがcreatePlaylist()の完了を
+// 待っていた保存側の自動更新が後から完了しても、より古い世代という理由だけで一律に破棄
+// されてしまい、保存されたはずのプレイリストが次に手動更新するまで一覧に現れなかった。
+// 「対象スプレッドシートが変わっていないか」だけを見る方式に変更し、同じスプレッドシートを
+// 対象とした重複読み込み同士は開始順に関わらずどちらが先に完了しても構わない（最後に完了
+// した方の結果がそのまま表示される。次の更新で自然に解消するため実害は小さい。sync タブ等の
+// 他のTOCTOUと同じ「事前防止ではなく事後の整合」という本アプリ全体の方針の範囲内）。
+let currentPlaylistsTargetSpreadsheetId: string | null = null;
+
+function reservePlaylistsLoadTarget(spreadsheetId: string): void {
+  currentPlaylistsTargetSpreadsheetId = spreadsheetId;
 }
 
-async function loadPlaylists(spreadsheetId: string, generation: number): Promise<void> {
+// 戻り値は実際にコミットした（＝表示に反映した）かどうか。呼び出し元は、対象スプレッドシートが
+// 既に切り替えられ自分の結果が破棄された場合、その旨のステータス表示を行ってはならない
+// （2026-09-03 Codexレビュー指摘：P2。破棄された古い呼び出しが、より新しい呼び出し・別の
+// 操作が既に出したステータス表示を「保存しました」等で上書きしてしまう）。
+async function loadPlaylists(spreadsheetId: string): Promise<boolean> {
   const playlistsIO = playlistsSpreadsheetIO(spreadsheetId);
   await ensurePlaylistTabsReady(spreadsheetId, playlistsIO);
   const playlists = parsePlaylistRows(await playlistsIO.listPlaylists());
   const playlistTracks = parsePlaylistTrackRows(await playlistsIO.listPlaylistTracks());
-  // 3フィールドへの代入直前に、自分が依然として最新の呼び出しかどうかを確認する。後から
-  // 開始した別の呼び出しが既に完了していれば、自分の（相対的に古い）結果は破棄する。
-  if (generation !== playlistsLoadGeneration) return;
+  // 3フィールドへの代入直前に、自分が読みに行ったスプレッドシートが依然としてユーザーの
+  // 対象と一致するか確認する。既に別のスプレッドシートへ切り替えられていれば結果を破棄する。
+  if (spreadsheetId !== currentPlaylistsTargetSpreadsheetId) return false;
   loadedPlaylists = playlists;
   loadedPlaylistTracks = playlistTracks;
   loadedPlaylistsSpreadsheetId = spreadsheetId;
   playlistsCommitCountForE2E += 1;
   renderPlaylistList();
+  return true;
 }
 
 async function handleRefreshPlaylists(): Promise<void> {
   const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
   if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
-  // 操作を開始した時点（最初のawaitより前）で世代を予約する。loadPlaylists()自体は
-  // ensurePlaylistTabsReady等の非同期処理を経てから世代を検証するため、予約が遅れると
-  // 他の操作（保存・削除に伴う自動更新等）との開始順の逆転を防げない（reservePlaylistsLoad
-  // Generationのコメント参照）。
-  const generation = reservePlaylistsLoadGeneration();
+  // 操作を開始した時点（最初のawaitより前）で対象を予約する。loadPlaylists()自体は
+  // ensurePlaylistTabsReady等の非同期処理を経てから対象を検証するため、予約が遅れると
+  // 他の操作（保存・削除に伴う自動更新等）との開始順の逆転を防げない
+  // （reservePlaylistsLoadTargetのコメント参照）。
+  reservePlaylistsLoadTarget(spreadsheetId);
   const button = el<HTMLButtonElement>("refresh-playlists-btn");
   button.disabled = true;
   try {
-    await loadPlaylists(spreadsheetId, generation);
-    setStatus(`プレイリスト${loadedPlaylists.length}件を読み込みました。`);
+    const committed = await loadPlaylists(spreadsheetId);
+    // 対象スプレッドシートが既に切り替えられ結果が破棄された場合、より新しい操作が
+    // 既に出したステータス表示を上書きしないよう、何も表示しない。
+    if (committed) setStatus(`プレイリスト${loadedPlaylists.length}件を読み込みました。`);
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
     setStatus(err instanceof Error ? `プレイリスト一覧の読み込みに失敗しました: ${err.message}` : "プレイリスト一覧の読み込みに失敗しました", true);
@@ -360,11 +367,11 @@ async function handleSavePlaylist(): Promise<void> {
   const fileIds = queue?.list().map((song) => song.fileId) ?? [];
   if (fileIds.length === 0) { setStatus("保存する再生リストがありません。条件を指定して再生リストを作ってから保存してください。", true); return; }
   // createPlaylist()（収録曲の件数次第で数秒かかりうる）を待つ前、操作を開始した最初の
-  // 同期的なタイミングで世代を予約する（2026-09-03 Codexレビュー指摘：P2。保存完了後に
-  // 初めてloadPlaylists()内で世代を採番すると、保存の完了を待っている間にユーザーが別の
+  // 同期的なタイミングで対象を予約する（2026-09-03 Codexレビュー指摘：P2。保存完了後に
+  // 初めてloadPlaylists()内で対象を記録すると、保存の完了を待っている間にユーザーが別の
   // スプレッドシートへ切り替えて手動更新を先に完了させていても、後から完了したこの保存の
-  // 自動更新の方が新しい世代を得てしまい、ユーザーの最新の操作結果を上書きしてしまう）。
-  const refreshGeneration = reservePlaylistsLoadGeneration();
+  // 自動更新の方が新しい対象記録を得てしまい、ユーザーの最新の操作結果を上書きしてしまう）。
+  reservePlaylistsLoadTarget(spreadsheetId);
   const button = el<HTMLButtonElement>("save-playlist-btn");
   button.disabled = true;
   try {
@@ -377,10 +384,18 @@ async function handleSavePlaylist(): Promise<void> {
     // 失敗を「保存に失敗しました」として同じcatchで報告してはならない（2026-09-03 Codex
     // レビュー指摘：P2。保存自体は成功しているのに失敗と誤表示すると、ユーザーが同じ名前で
     // 再度保存し直し、新しいUUIDで重複したプレイリストを作ってしまう）。
-    nameInput.value = "";
+    // nameInput.value === name（保存開始時点の名前のまま）の場合のみ空欄に戻す。await中に
+    // ユーザーが次のプレイリスト名を入力し始めていた場合、その入力を消してしまわないため
+    // （2026-09-03 Codexレビュー指摘：P2）。
+    if (nameInput.value === name) nameInput.value = "";
     try {
-      await loadPlaylists(spreadsheetId, refreshGeneration);
-      setStatus(`プレイリスト「${name}」（${fileIds.length}曲）を保存しました。`);
+      const committed = await loadPlaylists(spreadsheetId);
+      // 対象スプレッドシートが既に切り替えられ一覧の反映が破棄された場合、より新しい操作が
+      // 既に出したステータス表示を上書きしないよう、何も表示しない（2026-09-03 Codex
+      // レビュー指摘：P2。保存自体は成功しているが、既に別のスプレッドシートを見ている
+      // ユーザーへ「保存しました」とだけ表示すると、どちらのスプレッドシートの話か
+      // 紛らわしくもなる）。
+      if (committed) setStatus(`プレイリスト「${name}」（${fileIds.length}曲）を保存しました。`);
     } catch (refreshErr) {
       if (isAuthFailure(refreshErr)) auth.clearToken();
       setStatus(`プレイリスト「${name}」（${fileIds.length}曲）は保存済みですが、一覧の更新に失敗しました。「プレイリスト一覧を更新」をお試しください。`, true);
@@ -427,8 +442,8 @@ async function handleDeletePlaylist(playlistId: string): Promise<void> {
   const spreadsheetId = loadedPlaylistsSpreadsheetId;
   if (!spreadsheetId) { setStatus("先にプレイリスト一覧を読み込んでください", true); return; }
   // handleSavePlaylistと同じ理由：deletePlaylist()を待つ前、操作を開始した最初の同期的な
-  // タイミングで世代を予約する（2026-09-03 Codexレビュー指摘：P2）。
-  const refreshGeneration = reservePlaylistsLoadGeneration();
+  // タイミングで対象を予約する（2026-09-03 Codexレビュー指摘：P2）。
+  reservePlaylistsLoadTarget(spreadsheetId);
   try {
     const playlistsIO = playlistsSpreadsheetIO(spreadsheetId);
     await deletePlaylist(playlistsIO, playlistId);
@@ -436,8 +451,10 @@ async function handleDeletePlaylist(playlistId: string): Promise<void> {
     // 以降のloadPlaylists()（一覧再読み込み）の失敗を「削除に失敗しました」として報告しては
     // ならない（2026-09-03 Codexレビュー指摘：P3）。
     try {
-      await loadPlaylists(spreadsheetId, refreshGeneration);
-      setStatus("プレイリストを削除しました。");
+      const committed = await loadPlaylists(spreadsheetId);
+      // handleSavePlaylistと同じ理由：対象スプレッドシートが既に切り替えられていれば、
+      // より新しい操作のステータス表示を上書きしない（2026-09-03 Codexレビュー指摘：P2）。
+      if (committed) setStatus("プレイリストを削除しました。");
     } catch (refreshErr) {
       if (isAuthFailure(refreshErr)) auth.clearToken();
       setStatus("プレイリストは削除済みですが、一覧の更新に失敗しました。「プレイリスト一覧を更新」をお試しください。", true);
@@ -1472,14 +1489,14 @@ if (import.meta.env.VITE_E2E === "true") {
     window as Window & {
       __e2e?: {
         serviceWorkerReady: () => Promise<void>;
-        loadPlaylists: (spreadsheetId: string) => Promise<void>;
+        loadPlaylists: (spreadsheetId: string) => Promise<boolean>;
         getPlaylistsCommitCount: () => number;
       };
     }
   ).__e2e = {
     serviceWorkerReady: () => serviceWorkerReady ?? Promise.resolve(),
-    // overlapping loadPlaylists()呼び出しのgenerationガードを直接検証するためのフック。
-    loadPlaylists: (spreadsheetId: string) => loadPlaylists(spreadsheetId, reservePlaylistsLoadGeneration()),
+    // overlapping loadPlaylists()呼び出しの対象スプレッドシートガードを直接検証するためのフック。
+    loadPlaylists: (spreadsheetId: string) => { reservePlaylistsLoadTarget(spreadsheetId); return loadPlaylists(spreadsheetId); },
     getPlaylistsCommitCount: () => playlistsCommitCountForE2E,
   };
 }

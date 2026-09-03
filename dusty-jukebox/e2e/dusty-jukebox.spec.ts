@@ -199,20 +199,22 @@ test("読み込んだプレイリストの全曲が索引から消えていた�
   await expect.poll(() => page.evaluate(() => (window as unknown as { __e2ePauseCalls: number }).__e2ePauseCalls)).toBeGreaterThan(pauseCallsBefore);
 });
 
-test("重なったプレイリスト一覧読み込みは、後から開始した方だけをコミットする（先に開始した読み込みが後で完了しても上書きしない）", async ({ context, page }) => {
+test("対象スプレッドシートを切り替えた後に完了した旧対象向けの読み込みはコミットしない（新対象への切り替え後は破棄）", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { gatePlaylistsListReads: true });
   await page.goto("/"); await login(page);
   await page.locator("#spreadsheet-id").fill("sheet");
 
   const getCommitCount = () => page.evaluate(() => (window as unknown as { __e2e: { getPlaylistsCommitCount: () => number } }).__e2e.getPlaylistsCommitCount());
-  const callLoadPlaylists = () => page.evaluate(() => (window as unknown as { __e2e: { loadPlaylists: (id: string) => Promise<void> } }).__e2e.loadPlaylists("sheet"));
+  const callLoadPlaylists = (id: string) => page.evaluate((spreadsheetId) => (window as unknown as { __e2e: { loadPlaylists: (id: string) => Promise<boolean> } }).__e2e.loadPlaylists(spreadsheetId), id);
 
   // listPlaylists→listPlaylistTracksは同一呼び出し内で直列（await）のため、1回の呼び出しに
-  // つき同時に保留されるのは常に1件。呼び出しA（先に開始）のlistPlaylistsが保留される。
-  const callA = callLoadPlaylists();
+  // つき同時に保留されるのは常に1件。呼び出しA（"sheet"を対象に先に開始）のlistPlaylistsが
+  // 保留される。
+  const callA = callLoadPlaylists("sheet");
   await expect.poll(() => mock.pendingPlaylistsReadCount()).toBe(1);
-  // 呼び出しB（後から開始）のlistPlaylistsも保留される（Aはまだ保留中のまま）。
-  const callB = callLoadPlaylists();
+  // 呼び出しB（別のスプレッドシート"sheet-b"へ対象を切り替えて後から開始）のlistPlaylistsも
+  // 保留される（Aはまだ保留中のまま）。
+  const callB = callLoadPlaylists("sheet-b");
   await expect.poll(() => mock.pendingPlaylistsReadCount()).toBe(2);
 
   // BのlistPlaylists（インデックス1）を解放するとBはlistPlaylistTracksへ進み、それも保留される。
@@ -220,21 +222,21 @@ test("重なったプレイリスト一覧読み込みは、後から開始し�
   await expect.poll(() => mock.pendingPlaylistsReadCount()).toBe(2);
   // BのlistPlaylistTracks（残っている方のインデックス1）を解放し、Bを完了させる。
   mock.releasePlaylistsReadsAt([1]);
-  await callB;
+  expect(await callB).toBe(true);
   await expect.poll(() => getCommitCount()).toBe(1);
 
   // ここでAのlistPlaylists（インデックス0）を解放するとAはlistPlaylistTracksへ進む。
   mock.releasePlaylistsReadsAt([0]);
   await expect.poll(() => mock.pendingPlaylistsReadCount()).toBe(1);
-  // Aのlistplaylistracksを解放しAを完了させる。Aは先に開始したが後から完了する
-  // （＝もはや最新の呼び出しではない）ため、generationガードによりコミットされないはずである。
+  // AのlistPlaylistTracksを解放しAを完了させる。対象は既に"sheet-b"へ切り替わっている
+  // （＝Aはもはや対象スプレッドシートではない）ため、コミットされないはずである。
   mock.releasePlaylistsReadsAt([0]);
-  await callA;
+  expect(await callA).toBe(false);
   // Aの完了後もコミット回数はBの1回のまま増えないことを確認する（Aの結果が破棄されたことの検証）。
   await expect.poll(() => getCommitCount()).toBe(1);
 });
 
-test("保存中の一覧自動更新は、保存操作の開始より後に始まった手動更新の結果を上書きしない", async ({ context, page }) => {
+test("保存操作自身の一覧自動更新は、同じスプレッドシートを対象とした手動更新が先に完了していても反映される", async ({ context, page }) => {
   // createPlaylist()（playlists/playlist_tracksタブへのappend）を意図的に長引かせる。
   const mock = await installGoogleMocks(context, { gatePlaylistsAppends: true });
   await page.goto("/"); await login(page); await openCatalog(page);
@@ -247,20 +249,42 @@ test("保存中の一覧自動更新は、保存操作の開始より後に始�
   await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
   await expect(page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" })).toBeDisabled();
 
-  // 保存操作の開始より後に、手動更新（後発の操作）を実行して完了させる。「一覧が0件」は
-  // 何もロードしていない初期状態でも成り立ってしまい待機条件として使えないため、
-  // コミット回数が実際に1件増えるまで待つことで、手動更新が本当に完了したことを確認する。
+  // 保存操作の開始より後、同じスプレッドシートに対して手動更新（後発の操作）を実行して
+  // 完了させる。この時点ではまだ何も保存されていないため一覧は0件。「一覧が0件」は何も
+  // ロードしていない初期状態でも成り立ってしまい待機条件として使えないため、コミット回数が
+  // 実際に1件増えるまで待つことで、手動更新が本当に完了したことを確認する。
   await page.getByRole("button", { name: "プレイリスト一覧を更新" }).click();
   await expect.poll(() => getCommitCount()).toBe(1);
   await expect(page.locator("#playlist-list li")).toHaveCount(0);
 
-  // 保留していた保存のappendを解放し、保存を完了させる。保存操作の自動更新は、手動更新より
-  // 先に開始した（＝より古い世代を予約した）ため、後発の手動更新の結果（0件）を上書きしては
-  // ならない＝コミット回数は1のまま増えないはずである。
+  // 保留していた保存のappendを解放し、保存を完了させる。対象スプレッドシートは手動更新の
+  // 後も切り替わっていない（＝同じスプレッドシートに対する重複読み込み）ため、保存操作
+  // 自身の自動更新は開始順に関わらずコミットされ、新しく保存したプレイリストが一覧へ
+  // 反映されなければならない（2026-09-03 Codexレビュー指摘：P2。世代番号による開始順
+  // 判定だと、この自動更新が「古い」という理由だけで一律に破棄され、保存したプレイリストが
+  // 次に手動更新するまで一覧に現れなかった）。
   mock.releaseAllPlaylistsAppends();
   await expect(page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" })).toBeEnabled();
-  await expect(page.locator("#playlist-list li")).toHaveCount(0);
-  expect(await getCommitCount()).toBe(1);
+  await expect.poll(() => getCommitCount()).toBe(2);
+  await expect(page.locator("#playlist-list li")).toHaveCount(1);
+});
+
+test("保存中に次のプレイリスト名を入力し始めても、保存完了時にその入力を消さない", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context, { gatePlaylistsAppends: true });
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.locator("#playlist-name").fill("先発の保存");
+  await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
+  await expect(page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" })).toBeDisabled();
+
+  // 保存が完了する前に、次のプレイリスト用の名前を入力し始める。
+  await page.locator("#playlist-name").fill("次の入力中の名前");
+
+  mock.releaseAllPlaylistsAppends();
+  await expect(page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" })).toBeEnabled();
+  // 保存完了時に入力欄が保存開始時点の名前（"先発の保存"）と一致しない＝ユーザーが既に
+  // 次の名前を入力し始めているため、消さずに残さなければならない。
+  await expect(page.locator("#playlist-name")).toHaveValue("次の入力中の名前");
 });
 
 test("スキャン開始後のアルバム再生は再読み込みエラーになりキューを変更しない", async ({ context, page }) => {
