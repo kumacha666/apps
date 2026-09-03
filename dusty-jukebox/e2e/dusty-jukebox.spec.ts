@@ -125,20 +125,29 @@ test("再生リストの曲をクリックするとその曲が再生され、�
 });
 
 test("再生リストの曲クリックがDrive側401で保留になっても、認証継続後の再生中の曲名表示と行のハイライトが正しい（2026-09-03 レビュー指摘：handleStreamTokenRejected()の認証継続はhandleQueuePlayback()を経由しないため、独立した再描画経路が必要）", async ({ context, page }) => {
-  const mock = await installGoogleMocks(context, { rejectFirstStreamToken: true });
+  // delayFirstMediaPlay: 最初のHTMLMediaElement.play()を意図的に保留し、SWの401応答（実際の
+  // fetch/ルート処理を経由するため相対的に遅い）が先に届く現実的な順序を再現する。これが無いと
+  // play()が即座に解決しqueue.currentFileIdが確定してしまい、認証継続成功時の再描画有無による
+  // 表示の違いが表面化しない（false negativeになる、レビュー指摘）。
+  const mock = await installGoogleMocks(context, { rejectFirstStreamToken: true, delayFirstMediaPlay: true });
   await page.goto("/"); await login(page); await openCatalog(page);
 
   const items = page.locator("#catalog-list li");
-  await items.nth(1).locator(".song-link").click(); // 曲B（Second song）。最初のストリーム要求が401で保留になる
+  await items.nth(1).locator(".song-link").click(); // 曲B（Second song）。最初のplay()は保留のまま、ストリーム要求だけが401で拒否される
   await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeVisible();
+  // play()がまだ解決していないため、queue.currentFileIdは未確定のまま
+  await expect(page.locator("#now-playing")).toHaveText("");
+  await expect(items.nth(1)).not.toHaveClass(/now-playing/);
 
-  await page.getByRole("button", { name: "認証を更新して続行" }).click();
+  await page.getByRole("button", { name: "認証を更新して続行" }).click(); // 認証継続は2回目のplay()（保留されない）で再生する
   await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeHidden();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
   await expect(page.locator("#now-playing")).toContainText("Second song");
   await expect(items.nth(1)).toHaveClass(/now-playing/);
   await expect(items.nth(0)).not.toHaveClass(/now-playing/);
   expect(mock.authFailures).toEqual([]);
+
+  await page.evaluate(() => (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay());
 });
 
 test("検索で曲を絞り込み、アルバムをdisc/track順のキューに設定して再生できる", async ({ context, page }) => {

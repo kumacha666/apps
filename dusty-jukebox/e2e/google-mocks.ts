@@ -23,6 +23,16 @@ export type MockOptions = {
   gatePlaylistsListReads?: boolean;
   /** Hold every playlists/playlist_tracks append (POST) until the test releases it via releaseAllPlaylistsAppends(). */
   gatePlaylistsAppends?: boolean;
+  /**
+   * Hold the first HTMLMediaElement.play() call pending (never resolving on its own) until the
+   * test releases it via window.__e2eReleaseFirstMediaPlay(). Every later play() call resolves
+   * immediately as usual. Used to reproduce the realistic ordering where a Drive-side stream
+   * rejection (rejectFirstStreamToken) arrives before the native play() promise settles, so
+   * PlaybackQueue.currentFileId is still unset when the "認証を更新して続行" continuation UI
+   * appears (2026-09-03, review follow-up: without this, play() resolving instantly made the
+   * queue's optimistic render happen before the rejection, masking a real display-staleness bug).
+   */
+  delayFirstMediaPlay?: boolean;
 };
 
 type SheetWrite = {
@@ -92,8 +102,20 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   // reflects app-driven playback here. Track pause() calls explicitly via
   // window.__e2ePauseCalls so tests can verify a real pause was requested
   // (e.g. stopping playback when a loaded playlist resolves to zero songs).
-  await context.addInitScript(() => {
-    Object.defineProperty(HTMLMediaElement.prototype, "play", { configurable: true, value: () => Promise.resolve() });
+  await context.addInitScript((delayFirstPlay: boolean) => {
+    let firstPlayHeld = false;
+    let releaseFirstPlay: (() => void) | undefined;
+    (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay = () => releaseFirstPlay?.();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: () => {
+        if (delayFirstPlay && !firstPlayHeld) {
+          firstPlayHeld = true;
+          return new Promise<void>((resolve) => { releaseFirstPlay = resolve; });
+        }
+        return Promise.resolve();
+      },
+    });
     (window as unknown as { __e2ePauseCalls: number }).__e2ePauseCalls = 0;
     const originalPause = HTMLMediaElement.prototype.pause;
     Object.defineProperty(HTMLMediaElement.prototype, "pause", {
@@ -103,7 +125,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
         return originalPause.apply(this, args);
       },
     });
-  });
+  }, options.delayFirstMediaPlay ?? false);
   const json = (route: Route, value: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
   const requireToken = (route: Route) => {
     if (route.request().headers().authorization === `Bearer ${TOKEN}`) return true;
