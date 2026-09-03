@@ -56,11 +56,30 @@ import {
 } from "./sheets";
 import {
   ensureIndexAndSyncTabsExist,
+  ensurePlaylistsTabsExist,
   ensureValidHeader,
   createSpreadsheetSetupIO,
   migrateLegacyIndexHeaderV1,
   migrateLegacyIndexHeaderV2,
 } from "./sheetsSetup";
+import {
+  createPlaylist,
+  createPlaylistsIO,
+  deletePlaylist,
+  fileIdsForPlaylist,
+  generateDeviceRandomId,
+  isValidPlaylistsHeader,
+  isValidPlaylistTracksHeader,
+  parsePlaylistRows,
+  parsePlaylistTrackRows,
+  PLAYLISTS_SHEET_HEADER,
+  PLAYLISTS_SHEET_NAME,
+  PLAYLIST_TRACKS_SHEET_HEADER,
+  PLAYLIST_TRACKS_SHEET_NAME,
+  type Playlist,
+  type PlaylistTrackRow,
+  type PlaylistsIO,
+} from "./playlists";
 import {
   advanceStartPageToken,
   clearScanRunId,
@@ -97,6 +116,12 @@ const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
 let serviceWorkerReady: Promise<void> | null = null;
 const catalogOperationGate = new CatalogOperationGate();
+// アプリ起動時に1回だけ生成し、以降のプレイリスト保存操作すべてで使い回す
+// （CONCEPT.md 4.3節、playlists.tsのmakeOrderKey参照）。
+const deviceRandomId = generateDeviceRandomId();
+// 直近にloadPlaylists()で読み込んだ一覧（一覧表示・読み込み・削除で使い回す）。
+let loadedPlaylists: Playlist[] = [];
+let loadedPlaylistTracks: PlaylistTrackRow[] = [];
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -158,6 +183,13 @@ function render(): void {
         <h3>アルバム</h3>
         <ul id="album-list" class="result-list"></ul>
       </section>
+      <section class="playlists">
+        <h2>保存済みプレイリスト</h2>
+        <label class="field"><span>プレイリスト名</span><input id="playlist-name" type="text" placeholder="例: ドライブ用" /></label>
+        <button id="save-playlist-btn" type="button">現在の再生リストをプレイリストとして保存</button>
+        <button id="refresh-playlists-btn" type="button">プレイリスト一覧を更新</button>
+        <ul id="playlist-list" class="result-list"></ul>
+      </section>
       <p id="status" class="status"></p>
       <ul id="result-list" class="result-list"></ul>
     `
@@ -194,6 +226,136 @@ function renderAlbumGroups(groups: AlbumGroup[]): void {
     item.append(label, button); list.append(item);
   }
 }
+function playlistsSpreadsheetIO(spreadsheetId: string): PlaylistsIO {
+  return createPlaylistsIO(spreadsheetId, () => auth.ensureAccessToken());
+}
+
+// playlists/playlist_tracksタブの自動作成・ヘッダー検証。sheetsSetup.tsのensureIndexAndSyncTabsExist
+// と同じ「既存タブには一切触れない」方針だが、index/syncタブとは別のタイミング（ユーザーが
+// プレイリスト機能を初めて使おうとした時点）で呼ぶため独立した関数として持つ。
+async function ensurePlaylistTabsReady(spreadsheetId: string, playlistsIO: PlaylistsIO): Promise<void> {
+  const setupIO = createSpreadsheetSetupIO(spreadsheetId, () => auth.ensureAccessToken());
+  await ensurePlaylistsTabsExist(setupIO);
+  await ensureValidHeader(
+    { readHeaderRow: () => playlistsIO.readPlaylistsHeaderRow() },
+    setupIO,
+    PLAYLISTS_SHEET_NAME,
+    PLAYLISTS_SHEET_HEADER,
+    isValidPlaylistsHeader
+  );
+  await ensureValidHeader(
+    { readHeaderRow: () => playlistsIO.readPlaylistTracksHeaderRow() },
+    setupIO,
+    PLAYLIST_TRACKS_SHEET_NAME,
+    PLAYLIST_TRACKS_SHEET_HEADER,
+    isValidPlaylistTracksHeader
+  );
+}
+
+function renderPlaylistList(): void {
+  const list = el<HTMLUListElement>("playlist-list");
+  list.innerHTML = "";
+  for (const playlist of loadedPlaylists) {
+    const trackCount = fileIdsForPlaylist(loadedPlaylistTracks, playlist.playlistId).length;
+    const item = document.createElement("li");
+    const label = document.createElement("span");
+    label.textContent = `${playlist.name}（${trackCount}曲） `;
+    const loadButton = document.createElement("button");
+    loadButton.type = "button";
+    loadButton.textContent = "読み込んで再生リストにする";
+    loadButton.addEventListener("click", () => void handleLoadPlaylistIntoQueue(playlist.playlistId));
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.textContent = "削除";
+    deleteButton.addEventListener("click", () => void handleDeletePlaylist(playlist.playlistId));
+    item.append(label, loadButton, deleteButton);
+    list.append(item);
+  }
+}
+
+async function loadPlaylists(spreadsheetId: string): Promise<void> {
+  const playlistsIO = playlistsSpreadsheetIO(spreadsheetId);
+  await ensurePlaylistTabsReady(spreadsheetId, playlistsIO);
+  loadedPlaylists = parsePlaylistRows(await playlistsIO.listPlaylists());
+  loadedPlaylistTracks = parsePlaylistTrackRows(await playlistsIO.listPlaylistTracks());
+  renderPlaylistList();
+}
+
+async function handleRefreshPlaylists(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
+  const button = el<HTMLButtonElement>("refresh-playlists-btn");
+  button.disabled = true;
+  try {
+    await loadPlaylists(spreadsheetId);
+    setStatus(`プレイリスト${loadedPlaylists.length}件を読み込みました。`);
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `プレイリスト一覧の読み込みに失敗しました: ${err.message}` : "プレイリスト一覧の読み込みに失敗しました", true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleSavePlaylist(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  const nameInput = el<HTMLInputElement>("playlist-name");
+  const name = nameInput.value.trim();
+  if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
+  if (!name) { setStatus("プレイリスト名を入力してください", true); return; }
+  const fileIds = queue?.list().map((song) => song.fileId) ?? [];
+  if (fileIds.length === 0) { setStatus("保存する再生リストがありません。条件を指定して再生リストを作ってから保存してください。", true); return; }
+  const button = el<HTMLButtonElement>("save-playlist-btn");
+  button.disabled = true;
+  try {
+    const playlistsIO = playlistsSpreadsheetIO(spreadsheetId);
+    await ensurePlaylistTabsReady(spreadsheetId, playlistsIO);
+    await createPlaylist(playlistsIO, name, fileIds, deviceRandomId);
+    nameInput.value = "";
+    await loadPlaylists(spreadsheetId);
+    setStatus(`プレイリスト「${name}」（${fileIds.length}曲）を保存しました。`);
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `プレイリストの保存に失敗しました: ${err.message}` : "プレイリストの保存に失敗しました", true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleLoadPlaylistIntoQueue(playlistId: string): Promise<void> {
+  if (!queue) return;
+  const orderedFileIds = fileIdsForPlaylist(loadedPlaylistTracks, playlistId);
+  const songs = catalogSession.createQueue((loadedSongs) => {
+    const byFileId = new Map(loadedSongs.map((song) => [song.fileId, song]));
+    return orderedFileIds.map((fileId) => byFileId.get(fileId)).filter((song): song is Song => Boolean(song));
+  });
+  if (!songs) {
+    setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてからプレイリストを読み込んでください。", true);
+    return;
+  }
+  queue.setList(songs);
+  renderQueue();
+  el<HTMLButtonElement>("next-btn").disabled = songs.length === 0;
+  el<HTMLButtonElement>("previous-btn").disabled = songs.length === 0;
+  const missingCount = orderedFileIds.length - songs.length;
+  setStatus(`プレイリストから${songs.length}曲を再生リストに設定しました${missingCount > 0 ? `（${missingCount}曲は現在の索引に見つかりませんでした）` : ""}。`);
+  if (songs.length > 0) void handleQueuePlayback(() => queue?.playAt(0));
+}
+
+async function handleDeletePlaylist(playlistId: string): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
+  try {
+    const playlistsIO = playlistsSpreadsheetIO(spreadsheetId);
+    await deletePlaylist(playlistsIO, playlistId);
+    await loadPlaylists(spreadsheetId);
+    setStatus("プレイリストを削除しました。");
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `プレイリストの削除に失敗しました: ${err.message}` : "プレイリストの削除に失敗しました", true);
+  }
+}
+
 async function loadCatalog(): Promise<void> {
   const spreadsheetInput = el<HTMLInputElement>("spreadsheet-id");
   const loadButton = el<HTMLButtonElement>("load-catalog-btn");
@@ -1204,6 +1366,8 @@ function init(): void {
     el<HTMLButtonElement>("create-queue-btn").addEventListener("click", createQueueFromFilters);
     el<HTMLButtonElement>("next-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.next()));
     el<HTMLButtonElement>("previous-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.previous()));
+    el<HTMLButtonElement>("save-playlist-btn").addEventListener("click", () => void handleSavePlaylist());
+    el<HTMLButtonElement>("refresh-playlists-btn").addEventListener("click", () => void handleRefreshPlaylists());
   });
 }
 

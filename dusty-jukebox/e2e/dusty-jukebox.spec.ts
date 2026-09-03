@@ -123,6 +123,29 @@ test("検索で曲を絞り込み、アルバムをdisc/track順のキューに�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
 });
 
+test("再生リストをプレイリストとして保存し、一覧から読み込み直して再生でき、削除もできる", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.locator("#playlist-name").fill("テストリスト");
+  await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
+  await expect(page.locator("#status")).toContainText("プレイリスト「テストリスト」（2曲）を保存しました");
+  await expect(page.locator("#playlist-list li")).toHaveCount(1);
+  await expect(page.locator("#playlist-list")).toContainText("テストリスト（2曲）");
+
+  // キューを進めてから読み込み直すと、保存した並び順の先頭から再生し直すことを確認する。
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+  await page.getByRole("button", { name: "読み込んで再生リストにする" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(2);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  await page.getByRole("button", { name: "削除" }).click();
+  await expect(page.locator("#status")).toContainText("プレイリストを削除しました");
+  await expect(page.locator("#playlist-list li")).toHaveCount(0);
+});
+
 test("スキャン開始後のアルバム再生は再読み込みエラーになりキューを変更しない", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true, delaySheetsReads: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
