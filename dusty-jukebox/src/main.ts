@@ -25,6 +25,7 @@ import {
   type FolderCacheEntry,
 } from "./folderCache";
 import { PlaybackQueue, queueRowViews, songDisplayLabel, nowPlayingLabel } from "./queue";
+import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState } from "./mediaSession";
 import { registerStreamAuthResponder } from "./streamAuth";
 import {
   createChangesListFn,
@@ -246,7 +247,10 @@ function renderQueue(): void {
     item.append(label);
     list.append(item);
   }
-  el<HTMLParagraphElement>("now-playing").textContent = nowPlayingLabel(rows.find((r) => r.isCurrent)?.song);
+  const currentSong = rows.find((r) => r.isCurrent)?.song;
+  el<HTMLParagraphElement>("now-playing").textContent = nowPlayingLabel(currentSong);
+  // Bluetoothスピーカー・OSのロック画面に現在再生中の曲名・アーティストを表示する。
+  updateNowPlayingMetadata(navigator.mediaSession, window.MediaMetadata, currentSong);
 }
 function renderAlbumGroups(groups: AlbumGroup[]): void {
   const list = el<HTMLUListElement>("album-list"); list.innerHTML = "";
@@ -754,6 +758,8 @@ function handleNativePlaybackStatus(audio: HTMLAudioElement, eventType: Playback
     hasEnded: audio.ended,
   });
   if (status !== null) setStatus(status);
+  // Bluetoothデバイス・OSのロック画面等に再生/一時停止アイコンの状態を反映する。
+  updatePlaybackState(navigator.mediaSession, eventType === "playing" ? "playing" : "paused");
 }
 
 async function handlePlaybackAction(action: () => Promise<boolean>): Promise<void> {
@@ -1634,6 +1640,16 @@ function init(): void {
     );
     audioPlayer.addEventListener("playing", () => handleNativePlaybackStatus(audioPlayer, "playing"));
     audioPlayer.addEventListener("pause", () => handleNativePlaybackStatus(audioPlayer, "pause"));
+    // Bluetoothスピーカー・OSのメディアキー対応（2026-09-05、実機利用フィードバック）。
+    // play/pauseは<audio>要素のネイティブ再生・一時停止に委ねる（mediaSession.ts参照：
+    // PlaybackController.pause()はアプリの「一時停止」ボタンと同じ完全停止のため、
+    // Bluetoothの一時停止ボタンを押すたびに二度と同じボタンで再開できなくなってしまう）。
+    registerActionHandlers(navigator.mediaSession, {
+      play: () => { void audioPlayer.play(); },
+      pause: () => audioPlayer.pause(),
+      previoustrack: () => void handleQueuePlayback(() => queue?.previous()),
+      nexttrack: () => void handleQueuePlayback(() => queue?.next()),
+    });
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
     el<HTMLButtonElement>("retry-extraction-btn").addEventListener("click", () => void handleRetryExtraction());

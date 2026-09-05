@@ -124,6 +124,25 @@ test("再生リストの曲をクリックするとその曲が再生され、�
   await expect(items.nth(1)).not.toHaveClass(/now-playing/);
 });
 
+test("Bluetooth/OSメディアキー対応：再生中の曲情報がnavigator.mediaSessionへ反映される", async ({ context, page }) => {
+  // playbackState（"playing"/"paused"）の更新は<audio>要素のネイティブplaying/pauseイベントに
+  // 連動させているが、このE2Eモックの音声は実際にはデコードできないダミーデータのため、
+  // ネイティブイベント自体が発火しない（play()はスタブされ即座に解決するため尚更）。
+  // updatePlaybackState()自体のロジックはmediaSession.test.tsでユニットテスト済みのため、
+  // ここではDOM結線が実際に機能するmetadata側（handlePlaybackAction/renderQueue経由、
+  // ネイティブイベントに依存しない）だけを実ブラウザで検証する。
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+
+  const items = page.locator("#catalog-list li");
+  await items.nth(1).locator(".song-link").click(); // Second song
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+  await expect.poll(() => page.evaluate(() => navigator.mediaSession.metadata?.title)).toBe("Second song");
+  await expect.poll(() => page.evaluate(() => navigator.mediaSession.metadata?.artist)).toBe("Artist");
+
+  await items.nth(0).locator(".song-link").click(); // First song
+  await expect.poll(() => page.evaluate(() => navigator.mediaSession.metadata?.title)).toBe("First song");
+});
+
 test("再生リストの曲クリックがDrive側401で保留になっても、認証継続後の再生中の曲名表示と行のハイライトが正しい（2026-09-03 レビュー指摘：handleStreamTokenRejected()の認証継続はhandleQueuePlayback()を経由しないため、独立した再描画経路が必要）", async ({ context, page }) => {
   // delayFirstMediaPlay: 最初のHTMLMediaElement.play()を意図的に保留し、SWの401応答（実際の
   // fetch/ルート処理を経由するため相対的に遅い）が先に届く現実的な順序を再現する。これが無いと

@@ -11,7 +11,7 @@
 **次セッションで最初に確認すべきこと**：
 - 上記3PR（#392, #398, #400）の実機確認は完了しているが、長時間の連続再生・複数タブ・トークン失効を跨いだ操作等の追加シナリオはまだ試せていない
 - ~~保存済みプレイリスト~~（2026-09-03実装、下記「保存済みプレイリスト」節参照）・~~`extractionFailed`行の再抽出リトライ導線~~（PR #404実装済み）に続き、次の機能開発候補（優先度未検討）：カタログ補正機能（CONCEPT.md 4.4節）
-- **2026-09-03、実機利用フィードバックを受けて着手（開発体制#39）**：①起動時のフォルダパス解決の高速化（下記「フォルダ名キャッシュ」節、PR #408→デプロイPR #409）、②再生リストの曲クリックで再生・現在再生中の曲表示・キュー内ハイライト（上記「索引ライブラリUI」節参照）を実装済み。続けて優先度順に対応予定：③Bluetooth/OSメディアキー（Media Session API）対応、④検索/絞り込みUI刷新（項目整理・候補一覧／オートコンプリート・仮想スクロール・気分に合わせたランダム再生・シングル/B面等の柔軟な絞り込み）。詳細はhandoffではなく本セッションの会話ログ参照（③④は未着手）
+- **2026-09-03〜05、実機利用フィードバックを受けて着手（開発体制#39）**：①起動時のフォルダパス解決の高速化（下記「フォルダ名キャッシュ」節、PR #408→デプロイPR #409）、②再生リストの曲クリックで再生・現在再生中の曲表示・キュー内ハイライト（上記「索引ライブラリUI」節参照、PR #410）、③Bluetooth/OSメディアキー対応（下記「Media Session対応」節参照）を実装済み。続けて優先度順に対応予定：④検索/絞り込みUI刷新（項目整理・候補一覧／オートコンプリート・仮想スクロール・気分に合わせたランダム再生・シングル/B面等の柔軟な絞り込み）。詳細はhandoffではなく本セッションの会話ログ参照（④は未着手）
 - **2026-09-03、Claude Code実行セッションでも`VITE_GOOGLE_CLIENT_ID`環境変数が利用可能であることが判明**（PR #408の対応中、事前確認を怠り「実クライアントIDが無い」と誤って`npm run deploy`を見送りマージした後に発覚。デプロイのみのPR #409で追ってコミット）。**以降、Claude Codeがこのアプリの実装PRを作る場合は、着手前に`env | grep VITE_GOOGLE_CLIENT_ID`等で確認したうえで、同一PR内で`npm run deploy`まで実行しビルド成果物をコミットする**（他のビルドアプリと同じ標準運用に揃える。「実クライアントIDが無いため見送り」という過去の記述は2026-09-03時点で解消済みの制約であり、以後のPRでは繰り返さないこと）
 
 ## フォルダ名キャッシュ（2026-09-03）
@@ -26,6 +26,7 @@
 - **`loadCatalog()`からの書き戻しは`upsertFolderCacheEntries`の`insertOnly=true`モードを使う**：書き込み時点で既に存在するfolderIdは（Driveから取得した値と異なっていても）上書きしない、新規folderIdの追記のみ行う。Driveから取得した値自体も「書き込み時点で最新」とは限らない（この読み込みが長時間かかる間に、別デバイスのスキャン・差分同期・別の読み込みが同じfolderIdをより新しい値で先に書き込む競合がありうるため）。書き込み時点で既に存在するなら、それは途中で誰か（より新しい情報源）が書いたものなので、そちらを優先する。スキャン・差分同期からの通常のupsert（実際のDrive上のフォルダ構造の変更を反映する）は従来通り更新も行う（`insertOnly`省略時=false）。
 - **スキャン・差分同期からの`folders`タブ書き込みは、書き込み直前にroot/tokenの所有権（`isSyncStateCurrent`）を再確認してから行う**（indexタブへの書き込みで既に徹底している対策と揃える。別デバイスが既に新しいroot/tokenへ切り替えていた場合は書き込みをスキップする）。
 - **既知の制限**：この機能の初回展開後、まだ一度もスキャン・差分同期・読み込みを行っていないスプレッドシートは、初回のloadCatalog()実行時だけ従来通り遅い（その1回でキャッシュが作られ、以降は速くなる）。
+- **2026-09-05、実機確認**：ユーザー本人の実ライブラリで「だいぶ早くなった」との報告あり。具体的な秒数は計測していないが、体感で明確な改善が確認できた（設計時の想定通り）。
 - ユニットテスト：`folderCache.test.ts`（ヘッダー検証・行パース・差分upsert・バッチ分割・cache-firstゲッター）、`drive.test.ts`（`folderEntries`出力引数の収集、ショートカット除外、`parents`欠落時のフォールバック）、`differentialSync.test.ts`（`folderCacheUpdatesFromChanges`）、`sheetsSetup.test.ts`（`ensureFoldersTabExists`）。
 - **2026-09-03、ChatGPTレビュー指摘3件を修正**：①`loadCatalog()`のセルフヒーリング書き込みが、キャッシュヒットも含めた全解決結果（当初`FolderPathResolver.resolvedEntries()`という「getFolderが返した全結果」を保持するメソッドを追加していた）を書き戻していたため、この読み込みが長時間かかる間に他デバイスがキャッシュを更新すると、開始時点の古いキャッシュ値で新しい値を上書き（巻き戻し）しうる問題があった。`resolvedEntries()`は削除し、Drive呼び出しをラップした専用トラッキング関数でDrive由来の値だけを収集するよう変更。②`loadCatalog()`が`folders`タブ未作成時に何もしなかったため、この機能の目的（起動時間短縮）に反して既存ユーザーは次にスキャンするまで高速化されなかった問題を、`loadCatalog()`自身もタブを作成するよう変更して解消（詳細は上記）。③スキャン・差分同期からの`folders`タブ書き込みが、indexタブの書き込みと異なりroot/token所有権の再確認を経ずに行われていた問題を、`isSyncStateCurrent`によるガードを追加して解消（詳細は上記）。
 - **E2Eでの直接検証は無し**：既存のPlaywrightモック（`e2e/google-mocks.ts`）の`files.list`応答は固定でフォルダ階層を持たないため（`root`直下に音声ファイル1件のみ）、今回のスキャンではフォルダが1件も発見されず`persistFolderCache`が空マップで即returnする経路しか通らない。folders タブへの実際の書き込み経路自体は上記ユニットテストでカバーしているが、E2Eモックの`files.list`応答をフォルダ階層ありに拡張する対応は次PR以降の課題として据え置いた（他の既存E2Eテストが依存する固定レスポンスへの影響範囲を今回は広げなかった）。
@@ -48,7 +49,9 @@
 - 既知の制約: カテゴリ導出、2種類の絞り込み入口、シャッフル、保存プレイリスト、仮想スクロールは未実装。
 - **2026-09-02、PR #402で検索窓・Album/Composer絞り込み・アルバム単位の通し再生を実装**：`groupSongsByAlbum()`はtrim済み`album`・代表アーティスト（`albumArtist`、空なら`artist`）・`parentId`の組み合わせでグルーピングする。同名・同アーティストでもフォルダが異なるリリースを分離する一方、複数フォルダに分かれたマルチディスク構成は複数のアルバムエントリに分かれる既知の制限がある。アルバム再生ボタンは`catalogSession`経由でセッション無効化を検証してからキューを設定し、先頭曲を再生する。
 - ユニットテスト: `catalog.test.ts`（パース・override・フィルタ・数値ソート）、`folderPaths.test.ts`（祖先・同時Promise共有・失敗後再取得）、`queue.test.ts`（除外リセット・ended/前後移動・末尾停止、`queueRowViews`/`songDisplayLabel`/`nowPlayingLabel`）。
-- **2026-09-03、再生リストの曲クリック再生・再生中の曲表示・キュー内ハイライトを実装**（実機利用フィードバック、開発体制#39の指摘③）：`src/queue.ts`に純粋関数`queueRowViews(songs, isExcluded, currentFileId)`を追加し、除外されていない曲だけに`playAt()`向けの`listIndex`を割り当てる（除外中の曲はクリックしても再生できない、除外を解除してから再生する運用）。`main.ts`の`renderQueue()`はこのビューモデルを使って各行を描画し、`listIndex`を持つ曲のラベルにクリックハンドラ（`handleQueuePlayback(() => queue?.playAt(listIndex))`、次へ/前へと同じ認証継続フローを通す）を付け、現在再生中の曲の行に`now-playing`クラスを付与する。`handleQueuePlayback()`自体の末尾で`renderQueue()`を呼ぶことで、クリック・次へ/前へ・曲の自然終了（ended→next）のいずれの経路でもハイライトと`#now-playing`表示（`songDisplayLabel`/`nowPlayingLabel`、いずれも純粋関数）が更新される。単曲試聴（「この曲を再生」、`play-file-id`欄）でキュー外の曲を再生した場合、`#now-playing`は直前のキュー再生曲の表示のまま更新されない既知の制限（P3、単曲試聴は開発時の疎通確認用途のためスコープ外とした）。
+- **2026-09-03、再生リストの曲クリック再生・再生中の曲表示・キュー内ハイライトを実装**（実機利用フィードバック、開発体制#39の指摘③、PR #410）：`src/queue.ts`に純粋関数`queueRowViews(songs, isExcluded, currentFileId)`を追加し、除外されていない曲だけに`playAt()`向けの`listIndex`を割り当てる（除外中の曲はクリックしても再生できない、除外を解除してから再生する運用）。`main.ts`の`renderQueue()`はこのビューモデルを使って各行を描画し、`listIndex`を持つ曲のラベルにクリックハンドラ（`handleQueuePlayback(() => queue?.playAt(listIndex))`、次へ/前へと同じ認証継続フローを通す）を付け、現在再生中の曲の行に`now-playing`クラスを付与する。単曲試聴（「この曲を再生」、`play-file-id`欄）でキュー外の曲を再生した場合、`#now-playing`は直前のキュー再生曲の表示のまま更新されない既知の制限（P3、単曲試聴は開発時の疎通確認用途のためスコープ外とした）。
+  - **同日、ChatGPTレビュー指摘（P2）を修正**：表示更新（ハイライト・`#now-playing`ラベル）は当初`handleQueuePlayback()`の内側にのみ`renderQueue()`を置いていたが、Drive側401→認証継続（`handleStreamTokenRejected()`→`continuation.resume()`）の成功経路は`handleQueuePlayback()`を経由しないため、この経路で表示が更新されないまま残る問題があった。`renderQueue()`の呼び出しを、両経路の唯一の合流点である`handlePlaybackAction()`の成功分岐（`if (started) {...}`）へ移動して解消。
+  - **続けて、この修正の回帰防止E2Eが実際には回帰を検出できないfalse negativeだったという指摘（P2）も修正**：既存のE2Eモックは`HTMLMediaElement.play()`を即座に解決するようスタブしているため、`queue.currentFileId`がSWの401応答より先に確定してしまい、修正の有無に関わらずテストが成功していた。`e2e/google-mocks.ts`にテスト専用opt-in`delayFirstMediaPlay`（最初の`play()`だけを保留し`window.__e2eReleaseFirstMediaPlay()`で解放できる）を追加し、SWの401応答が`play()`の解決より先に届く現実的な順序を再現。修正を一時的に無効化してテストが実際に失敗することを確認済み。
 - **2026-08-26〜27、レビュー指摘5件（P1・P2×4）を修正**：
   - 修正①：`FolderPathResolver`が失敗した祖先フォルダIDを`failedFolderErrors`に記録し、同一カタログ読み込み中は同じ祖先への再要求・再試行を抑止する（複数アルバムが共有する上位フォルダの取得失敗による無限リトライ的挙動を防止）
   - 修正②：`CatalogOperationGate`を追加し、スキャンとカタログ読み込みを相互排他にした（ボタンのdisabled制御だけでなく、`main.ts`の`handleScan()`/`loadCatalog()`双方でゲートを取得できない場合は開始せずエラー表示する）
@@ -58,6 +61,19 @@
   - 修正⑤：`parseIndexRows()`で重複`fileId`を先勝ちで除外し、複数デバイスによる一時的な重複行があってもキューへ同じ曲を二度渡さないようにした
   - 修正⑥：`PlaybackQueue.setList()`で直列化チェーン（`pendingMove`）も新しいリスト用にリセットし、リスト差し替え直後の操作が旧リストの未解決の再生完了を待たなくなるようにした
   - **既知の制限（未修正、いずれもP2・データ破損や情報漏洩には該当しない再生体験上の不具合）**：①リスト差し替え時、旧リストの`player.play()`が`AbortError`等でreject（世代変更後）すると、新しい曲が正常に再生できていても旧要求のエラーメッセージが表示されることがある（[review](https://github.com/kumacha666/apps/pull/387#discussion_r3864874708)）／②キューの「次へ」連打で移動が`pendingMove`に待機中の状態でファイルID欄から単曲再生を始めると、待機中のキュー移動が後から実行され単曲再生を上書きすることがある（[review](https://github.com/kumacha666/apps/pull/387#discussion_r3864874714)）
+
+## Media Session対応（2026-09-05）
+
+**実機利用フィードバック（開発体制#39の指摘③）**：Bluetoothスピーカーで再生中、曲の先送り・戻しが機能しなかった。ブラウザのMedia Session API（`navigator.mediaSession`）にアクション（曲送り・戻し・再生・一時停止）ハンドラを一切登録していなかったことが原因。
+
+- `src/mediaSession.ts`に純粋関数（`mediaMetadataInit`）＋薄いDIラッパー（`updateNowPlayingMetadata`/`updatePlaybackState`/`registerActionHandlers`）を追加。`navigator.mediaSession`/`MediaMetadata`はvitestのnode環境に存在しないため、drive.ts/folderPaths.tsと同じDI方針（呼び出し元がブラウザの実値を渡す）でテスト可能にした。
+- `main.ts`の`init()`で`registerActionHandlers`を1回呼び、`previoustrack`/`nexttrack`はキューの次へ/前へと同じ経路（`handleQueuePlayback(() => queue?.previous()/next())`、認証継続フローも共通）に委ねる。`play`/`pause`は`<audio>`要素のネイティブ`play()`/`pause()`に委ねる（`PlaybackController.pause()`はアプリの「一時停止」ボタンと同じ完全停止のため、Bluetoothの一時停止ボタンを押すたびに同じボタンで二度と再開できなくなってしまう。既知の制限「アプリの一時停止ボタン→ネイティブ再開での認証相関ロス」と同種のトレードオフ）。
+- `renderQueue()`（現在再生中の曲を特定する既存の唯一の箇所）で`updateNowPlayingMetadata()`を呼び、`navigator.mediaSession.metadata`へ曲名・アーティスト・アルバムを反映する。曲が無い場合はmetadataをnullに戻す（OS側のロック画面に古い曲名を残さないため）。
+- `handleNativePlaybackStatus()`（`<audio>`のplaying/pauseイベント）で`updatePlaybackState()`を呼び、`navigator.mediaSession.playbackState`を反映する。
+- ユニットテスト：`mediaSession.test.ts`（`mediaMetadataInit`のフォールバック・各DIラッパーのフェイク`mediaSession`に対する呼び出し内容）。
+- **E2Eでの制限**：`playbackState`（playing/pause）の更新は実ブラウザの`<audio>`ネイティブイベントに連動させているが、E2Eモックの音声は実際にはデコードできないダミーデータのため（`play()`自体もスタブされ即座に解決する）、ネイティブイベントが発火せずE2Eでは検証できない。`updatePlaybackState()`自体のロジックはユニットテストでカバー済み。E2Eでは、ネイティブイベントに依存しない`metadata`側（曲クリック→`renderQueue()`経由）のみを検証する。
+- **既知の制限**：`stop`/`seekto`等の他のMedia Sessionアクションは未対応。カバーアート（`artwork`）も未設定（M4Aファイルの埋め込みカバーアートは抽出済みだが索引スプレッドシートには保存していない、CONCEPT.md 3.3節参照）。
+- **同日、ChatGPTレビュー指摘（P2）を修正**：`registerActionHandlers()`が4種類のactionを無防備に連続で`setActionHandler()`していたため、`navigator.mediaSession`自体は存在するがaction個別の対応状況にはブラウザ差がある環境で、1つのactionが未対応で例外を投げると残りのaction登録が止まるだけでなく、呼び出し元`init()`内でこの直後に並ぶログイン・スキャン・再生等の通常UIイベント登録まで実行されなくなる問題があった。各actionを個別にtry/catchし、1つの失敗が他のaction登録や`init()`の後続処理を止めないよう修正。ユニットテストに、`previoustrack`のみ例外を投げるfake `MediaSession`で「関数はthrowせず他の3つは登録される」ケースを追加（修正前は実際にテストが失敗することを確認済み）。
 
 ## 保存済みプレイリスト（2026-09-03、PR #406）
 
