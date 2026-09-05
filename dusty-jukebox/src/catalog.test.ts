@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { INDEX_SHEET_HEADER } from "./sheets";
-import { filterSongs, groupSongsByAlbum, parseIndexRows, readOverride, sortSongs, type Song } from "./catalog";
+import { distinctFieldValues, filterSongs, groupSongsByAlbum, parseIndexRows, readOverride, sortSongs, type Song } from "./catalog";
 const row = (values: Record<string, string>): string[] => INDEX_SHEET_HEADER.map((header) => values[header] ?? "");
 describe("索引行の読み取り", () => {
   test("overrideの空欄/(none)/値とfileIdフォールバックを扱う", () => {
@@ -43,6 +43,19 @@ describe("絞り込みとソート", () => {
   });
   test("年、artist、album、disc、trackを数値順でソートする", () => {
     expect(sortSongs([song({ fileId: "10", releaseYear: "2000", artist: "A", album: "X", discNumber: "1", trackNumber: "10" }), song({ fileId: "2", releaseYear: "2000", artist: "A", album: "X", discNumber: "1", trackNumber: "2" }), song({ fileId: "disc2", releaseYear: "2000", artist: "A", album: "X", discNumber: "2", trackNumber: "1" }), song({ fileId: "unknown" })]).map((s) => s.fileId)).toEqual(["2", "10", "disc2", "unknown"]);
+  });
+});
+describe("オートコンプリート候補の抽出", () => {
+  test("重複を除き50音/アルファベット順に並べる", () => {
+    const songs = [song({ artist: "Beta" }), song({ artist: "Alpha" }), song({ artist: "Beta" }), song({ artist: "  " })];
+    expect(distinctFieldValues(songs, "artist")).toEqual(["Alpha", "Beta"]);
+  });
+  test("genreは' / '区切りで個々のジャンルへ分解する", () => {
+    const songs = [song({ genre: "Soundtrack / Game" }), song({ genre: "Rock" }), song({ genre: "Game / Rock" })];
+    expect(distinctFieldValues(songs, "genre")).toEqual(["Game", "Rock", "Soundtrack"]);
+  });
+  test("空欄は候補に含めない", () => {
+    expect(distinctFieldValues([song({ album: "" }), song({ album: "  " })], "album")).toEqual([]);
   });
 });
 describe("アルバムグルーピング", () => {

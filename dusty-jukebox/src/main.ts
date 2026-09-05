@@ -12,7 +12,7 @@ import { PlaybackAuthenticationRequiredError, PlaybackController } from "./playb
 import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStatus";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
-import { parseIndexRows, filterSongs, groupSongsByAlbum, sortSongs, type AlbumGroup, type Song } from "./catalog";
+import { parseIndexRows, filterSongs, groupSongsByAlbum, sortSongs, distinctFieldValues, type AlbumGroup, type AutocompleteField, type Song } from "./catalog";
 import { CatalogOperationGate } from "./catalogOperationGate";
 import { CatalogSession } from "./catalogSession";
 import { FolderPathResolver, type FolderGetFn, type FolderMeta } from "./folderPaths";
@@ -199,11 +199,15 @@ function render(): void {
         <h2>ライブラリ</h2>
         <button id="load-catalog-btn" type="button" disabled>索引から曲一覧を読み込む</button>
         <label class="field"><span>検索</span><input id="filter-query" type="search" placeholder="タイトル・アーティスト・アルバム・作曲者を検索" /></label>
-        <label class="field"><span>アーティスト</span><input id="filter-artist" type="search" /></label>
-        <label class="field"><span>アルバム</span><input id="filter-album" type="search" /></label>
-        <label class="field"><span>作曲者</span><input id="filter-composer" type="search" /></label>
+        <label class="field"><span>アーティスト</span><input id="filter-artist" type="search" list="filter-artist-options" /></label>
+        <datalist id="filter-artist-options"></datalist>
+        <label class="field"><span>アルバム</span><input id="filter-album" type="search" list="filter-album-options" /></label>
+        <datalist id="filter-album-options"></datalist>
+        <label class="field"><span>作曲者</span><input id="filter-composer" type="search" list="filter-composer-options" /></label>
+        <datalist id="filter-composer-options"></datalist>
         <div class="filter-years"><label>年（最小）<input id="filter-min-year" type="number" /></label><label>年（最大）<input id="filter-max-year" type="number" /></label></div>
-        <label class="field"><span>カテゴリ（Genre）</span><input id="filter-genre" type="search" /></label>
+        <label class="field"><span>カテゴリ（Genre）</span><input id="filter-genre" type="search" list="filter-genre-options" /></label>
+        <datalist id="filter-genre-options"></datalist>
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
         <div><button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button></div>
@@ -251,6 +255,24 @@ function renderQueue(): void {
   el<HTMLParagraphElement>("now-playing").textContent = nowPlayingLabel(currentSong);
   // Bluetoothスピーカー・OSのロック画面に現在再生中の曲名・アーティストを表示する。
   updateNowPlayingMetadata(navigator.mediaSession, window.MediaMetadata, currentSong);
+}
+// アーティスト/アルバム/作曲者/Genre欄のdatalistへ、索引から読み込んだ曲一覧に実際に
+// 存在する値だけを候補として反映する（開発体制#39④、スプレッドシートを見ないと何が
+// 登録されているか分からない、という使いづらさへの対応）。
+const AUTOCOMPLETE_DATALISTS: { field: AutocompleteField; datalistId: string }[] = [
+  { field: "artist", datalistId: "filter-artist-options" },
+  { field: "album", datalistId: "filter-album-options" },
+  { field: "composer", datalistId: "filter-composer-options" },
+  { field: "genre", datalistId: "filter-genre-options" },
+];
+function renderFilterSuggestions(songs: Song[]): void {
+  for (const { field, datalistId } of AUTOCOMPLETE_DATALISTS) {
+    const datalist = el<HTMLDataListElement>(datalistId);
+    datalist.innerHTML = "";
+    for (const value of distinctFieldValues(songs, field)) {
+      const option = document.createElement("option"); option.value = value; option.textContent = value; datalist.append(option);
+    }
+  }
 }
 function renderAlbumGroups(groups: AlbumGroup[]): void {
   const list = el<HTMLUListElement>("album-list"); list.innerHTML = "";
@@ -626,6 +648,7 @@ async function loadCatalog(): Promise<void> {
     catalogSession.replace(songs);
     loadedCatalogSpreadsheetId = spreadsheetId;
     renderAlbumGroups(groupSongsByAlbum(songs));
+    renderFilterSuggestions(songs);
     el<HTMLButtonElement>("create-queue-btn").disabled = false;
     setStatus(`索引から${songs.length}曲を読み込みました${failedPathCount > 0 ? `（${failedPathCount}件はパス解決に失敗）` : ""}。条件を指定して再生リストを作れます。`);
   } catch (err) {
