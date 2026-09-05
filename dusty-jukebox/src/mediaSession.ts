@@ -60,10 +60,25 @@ export interface MediaSessionActionHandlers {
 // 同じボタンでの再開ができなくなる。既知の制限「アプリの一時停止ボタン→ネイティブ再開での
 // 認証相関ロス」と同種のトレードオフとして、Bluetoothの一時停止／再生はネイティブの
 // pause/play相当として扱う）。previoustrack/nexttrackはキューの次へ/前へと同じ経路を使う。
+// 各actionを個別にtry/catchする。navigator.mediaSession自体は存在しても、個々のactionへの
+// 対応状況はブラウザ実装によって差があり、未対応actionでsetActionHandler()が例外を投げる
+// 実装があるため、1つの失敗が残りのaction登録や呼び出し元（init()）の後続処理を止めないようにする
+// （2026-09-05、ChatGPTレビュー指摘：修正前は最初にthrowしたactionで残り全てが未登録になり、
+// かつinit()内のこの呼び出し直後にあるログイン・スキャン・再生等のボタンイベント登録も
+// 実行されなくなっていた）。
 export function registerActionHandlers(mediaSession: MediaSessionLike | undefined, handlers: MediaSessionActionHandlers): void {
   if (!mediaSession) return;
-  mediaSession.setActionHandler("play", handlers.play);
-  mediaSession.setActionHandler("pause", handlers.pause);
-  mediaSession.setActionHandler("previoustrack", handlers.previoustrack);
-  mediaSession.setActionHandler("nexttrack", handlers.nexttrack);
+  const entries: [MediaSessionAction, () => void][] = [
+    ["play", handlers.play],
+    ["pause", handlers.pause],
+    ["previoustrack", handlers.previoustrack],
+    ["nexttrack", handlers.nexttrack],
+  ];
+  for (const [action, handler] of entries) {
+    try {
+      mediaSession.setActionHandler(action, handler);
+    } catch {
+      // 未対応action。他のactionの登録・呼び出し元の後続処理は継続する。
+    }
+  }
 }

@@ -73,6 +73,7 @@
 - ユニットテスト：`mediaSession.test.ts`（`mediaMetadataInit`のフォールバック・各DIラッパーのフェイク`mediaSession`に対する呼び出し内容）。
 - **E2Eでの制限**：`playbackState`（playing/pause）の更新は実ブラウザの`<audio>`ネイティブイベントに連動させているが、E2Eモックの音声は実際にはデコードできないダミーデータのため（`play()`自体もスタブされ即座に解決する）、ネイティブイベントが発火せずE2Eでは検証できない。`updatePlaybackState()`自体のロジックはユニットテストでカバー済み。E2Eでは、ネイティブイベントに依存しない`metadata`側（曲クリック→`renderQueue()`経由）のみを検証する。
 - **既知の制限**：`stop`/`seekto`等の他のMedia Sessionアクションは未対応。カバーアート（`artwork`）も未設定（M4Aファイルの埋め込みカバーアートは抽出済みだが索引スプレッドシートには保存していない、CONCEPT.md 3.3節参照）。
+- **同日、ChatGPTレビュー指摘（P2）を修正**：`registerActionHandlers()`が4種類のactionを無防備に連続で`setActionHandler()`していたため、`navigator.mediaSession`自体は存在するがaction個別の対応状況にはブラウザ差がある環境で、1つのactionが未対応で例外を投げると残りのaction登録が止まるだけでなく、呼び出し元`init()`内でこの直後に並ぶログイン・スキャン・再生等の通常UIイベント登録まで実行されなくなる問題があった。各actionを個別にtry/catchし、1つの失敗が他のaction登録や`init()`の後続処理を止めないよう修正。ユニットテストに、`previoustrack`のみ例外を投げるfake `MediaSession`で「関数はthrowせず他の3つは登録される」ケースを追加（修正前は実際にテストが失敗することを確認済み）。
 
 ## 保存済みプレイリスト（2026-09-03、PR #406）
 

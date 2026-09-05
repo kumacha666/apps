@@ -74,4 +74,19 @@ describe("registerActionHandlers", () => {
   test("mediaSessionが無い場合は何もしない", () => {
     expect(() => registerActionHandlers(undefined, { play: vi.fn(), pause: vi.fn(), previoustrack: vi.fn(), nexttrack: vi.fn() })).not.toThrow();
   });
+
+  test("特定actionのsetActionHandlerが未対応で例外を投げても、関数はthrowせず他のactionは登録される", () => {
+    const mediaSession = fakeMediaSession();
+    const originalSetActionHandler = mediaSession.setActionHandler.bind(mediaSession);
+    mediaSession.setActionHandler = (action, handler) => {
+      if (action === "previoustrack") throw new TypeError("unsupported action");
+      originalSetActionHandler(action, handler);
+    };
+    const handlers = { play: vi.fn(), pause: vi.fn(), previoustrack: vi.fn(), nexttrack: vi.fn() };
+    expect(() => registerActionHandlers(mediaSession, handlers)).not.toThrow();
+    expect(mediaSession.handlers.play).toBe(handlers.play);
+    expect(mediaSession.handlers.pause).toBe(handlers.pause);
+    expect(mediaSession.handlers.nexttrack).toBe(handlers.nexttrack);
+    expect(mediaSession.handlers.previoustrack).toBeUndefined();
+  });
 });
