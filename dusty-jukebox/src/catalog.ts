@@ -52,6 +52,25 @@ export function filterSongs(songs: Song[], filters: SongFilters): Song[] {
   });
 }
 
+// アーティスト/アルバム/作曲者/Genre欄のオートコンプリート候補（入力中のdatalist）用に、
+// 索引から実際に使われている値だけを重複無く取り出す。スプレッドシートを見ないと
+// 何が登録されているか分からない、という使いづらさへの対応（開発体制#39④）。
+// genreは1曲に複数ジャンルが" / "区切りで入る（filterSongsの一致判定と同じ分割規則）ため、
+// 個々のジャンル語として分解してから重複排除する。
+export type AutocompleteField = "artist" | "album" | "composer" | "genre";
+export function distinctFieldValues(songs: Song[], field: AutocompleteField): string[] {
+  const values = new Set<string>();
+  for (const song of songs) {
+    const raw = song[field];
+    const parts = field === "genre" ? raw.split(" / ") : [raw];
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed) values.add(trimmed);
+    }
+  }
+  return [...values].sort((a, b) => a.localeCompare(b));
+}
+
 const numeric = (v: string) => { const n = Number(v); return v.trim() !== "" && Number.isFinite(n) ? n : Number.POSITIVE_INFINITY; };
 export function sortSongs(songs: Song[]): Song[] {
   return [...songs].sort((a, b) => numeric(a.releaseYear) - numeric(b.releaseYear) || a.artist.localeCompare(b.artist) ||

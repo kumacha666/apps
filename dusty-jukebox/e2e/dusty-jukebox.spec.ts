@@ -105,6 +105,12 @@ test("除外は再生キューへ反映され、戻して作り直すと復帰�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 });
 
+test("索引読み込み後、アーティスト/Genre欄の候補一覧（datalist）に実在する値が反映される", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await expect(page.locator("#filter-artist-options option")).toHaveText(["Artist"]);
+  await expect(page.locator("#filter-genre-options option")).toHaveText(["Rock"]);
+});
+
 test("再生リストの曲をクリックするとその曲が再生され、再生中の曲名表示と行のハイライトが更新される", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
 
