@@ -186,11 +186,30 @@ test("検索で曲を絞り込み、アルバムをdisc/track順のキューに�
   await expect(page.locator("#catalog-list li")).toHaveCount(1);
   await expect(page.locator("#catalog-list")).toContainText("Jazz Song");
 
-  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony — Orchestra（3曲）" });
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(3);
   await expect(page.locator("#catalog-list li")).toHaveText([/Opening/, /Scherzo/, /Finale/]);
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+});
+
+test("アルバム一覧はアーティスト別に見出し付きで表示され、検索欄でアルバム名/アーティスト名を絞り込める", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  const albumList = page.locator("#album-list");
+  await expect(albumList.locator(".album-artist-heading")).toHaveText(["Orchestra", "Quartet"]);
+
+  await page.locator("#album-search").fill("quartet");
+  await expect(albumList.locator(".album-artist-heading")).toHaveText(["Quartet"]);
+  await expect(albumList).toContainText("Blue Notes");
+  await expect(albumList).not.toContainText("Symphony");
+
+  await page.locator("#album-search").fill("symphony");
+  await expect(albumList.locator(".album-artist-heading")).toHaveText(["Orchestra"]);
+  await expect(albumList).toContainText("Symphony");
 });
 
 test("再生リストをプレイリストとして保存し、一覧から読み込み直して再生でき、削除もできる", async ({ context, page }) => {
@@ -394,7 +413,7 @@ test("スキャン開始後のアルバム再生は再読み込みエラーに�
   await expect(page.locator("#catalog-list li")).toHaveCount(1);
 
   await page.getByRole("button", { name: /スキャンして索引/ }).click();
-  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony — Orchestra（3曲）" });
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
   await expect(page.locator("#status")).toContainText("曲一覧を再読み込みしてから再生リストを作成してください");
   await expect(page.locator("#catalog-list li")).toHaveCount(1);
