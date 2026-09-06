@@ -283,6 +283,25 @@ test("「再生」ボタンで先頭曲から再生でき、一時停止中の�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
 });
 
+test("キュー曲再生中に「この曲を再生」でキュー外の単曲試聴を挟んでから「再生」ボタンを押すと、キューの古い再生位置を誤って再開せず先頭から再生し直す（2026-09-06 PR #418 ChatGPTレビュー再指摘）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await page.getByRole("button", { name: "再生", exact: true }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+
+  // キュー外の単曲試聴（開発時の疎通確認用）に切り替える。currentPlayingFileId()自体は
+  // "song-2"のまま温存されるため、この状態を区別しないとcanResumeCurrent()が誤ってtrueになる。
+  await page.locator("#play-file-id").fill("song-1");
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/song-1(\?|$)/);
+
+  // 修正前は、外部試聴中の再生位置のままキューの古いcurrentFileId（song-2）をresume()して
+  // しまっていた。修正後はcanResumeCurrent()がfalseになり、先頭（song-1）から再生し直す。
+  await page.getByRole("button", { name: "再生", exact: true }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+});
+
 test("アルバム一覧はアーティスト別に見出し付きで表示され、検索欄でアルバム名/アーティスト名を絞り込める", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");

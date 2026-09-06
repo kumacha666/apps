@@ -34,6 +34,12 @@ export class PlaybackQueue {
   all(): Song[] { return [...this.songs]; }
   list(): Song[] { return this.songs.filter((s) => !this.isExcluded(s.fileId)); }
   currentPlayingFileId(): string | null { return this.currentFileId; }
+  // 「再生」ボタン（開発体制#40）向け：現在の曲を再開してよいかどうか。currentFileIdは
+  // notifyExternalPlaybackStarted()後も温存され続けるため、これ単独では「キュー由来の再生
+  // （一時停止中を含む）が今も有効かどうか」を判定できない（2026-09-06、PR #418
+  // ChatGPTレビュー指摘：キュー曲再生→キュー外の単曲試聴→「再生」ボタンで、試聴中の曲の
+  // 再生位置のままキューの古い曲を誤って再開してしまう）。isQueuePlaybackも併せて確認する。
+  canResumeCurrent(): boolean { return this.isQueuePlayback && this.currentFileId !== null; }
   private async playAndCommit(fileId: string, generation: number, position?: number): Promise<boolean> {
     // Register a continuation before the native play promise settles: the
     // initial stream request can receive a 401 while that promise is pending.

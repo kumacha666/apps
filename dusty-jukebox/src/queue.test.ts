@@ -78,6 +78,19 @@ describe("PlaybackQueue", () => {
     while (await queue.next()) { /* 到達可能な限り辿る */ }
     expect(played.filter((id) => id !== "a" && id !== "b").sort()).toEqual(["c", "d"]);
   });
+  test("canResumeCurrentは未再生でfalse、再生中/一時停止中はtrue、notifyExternalPlaybackStarted後はfalse（2026-09-06 PR #418 ChatGPTレビュー指摘）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    expect(queue.canResumeCurrent()).toBe(false);
+    await queue.playAt(0);
+    expect(queue.canResumeCurrent()).toBe(true);
+    // キュー外の単曲試聴（main.tsのstartExternalPlayback()相当）に切り替わると、
+    // currentPlayingFileId()自体は温存されるがcanResumeCurrent()はfalseになる
+    // （試聴中の再生位置のままキューの古い曲を誤って再開してしまうことを防ぐ）。
+    queue.notifyExternalPlaybackStarted();
+    expect(queue.currentPlayingFileId()).toBe("a");
+    expect(queue.canResumeCurrent()).toBe(false);
+  });
   test("hasShuffleHistoryはshuffle前false、shuffle後true、unshuffle後false", async () => {
     const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
     queue.setList([song("a"), song("b"), song("c")]);

@@ -1734,8 +1734,10 @@ function init(): void {
     // 絞り込みで再生リストを作った直後に必ず「次へ」を押す必要がある、という違和感への対応。
     el<HTMLButtonElement>("queue-play-btn").addEventListener("click", () => void handleQueuePlayback(() => {
       if (!queue) return undefined;
-      const current = queue.currentPlayingFileId();
-      return current ? queue.resume(current, audioPlayer.currentTime) : queue.playAt(0);
+      // canResumeCurrent()が偽の場合（キュー曲を一度も再生していない、またはキュー外の
+      // 単曲試聴で上書きされている）は先頭から再生する。currentPlayingFileId()単独では
+      // 判定できない理由はcanResumeCurrent()のコメント参照（2026-09-06 レビュー指摘）。
+      return queue.canResumeCurrent() ? queue.resume(queue.currentPlayingFileId()!, audioPlayer.currentTime) : queue.playAt(0);
     }));
     el<HTMLButtonElement>("save-playlist-btn").addEventListener("click", () => void handleSavePlaylist());
     el<HTMLButtonElement>("refresh-playlists-btn").addEventListener("click", () => void handleRefreshPlaylists());
