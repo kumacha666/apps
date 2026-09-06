@@ -8,6 +8,8 @@
 - OAuthクライアントIDは本体`dusty-jukebox`と共用する（Google Identity Servicesのトークンモデルは「承認済みJavaScript生成元」＝オリジン単位で認可するため、同一ドメイン配下の別パス`honeypawlab.com/dusty-jukebox-tools/`は追加のGoogle Cloud Console設定なしで共用できる）。要求スコープは本体と異なり`spreadsheets`のみ（`drive.readonly`は要求しない。音源ファイルには一切アクセスしないため最小権限にした）
 - ランディングページには非掲載・URL直踏み運用（本体`dusty-jukebox`や`enblo`/`combrawl`と同じ理由。管理者本人が必要な時だけ使うツールのため）
 
+**現在の状態（2026-09-06）**：初版をPR #423としてマージ済み（`main` `9015d50`）。ChatGPTレビュー1件（P2: `garbledResolved`列を意図的に未使用とする方針の明記、下記「文字化け修復」節参照）に対応済み。**実ブラウザでの動作確認・Playwright E2Eはまだ実施していない**（新規アプリのため）。次回このアプリを触るセッションでまず実機確認を行うこと。
+
 ## 移植元
 
 `dusty-jukebox`本体から以下を移植（apps全体の方針「アプリ間のコード共有はしない」に沿い、コピー＋必要な差分を適用したもの。列を追加・変更する場合は本体の`sheets.ts`と両方を更新する必要がある）：
