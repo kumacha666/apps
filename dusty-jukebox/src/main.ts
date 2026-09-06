@@ -1705,10 +1705,14 @@ function init(): void {
     });
     el<HTMLButtonElement>("next-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.next()));
     el<HTMLButtonElement>("previous-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.previous()));
-    // シャッフルは絞り込み結果の並び順を変えるだけの同期操作で、何かを再生開始するわけではない
-    // ため、他のボタンと違いhandleQueuePlayback()を経由しない（再生中の曲・除外設定はqueue.shuffle()
-    // 自体が変更しない。次へ/前へは新しい並び順をそのまま辿る）。
-    el<HTMLButtonElement>("shuffle-btn").addEventListener("click", () => { queue?.shuffle(); renderQueue(); });
+    // シャッフルは絞り込み結果の並び順を変えるだけで何かを再生開始するわけではないため、
+    // handleQueuePlayback()（「再生中」表示・認証ゲート解除等、実際の再生成功時の副作用を伴う）は
+    // 経由しない（再生中の曲・除外設定はqueue.shuffle()自体が変更しない。次へ/前へは新しい
+    // 並び順をそのまま辿る）。ただしqueue.shuffle()自体は他のナビゲーション操作と同じ
+    // pendingMoveの直列化チェーンに参加するため（2026-09-06 レビュー指摘：進行中のnext()等が
+    // currentFileIdを確定させる前にシャッフルすると並べ替えの基準がずれる不具合の修正）、
+    // 完了を待ってからrenderQueue()する。
+    el<HTMLButtonElement>("shuffle-btn").addEventListener("click", () => { if (queue) void queue.shuffle().then(() => renderQueue()); });
     el<HTMLButtonElement>("save-playlist-btn").addEventListener("click", () => void handleSavePlaylist());
     el<HTMLButtonElement>("refresh-playlists-btn").addEventListener("click", () => void handleRefreshPlaylists());
   });

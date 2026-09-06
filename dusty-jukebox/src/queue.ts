@@ -68,13 +68,22 @@ export class PlaybackQueue {
   // 移動した未再生曲がnext()から永久に到達不能になり、残り曲があるのに再生が止まって
   // しまう。現在曲より後ろの区間だけをシャッフルすることで、その区間の曲は常に
   // 現在曲より後ろの位置に留まりnext()で辿り着ける）。
-  shuffle(random: () => number = Math.random): void {
-    const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId);
-    const start = currentIndex + 1;
-    for (let i = this.songs.length - 1; i > start; i -= 1) {
-      const j = start + Math.floor(random() * (i - start + 1));
-      [this.songs[i], this.songs[j]] = [this.songs[j], this.songs[i]];
-    }
+  // next()/playAt()等と同じpendingMoveの直列化チェーンに参加させる（2026-09-06、
+  // ChatGPTレビュー再指摘：シャッフルが独立した同期操作のままだと、next()のplayAndCommit()が
+  // player.play()の解決待ちでcurrentFileIdをまだ更新していない間にシャッフルすると、
+  // 古いcurrentFileIdを基準に並べ替えてしまい、直後にcurrentFileIdへ確定する曲が
+  // 並べ替え後の配列で他の未再生曲より前の位置に来てしまうことがある。move()経由にすることで、
+  // 進行中の移動がcurrentFileIdを確定させた後の状態を基準に並べ替えられる）。
+  shuffle(random: () => number = Math.random): Promise<boolean> {
+    return this.move(async () => {
+      const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId);
+      const start = currentIndex + 1;
+      for (let i = this.songs.length - 1; i > start; i -= 1) {
+        const j = start + Math.floor(random() * (i - start + 1));
+        [this.songs[i], this.songs[j]] = [this.songs[j], this.songs[i]];
+      }
+      return true;
+    });
   }
   resume(fileId: string, position: number): Promise<boolean> {
     return this.move(async (generation) =>
