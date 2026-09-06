@@ -563,3 +563,36 @@ test("表記ゆれ（大文字小文字）をチェックして統一し、元�
   const writesAfterRevert = mock.sheetsWrites.filter((w) => w.sheet === "index");
   expect(writesAfterRevert[writesAfterRevert.length - 1]?.values[0]?.[artistOverrideIndex]).toBe("");
 });
+
+test("適用後に同じスプレッドシートで再チェックしても「元に戻す」が使える（ChatGPTレビュー指摘P2）", async ({ context, page }) => {
+  await installGoogleMocks(context, { casingVariants: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#spreadsheet-id").fill("sheet");
+
+  await page.getByRole("button", { name: "表記ゆれをチェック" }).click();
+  await page.getByRole("button", { name: "統一を適用" }).click();
+  await expect(page.locator("#status")).toContainText("1件の表記ゆれを統一しました");
+
+  // 適用後もう一度チェックする（もう表記ゆれは無いはずなので0件になる）。
+  await page.getByRole("button", { name: "表記ゆれをチェック" }).click();
+  await expect(page.locator("#status")).toContainText("表記ゆれは見つかりませんでした");
+
+  // 再チェック後も直前の統一の「元に戻す」は有効なまま。
+  await expect(page.getByRole("button", { name: "直前の統一を元に戻す" })).toBeEnabled();
+  await page.getByRole("button", { name: "直前の統一を元に戻す" }).click();
+  await expect(page.locator("#status")).toContainText("1件の表記ゆれ統一を元に戻しました");
+});
+
+test("チェック後に入力欄のスプレッドシートIDを変えてから適用すると拒否される（ChatGPTレビュー指摘P1）", async ({ context, page }) => {
+  await installGoogleMocks(context, { casingVariants: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#spreadsheet-id").fill("sheet");
+
+  await page.getByRole("button", { name: "表記ゆれをチェック" }).click();
+  await expect(page.locator("#status")).toContainText("1件の表記ゆれ候補が見つかりました");
+
+  // チェック後に入力欄だけ別のスプレッドシートIDへ書き換える。
+  await page.locator("#spreadsheet-id").fill("other-sheet");
+  await page.getByRole("button", { name: "統一を適用" }).click();
+  await expect(page.locator("#status")).toContainText("チェック時と異なるスプレッドシートIDが入力されています");
+});

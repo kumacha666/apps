@@ -11,7 +11,7 @@
 // - 正規化後の値は「件数が多い方を自動採用」がユーザーの既定選択。呼び出し元（UI）は
 //   canonicalByGroupKeyで個別グループごとに上書きできる。
 
-import { INDEX_SHEET_HEADER } from "./sheets";
+import { INDEX_SHEET_HEADER, WRITE_BATCH_SIZE } from "./sheets";
 
 type Row = (string | number)[];
 
@@ -86,6 +86,11 @@ export interface CasingWrite {
   field: CaseNormalizationField;
   fileId: string;
   value: string;
+  // チェック時点でこの曲が実際に持っていた表記（variant.value）。書き込み直前にこの値のまま
+  // 変わっていないかを確認するために保持する（ChatGPTレビュー指摘：チェック後〜適用前に
+  // 別デバイス・再スキャンで元のタグ自体が変わっていた場合、overrideが空というだけでは
+  // 古い候補のまま誤って書き込んでしまう）。
+  expectedSourceValue: string;
 }
 
 // canonicalByGroupKey未指定のグループはsuggestedCanonical（件数の多い表記）を採用する。
@@ -99,7 +104,9 @@ export function planCasingNormalization(
     const canonical = canonicalByGroupKey.get(casingGroupKey(group)) ?? group.suggestedCanonical;
     for (const variant of group.variants) {
       if (variant.value === canonical) continue;
-      for (const fileId of variant.fileIds) writes.push({ field: group.field, fileId, value: canonical });
+      for (const fileId of variant.fileIds) {
+        writes.push({ field: group.field, fileId, value: canonical, expectedSourceValue: variant.value });
+      }
     }
   }
   return writes;
@@ -121,6 +128,9 @@ export interface BuildCasingRowUpdatesResult {
 // - 行自体が既に無い（削除・リコンサイル済み）
 // - 対象フィールドのoverrideが既に空でない（この一括正規化の対象選定後、実行までの間に
 //   他デバイス・別の操作がこの曲を手動補正した）
+// - 対象フィールドの抽出値自体がチェック時点（expectedSourceValue）から変わっている
+//   （overrideは空のままでも、別デバイス・再スキャンが元のタグ自体を書き換えていた場合、
+//   チェック時点の古い候補をそのまま書き込むと新しい値を意図せず上書きしてしまう）
 export function buildCasingRowUpdates(writes: CasingWrite[], currentRows: Row[]): BuildCasingRowUpdatesResult {
   const rowByFileId = new Map<string, { rowNumber: number; row: Row }>();
   currentRows.forEach((row, i) => {
@@ -132,7 +142,11 @@ export function buildCasingRowUpdates(writes: CasingWrite[], currentRows: Row[])
   let skippedStaleCount = 0;
   for (const write of writes) {
     const current = rowByFileId.get(write.fileId);
-    if (!current || hasOverride(current.row, write.field)) {
+    if (
+      !current ||
+      hasOverride(current.row, write.field) ||
+      cell(current.row, write.field) !== write.expectedSourceValue
+    ) {
       skippedStaleCount++;
       continue;
     }
@@ -151,6 +165,9 @@ export function buildCasingRowUpdates(writes: CasingWrite[], currentRows: Row[])
 
 export interface BuildCasingRevertUpdatesResult {
   updates: { rowNumber: number; row: Row }[];
+  // 実際に元に戻す対象になったエントリ（呼び出し元がバッチ書き込みの進捗に合わせて
+  // casingUiState.lastAppliedから取り除く対象を特定するために使う）。
+  revertedEntries: AppliedCasingWrite[];
   revertedCount: number;
   skippedStaleCount: number;
 }
@@ -166,7 +183,7 @@ export function buildCasingRevertUpdates(applied: AppliedCasingWrite[], currentR
     if (fileId) rowByFileId.set(fileId, { rowNumber: i + 2, row });
   });
   const updatesByRowNumber = new Map<number, Row>();
-  let revertedCount = 0;
+  const revertedEntries: AppliedCasingWrite[] = [];
   let skippedStaleCount = 0;
   for (const write of applied) {
     const current = rowByFileId.get(write.fileId);
@@ -178,7 +195,43 @@ export function buildCasingRevertUpdates(applied: AppliedCasingWrite[], currentR
     const row = updatesByRowNumber.get(current.rowNumber) ?? [...current.row];
     row[overrideIdx] = "";
     updatesByRowNumber.set(current.rowNumber, row);
-    revertedCount++;
+    revertedEntries.push(write);
   }
-  return { updates: [...updatesByRowNumber.entries()].map(([rowNumber, row]) => ({ rowNumber, row })), revertedCount, skippedStaleCount };
+  return {
+    updates: [...updatesByRowNumber.entries()].map(([rowNumber, row]) => ({ rowNumber, row })),
+    revertedEntries,
+    revertedCount: revertedEntries.length,
+    skippedStaleCount,
+  };
+}
+
+export interface RowUpdateWriterLike {
+  updateRows(updates: { rowNumber: number; row: Row }[]): Promise<void>;
+}
+
+// sheets.tsのupdateRowsInBatches()と同じバッチ分割で書き込むが、1バッチが実際に書き込まれる
+// たびにそのバッチに含まれるentries（AppliedCasingWrite等）をコールバックで通知する。
+// 呼び出し元はこれを使って、複数バッチの途中で書き込みが失敗しても、成功済みバッチ分の
+// undo情報（casingUiState.lastApplied）を失わないようにできる（ChatGPTレビュー指摘：
+// 適用完了後に一括で代入する方式では、途中バッチで例外が起きた場合に成功済みの書き込みが
+// UI上のundo対象として追跡されなくなってしまう）。
+export async function writeCasingUpdatesInBatches<T extends { rowNumber: number }>(
+  io: RowUpdateWriterLike,
+  updates: { rowNumber: number; row: Row }[],
+  entries: T[],
+  onBatchWritten: (batchEntries: T[]) => void,
+  batchSize = WRITE_BATCH_SIZE
+): Promise<void> {
+  const entriesByRowNumber = new Map<number, T[]>();
+  for (const entry of entries) {
+    const list = entriesByRowNumber.get(entry.rowNumber);
+    if (list) list.push(entry);
+    else entriesByRowNumber.set(entry.rowNumber, [entry]);
+  }
+  for (let i = 0; i < updates.length; i += batchSize) {
+    const batch = updates.slice(i, i + batchSize);
+    await io.updateRows(batch);
+    const batchEntries = batch.flatMap((u) => entriesByRowNumber.get(u.rowNumber) ?? []);
+    onBatchWritten(batchEntries);
+  }
 }

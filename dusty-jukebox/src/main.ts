@@ -19,6 +19,7 @@ import {
   casingGroupKey,
   findCasingVariants,
   planCasingNormalization,
+  writeCasingUpdatesInBatches,
   type AppliedCasingWrite,
   type CaseNormalizationField,
   type CasingGroup,
@@ -66,7 +67,6 @@ import {
   mergeDuplicateIndexRows,
   reconcileIndexAgainstRoot,
   removeIndexRows,
-  updateRowsInBatches,
   upsertIndexRows,
   SheetsHttpError,
   SheetsIndexIO,
@@ -726,12 +726,18 @@ function createQueueFromFilters(): void {
 
 // カタログ補正（表記ゆれ統一）のUI状態。groupsは直近のチェック結果、lastAppliedは直前に
 // このツールが書き込んだoverride（セッション内限定の「元に戻す」対象、buildCasingRevertUpdates参照）。
+// spreadsheetIdはチェック実行時点の対象スプレッドシートIDで、groups・lastApplied双方が
+// このIDに対して有効であることを保証する（ChatGPTレビュー指摘：入力欄のIDをチェック後に
+// 別のスプレッドシートへ変更すると、適用・元に戻すが誤って別カタログのfileIdへ書き込みうる）。
+// 同じIDでの再チェックはlastAppliedを引き継ぐ（そうしないと「チェック」を押しただけで
+// 直前の統一の「元に戻す」ができなくなってしまう。別IDへ切り替えた場合のみlastAppliedを破棄する）。
 interface CasingUiState {
+  spreadsheetId: string | null;
   groups: CasingGroup[];
   canonicalByGroupKey: Map<string, string>;
   lastApplied: AppliedCasingWrite[];
 }
-let casingUiState: CasingUiState = { groups: [], canonicalByGroupKey: new Map(), lastApplied: [] };
+let casingUiState: CasingUiState = { spreadsheetId: null, groups: [], canonicalByGroupKey: new Map(), lastApplied: [] };
 const CASE_NORMALIZATION_FIELD_LABELS: Record<CaseNormalizationField, string> = {
   artist: "アーティスト",
   albumArtist: "アルバムアーティスト",
@@ -774,7 +780,10 @@ async function handleCheckCasing(): Promise<void> {
       throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。");
     }
     const rows = await sheetsIO.listExistingRows();
-    casingUiState = { groups: findCasingVariants(rows), canonicalByGroupKey: new Map(), lastApplied: [] };
+    // 同じスプレッドシートに対する再チェックはlastApplied（元に戻す対象）を引き継ぐ。
+    // 別のスプレッドシートIDへ切り替えていた場合は、そのIDに対する統一実績が無いため破棄する。
+    const preservedLastApplied = casingUiState.spreadsheetId === spreadsheetId ? casingUiState.lastApplied : [];
+    casingUiState = { spreadsheetId, groups: findCasingVariants(rows), canonicalByGroupKey: new Map(), lastApplied: preservedLastApplied };
     renderCasingGroups();
     setStatus(
       casingUiState.groups.length > 0
@@ -791,6 +800,12 @@ async function handleCheckCasing(): Promise<void> {
 async function handleApplyCasingNormalization(): Promise<void> {
   const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
   if (!spreadsheetId || casingUiState.groups.length === 0) return;
+  // チェック時と異なるIDが入力欄にある状態での適用を拒否する（ChatGPTレビュー指摘：
+  // 別カタログのfileIdへ誤って書き込むことを防ぐ）。
+  if (spreadsheetId !== casingUiState.spreadsheetId) {
+    setStatus("チェック時と異なるスプレッドシートIDが入力されています。もう一度「表記ゆれをチェック」を実行してください。", true);
+    return;
+  }
   if (!catalogOperationGate.tryAcquire()) {
     setStatus("スキャンまたは索引の読み込みが進行中です。完了してからもう一度お試しください。", true);
     return;
@@ -805,15 +820,28 @@ async function handleApplyCasingNormalization(): Promise<void> {
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
     const currentRows = await sheetsIO.listExistingRows();
     const { updates, applied, skippedStaleCount } = buildCasingRowUpdates(writes, currentRows);
-    await updateRowsInBatches(sheetsIO, updates);
-    casingUiState = { groups: [], canonicalByGroupKey: new Map(), lastApplied: applied };
+    casingUiState.groups = []; casingUiState.canonicalByGroupKey = new Map();
+    // バッチ単位で成功のたびにlastAppliedへ積み増す（ChatGPTレビュー指摘：完了後に一括代入する
+    // 方式だと、複数バッチの途中で書き込みが失敗した場合に成功済み分のundo情報が失われる）。
+    const appliedSoFar: AppliedCasingWrite[] = [];
+    casingUiState.lastApplied = appliedSoFar;
+    await writeCasingUpdatesInBatches(sheetsIO, updates, applied, (batchEntries) => {
+      appliedSoFar.push(...batchEntries);
+      renderCasingGroups();
+    });
     renderCasingGroups();
     setStatus(
-      `${applied.length}件の表記ゆれを統一しました${skippedStaleCount > 0 ? `（${skippedStaleCount}件は他の変更と競合したためスキップ）` : ""}。索引を読み込み直してください。`
+      `${appliedSoFar.length}件の表記ゆれを統一しました${skippedStaleCount > 0 ? `（${skippedStaleCount}件は他の変更と競合したためスキップ）` : ""}。索引を読み込み直してください。`
     );
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
-    setStatus(err instanceof Error ? `表記ゆれの統一に失敗しました: ${err.message}` : "表記ゆれの統一に失敗しました", true);
+    setStatus(
+      err instanceof Error
+        ? `表記ゆれの統一に失敗しました（一部は既に書き込まれている可能性があります。「直前の統一を元に戻す」で確認できます）: ${err.message}`
+        : "表記ゆれの統一に失敗しました",
+      true
+    );
+    renderCasingGroups();
   } finally {
     catalogOperationGate.release();
   }
@@ -821,6 +849,10 @@ async function handleApplyCasingNormalization(): Promise<void> {
 async function handleRevertCasingNormalization(): Promise<void> {
   const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
   if (!spreadsheetId || casingUiState.lastApplied.length === 0) return;
+  if (spreadsheetId !== casingUiState.spreadsheetId) {
+    setStatus("チェック時と異なるスプレッドシートIDが入力されています。もう一度「表記ゆれをチェック」を実行してください。", true);
+    return;
+  }
   if (!catalogOperationGate.tryAcquire()) {
     setStatus("スキャンまたは索引の読み込みが進行中です。完了してからもう一度お試しください。", true);
     return;
@@ -830,16 +862,27 @@ async function handleRevertCasingNormalization(): Promise<void> {
     loadedCatalogSpreadsheetId = null;
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
     const currentRows = await sheetsIO.listExistingRows();
-    const { updates, revertedCount, skippedStaleCount } = buildCasingRevertUpdates(casingUiState.lastApplied, currentRows);
-    await updateRowsInBatches(sheetsIO, updates);
-    casingUiState = { groups: [], canonicalByGroupKey: new Map(), lastApplied: [] };
+    const { updates, revertedEntries, revertedCount, skippedStaleCount } = buildCasingRevertUpdates(casingUiState.lastApplied, currentRows);
+    // バッチが成功するたびに、そのバッチで元に戻せたエントリだけをlastAppliedから取り除く
+    // （途中で失敗しても、まだ元に戻していない残りは次回の「元に戻す」に引き続き使える）。
+    await writeCasingUpdatesInBatches(sheetsIO, updates, revertedEntries, (batchEntries) => {
+      const reverted = new Set(batchEntries);
+      casingUiState.lastApplied = casingUiState.lastApplied.filter((entry) => !reverted.has(entry));
+      renderCasingGroups();
+    });
     renderCasingGroups();
     setStatus(
       `${revertedCount}件の表記ゆれ統一を元に戻しました${skippedStaleCount > 0 ? `（${skippedStaleCount}件は既に他の変更があったためスキップ）` : ""}。索引を読み込み直してください。`
     );
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
-    setStatus(err instanceof Error ? `元に戻す処理に失敗しました: ${err.message}` : "元に戻す処理に失敗しました", true);
+    setStatus(
+      err instanceof Error
+        ? `元に戻す処理に失敗しました（一部は既に元に戻っている可能性があります）: ${err.message}`
+        : "元に戻す処理に失敗しました",
+      true
+    );
+    renderCasingGroups();
   } finally {
     catalogOperationGate.release();
   }
