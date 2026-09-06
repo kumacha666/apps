@@ -14,12 +14,11 @@ import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
 import { parseIndexRows, filterSongs, groupSongsByAlbum, groupAlbumsByArtist, filterAlbumGroups, sortSongs, distinctFieldValues, type AlbumGroup, type AutocompleteField, type Song } from "./catalog";
 import {
-  buildCasingRevertUpdates,
-  buildCasingRowUpdates,
+  applyCasingWritesInChunks,
   casingGroupKey,
   findCasingVariants,
   planCasingNormalization,
-  writeCasingUpdatesInBatches,
+  revertCasingWritesInChunks,
   type AppliedCasingWrite,
   type CaseNormalizationField,
   type CasingGroup,
@@ -818,20 +817,27 @@ async function handleApplyCasingNormalization(): Promise<void> {
     catalogSession.invalidate();
     loadedCatalogSpreadsheetId = null;
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    const currentRows = await sheetsIO.listExistingRows();
-    const { updates, applied, skippedStaleCount } = buildCasingRowUpdates(writes, currentRows);
     casingUiState.groups = []; casingUiState.canonicalByGroupKey = new Map();
-    // バッチ単位で成功のたびにlastAppliedへ積み増す（ChatGPTレビュー指摘：完了後に一括代入する
-    // 方式だと、複数バッチの途中で書き込みが失敗した場合に成功済み分のundo情報が失われる）。
-    const appliedSoFar: AppliedCasingWrite[] = [];
-    casingUiState.lastApplied = appliedSoFar;
-    await writeCasingUpdatesInBatches(sheetsIO, updates, applied, (batchEntries) => {
-      appliedSoFar.push(...batchEntries);
+    // チャンク（既定200件）ごとに索引を読み直してから書き込む（ChatGPTレビュー再指摘：
+    // 一度だけ読んだ最新行のスナップショットを複数チャンクにわたって使い回すと、他デバイスが
+    // その間に更新した無関係な列・対象フィールド自体を古い値へ巻き戻してしまう。各チャンク直前に
+    // 読み直すことでこの窓を1チャンク分の処理時間まで縮める）。
+    // 新しい統一が1件も成功していない間は、以前の「元に戻す」対象（lastApplied）を保持する
+    // （ChatGPTレビュー再指摘：最初のチャンク成功前にlastAppliedを空配列へ差し替えると、
+    // 全件stale等で1件も成功しなかった場合に前回成功分のundoが失われてしまう）。
+    const newlyApplied: AppliedCasingWrite[] = [];
+    let hasSwitchedToNewApplied = false;
+    let totalSkippedStaleCount = 0;
+    await applyCasingWritesInChunks(sheetsIO, writes, ({ chunkApplied, chunkSkippedStaleCount }) => {
+      totalSkippedStaleCount += chunkSkippedStaleCount;
+      if (chunkApplied.length === 0) return;
+      newlyApplied.push(...chunkApplied);
+      if (!hasSwitchedToNewApplied) { casingUiState.lastApplied = newlyApplied; hasSwitchedToNewApplied = true; }
       renderCasingGroups();
     });
     renderCasingGroups();
     setStatus(
-      `${appliedSoFar.length}件の表記ゆれを統一しました${skippedStaleCount > 0 ? `（${skippedStaleCount}件は他の変更と競合したためスキップ）` : ""}。索引を読み込み直してください。`
+      `${newlyApplied.length}件の表記ゆれを統一しました${totalSkippedStaleCount > 0 ? `（${totalSkippedStaleCount}件は他の変更と競合したためスキップ）` : ""}。索引を読み込み直してください。`
     );
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
@@ -861,18 +867,24 @@ async function handleRevertCasingNormalization(): Promise<void> {
     catalogSession.invalidate();
     loadedCatalogSpreadsheetId = null;
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    const currentRows = await sheetsIO.listExistingRows();
-    const { updates, revertedEntries, revertedCount, skippedStaleCount } = buildCasingRevertUpdates(casingUiState.lastApplied, currentRows);
-    // バッチが成功するたびに、そのバッチで元に戻せたエントリだけをlastAppliedから取り除く
-    // （途中で失敗しても、まだ元に戻していない残りは次回の「元に戻す」に引き続き使える）。
-    await writeCasingUpdatesInBatches(sheetsIO, updates, revertedEntries, (batchEntries) => {
-      const reverted = new Set(batchEntries);
-      casingUiState.lastApplied = casingUiState.lastApplied.filter((entry) => !reverted.has(entry));
+    let totalRevertedCount = 0;
+    let totalStaleCount = 0;
+    // チャンクごとに索引を読み直してから書き込む（applyと同じ理由）。
+    // 成功した（chunkReverted）・永久にstaleと判定された（chunkStale）のいずれも、その場で
+    // lastAppliedから取り除く（ChatGPTレビュー再指摘：staleと判定されたエントリをlastApplied
+    // に残し続けると、後日ユーザーが偶然/意図的に同じ値へ手動で書き換えた場合、次回の
+    // 「元に戻す」がその後日の手動変更を誤って消してしまう。一度不一致を観測した時点で
+    // 「今の値が自分の書き込み由来」という前提は永久に失われているため、二度と対象にしない）。
+    await revertCasingWritesInChunks(sheetsIO, casingUiState.lastApplied, ({ chunkReverted, chunkStale }) => {
+      totalRevertedCount += chunkReverted.length;
+      totalStaleCount += chunkStale.length;
+      const handled = new Set([...chunkReverted, ...chunkStale]);
+      casingUiState.lastApplied = casingUiState.lastApplied.filter((entry) => !handled.has(entry));
       renderCasingGroups();
     });
     renderCasingGroups();
     setStatus(
-      `${revertedCount}件の表記ゆれ統一を元に戻しました${skippedStaleCount > 0 ? `（${skippedStaleCount}件は既に他の変更があったためスキップ）` : ""}。索引を読み込み直してください。`
+      `${totalRevertedCount}件の表記ゆれ統一を元に戻しました${totalStaleCount > 0 ? `（${totalStaleCount}件は既に他の変更があったためスキップ）` : ""}。索引を読み込み直してください。`
     );
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();

@@ -165,9 +165,15 @@ export function buildCasingRowUpdates(writes: CasingWrite[], currentRows: Row[])
 
 export interface BuildCasingRevertUpdatesResult {
   updates: { rowNumber: number; row: Row }[];
-  // 実際に元に戻す対象になったエントリ（呼び出し元がバッチ書き込みの進捗に合わせて
-  // casingUiState.lastAppliedから取り除く対象を特定するために使う）。
+  // 実際に元に戻す対象になった（これから書き込む）エントリ。
   revertedEntries: AppliedCasingWrite[];
+  // 行が既に無い、またはoverrideの現在値がこのツールが書いた値と異なっていたエントリ。
+  // 一度でも不一致を観測した時点で「今の値が自分の書き込み由来である」という前提
+  // （provenance）は失われるため、呼び出し元はこれらをlastApplied（undo対象）から
+  // 永久に取り除く必要がある（ChatGPTレビュー再指摘：staleと判定された後もundo対象に
+  // 残り続けると、後日ユーザーが偶然/意図的に同じ値へ手動で書き換えた場合、次回の
+  // 「元に戻す」がその後日の手動変更を誤って消してしまう）。
+  staleEntries: AppliedCasingWrite[];
   revertedCount: number;
   skippedStaleCount: number;
 }
@@ -184,12 +190,12 @@ export function buildCasingRevertUpdates(applied: AppliedCasingWrite[], currentR
   });
   const updatesByRowNumber = new Map<number, Row>();
   const revertedEntries: AppliedCasingWrite[] = [];
-  let skippedStaleCount = 0;
+  const staleEntries: AppliedCasingWrite[] = [];
   for (const write of applied) {
     const current = rowByFileId.get(write.fileId);
     const overrideIdx = col(overrideColumnName(write.field));
     if (!current || cell(current.row, overrideColumnName(write.field)) !== write.value) {
-      skippedStaleCount++;
+      staleEntries.push(write);
       continue;
     }
     const row = updatesByRowNumber.get(current.rowNumber) ?? [...current.row];
@@ -200,38 +206,67 @@ export function buildCasingRevertUpdates(applied: AppliedCasingWrite[], currentR
   return {
     updates: [...updatesByRowNumber.entries()].map(([rowNumber, row]) => ({ rowNumber, row })),
     revertedEntries,
+    staleEntries,
     revertedCount: revertedEntries.length,
-    skippedStaleCount,
+    skippedStaleCount: staleEntries.length,
   };
 }
 
-export interface RowUpdateWriterLike {
+export interface CasingRowIO {
+  listExistingRows(): Promise<Row[]>;
   updateRows(updates: { rowNumber: number; row: Row }[]): Promise<void>;
 }
 
-// sheets.tsのupdateRowsInBatches()と同じバッチ分割で書き込むが、1バッチが実際に書き込まれる
-// たびにそのバッチに含まれるentries（AppliedCasingWrite等）をコールバックで通知する。
-// 呼び出し元はこれを使って、複数バッチの途中で書き込みが失敗しても、成功済みバッチ分の
-// undo情報（casingUiState.lastApplied）を失わないようにできる（ChatGPTレビュー指摘：
-// 適用完了後に一括で代入する方式では、途中バッチで例外が起きた場合に成功済みの書き込みが
-// UI上のundo対象として追跡されなくなってしまう）。
-export async function writeCasingUpdatesInBatches<T extends { rowNumber: number }>(
-  io: RowUpdateWriterLike,
-  updates: { rowNumber: number; row: Row }[],
-  entries: T[],
-  onBatchWritten: (batchEntries: T[]) => void,
-  batchSize = WRITE_BATCH_SIZE
+export interface ApplyCasingWritesChunkResult {
+  chunkApplied: AppliedCasingWrite[];
+  chunkSkippedStaleCount: number;
+}
+
+// writesをchunkSizeずつ処理し、各チャンクの直前に索引を読み直してからbuildCasingRowUpdates()で
+// 書き込み行を組み立てる（ChatGPTレビュー再指摘：`updateRows()`は対象行を丸ごと上書きするため、
+// 一度だけ読んだ最新行のスナップショットを複数バッチにわたって使い回すと、最初のチェック～
+// 最後のバッチ書き込みまでの間に他デバイスが同じ行の無関係な列（title・lastScannedAt等）や
+// 対象フィールド自体を更新していても、そのバッチの書き込みで古いスナップショットへ巻き戻して
+// しまう。各チャンクの直前に読み直すことで、この「古い行の巻き戻し」が起こりうる時間窓を
+// 1チャンク分の処理時間まで縮める。完全な単一セル更新ではなく行全体の上書きである点は変わらない
+// ため、根本的な排他制御ではなく「事前防止ではなく窓を狭める」という本アプリ全体の既存方針の
+// 範囲内の対策である点に留意）。
+export async function applyCasingWritesInChunks(
+  io: CasingRowIO,
+  writes: CasingWrite[],
+  onChunkWritten: (result: ApplyCasingWritesChunkResult) => void,
+  chunkSize = WRITE_BATCH_SIZE
 ): Promise<void> {
-  const entriesByRowNumber = new Map<number, T[]>();
-  for (const entry of entries) {
-    const list = entriesByRowNumber.get(entry.rowNumber);
-    if (list) list.push(entry);
-    else entriesByRowNumber.set(entry.rowNumber, [entry]);
+  for (let i = 0; i < writes.length; i += chunkSize) {
+    const chunk = writes.slice(i, i + chunkSize);
+    const currentRows = await io.listExistingRows();
+    const { updates, applied, skippedStaleCount } = buildCasingRowUpdates(chunk, currentRows);
+    if (updates.length > 0) await io.updateRows(updates);
+    onChunkWritten({ chunkApplied: applied, chunkSkippedStaleCount: skippedStaleCount });
   }
-  for (let i = 0; i < updates.length; i += batchSize) {
-    const batch = updates.slice(i, i + batchSize);
-    await io.updateRows(batch);
-    const batchEntries = batch.flatMap((u) => entriesByRowNumber.get(u.rowNumber) ?? []);
-    onBatchWritten(batchEntries);
+}
+
+export interface RevertCasingWritesChunkResult {
+  chunkReverted: AppliedCasingWrite[];
+  // このチャンクで永久にstaleと判定されたエントリ（行が無い、またはoverrideの現在値が
+  // 書き込んだ値と異なる）。呼び出し元はこれをlastAppliedから即座に取り除く必要がある
+  // （buildCasingRevertUpdatesのstaleEntries参照）。
+  chunkStale: AppliedCasingWrite[];
+}
+
+// applyCasingWritesInChunks()と同じ理由（行全体上書きの巻き戻しリスクを縮める）で、
+// 各チャンクの直前に索引を読み直す。
+export async function revertCasingWritesInChunks(
+  io: CasingRowIO,
+  applied: AppliedCasingWrite[],
+  onChunkWritten: (result: RevertCasingWritesChunkResult) => void,
+  chunkSize = WRITE_BATCH_SIZE
+): Promise<void> {
+  for (let i = 0; i < applied.length; i += chunkSize) {
+    const chunk = applied.slice(i, i + chunkSize);
+    const currentRows = await io.listExistingRows();
+    const { updates, revertedEntries, staleEntries } = buildCasingRevertUpdates(chunk, currentRows);
+    if (updates.length > 0) await io.updateRows(updates);
+    onChunkWritten({ chunkReverted: revertedEntries, chunkStale: staleEntries });
   }
 }

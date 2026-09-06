@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { INDEX_SHEET_HEADER } from "./sheets";
 import {
+  applyCasingWritesInChunks,
   buildCasingRevertUpdates,
   buildCasingRowUpdates,
   casingGroupKey,
   findCasingVariants,
   planCasingNormalization,
-  writeCasingUpdatesInBatches,
+  revertCasingWritesInChunks,
 } from "./caseNormalization";
 
 type Row = (string | number)[];
@@ -161,71 +162,85 @@ describe("buildCasingRevertUpdates", () => {
   it("clears the override written by this tool back to blank", () => {
     const currentRows = [makeRow({ fileId: "2", artist: "akb48", artist_override: "AKB48" })];
     const applied = [{ field: "artist" as const, fileId: "2", value: "AKB48", expectedSourceValue: "akb48", rowNumber: 2 }];
-    const { updates, revertedEntries, revertedCount, skippedStaleCount } = buildCasingRevertUpdates(applied, currentRows);
+    const { updates, revertedEntries, staleEntries, revertedCount, skippedStaleCount } = buildCasingRevertUpdates(applied, currentRows);
     expect(revertedCount).toBe(1);
     expect(revertedEntries).toEqual(applied);
+    expect(staleEntries).toHaveLength(0);
     expect(skippedStaleCount).toBe(0);
     expect(updates[0].row[INDEX_SHEET_HEADER.indexOf("artist_override")]).toBe("");
   });
 
-  it("does not revert if the override has since changed to something else", () => {
+  it("does not revert if the override has since changed to something else, and reports it as permanently stale", () => {
     const currentRows = [makeRow({ fileId: "2", artist: "akb48", artist_override: "Something Else" })];
     const applied = [{ field: "artist" as const, fileId: "2", value: "AKB48", expectedSourceValue: "akb48", rowNumber: 2 }];
-    const { updates, revertedEntries, revertedCount, skippedStaleCount } = buildCasingRevertUpdates(applied, currentRows);
+    const { updates, revertedEntries, staleEntries, revertedCount, skippedStaleCount } = buildCasingRevertUpdates(applied, currentRows);
     expect(updates).toHaveLength(0);
     expect(revertedEntries).toHaveLength(0);
+    expect(staleEntries).toEqual(applied);
     expect(revertedCount).toBe(0);
     expect(skippedStaleCount).toBe(1);
   });
 
-  it("skips revert if the row no longer exists", () => {
+  it("skips revert if the row no longer exists, and reports it as permanently stale", () => {
     const applied = [{ field: "artist" as const, fileId: "gone", value: "AKB48", expectedSourceValue: "akb48", rowNumber: 2 }];
-    const { revertedCount, skippedStaleCount } = buildCasingRevertUpdates(applied, []);
+    const { staleEntries, revertedCount, skippedStaleCount } = buildCasingRevertUpdates(applied, []);
+    expect(staleEntries).toEqual(applied);
     expect(revertedCount).toBe(0);
     expect(skippedStaleCount).toBe(1);
   });
 });
 
-describe("writeCasingUpdatesInBatches", () => {
-  it("notifies each batch's entries as that batch is written, grouped by rowNumber", async () => {
-    const updates = [
-      { rowNumber: 2, row: ["r2"] as (string | number)[] },
-      { rowNumber: 3, row: ["r3"] as (string | number)[] },
+describe("applyCasingWritesInChunks", () => {
+  it("re-reads the index immediately before each chunk, so a later chunk sees changes made after an earlier chunk was written (ChatGPT re-review P1)", async () => {
+    // 1件目のチャンク書き込み後、外部（別デバイス想定）が2件目の対象行のartistを書き換える。
+    // 各チャンク直前に読み直していれば、2件目のチャンクはその新しい値を見てstale判定できる。
+    const rows: Row[] = [makeRow({ fileId: "1", artist: "akb48" }), makeRow({ fileId: "2", artist: "akb48" })];
+    const writes = [
+      { field: "artist" as const, fileId: "1", value: "AKB48", expectedSourceValue: "akb48" },
+      { field: "artist" as const, fileId: "2", value: "AKB48", expectedSourceValue: "akb48" },
     ];
-    const entries = [
-      { rowNumber: 2, fileId: "a" },
-      { rowNumber: 3, fileId: "b" },
-      { rowNumber: 3, fileId: "c" },
-    ];
-    const writtenBatches: { rowNumber: number; row: (string | number)[] }[][] = [];
-    const io = { updateRows: vi.fn(async (batch: typeof updates) => { writtenBatches.push(batch); }) };
-    const notified: { rowNumber: number; fileId: string }[][] = [];
-    await writeCasingUpdatesInBatches(io, updates, entries, (batchEntries) => notified.push(batchEntries), 1);
-    expect(writtenBatches).toHaveLength(2);
-    expect(notified).toEqual([[{ rowNumber: 2, fileId: "a" }], [{ rowNumber: 3, fileId: "b" }, { rowNumber: 3, fileId: "c" }]]);
-  });
-
-  it("preserves the notifications from batches written before a later batch throws", async () => {
-    const updates = [
-      { rowNumber: 2, row: ["r2"] as (string | number)[] },
-      { rowNumber: 3, row: ["r3"] as (string | number)[] },
-    ];
-    const entries = [
-      { rowNumber: 2, fileId: "a" },
-      { rowNumber: 3, fileId: "b" },
-    ];
-    let callCount = 0;
     const io = {
-      updateRows: vi.fn(async () => {
-        callCount++;
-        if (callCount === 2) throw new Error("boom");
+      listExistingRows: vi.fn(async () => rows.map((r) => [...r])),
+      updateRows: vi.fn(async (updates: { rowNumber: number; row: Row }[]) => {
+        for (const { rowNumber, row } of updates) rows[rowNumber - 2] = row;
+        // 1件目のチャンクが書き込まれた直後、外部が2件目の行のartistを書き換えたことを模擬する。
+        if (updates[0]?.rowNumber === 2) rows[1][INDEX_SHEET_HEADER.indexOf("artist")] = "AC/DC";
       }),
     };
-    const notified: { rowNumber: number; fileId: string }[][] = [];
-    await expect(
-      writeCasingUpdatesInBatches(io, updates, entries, (batchEntries) => notified.push(batchEntries), 1)
-    ).rejects.toThrow("boom");
-    // 1件目のバッチ分は例外発生前に既に通知済みのはず。
-    expect(notified).toEqual([[{ rowNumber: 2, fileId: "a" }]]);
+    const results: { chunkApplied: { fileId: string }[]; chunkSkippedStaleCount: number }[] = [];
+    await applyCasingWritesInChunks(io, writes, (result) => results.push(result), 1);
+    expect(results[0].chunkApplied.map((e) => e.fileId)).toEqual(["1"]);
+    expect(results[1].chunkApplied).toHaveLength(0);
+    expect(results[1].chunkSkippedStaleCount).toBe(1);
+    // 2件目のfileIdの行は、後から書き換えられた"AC/DC"のまま（古いスナップショットで巻き戻されていない）。
+    expect(rows[1][INDEX_SHEET_HEADER.indexOf("artist")]).toBe("AC/DC");
+  });
+});
+
+describe("revertCasingWritesInChunks", () => {
+  it("notifies chunkReverted/chunkStale per chunk after re-reading the index immediately before writing it", async () => {
+    const rows: Row[] = [
+      makeRow({ fileId: "1", artist: "akb48", artist_override: "AKB48" }),
+      makeRow({ fileId: "2", artist: "akb48", artist_override: "AKB48" }),
+    ];
+    const applied = [
+      { field: "artist" as const, fileId: "1", value: "AKB48", expectedSourceValue: "akb48", rowNumber: 2 },
+      { field: "artist" as const, fileId: "2", value: "AKB48", expectedSourceValue: "akb48", rowNumber: 3 },
+    ];
+    const io = {
+      listExistingRows: vi.fn(async () => rows.map((r) => [...r])),
+      updateRows: vi.fn(async (updates: { rowNumber: number; row: Row }[]) => {
+        for (const { rowNumber, row } of updates) rows[rowNumber - 2] = row;
+        // 1件目を元に戻した直後、別のユーザーが2件目のoverrideを手動で別の値へ変更したことを模擬する。
+        if (updates[0]?.rowNumber === 2) rows[1][INDEX_SHEET_HEADER.indexOf("artist_override")] = "Manual Fix";
+      }),
+    };
+    const results: { chunkReverted: { fileId: string }[]; chunkStale: { fileId: string }[] }[] = [];
+    await revertCasingWritesInChunks(io, applied, (result) => results.push(result), 1);
+    expect(results[0].chunkReverted.map((e) => e.fileId)).toEqual(["1"]);
+    expect(results[1].chunkReverted).toHaveLength(0);
+    expect(results[1].chunkStale.map((e) => e.fileId)).toEqual(["2"]);
+    // 2件目のoverrideは手動修正のまま消されていない。
+    expect(rows[1][INDEX_SHEET_HEADER.indexOf("artist_override")]).toBe("Manual Fix");
   });
 });
