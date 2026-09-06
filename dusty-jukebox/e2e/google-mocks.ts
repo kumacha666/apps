@@ -51,6 +51,13 @@ function sheetNameForRange(range: string | undefined): string {
   return match?.[1] ?? "unknown";
 }
 
+// A1記法の列文字（例："J"）を0-indexedの列インデックスに変換する（sheets.tsのcolumnLetter()の逆変換）。
+function columnLettersToIndex(letters: string): number {
+  let index = 0;
+  for (const ch of letters) index = index * 26 + (ch.charCodeAt(0) - 64);
+  return index - 1;
+}
+
 /** In-memory GIS, Drive and Sheets boundary. Every authenticated API request is
  * checked here, so a broken token hand-off cannot look like a successful E2E run. */
 export async function installGoogleMocks(context: BrowserContext, options: MockOptions = {}) {
@@ -201,10 +208,21 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     if (url.includes("values:batchUpdate") && method === "POST") {
       const body = JSON.parse(route.request().postData() ?? "{}") as { data?: Array<{ range?: string; values?: (string | number)[][] }> };
       for (const update of body.data ?? []) {
-        const match = update.range?.match(/^'?([^'!]+)'?!A(\d+)/);
+        // 行全体の更新（'sheet'!A5:AS5、values[0].length>1）と、カタログ補正機能の単一セル更新
+        // （'sheet'!J5、values[0].length===1）の両方に対応する。後者は列がAとは限らないため
+        // 列文字を実際にパースして列インデックスへ変換する（旧実装は列Aを暗黙の前提としていた）。
+        const match = update.range?.match(/^'?([^'!]+)'?!([A-Z]+)(\d+)/);
         if (!match || !update.values?.[0]) continue;
         const rows = (sheetData[match[1]] ??= []);
-        rows[Number(match[2]) - 2] = [...update.values[0]];
+        const rowIndex = Number(match[3]) - 2;
+        const values = update.values[0];
+        if (values.length === 1) {
+          const columnIndex = columnLettersToIndex(match[2]);
+          const row = (rows[rowIndex] ??= []);
+          row[columnIndex] = values[0];
+        } else {
+          rows[rowIndex] = [...values];
+        }
       }
       for (const update of body.data ?? []) {
         sheetsWrites.push({
