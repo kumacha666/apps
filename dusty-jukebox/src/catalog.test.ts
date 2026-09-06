@@ -12,13 +12,18 @@ describe("索引行の読み取り", () => {
     expect(readOverride(row({ [field]: "Extracted", [`${field}_override`]: "(none)" }), field)).toBe("");
     expect(readOverride(row({ [field]: "Extracted", [`${field}_override`]: "Corrected" }), field)).toBe("Corrected");
   });
+  test("releaseType_overrideは抽出値へのフォールバックが無く、空欄・(none)・値をそのまま扱う（開発体制#39④UI-5）", () => {
+    expect(parseIndexRows([row({ fileId: "a" })])[0].releaseType).toBe("");
+    expect(parseIndexRows([row({ fileId: "b", releaseType_override: "(none)" })])[0].releaseType).toBe("");
+    expect(parseIndexRows([row({ fileId: "c", releaseType_override: "Single" })])[0].releaseType).toBe("Single");
+  });
   test("同じfileIdは先に現れた行だけを採用する", () => {
     const songs = parseIndexRows([row({ fileId: "duplicate", title: "first" }), row({ fileId: "duplicate", title: "later" }), row({ fileId: "unique" })]);
     expect(songs.map((song) => song.fileId)).toEqual(["duplicate", "unique"]);
     expect(songs[0].title).toBe("first");
   });
 });
-const song = (v: Partial<Song>): Song => ({ fileId: "id", parentId: "p", title: "t", artist: "", album: "", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", ...v });
+const song = (v: Partial<Song>): Song => ({ fileId: "id", parentId: "p", title: "t", artist: "", album: "", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", releaseType: "", ...v });
 describe("絞り込みとソート", () => {
   test("artist、genre、年範囲をANDで適用し年不明を切替える", () => {
     const songs = [song({ fileId: "1", artist: "Alpha", genre: "Rock", releaseYear: "1999" }), song({ fileId: "2", artist: "Alpha", genre: "Rock" }), song({ fileId: "3", artist: "Beta", genre: "Rock", releaseYear: "2000" })];
@@ -41,6 +46,12 @@ describe("絞り込みとソート", () => {
     expect(filterSongs(songs, { composer: "WRIT", includeUnknownYear: true }).map((s) => s.fileId)).toEqual(["artist", "album"]);
     expect(filterSongs(songs, { query: "moon", artist: "alpha", album: "suite", composer: "beeth", genre: "classical", includeUnknownYear: true }).map((s) => s.fileId)).toEqual(["title"]);
   });
+  test("releaseTypeは部分一致・大文字小文字を区別しない（開発体制#39④UI-5）", () => {
+    const songs = [song({ fileId: "single", releaseType: "Single" }), song({ fileId: "bside", releaseType: "B-side" }), song({ fileId: "unset", releaseType: "" })];
+    expect(filterSongs(songs, { releaseType: "single", includeUnknownYear: true }).map((s) => s.fileId)).toEqual(["single"]);
+    expect(filterSongs(songs, { releaseType: "side", includeUnknownYear: true }).map((s) => s.fileId)).toEqual(["bside"]);
+    expect(filterSongs(songs, { includeUnknownYear: true })).toHaveLength(3);
+  });
   test("年、artist、album、disc、trackを数値順でソートする", () => {
     expect(sortSongs([song({ fileId: "10", releaseYear: "2000", artist: "A", album: "X", discNumber: "1", trackNumber: "10" }), song({ fileId: "2", releaseYear: "2000", artist: "A", album: "X", discNumber: "1", trackNumber: "2" }), song({ fileId: "disc2", releaseYear: "2000", artist: "A", album: "X", discNumber: "2", trackNumber: "1" }), song({ fileId: "unknown" })]).map((s) => s.fileId)).toEqual(["2", "10", "disc2", "unknown"]);
   });
@@ -53,6 +64,10 @@ describe("オートコンプリート候補の抽出", () => {
   test("genreは' / '区切りで個々のジャンルへ分解する", () => {
     const songs = [song({ genre: "Soundtrack / Game" }), song({ genre: "Rock" }), song({ genre: "Game / Rock" })];
     expect(distinctFieldValues(songs, "genre")).toEqual(["Game", "Rock", "Soundtrack"]);
+  });
+  test("releaseTypeはgenreと違い分解しない（単一値として重複排除・ソート）（開発体制#39④UI-5）", () => {
+    const songs = [song({ releaseType: "Single" }), song({ releaseType: "Album" }), song({ releaseType: "Single" }), song({ releaseType: "" })];
+    expect(distinctFieldValues(songs, "releaseType")).toEqual(["Album", "Single"]);
   });
   test("空欄は候補に含めない", () => {
     expect(distinctFieldValues([song({ album: "" }), song({ album: "  " })], "album")).toEqual([]);

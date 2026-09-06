@@ -193,6 +193,19 @@ test("検索で曲を絞り込み、アルバムをdisc/track順のキューに�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
 });
 
+test("リリース種別欄の候補一覧が反映され、絞り込みができる（開発体制#39④UI-5）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await expect(page.locator("#filter-release-type-options option")).toHaveText(["Album", "Single"]);
+
+  await page.locator("#filter-release-type").fill("single");
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(1);
+  await expect(page.locator("#catalog-list")).toContainText("Jazz Song");
+});
+
 test("再生中にシャッフルしても現在曲は維持され、次へで残り曲を1曲も失わず辿れる", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");

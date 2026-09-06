@@ -2,7 +2,8 @@ import { INDEX_SHEET_HEADER } from "./sheets";
 
 export interface Song {
   fileId: string; parentId: string; title: string; artist: string; album: string; genre: string;
-  composer: string; albumArtist: string; releaseYear: string; discNumber: string; trackNumber: string; folderPath?: string;
+  composer: string; albumArtist: string; releaseYear: string; discNumber: string; trackNumber: string;
+  releaseType: string; folderPath?: string;
 }
 
 type Row = (string | number)[];
@@ -13,6 +14,14 @@ const cell = (row: Row, name: (typeof INDEX_SHEET_HEADER)[number]) => String(row
 export function readOverride(row: Row, field: "title" | "artist" | "album" | "releaseYear" | "composer" | "albumArtist"): string {
   const override = cell(row, `${field}_override` as (typeof INDEX_SHEET_HEADER)[number]);
   return override === "" ? cell(row, field) : override === "(none)" ? "" : override;
+}
+
+// releaseType（シングル/アルバム/B面等）はCONCEPT.md 4.3節の通り「抽出なし、ユーザー入力欄」
+// （対応する抽出値列が存在しない）ため、readOverride()の空欄→抽出値フォールバックは適用されない。
+// (none)は他の_override列と同じ「意図的な空」を表す規約のまま踏襲する。
+function readReleaseTypeOverride(row: Row): string {
+  const override = cell(row, "releaseType_override");
+  return override === "(none)" ? "" : override;
 }
 
 export function parseIndexRows(rows: Row[]): Song[] {
@@ -28,23 +37,26 @@ export function parseIndexRows(rows: Row[]): Song[] {
     return { fileId, parentId: cell(row, "parentId"), title, artist: readOverride(row, "artist"),
       album: readOverride(row, "album"), composer: readOverride(row, "composer"), albumArtist: readOverride(row, "albumArtist"),
       genre: cell(row, "genre"), releaseYear: readOverride(row, "releaseYear"),
-      discNumber: cell(row, "discNumber"), trackNumber: cell(row, "trackNumber") };
+      discNumber: cell(row, "discNumber"), trackNumber: cell(row, "trackNumber"),
+      releaseType: readReleaseTypeOverride(row) };
   });
 }
 
-export interface SongFilters { query?: string; artist?: string; album?: string; composer?: string; minYear?: number; maxYear?: number; includeUnknownYear: boolean; genre?: string; }
+export interface SongFilters { query?: string; artist?: string; album?: string; composer?: string; minYear?: number; maxYear?: number; includeUnknownYear: boolean; genre?: string; releaseType?: string; }
 export function filterSongs(songs: Song[], filters: SongFilters): Song[] {
   const query = filters.query?.toLocaleLowerCase() ?? "";
   const artist = filters.artist?.toLocaleLowerCase() ?? "";
   const album = filters.album?.toLocaleLowerCase() ?? "";
   const composer = filters.composer?.toLocaleLowerCase() ?? "";
   const genre = filters.genre?.toLocaleLowerCase() ?? "";
+  const releaseType = filters.releaseType?.toLocaleLowerCase() ?? "";
   return songs.filter((song) => {
     if (query && ![song.title, song.artist, song.album, song.composer].some((value) => value.toLocaleLowerCase().includes(query))) return false;
     if (artist && !song.artist.toLocaleLowerCase().includes(artist)) return false;
     if (album && !song.album.toLocaleLowerCase().includes(album)) return false;
     if (composer && !song.composer.toLocaleLowerCase().includes(composer)) return false;
     if (genre && !song.genre.split(" / ").some((value) => value.trim().toLocaleLowerCase() === genre)) return false;
+    if (releaseType && !song.releaseType.toLocaleLowerCase().includes(releaseType)) return false;
     const releaseYear = song.releaseYear.trim();
     const year = Number(releaseYear);
     if (releaseYear === "" || !Number.isFinite(year)) return filters.includeUnknownYear;
@@ -57,7 +69,7 @@ export function filterSongs(songs: Song[], filters: SongFilters): Song[] {
 // 何が登録されているか分からない、という使いづらさへの対応（開発体制#39④）。
 // genreは1曲に複数ジャンルが" / "区切りで入る（filterSongsの一致判定と同じ分割規則）ため、
 // 個々のジャンル語として分解してから重複排除する。
-export type AutocompleteField = "artist" | "album" | "composer" | "genre";
+export type AutocompleteField = "artist" | "album" | "composer" | "genre" | "releaseType";
 export function distinctFieldValues(songs: Song[], field: AutocompleteField): string[] {
   const values = new Set<string>();
   for (const song of songs) {
