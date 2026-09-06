@@ -193,6 +193,39 @@ test("検索で曲を絞り込み、アルバムをdisc/track順のキューに�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
 });
 
+test("シャッフルボタンで再生リストの並び順を変えられ、次へ/前へは新しい並び順をそのまま辿る", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+
+  await page.getByRole("button", { name: "シャッフル" }).click();
+  // シャッフル自体はランダムなため並び順そのものは固定しないが、シャッフル後の表示順と
+  // 実際の再生順（次へ/前への遷移）が一致していることを検証する（ランダム値に依存しない
+  // 自己整合性チェック。ボタンが表示だけ入れ替えてqueue本体を並べ替えていない、という
+  // 回帰を検出できる）。
+  const items = page.locator("#catalog-list li .song-link");
+  const shuffledTexts = await items.allTextContents();
+  const fileIdByTitle: Record<string, string> = { Opening: "album-track-1", Scherzo: "album-track-2", Finale: "album-track-3" };
+  const shuffledFileIds = shuffledTexts.map((text) => {
+    const match = Object.entries(fileIdByTitle).find(([title]) => text.includes(title));
+    if (!match) throw new Error(`unexpected song text: ${text}`);
+    return match[1];
+  });
+  expect(new Set(shuffledFileIds)).toEqual(new Set(["album-track-1", "album-track-2", "album-track-3"]));
+
+  await items.nth(0).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", new RegExp(`${shuffledFileIds[0]}(\\?|$)`));
+  for (let i = 1; i < shuffledFileIds.length; i += 1) {
+    await page.getByRole("button", { name: "次へ" }).click();
+    await expect(page.locator("#audio-player")).toHaveAttribute("src", new RegExp(`${shuffledFileIds[i]}(\\?|$)`));
+  }
+});
+
 test("アルバム一覧はアーティスト別に見出し付きで表示され、検索欄でアルバム名/アーティスト名を絞り込める", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");

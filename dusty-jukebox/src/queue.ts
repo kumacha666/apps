@@ -57,6 +57,17 @@ export class PlaybackQueue {
   next(): Promise<boolean> { return this.move(async (generation) => { const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId); const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId)); return next ? this.playAndCommit(next.fileId, generation) : false; }); }
   previous(): Promise<boolean> { return this.move(async (generation) => { if (this.currentFileId === null) return false; const currentIndex = this.songs.findIndex((song) => song.fileId === this.currentFileId); for (let index = currentIndex - 1; index >= 0; index -= 1) { const song = this.songs[index]; if (!this.isExcluded(song.fileId)) return this.playAndCommit(song.fileId, generation); } return false; }); }
   resumeCurrent(position: number): Promise<boolean> { return this.move(async (generation) => this.currentFileId ? this.playAndCommit(this.currentFileId, generation, position) : false, true); }
+  // 絞り込んだ再生リストをその場でランダムな順番に並べ替える（開発体制#39④UI-4）。
+  // CONCEPT.mdの設計方針「気分はフィルタ条件で満たす、シャッフルは任意の再生モードの1つ」
+  // に沿い、既存の絞り込み結果に対する任意操作として提供する（フィルタそのものは変えない）。
+  // currentFileId・excluded・generationはそのまま（再生中の曲を止めたり、既存の除外設定を
+  // リセットしたりしない）。next()/previous()はこの新しい並び順をそのまま辿る。
+  shuffle(random: () => number = Math.random): void {
+    for (let i = this.songs.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(random() * (i + 1));
+      [this.songs[i], this.songs[j]] = [this.songs[j], this.songs[i]];
+    }
+  }
   resume(fileId: string, position: number): Promise<boolean> {
     return this.move(async (generation) =>
       this.songs.some((song) => song.fileId === fileId) && !this.isExcluded(fileId)

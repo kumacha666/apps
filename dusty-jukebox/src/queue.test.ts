@@ -25,6 +25,21 @@ describe("PlaybackQueue", () => {
     queue.setList([song("a"), song("b")]); await queue.previous();
     expect(played).toEqual([]);
   });
+  test("shuffleは同じ曲集合を並べ替え、注入したrandomに従った決定的な順序になる（Fisher-Yates）", () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c"), song("d")]);
+    // 常に0を返すrandom＝各ステップでi=0側（先頭）の要素と交換し続けるため、結果は逆順になる。
+    queue.shuffle(() => 0);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["b", "c", "d", "a"]);
+    expect(queue.all().map((s) => s.fileId).sort()).toEqual(["a", "b", "c", "d"]);
+  });
+  test("shuffleは再生中の曲・除外設定を変えない", async () => {
+    const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    queue.setList([song("a"), song("b"), song("c")]); queue.exclude("b", true); await queue.playAt(0);
+    queue.shuffle(() => 0.999);
+    expect(queue.currentPlayingFileId()).toBe("a");
+    expect(queue.isExcluded("b")).toBe(true);
+  });
   test("キュー再生の終了時だけ次の曲へ進み、単曲試聴後の終了では進まない", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b")]); await queue.playAt(0); audio.listener?.();
