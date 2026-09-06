@@ -218,7 +218,7 @@ test("再生中にシャッフルしても現在曲は維持され、次へで�
   // アルバム再生開始時点で1曲目（album-track-1）が既に再生中の状態を作る。
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
 
-  await page.getByRole("button", { name: "シャッフル" }).click();
+  await page.getByRole("button", { name: "シャッフル", exact: true }).click();
   // 2026-09-06、ChatGPTレビュー指摘：再生中の曲を含めて全体をシャッフルすると、現在曲より
   // 前の位置に移動した未再生曲がnext()から永久に到達不能になり、残り曲があっても再生が
   // 止まってしまう不具合があった。再生中の曲はシャッフル後も位置・再生状態とも維持され、
@@ -234,6 +234,53 @@ test("再生中にシャッフルしても現在曲は維持され、次へで�
     reached.push(`album-track-${match[1]}`);
   }
   expect(reached.sort()).toEqual(["album-track-2", "album-track-3"]);
+});
+
+test("「シャッフルを元に戻す」でシャッフル前の並び順に戻る", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await expect(page.getByRole("button", { name: "シャッフルを元に戻す" })).toBeDisabled();
+
+  // シャッフル自体が実際に並び順を変えることは別テスト（「再生中にシャッフルしても現在曲は
+  // 維持され...」）で既に検証済みのため、ここではランダム性に左右されない「元に戻す」の
+  // 機能だけを検証する（並びが変わったことの追加確認は入れない。稀に変わらない結果になっても
+  // 偽陽性・偽陰性のどちらにもならないよう、以下は復元後の一致だけを見る）。
+  const originalOrder = await page.locator("#catalog-list li").allTextContents();
+  await page.getByRole("button", { name: "シャッフル", exact: true }).click();
+  await expect(page.getByRole("button", { name: "シャッフルを元に戻す" })).toBeEnabled();
+
+  await page.getByRole("button", { name: "シャッフルを元に戻す" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveText(originalOrder.map((t) => new RegExp(t)));
+  await expect(page.getByRole("button", { name: "シャッフルを元に戻す" })).toBeDisabled();
+});
+
+test("「再生」ボタンで先頭曲から再生でき、一時停止中の曲は同じ位置から再開する", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  // 「この条件で再生リストを作る」は自動再生しない（アルバム再生・プレイリスト読み込みとは
+  // 異なる既存の仕様）ため、この状態で「再生」ボタンを押すと先頭曲から再生できることを確認する。
+  // 検索で1曲だけに絞り込み、どの曲が「先頭」になるか（sortSongsの並び順）に依存しないようにする。
+  await page.locator("#filter-query").fill("opening");
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(1);
+  await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /.+/);
+  await page.getByRole("button", { name: "再生", exact: true }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  // 一時停止した曲は「再生」ボタンで同じ曲から再開できる（次へ等で別の曲に切り替えない限り、
+  // currentPlayingFileId()は一時停止後も保持され続けるため）。
+  await page.getByRole("button", { name: "一時停止" }).click();
+  await page.getByRole("button", { name: "再生", exact: true }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
 });
 
 test("アルバム一覧はアーティスト別に見出し付きで表示され、検索欄でアルバム名/アーティスト名を絞り込める", async ({ context, page }) => {

@@ -78,6 +78,51 @@ describe("PlaybackQueue", () => {
     while (await queue.next()) { /* 到達可能な限り辿る */ }
     expect(played.filter((id) => id !== "a" && id !== "b").sort()).toEqual(["c", "d"]);
   });
+  test("hasShuffleHistoryはshuffle前false、shuffle後true、unshuffle後false", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    expect(queue.hasShuffleHistory()).toBe(false);
+    await queue.shuffle(() => 0);
+    expect(queue.hasShuffleHistory()).toBe(true);
+    await queue.unshuffle();
+    expect(queue.hasShuffleHistory()).toBe(false);
+  });
+  test("unshuffleはshuffle前の並び順に戻し、再生中の曲・除外設定は変えない", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c"), song("d")]);
+    queue.exclude("c", true);
+    await queue.playAt(0);
+    await queue.shuffle(() => 0);
+    expect(queue.all().map((s) => s.fileId)).not.toEqual(["a", "b", "c", "d"]);
+    const result = await queue.unshuffle();
+    expect(result).toBe(true);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "c", "d"]);
+    expect(queue.currentPlayingFileId()).toBe("a");
+    expect(queue.isExcluded("c")).toBe(true);
+  });
+  test("連続してshuffleしても、unshuffleは一度も並べ替えていない元の並びに戻す", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c"), song("d")]);
+    await queue.shuffle(() => 0);
+    await queue.shuffle(() => 0.5);
+    await queue.unshuffle();
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "c", "d"]);
+  });
+  test("unshuffleはshuffle履歴が無い場合falseを返し何もしない", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    const result = await queue.unshuffle();
+    expect(result).toBe(false);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b"]);
+  });
+  test("setListで新しいリストを作るとshuffle履歴はリセットされる", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    await queue.shuffle(() => 0);
+    expect(queue.hasShuffleHistory()).toBe(true);
+    queue.setList([song("x"), song("y")]);
+    expect(queue.hasShuffleHistory()).toBe(false);
+  });
   test("キュー再生の終了時だけ次の曲へ進み、単曲試聴後の終了では進まない", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b")]); await queue.playAt(0); audio.listener?.();

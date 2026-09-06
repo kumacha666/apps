@@ -6,6 +6,10 @@ export type BeforeQueuePlay = (fileId: string) => void;
 export class PlaybackQueue {
   private songs: Song[] = []; private currentFileId: string | null = null; private excluded = new Set<string>(); private isQueuePlayback = false;
   private generation = 0;
+  // シャッフル前の並び順（初回シャッフル時点のスナップショット）。連続してシャッフルしても
+  // 上書きしない＝unshuffle()は常に「一度も並べ替えていない元の並び」へ戻る。setList()で
+  // リストを作り直すたびにリセットする。
+  private originalOrder: Song[] | null = null;
   // A play request does not commit the current song until PlaybackController has
   // started it. Keep navigation requests ordered so a second quick "next" sees
   // the result of the first request instead of requesting the same song again.
@@ -23,7 +27,7 @@ export class PlaybackQueue {
       else void this.next().catch(this.onError);
     });
   }
-  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.songs = songs; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; }
+  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.songs = songs; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
   notifyExternalPlaybackStarted(): void { this.isQueuePlayback = false; }
   exclude(fileId: string, excluded: boolean): void { excluded ? this.excluded.add(fileId) : this.excluded.delete(fileId); }
   isExcluded(fileId: string): boolean { return this.excluded.has(fileId); }
@@ -76,12 +80,26 @@ export class PlaybackQueue {
   // 進行中の移動がcurrentFileIdを確定させた後の状態を基準に並べ替えられる）。
   shuffle(random: () => number = Math.random): Promise<boolean> {
     return this.move(async () => {
+      if (this.originalOrder === null) this.originalOrder = [...this.songs];
       const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId);
       const start = currentIndex + 1;
       for (let i = this.songs.length - 1; i > start; i -= 1) {
         const j = start + Math.floor(random() * (i - start + 1));
         [this.songs[i], this.songs[j]] = [this.songs[j], this.songs[i]];
       }
+      return true;
+    });
+  }
+  hasShuffleHistory(): boolean { return this.originalOrder !== null; }
+  // シャッフル前の並び順に戻す。再生中の曲・除外設定・generationは変更しない（shuffle()と対称）。
+  // next()/playAt()等と同じpendingMoveの直列化チェーンに参加させる（shuffle()と同じ理由：
+  // 進行中のnext()等がcurrentFileIdを確定させる前に実行すると、その後next()がsongs配列を
+  // 参照する際に一時的な不整合を招きうるため）。
+  unshuffle(): Promise<boolean> {
+    return this.move(async () => {
+      if (this.originalOrder === null) return false;
+      this.songs = this.originalOrder;
+      this.originalOrder = null;
       return true;
     });
   }
