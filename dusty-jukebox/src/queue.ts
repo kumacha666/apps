@@ -6,6 +6,10 @@ export type BeforeQueuePlay = (fileId: string) => void;
 export class PlaybackQueue {
   private songs: Song[] = []; private currentFileId: string | null = null; private excluded = new Set<string>(); private isQueuePlayback = false;
   private generation = 0;
+  // シャッフル前の並び順（初回シャッフル時点のスナップショット）。連続してシャッフルしても
+  // 上書きしない＝unshuffle()は常に「一度も並べ替えていない元の並び」へ戻る。setList()で
+  // リストを作り直すたびにリセットする。
+  private originalOrder: Song[] | null = null;
   // A play request does not commit the current song until PlaybackController has
   // started it. Keep navigation requests ordered so a second quick "next" sees
   // the result of the first request instead of requesting the same song again.
@@ -23,13 +27,24 @@ export class PlaybackQueue {
       else void this.next().catch(this.onError);
     });
   }
-  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.songs = songs; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; }
+  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.songs = songs; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
   notifyExternalPlaybackStarted(): void { this.isQueuePlayback = false; }
   exclude(fileId: string, excluded: boolean): void { excluded ? this.excluded.add(fileId) : this.excluded.delete(fileId); }
   isExcluded(fileId: string): boolean { return this.excluded.has(fileId); }
   all(): Song[] { return [...this.songs]; }
   list(): Song[] { return this.songs.filter((s) => !this.isExcluded(s.fileId)); }
   currentPlayingFileId(): string | null { return this.currentFileId; }
+  // 「再生」ボタン（開発体制#40）向け：現在の曲を再開してよいかどうか。currentFileIdは
+  // notifyExternalPlaybackStarted()後も温存され続けるため、これ単独では「キュー由来の再生
+  // （一時停止中を含む）が今も有効かどうか」を判定できない（2026-09-06、PR #418
+  // ChatGPTレビュー指摘：キュー曲再生→キュー外の単曲試聴→「再生」ボタンで、試聴中の曲の
+  // 再生位置のままキューの古い曲を誤って再開してしまう）。isQueuePlaybackも併せて確認する。
+  // 現在曲が除外済みの場合もfalseにする（2026-09-06、PR #418 ChatGPTレビュー再々指摘：
+  // resume()自体は除外中のfileIdを拒否するため、除外済みの現在曲でtrueを返すと「再生」
+  // ボタンが何も再生できなくなる。除外済みならplayAt(0)側へフォールバックさせる）。
+  canResumeCurrent(): boolean {
+    return this.isQueuePlayback && this.currentFileId !== null && !this.isExcluded(this.currentFileId);
+  }
   private async playAndCommit(fileId: string, generation: number, position?: number): Promise<boolean> {
     // Register a continuation before the native play promise settles: the
     // initial stream request can receive a 401 while that promise is pending.
@@ -55,6 +70,19 @@ export class PlaybackQueue {
   }
   playAt(index: number): Promise<boolean> { return this.move(async (generation) => { const list = this.list(); if (index < 0 || index >= list.length) return false; return this.playAndCommit(list[index].fileId, generation); }); }
   next(): Promise<boolean> { return this.move(async (generation) => { const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId); const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId)); return next ? this.playAndCommit(next.fileId, generation) : false; }); }
+  // 曲の自然終了（<audio>のended）専用のnext()。next()自体にこのロジックを組み込まないのは、
+  // 末尾で「次へ」ボタンを空振りクリックしただけ（曲はまだ再生中）でも再開不可状態へ遷移して
+  // しまうと、その後「一時停止して再生」で現在位置から再開する既存の想定動作を壊すため
+  // （2026-09-06、PR #418 ChatGPTレビュー再々指摘：キューを最後まで自然再生し終えた後も
+  // isQueuePlaybackがtrueのまま残り、「再生」ボタンが曲末尾の再生位置からresume()してしまい、
+  // 実質何も再生されない不具合があった）。次の曲が無い場合のみisQueuePlaybackを明示的に
+  // falseへ遷移させ、以後の「再生」ボタンがplayAt(0)で先頭から再生し直せるようにする。
+  advanceOnEnded(): Promise<boolean> {
+    return this.next().then((started) => {
+      if (!started) this.isQueuePlayback = false;
+      return started;
+    });
+  }
   previous(): Promise<boolean> { return this.move(async (generation) => { if (this.currentFileId === null) return false; const currentIndex = this.songs.findIndex((song) => song.fileId === this.currentFileId); for (let index = currentIndex - 1; index >= 0; index -= 1) { const song = this.songs[index]; if (!this.isExcluded(song.fileId)) return this.playAndCommit(song.fileId, generation); } return false; }); }
   resumeCurrent(position: number): Promise<boolean> { return this.move(async (generation) => this.currentFileId ? this.playAndCommit(this.currentFileId, generation, position) : false, true); }
   // 絞り込んだ再生リストをその場でランダムな順番に並べ替える（開発体制#39④UI-4）。
@@ -76,12 +104,36 @@ export class PlaybackQueue {
   // 進行中の移動がcurrentFileIdを確定させた後の状態を基準に並べ替えられる）。
   shuffle(random: () => number = Math.random): Promise<boolean> {
     return this.move(async () => {
+      if (this.originalOrder === null) this.originalOrder = [...this.songs];
       const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId);
       const start = currentIndex + 1;
       for (let i = this.songs.length - 1; i > start; i -= 1) {
         const j = start + Math.floor(random() * (i - start + 1));
         [this.songs[i], this.songs[j]] = [this.songs[j], this.songs[i]];
       }
+      return true;
+    });
+  }
+  hasShuffleHistory(): boolean { return this.originalOrder !== null; }
+  // シャッフル前の並び順に戻す。再生中の曲・除外設定・generationは変更しない（shuffle()と対称）。
+  // next()/playAt()等と同じpendingMoveの直列化チェーンに参加させる（shuffle()と同じ理由：
+  // 進行中のnext()等がcurrentFileIdを確定させる前に実行すると、その後next()がsongs配列を
+  // 参照する際に一時的な不整合を招きうるため）。
+  // 現在位置（プレフィックス）はそのまま残し、それより後ろ（未再生のサフィックス）だけを
+  // originalOrderの相対順に戻す（2026-09-06、PR #418 ChatGPTレビュー指摘：シャッフル後に
+  // next()で再生位置が進んだ状態で配列全体をoriginalOrderへ戻すと、currentFileIdの元配列上の
+  // 位置がプレフィックス長より後ろにずれてしまい、next()がその位置より前の未再生曲を
+  // 永久にスキップしたり、既に再生済みの曲を再度辿ったりする不具合があった。shuffle()自身が
+  // 現在位置より前を並べ替え対象から常に除外しているのと対称の設計にする）。
+  unshuffle(): Promise<boolean> {
+    return this.move(async () => {
+      if (this.originalOrder === null) return false;
+      const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId);
+      const prefix = this.songs.slice(0, currentIndex + 1);
+      const playedIds = new Set(prefix.map((song) => song.fileId));
+      const suffix = this.originalOrder.filter((song) => !playedIds.has(song.fileId));
+      this.songs = [...prefix, ...suffix];
+      this.originalOrder = null;
       return true;
     });
   }

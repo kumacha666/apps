@@ -78,6 +78,109 @@ describe("PlaybackQueue", () => {
     while (await queue.next()) { /* 到達可能な限り辿る */ }
     expect(played.filter((id) => id !== "a" && id !== "b").sort()).toEqual(["c", "d"]);
   });
+  test("canResumeCurrentは未再生でfalse、再生中/一時停止中はtrue、notifyExternalPlaybackStarted後はfalse（2026-09-06 PR #418 ChatGPTレビュー指摘）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    expect(queue.canResumeCurrent()).toBe(false);
+    await queue.playAt(0);
+    expect(queue.canResumeCurrent()).toBe(true);
+    // キュー外の単曲試聴（main.tsのstartExternalPlayback()相当）に切り替わると、
+    // currentPlayingFileId()自体は温存されるがcanResumeCurrent()はfalseになる
+    // （試聴中の再生位置のままキューの古い曲を誤って再開してしまうことを防ぐ）。
+    queue.notifyExternalPlaybackStarted();
+    expect(queue.currentPlayingFileId()).toBe("a");
+    expect(queue.canResumeCurrent()).toBe(false);
+  });
+  test("advanceOnEndedはキューを最後まで自然再生し終えるとcanResumeCurrentをfalseにする（2026-09-06 PR #418 ChatGPTレビュー再々指摘）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0);
+    // aからbへは進める（末尾に到達していないため、canResumeCurrentはtrueのまま）。
+    expect(await queue.advanceOnEnded()).toBe(true);
+    expect(queue.canResumeCurrent()).toBe(true);
+    // bが最後の曲のため、advanceOnEndedはfalseを返し、以後は「再生」ボタンがplayAt(0)で
+    // 先頭から再生し直せるようcanResumeCurrentをfalseへ遷移させる（currentPlayingFileId()
+    // 自体は最後に再生した曲bのまま、UIの現在曲ハイライト表示は壊さない）。
+    expect(await queue.advanceOnEnded()).toBe(false);
+    expect(queue.currentPlayingFileId()).toBe("b");
+    expect(queue.canResumeCurrent()).toBe(false);
+  });
+  test("次へボタンの末尾での空振りクリック（next()）はcanResumeCurrentを変えない（曲はまだ再生中のため一時停止して再開する既存動作を壊さない）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(1); // 最後の曲bが再生中
+    expect(await queue.next()).toBe(false);
+    expect(queue.canResumeCurrent()).toBe(true);
+  });
+  test("canResumeCurrentは現在曲が除外済みだとfalseになる（2026-09-06 PR #418 ChatGPTレビュー再々指摘：resume()自体は除外中のfileIdを拒否するため、除外済みの現在曲でtrueを返すと「再生」ボタンが何も再生できなくなる）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0);
+    expect(queue.canResumeCurrent()).toBe(true);
+    queue.exclude("a", true);
+    expect(queue.canResumeCurrent()).toBe(false);
+  });
+  test("hasShuffleHistoryはshuffle前false、shuffle後true、unshuffle後false", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    expect(queue.hasShuffleHistory()).toBe(false);
+    await queue.shuffle(() => 0);
+    expect(queue.hasShuffleHistory()).toBe(true);
+    await queue.unshuffle();
+    expect(queue.hasShuffleHistory()).toBe(false);
+  });
+  test("unshuffleはshuffle前の並び順に戻し、再生中の曲・除外設定は変えない", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c"), song("d")]);
+    queue.exclude("c", true);
+    await queue.playAt(0);
+    await queue.shuffle(() => 0);
+    expect(queue.all().map((s) => s.fileId)).not.toEqual(["a", "b", "c", "d"]);
+    const result = await queue.unshuffle();
+    expect(result).toBe(true);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "c", "d"]);
+    expect(queue.currentPlayingFileId()).toBe("a");
+    expect(queue.isExcluded("c")).toBe(true);
+  });
+  test("シャッフル後にnext()で再生位置が進んでからunshuffleしても、未再生曲を飛ばさず・再生済み曲を再度辿らない（2026-09-06 PR #418 ChatGPTレビュー指摘）", async () => {
+    const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    queue.setList([song("a"), song("b"), song("c"), song("d")]);
+    await queue.playAt(0); // aが再生中
+    await queue.shuffle(() => 0); // b/c/dの区間をシャッフル → [a, c, d, b]
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "c", "d", "b"]);
+    await queue.next(); // cへ進む（シャッフル後の並びを辿った結果、bと再生順が入れ替わっている）
+    expect(queue.currentPlayingFileId()).toBe("c");
+    await queue.unshuffle();
+    // 再生済み（a, c）はその通りの順で先頭に残り、未再生（b, d）は元の相対順（b→d）で後ろに続く。
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "c", "b", "d"]);
+    while (await queue.next()) { /* 到達可能な限り辿る */ }
+    // 修正前は配列全体を元の並び[a,b,c,d]へ戻していたため、currentFileId="c"はindex2に位置し、
+    // next()がindex1のb（本来まだ未再生）を永久にスキップしていた。
+    expect(played).toEqual(["a", "c", "b", "d"]);
+  });
+  test("連続してshuffleしても、unshuffleは一度も並べ替えていない元の並びに戻す", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c"), song("d")]);
+    await queue.shuffle(() => 0);
+    await queue.shuffle(() => 0.5);
+    await queue.unshuffle();
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "c", "d"]);
+  });
+  test("unshuffleはshuffle履歴が無い場合falseを返し何もしない", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    const result = await queue.unshuffle();
+    expect(result).toBe(false);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b"]);
+  });
+  test("setListで新しいリストを作るとshuffle履歴はリセットされる", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    await queue.shuffle(() => 0);
+    expect(queue.hasShuffleHistory()).toBe(true);
+    queue.setList([song("x"), song("y")]);
+    expect(queue.hasShuffleHistory()).toBe(false);
+  });
   test("キュー再生の終了時だけ次の曲へ進み、単曲試聴後の終了では進まない", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b")]); await queue.playAt(0); audio.listener?.();

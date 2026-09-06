@@ -215,7 +215,7 @@ function render(): void {
         <datalist id="filter-release-type-options"></datalist>
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
-        <div><button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button></div>
+        <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button></div>
         <ul id="catalog-list" class="result-list"></ul>
         <h3>アルバム</h3>
         <label class="field"><span>アルバム検索</span><input id="album-search" type="search" placeholder="アルバム名・アーティスト名で検索" /></label>
@@ -237,12 +237,21 @@ function render(): void {
 }
 
 function numberOrUndefined(value: string): number | undefined { const n = Number(value); return value.trim() === "" || !Number.isFinite(n) ? undefined : n; }
-// 前へ/次へ/シャッフルはいずれも「再生リストに曲がある間だけ使える」操作のため、有効/無効を
+// 再生/前へ/次へ/シャッフルはいずれも「再生リストに曲がある間だけ使える」操作のため、有効/無効を
 // まとめて切り替える（開発体制#39④UI-4、シャッフル追加時に既存2ボタンと同じ条件のまま揃える）。
 function setQueueNavEnabled(enabled: boolean): void {
+  el<HTMLButtonElement>("queue-play-btn").disabled = !enabled;
   el<HTMLButtonElement>("next-btn").disabled = !enabled;
   el<HTMLButtonElement>("previous-btn").disabled = !enabled;
   el<HTMLButtonElement>("shuffle-btn").disabled = !enabled;
+  // 元に戻す対象（シャッフル履歴）は新しいリストでは常に無い状態からスタートするため、
+  // ここでまとめて無効化する（シャッフル実行後にupdateUnshuffleEnabled()が個別に有効化する）。
+  updateUnshuffleEnabled();
+}
+// シャッフルを実行した直後だけ「元に戻す」を有効化する。setQueueNavEnabled()（新しい
+// 再生リスト作成時）・shuffle()/unshuffle()完了後の両方から呼ぶ。
+function updateUnshuffleEnabled(): void {
+  el<HTMLButtonElement>("unshuffle-btn").disabled = !(queue?.hasShuffleHistory() ?? false);
 }
 function renderQueue(): void {
   const list = el<HTMLUListElement>("catalog-list"); list.innerHTML = "";
@@ -1679,7 +1688,7 @@ function init(): void {
       playback,
       audioPlayer,
       (error) => setStatus(error instanceof Error ? error.message : String(error), true),
-      () => void handleQueuePlayback(() => queue?.next()),
+      () => void handleQueuePlayback(() => queue?.advanceOnEnded()),
       (fileId) => registerQueuePlaybackContinuation(fileId, playback!)
     );
     audioPlayer.addEventListener("playing", () => handleNativePlaybackStatus(audioPlayer, "playing"));
@@ -1716,7 +1725,20 @@ function init(): void {
     // pendingMoveの直列化チェーンに参加するため（2026-09-06 レビュー指摘：進行中のnext()等が
     // currentFileIdを確定させる前にシャッフルすると並べ替えの基準がずれる不具合の修正）、
     // 完了を待ってからrenderQueue()する。
-    el<HTMLButtonElement>("shuffle-btn").addEventListener("click", () => { if (queue) void queue.shuffle().then(() => renderQueue()); });
+    el<HTMLButtonElement>("shuffle-btn").addEventListener("click", () => { if (queue) void queue.shuffle().then(() => { renderQueue(); updateUnshuffleEnabled(); }); });
+    // シャッフルと同じ理由（並び順を変えるだけで再生を開始する操作ではない）でhandleQueuePlayback()は
+    // 経由しない。完了を待ってから表示を更新する。
+    el<HTMLButtonElement>("unshuffle-btn").addEventListener("click", () => { if (queue) void queue.unshuffle().then(() => { renderQueue(); updateUnshuffleEnabled(); }); });
+    // 「再生」ボタン：既に再生中の曲があればその位置から再開し（一時停止ボタンで止めた曲も
+    // currentPlayingFileId()は保持され続けるためここで再開できる）、無ければ先頭の曲から再生する。
+    // 絞り込みで再生リストを作った直後に必ず「次へ」を押す必要がある、という違和感への対応。
+    el<HTMLButtonElement>("queue-play-btn").addEventListener("click", () => void handleQueuePlayback(() => {
+      if (!queue) return undefined;
+      // canResumeCurrent()が偽の場合（キュー曲を一度も再生していない、またはキュー外の
+      // 単曲試聴で上書きされている）は先頭から再生する。currentPlayingFileId()単独では
+      // 判定できない理由はcanResumeCurrent()のコメント参照（2026-09-06 レビュー指摘）。
+      return queue.canResumeCurrent() ? queue.resume(queue.currentPlayingFileId()!, audioPlayer.currentTime) : queue.playAt(0);
+    }));
     el<HTMLButtonElement>("save-playlist-btn").addEventListener("click", () => void handleSavePlaylist());
     el<HTMLButtonElement>("refresh-playlists-btn").addEventListener("click", () => void handleRefreshPlaylists());
   });
