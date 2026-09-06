@@ -35,6 +35,7 @@ function makeFakeIO(
     async updateRows(updates) {
       updateCalls.push(updates);
     },
+    async updateCells() {},
     async appendRows(rows) {
       appendCalls.push(rows);
     },
@@ -307,6 +308,7 @@ describe("upsertIndexRows", () => {
         return [...INDEX_SHEET_HEADER];
       },
       async updateRows() {},
+      async updateCells() {},
       async appendRows() {},
     };
     await upsertIndexRows(io, []);
@@ -361,6 +363,7 @@ describe("upsertIndexRows", () => {
         return [...INDEX_SHEET_HEADER];
       },
       updateRows: vi.fn(async () => {}),
+      updateCells: vi.fn(async () => {}),
       appendRows: vi.fn(async () => {}),
     };
     const newF1 = buildIndexRow({

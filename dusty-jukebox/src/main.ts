@@ -13,6 +13,16 @@ import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStat
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
 import { parseIndexRows, filterSongs, groupSongsByAlbum, groupAlbumsByArtist, filterAlbumGroups, sortSongs, distinctFieldValues, type AlbumGroup, type AutocompleteField, type Song } from "./catalog";
+import {
+  applyCasingWritesInChunks,
+  casingGroupKey,
+  findCasingVariants,
+  planCasingNormalization,
+  revertCasingWritesInChunks,
+  type AppliedCasingWrite,
+  type CaseNormalizationField,
+  type CasingGroup,
+} from "./caseNormalization";
 import { CatalogOperationGate } from "./catalogOperationGate";
 import { CatalogSession } from "./catalogSession";
 import { FolderPathResolver, type FolderGetFn, type FolderMeta } from "./folderPaths";
@@ -220,6 +230,13 @@ function render(): void {
         <h3>アルバム</h3>
         <label class="field"><span>アルバム検索</span><input id="album-search" type="search" placeholder="アルバム名・アーティスト名で検索" /></label>
         <ul id="album-list" class="result-list"></ul>
+      </section>
+      <section class="correction">
+        <h2>カタログ補正</h2>
+        <p>アーティスト・アルバムアーティスト・作曲者の大文字小文字の表記ゆれ（例:「AKB48」と「akb48」）を統一します。既に手動補正済みの曲は対象外です。</p>
+        <button id="check-casing-btn" type="button" disabled>表記ゆれをチェック</button>
+        <div id="casing-results"></div>
+        <div><button id="apply-casing-btn" type="button" disabled>統一を適用</button> <button id="revert-casing-btn" type="button" disabled>直前の統一を元に戻す</button></div>
       </section>
       <section class="playlists">
         <h2>保存済みプレイリスト</h2>
@@ -706,6 +723,182 @@ function createQueueFromFilters(): void {
   setStatus(`${songs.length}曲の再生リストを作りました。`);
 }
 
+// カタログ補正（表記ゆれ統一）のUI状態。groupsは直近のチェック結果、lastAppliedは直前に
+// このツールが書き込んだoverride（セッション内限定の「元に戻す」対象、buildCasingRevertUpdates参照）。
+// spreadsheetIdはチェック実行時点の対象スプレッドシートIDで、groups・lastApplied双方が
+// このIDに対して有効であることを保証する（ChatGPTレビュー指摘：入力欄のIDをチェック後に
+// 別のスプレッドシートへ変更すると、適用・元に戻すが誤って別カタログのfileIdへ書き込みうる）。
+// 同じIDでの再チェックはlastAppliedを引き継ぐ（そうしないと「チェック」を押しただけで
+// 直前の統一の「元に戻す」ができなくなってしまう。別IDへ切り替えた場合のみlastAppliedを破棄する）。
+interface CasingUiState {
+  spreadsheetId: string | null;
+  groups: CasingGroup[];
+  canonicalByGroupKey: Map<string, string>;
+  lastApplied: AppliedCasingWrite[];
+}
+let casingUiState: CasingUiState = { spreadsheetId: null, groups: [], canonicalByGroupKey: new Map(), lastApplied: [] };
+const CASE_NORMALIZATION_FIELD_LABELS: Record<CaseNormalizationField, string> = {
+  artist: "アーティスト",
+  albumArtist: "アルバムアーティスト",
+  composer: "作曲者",
+};
+function renderCasingGroups(): void {
+  const container = el<HTMLDivElement>("casing-results");
+  container.innerHTML = "";
+  for (const group of casingUiState.groups) {
+    const item = document.createElement("p");
+    const summary = group.variants.map((v) => `「${v.value}」(${v.fileIds.length}曲)`).join(" / ");
+    item.append(`${CASE_NORMALIZATION_FIELD_LABELS[group.field]}: ${summary} → `);
+    const select = document.createElement("select");
+    const chosenCanonical = casingUiState.canonicalByGroupKey.get(casingGroupKey(group)) ?? group.suggestedCanonical;
+    for (const variant of group.variants) {
+      const option = document.createElement("option");
+      option.value = variant.value; option.textContent = variant.value;
+      option.selected = variant.value === chosenCanonical;
+      select.append(option);
+    }
+    select.addEventListener("change", () => casingUiState.canonicalByGroupKey.set(casingGroupKey(group), select.value));
+    item.append(select);
+    container.append(item);
+  }
+  el<HTMLButtonElement>("apply-casing-btn").disabled = casingUiState.groups.length === 0;
+  el<HTMLButtonElement>("revert-casing-btn").disabled = casingUiState.lastApplied.length === 0;
+}
+async function handleCheckCasing(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
+  // loadCatalog()と同じ理由：スキャン・差分同期がシートを書き換えている最中に読まないため、
+  // 他の書き込み系操作と排他にする。
+  if (!catalogOperationGate.tryAcquire()) {
+    setStatus("スキャンまたは索引の読み込みが進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  try {
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
+      throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。");
+    }
+    const rows = await sheetsIO.listExistingRows();
+    // 同じスプレッドシートに対する再チェックはlastApplied（元に戻す対象）を引き継ぐ。
+    // 別のスプレッドシートIDへ切り替えていた場合は、そのIDに対する統一実績が無いため破棄する。
+    const preservedLastApplied = casingUiState.spreadsheetId === spreadsheetId ? casingUiState.lastApplied : [];
+    casingUiState = { spreadsheetId, groups: findCasingVariants(rows), canonicalByGroupKey: new Map(), lastApplied: preservedLastApplied };
+    renderCasingGroups();
+    setStatus(
+      casingUiState.groups.length > 0
+        ? `${casingUiState.groups.length}件の表記ゆれ候補が見つかりました。内容を確認して適用してください。`
+        : "表記ゆれは見つかりませんでした。"
+    );
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `表記ゆれのチェックに失敗しました: ${err.message}` : "表記ゆれのチェックに失敗しました", true);
+  } finally {
+    catalogOperationGate.release();
+  }
+}
+async function handleApplyCasingNormalization(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId || casingUiState.groups.length === 0) return;
+  // チェック時と異なるIDが入力欄にある状態での適用を拒否する（ChatGPTレビュー指摘：
+  // 別カタログのfileIdへ誤って書き込むことを防ぐ）。
+  if (spreadsheetId !== casingUiState.spreadsheetId) {
+    setStatus("チェック時と異なるスプレッドシートIDが入力されています。もう一度「表記ゆれをチェック」を実行してください。", true);
+    return;
+  }
+  if (!catalogOperationGate.tryAcquire()) {
+    setStatus("スキャンまたは索引の読み込みが進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  try {
+    const writes = planCasingNormalization(casingUiState.groups, casingUiState.canonicalByGroupKey);
+    if (writes.length === 0) { setStatus("適用対象の変更はありません（選択済みの表記が既にすべての曲に反映されています）。"); return; }
+    // これから索引を書き換えるため、読み込み済みカタログが古くなる前に無効化する
+    // （handleScan()/handleRetryExtraction()と同じ方針）。
+    catalogSession.invalidate();
+    loadedCatalogSpreadsheetId = null;
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    casingUiState.groups = []; casingUiState.canonicalByGroupKey = new Map();
+    // チャンク（既定200件）ごとに索引を読み直してから書き込む（ChatGPTレビュー再指摘：
+    // 一度だけ読んだ最新行のスナップショットを複数チャンクにわたって使い回すと、他デバイスが
+    // その間に更新した無関係な列・対象フィールド自体を古い値へ巻き戻してしまう。各チャンク直前に
+    // 読み直すことでこの窓を1チャンク分の処理時間まで縮める）。
+    // 新しい統一が1件も成功していない間は、以前の「元に戻す」対象（lastApplied）を保持する
+    // （ChatGPTレビュー再指摘：最初のチャンク成功前にlastAppliedを空配列へ差し替えると、
+    // 全件stale等で1件も成功しなかった場合に前回成功分のundoが失われてしまう）。
+    const newlyApplied: AppliedCasingWrite[] = [];
+    let hasSwitchedToNewApplied = false;
+    let totalSkippedStaleCount = 0;
+    await applyCasingWritesInChunks(sheetsIO, writes, ({ chunkApplied, chunkSkippedStaleCount }) => {
+      totalSkippedStaleCount += chunkSkippedStaleCount;
+      if (chunkApplied.length === 0) return;
+      newlyApplied.push(...chunkApplied);
+      if (!hasSwitchedToNewApplied) { casingUiState.lastApplied = newlyApplied; hasSwitchedToNewApplied = true; }
+      renderCasingGroups();
+    });
+    renderCasingGroups();
+    setStatus(
+      `${newlyApplied.length}件の表記ゆれを統一しました${totalSkippedStaleCount > 0 ? `（${totalSkippedStaleCount}件は他の変更と競合したためスキップ）` : ""}。索引を読み込み直してください。`
+    );
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(
+      err instanceof Error
+        ? `表記ゆれの統一に失敗しました（一部は既に書き込まれている可能性があります。「直前の統一を元に戻す」で確認できます）: ${err.message}`
+        : "表記ゆれの統一に失敗しました",
+      true
+    );
+    renderCasingGroups();
+  } finally {
+    catalogOperationGate.release();
+  }
+}
+async function handleRevertCasingNormalization(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId || casingUiState.lastApplied.length === 0) return;
+  if (spreadsheetId !== casingUiState.spreadsheetId) {
+    setStatus("チェック時と異なるスプレッドシートIDが入力されています。もう一度「表記ゆれをチェック」を実行してください。", true);
+    return;
+  }
+  if (!catalogOperationGate.tryAcquire()) {
+    setStatus("スキャンまたは索引の読み込みが進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  try {
+    catalogSession.invalidate();
+    loadedCatalogSpreadsheetId = null;
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    let totalRevertedCount = 0;
+    let totalStaleCount = 0;
+    // チャンクごとに索引を読み直してから書き込む（applyと同じ理由）。
+    // 成功した（chunkReverted）・永久にstaleと判定された（chunkStale）のいずれも、その場で
+    // lastAppliedから取り除く（ChatGPTレビュー再指摘：staleと判定されたエントリをlastApplied
+    // に残し続けると、後日ユーザーが偶然/意図的に同じ値へ手動で書き換えた場合、次回の
+    // 「元に戻す」がその後日の手動変更を誤って消してしまう。一度不一致を観測した時点で
+    // 「今の値が自分の書き込み由来」という前提は永久に失われているため、二度と対象にしない）。
+    await revertCasingWritesInChunks(sheetsIO, casingUiState.lastApplied, ({ chunkReverted, chunkStale }) => {
+      totalRevertedCount += chunkReverted.length;
+      totalStaleCount += chunkStale.length;
+      const handled = new Set([...chunkReverted, ...chunkStale]);
+      casingUiState.lastApplied = casingUiState.lastApplied.filter((entry) => !handled.has(entry));
+      renderCasingGroups();
+    });
+    renderCasingGroups();
+    setStatus(
+      `${totalRevertedCount}件の表記ゆれ統一を元に戻しました${totalStaleCount > 0 ? `（${totalStaleCount}件は既に他の変更があったためスキップ）` : ""}。索引を読み込み直してください。`
+    );
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(
+      err instanceof Error
+        ? `元に戻す処理に失敗しました（一部は既に元に戻っている可能性があります）: ${err.message}`
+        : "元に戻す処理に失敗しました",
+      true
+    );
+    renderCasingGroups();
+  } finally {
+    catalogOperationGate.release();
+  }
+}
 function setStatus(message: string, isError = false): void {
   const status = el<HTMLParagraphElement>("status");
   status.textContent = message;
@@ -724,6 +917,7 @@ async function handleLogin(): Promise<void> {
     el<HTMLButtonElement>("play-btn").disabled = false;
     el<HTMLButtonElement>("pause-btn").disabled = false;
     el<HTMLButtonElement>("load-catalog-btn").disabled = false;
+    el<HTMLButtonElement>("check-casing-btn").disabled = false;
   } catch (err) {
     setStatus(err instanceof AuthError ? err.message : String(err), true);
   } finally {
@@ -1710,6 +1904,9 @@ function init(): void {
     el<HTMLButtonElement>("pause-btn").addEventListener("click", () => playback?.pause());
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
     el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
+    el<HTMLButtonElement>("check-casing-btn").addEventListener("click", () => void handleCheckCasing());
+    el<HTMLButtonElement>("apply-casing-btn").addEventListener("click", () => void handleApplyCasingNormalization());
+    el<HTMLButtonElement>("revert-casing-btn").addEventListener("click", () => void handleRevertCasingNormalization());
     el<HTMLButtonElement>("create-queue-btn").addEventListener("click", createQueueFromFilters);
     // アルバム検索は曲の絞り込み（ボタン起点）とは別に、入力の都度その場で絞り込む
     // （アルバム件数は曲数よりずっと少なく、jankの懸念が無いためユーザーとの相談で確認済み）。

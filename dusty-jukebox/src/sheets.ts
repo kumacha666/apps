@@ -264,6 +264,12 @@ export interface SheetsIndexIO {
   // 複数行の更新を1回のAPI呼び出しにまとめて書き込む（10235件規模でも逐次PUTにしない。
   // 2026-08-20 Codexレビュー指摘）。空配列ならAPIを呼ばない。
   updateRows(updates: { rowNumber: number; row: (string | number)[] }[]): Promise<void>;
+  // 特定のセル1つ1つだけをピンポイントで更新する（行全体を丸ごと上書きしない）。
+  // caseNormalization.tsのカタログ補正機能専用（ChatGPTレビュー指摘：行全体を書き戻す方式だと、
+  // 読み取り〜書き込みの間に他デバイスが同じ行の無関係な列を更新していた場合にその変更を
+  // 巻き戻してしまう。対象の`<field>_override`セルだけを書くことで、この種のデータ損失を
+  // 構造的に起こりえなくする）。複数セルを1回のAPI呼び出しにまとめる。空配列ならAPIを呼ばない。
+  updateCells(updates: { rowNumber: number; columnIndex: number; value: string | number }[]): Promise<void>;
   // 複数行をシート末尾に追記する。空配列ならAPIを呼ばない。
   appendRows(rows: (string | number)[][]): Promise<void>;
 }
@@ -790,6 +796,19 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
           data: updates.map(({ rowNumber, row }) => ({
             range: sheetRange(INDEX_SHEET_NAME, `A${rowNumber}:${lastCol}${rowNumber}`),
             values: [row],
+          })),
+        }),
+      });
+    },
+    async updateCells(updates) {
+      if (updates.length === 0) return;
+      await sheetsFetch(`${base}/values:batchUpdate`, {
+        method: "POST",
+        body: JSON.stringify({
+          valueInputOption: "RAW",
+          data: updates.map(({ rowNumber, columnIndex, value }) => ({
+            range: sheetRange(INDEX_SHEET_NAME, `${columnLetter(columnIndex + 1)}${rowNumber}`),
+            values: [[value]],
           })),
         }),
       });
