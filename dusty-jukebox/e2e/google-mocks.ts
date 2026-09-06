@@ -33,8 +33,6 @@ export type MockOptions = {
    * queue's optimistic render happen before the rejection, masking a real display-staleness bug).
    */
   delayFirstMediaPlay?: boolean;
-  /** Seed rows with an Artist casing mismatch (majority "AKB48", one "akb48") for the catalog correction feature. */
-  casingVariants?: boolean;
 };
 
 type SheetWrite = {
@@ -69,10 +67,6 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     indexRow({ fileId: "other-album", extension: "mp3", parentId: "root", title: "Jazz Song", artist: "Quartet", album: "Blue Notes", composer: "Writer", genre: "Jazz", discNumber: "1", trackNumber: "1", releaseYear: "2020", releaseType_override: "Single" }),
     indexRow({ fileId: "album-track-2", extension: "mp3", parentId: "root", title: "Scherzo", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", discNumber: "1", trackNumber: "2", releaseYear: "2024", releaseType_override: "Album" }),
     indexRow({ fileId: "album-track-1", extension: "mp3", parentId: "root", title: "Opening", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", discNumber: "1", trackNumber: "1", releaseYear: "2024", releaseType_override: "Album" }),
-  ] : options.casingVariants ? [
-    indexRow({ fileId: "casing-1", extension: "mp3", parentId: "root", driveModifiedTime: "2026-01-01T00:00:00Z", title: "Song A", artist: "AKB48", genre: "Pop", releaseYear: "2024" }),
-    indexRow({ fileId: "casing-2", extension: "mp3", parentId: "root", driveModifiedTime: "2026-01-01T00:00:00Z", title: "Song B", artist: "akb48", genre: "Pop", releaseYear: "2024" }),
-    indexRow({ fileId: "casing-3", extension: "mp3", parentId: "root", driveModifiedTime: "2026-01-01T00:00:00Z", title: "Song C", artist: "AKB48", genre: "Pop", releaseYear: "2024" }),
   ] : [
     indexRow({ fileId: "song-1", extension: "mp3", parentId: "root", driveModifiedTime: "2026-01-01T00:00:00Z", title: "First song", artist: "Artist", genre: "Rock", releaseYear: "2024" }),
     indexRow({ fileId: "song-2", extension: "mp3", parentId: "root", driveModifiedTime: "2026-01-01T00:00:00Z", title: "Second song", artist: "Artist", genre: "Rock", releaseYear: "2024" }),
