@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { installGoogleMocks } from "./google-mocks";
+import { INDEX_SHEET_HEADER } from "../src/sheets";
 
 async function login(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: /ログイン/ }).click();
@@ -540,4 +541,25 @@ test("スキャン開始後のアルバム再生は再読み込みエラーに�
   await expect(page.locator("#catalog-list li")).toHaveCount(1);
   await expect(page.locator("#catalog-list")).toContainText("Jazz Song");
   await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /album-track-/);
+});
+
+test("表記ゆれ（大文字小文字）をチェックして統一し、元に戻せる（カタログ補正機能）", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context, { casingVariants: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#spreadsheet-id").fill("sheet");
+
+  await page.getByRole("button", { name: "表記ゆれをチェック" }).click();
+  await expect(page.locator("#status")).toContainText("1件の表記ゆれ候補が見つかりました");
+  await expect(page.locator("#casing-results")).toContainText("AKB48");
+  await expect(page.locator("#casing-results")).toContainText("akb48");
+
+  await page.getByRole("button", { name: "統一を適用" }).click();
+  await expect(page.locator("#status")).toContainText("1件の表記ゆれを統一しました");
+  const artistOverrideIndex = INDEX_SHEET_HEADER.indexOf("artist_override");
+  expect(mock.sheetsWrites.some((w) => w.sheet === "index" && w.values[0]?.[artistOverrideIndex] === "AKB48")).toBe(true);
+
+  await page.getByRole("button", { name: "直前の統一を元に戻す" }).click();
+  await expect(page.locator("#status")).toContainText("1件の表記ゆれ統一を元に戻しました");
+  const writesAfterRevert = mock.sheetsWrites.filter((w) => w.sheet === "index");
+  expect(writesAfterRevert[writesAfterRevert.length - 1]?.values[0]?.[artistOverrideIndex]).toBe("");
 });
