@@ -39,7 +39,12 @@ export class PlaybackQueue {
   // （一時停止中を含む）が今も有効かどうか」を判定できない（2026-09-06、PR #418
   // ChatGPTレビュー指摘：キュー曲再生→キュー外の単曲試聴→「再生」ボタンで、試聴中の曲の
   // 再生位置のままキューの古い曲を誤って再開してしまう）。isQueuePlaybackも併せて確認する。
-  canResumeCurrent(): boolean { return this.isQueuePlayback && this.currentFileId !== null; }
+  // 現在曲が除外済みの場合もfalseにする（2026-09-06、PR #418 ChatGPTレビュー再々指摘：
+  // resume()自体は除外中のfileIdを拒否するため、除外済みの現在曲でtrueを返すと「再生」
+  // ボタンが何も再生できなくなる。除外済みならplayAt(0)側へフォールバックさせる）。
+  canResumeCurrent(): boolean {
+    return this.isQueuePlayback && this.currentFileId !== null && !this.isExcluded(this.currentFileId);
+  }
   private async playAndCommit(fileId: string, generation: number, position?: number): Promise<boolean> {
     // Register a continuation before the native play promise settles: the
     // initial stream request can receive a 401 while that promise is pending.
@@ -65,6 +70,19 @@ export class PlaybackQueue {
   }
   playAt(index: number): Promise<boolean> { return this.move(async (generation) => { const list = this.list(); if (index < 0 || index >= list.length) return false; return this.playAndCommit(list[index].fileId, generation); }); }
   next(): Promise<boolean> { return this.move(async (generation) => { const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId); const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId)); return next ? this.playAndCommit(next.fileId, generation) : false; }); }
+  // 曲の自然終了（<audio>のended）専用のnext()。next()自体にこのロジックを組み込まないのは、
+  // 末尾で「次へ」ボタンを空振りクリックしただけ（曲はまだ再生中）でも再開不可状態へ遷移して
+  // しまうと、その後「一時停止して再生」で現在位置から再開する既存の想定動作を壊すため
+  // （2026-09-06、PR #418 ChatGPTレビュー再々指摘：キューを最後まで自然再生し終えた後も
+  // isQueuePlaybackがtrueのまま残り、「再生」ボタンが曲末尾の再生位置からresume()してしまい、
+  // 実質何も再生されない不具合があった）。次の曲が無い場合のみisQueuePlaybackを明示的に
+  // falseへ遷移させ、以後の「再生」ボタンがplayAt(0)で先頭から再生し直せるようにする。
+  advanceOnEnded(): Promise<boolean> {
+    return this.next().then((started) => {
+      if (!started) this.isQueuePlayback = false;
+      return started;
+    });
+  }
   previous(): Promise<boolean> { return this.move(async (generation) => { if (this.currentFileId === null) return false; const currentIndex = this.songs.findIndex((song) => song.fileId === this.currentFileId); for (let index = currentIndex - 1; index >= 0; index -= 1) { const song = this.songs[index]; if (!this.isExcluded(song.fileId)) return this.playAndCommit(song.fileId, generation); } return false; }); }
   resumeCurrent(position: number): Promise<boolean> { return this.move(async (generation) => this.currentFileId ? this.playAndCommit(this.currentFileId, generation, position) : false, true); }
   // 絞り込んだ再生リストをその場でランダムな順番に並べ替える（開発体制#39④UI-4）。

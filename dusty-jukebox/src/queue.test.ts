@@ -91,6 +91,35 @@ describe("PlaybackQueue", () => {
     expect(queue.currentPlayingFileId()).toBe("a");
     expect(queue.canResumeCurrent()).toBe(false);
   });
+  test("advanceOnEndedはキューを最後まで自然再生し終えるとcanResumeCurrentをfalseにする（2026-09-06 PR #418 ChatGPTレビュー再々指摘）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0);
+    // aからbへは進める（末尾に到達していないため、canResumeCurrentはtrueのまま）。
+    expect(await queue.advanceOnEnded()).toBe(true);
+    expect(queue.canResumeCurrent()).toBe(true);
+    // bが最後の曲のため、advanceOnEndedはfalseを返し、以後は「再生」ボタンがplayAt(0)で
+    // 先頭から再生し直せるようcanResumeCurrentをfalseへ遷移させる（currentPlayingFileId()
+    // 自体は最後に再生した曲bのまま、UIの現在曲ハイライト表示は壊さない）。
+    expect(await queue.advanceOnEnded()).toBe(false);
+    expect(queue.currentPlayingFileId()).toBe("b");
+    expect(queue.canResumeCurrent()).toBe(false);
+  });
+  test("次へボタンの末尾での空振りクリック（next()）はcanResumeCurrentを変えない（曲はまだ再生中のため一時停止して再開する既存動作を壊さない）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(1); // 最後の曲bが再生中
+    expect(await queue.next()).toBe(false);
+    expect(queue.canResumeCurrent()).toBe(true);
+  });
+  test("canResumeCurrentは現在曲が除外済みだとfalseになる（2026-09-06 PR #418 ChatGPTレビュー再々指摘：resume()自体は除外中のfileIdを拒否するため、除外済みの現在曲でtrueを返すと「再生」ボタンが何も再生できなくなる）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0);
+    expect(queue.canResumeCurrent()).toBe(true);
+    queue.exclude("a", true);
+    expect(queue.canResumeCurrent()).toBe(false);
+  });
   test("hasShuffleHistoryはshuffle前false、shuffle後true、unshuffle後false", async () => {
     const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
     queue.setList([song("a"), song("b"), song("c")]);

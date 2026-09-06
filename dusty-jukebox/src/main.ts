@@ -1688,7 +1688,7 @@ function init(): void {
       playback,
       audioPlayer,
       (error) => setStatus(error instanceof Error ? error.message : String(error), true),
-      () => void handleQueuePlayback(() => queue?.next()),
+      () => void handleQueuePlayback(() => queue?.advanceOnEnded()),
       (fileId) => registerQueuePlaybackContinuation(fileId, playback!)
     );
     audioPlayer.addEventListener("playing", () => handleNativePlaybackStatus(audioPlayer, "playing"));
