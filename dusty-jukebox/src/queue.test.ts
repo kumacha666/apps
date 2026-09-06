@@ -40,6 +40,22 @@ describe("PlaybackQueue", () => {
     expect(queue.currentPlayingFileId()).toBe("a");
     expect(queue.isExcluded("b")).toBe(true);
   });
+  test("再生中にshuffleしても現在曲の位置は変わらず、後ろの区間だけが並べ替わる（2026-09-06 レビュー指摘）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c"), song("d")]); await queue.playAt(0); // aが再生中（index 0）
+    queue.shuffle(() => 0);
+    // 現在曲aはindex0のまま。後ろのb/c/dだけがFisher-Yatesで並べ替わる。
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "c", "d", "b"]);
+  });
+  test("再生中にshuffleしても、next()で残りの曲を1曲も失わずに全て辿れる（2026-09-06 レビュー指摘：現在曲を含めて全体をシャッフルすると、現在曲より前へ移動した曲がnext()から永久に到達不能になり、残り曲があっても再生が止まっていた）", async () => {
+    const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    queue.setList([song("a"), song("b"), song("c"), song("d")]); await queue.playAt(0);
+    queue.shuffle(() => 0);
+    while (await queue.next()) { /* 到達可能な限り辿る */ }
+    expect(played[0]).toBe("a");
+    expect(played.slice(1).sort()).toEqual(["b", "c", "d"]);
+    expect(played).toHaveLength(4);
+  });
   test("キュー再生の終了時だけ次の曲へ進み、単曲試聴後の終了では進まない", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b")]); await queue.playAt(0); audio.listener?.();

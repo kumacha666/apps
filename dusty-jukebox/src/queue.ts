@@ -61,10 +61,18 @@ export class PlaybackQueue {
   // CONCEPT.mdの設計方針「気分はフィルタ条件で満たす、シャッフルは任意の再生モードの1つ」
   // に沿い、既存の絞り込み結果に対する任意操作として提供する（フィルタそのものは変えない）。
   // currentFileId・excluded・generationはそのまま（再生中の曲を止めたり、既存の除外設定を
-  // リセットしたりしない）。next()/previous()はこの新しい並び順をそのまま辿る。
+  // リセットしたりしない）。
+  // 再生中の曲がある場合、その曲自身と、それより前の位置はシャッフル対象から除外する
+  // （2026-09-06、ChatGPTレビュー指摘：next()はcurrentFileIdの現在のインデックスより
+  // 後ろだけを探索するため、現在曲を含めて全体をシャッフルすると、現在曲より前の位置に
+  // 移動した未再生曲がnext()から永久に到達不能になり、残り曲があるのに再生が止まって
+  // しまう。現在曲より後ろの区間だけをシャッフルすることで、その区間の曲は常に
+  // 現在曲より後ろの位置に留まりnext()で辿り着ける）。
   shuffle(random: () => number = Math.random): void {
-    for (let i = this.songs.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(random() * (i + 1));
+    const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId);
+    const start = currentIndex + 1;
+    for (let i = this.songs.length - 1; i > start; i -= 1) {
+      const j = start + Math.floor(random() * (i - start + 1));
       [this.songs[i], this.songs[j]] = [this.songs[j], this.songs[i]];
     }
   }
