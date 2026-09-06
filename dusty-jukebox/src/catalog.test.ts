@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { INDEX_SHEET_HEADER } from "./sheets";
-import { distinctFieldValues, filterSongs, groupSongsByAlbum, parseIndexRows, readOverride, sortSongs, type Song } from "./catalog";
+import { distinctFieldValues, filterAlbumGroups, filterSongs, groupAlbumsByArtist, groupSongsByAlbum, parseIndexRows, readOverride, sortSongs, type Song } from "./catalog";
 const row = (values: Record<string, string>): string[] => INDEX_SHEET_HEADER.map((header) => values[header] ?? "");
 describe("索引行の読み取り", () => {
   test("overrideの空欄/(none)/値とfileIdフォールバックを扱う", () => {
@@ -78,5 +78,27 @@ describe("アルバムグルーピング", () => {
     ]);
     expect(groups.map(({ album, albumArtist }) => [album, albumArtist])).toEqual([["Alpha", "Another Artist"], ["Alpha", "Fallback Artist"], ["Beta", "Various"]]);
     expect(groups[2].songs.map((s) => s.fileId)).toEqual(["track-2", "track-10", "non-numeric"]);
+  });
+});
+describe("アルバムのアーティスト別グルーピングと検索", () => {
+  test("albumArtistでまとめ、アーティスト名・アルバム名の順で並べる", () => {
+    const groups = groupSongsByAlbum([
+      song({ fileId: "b2", album: "Second", artist: "X", albumArtist: "Beta" }),
+      song({ fileId: "b1", album: "First", artist: "X", albumArtist: "Beta" }),
+      song({ fileId: "a1", album: "Only", artist: "X", albumArtist: "Alpha" }),
+    ]);
+    const byArtist = groupAlbumsByArtist(groups);
+    expect(byArtist.map((g) => g.albumArtist)).toEqual(["Alpha", "Beta"]);
+    expect(byArtist[1].albums.map((a) => a.album)).toEqual(["First", "Second"]);
+  });
+  test("アルバム名・アーティスト名の部分一致（大文字小文字を区別しない）で絞り込む", () => {
+    const groups = groupSongsByAlbum([
+      song({ fileId: "1", album: "Moonlight Sonata", artist: "X", albumArtist: "Beethoven" }),
+      song({ fileId: "2", album: "Symphony", artist: "X", albumArtist: "Moon Orchestra" }),
+      song({ fileId: "3", album: "Other", artist: "X", albumArtist: "Other Artist" }),
+    ]);
+    expect(filterAlbumGroups(groups, "moon").map((g) => g.album)).toEqual(["Moonlight Sonata", "Symphony"]);
+    expect(filterAlbumGroups(groups, "").map((g) => g.album)).toEqual(["Moonlight Sonata", "Other", "Symphony"]);
+    expect(filterAlbumGroups(groups, "nothing-matches")).toEqual([]);
   });
 });

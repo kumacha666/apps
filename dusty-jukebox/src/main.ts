@@ -12,7 +12,7 @@ import { PlaybackAuthenticationRequiredError, PlaybackController } from "./playb
 import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStatus";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
-import { parseIndexRows, filterSongs, groupSongsByAlbum, sortSongs, distinctFieldValues, type AlbumGroup, type AutocompleteField, type Song } from "./catalog";
+import { parseIndexRows, filterSongs, groupSongsByAlbum, groupAlbumsByArtist, filterAlbumGroups, sortSongs, distinctFieldValues, type AlbumGroup, type AutocompleteField, type Song } from "./catalog";
 import { CatalogOperationGate } from "./catalogOperationGate";
 import { CatalogSession } from "./catalogSession";
 import { FolderPathResolver, type FolderGetFn, type FolderMeta } from "./folderPaths";
@@ -132,6 +132,9 @@ const catalogSession = new CatalogSession<Song>();
 // 誤表示したり、最悪キューを空にして再生を止めてしまう）。catalogSession自体が無効化
 // （invalidate）される箇所すべてでnullに戻す。
 let loadedCatalogSpreadsheetId: string | null = null;
+// アルバム検索欄（#album-search）で入力の都度、索引を再読み込みせずに絞り込み直せるように
+// loadCatalog()成功時点の全アルバムグループを保持する（開発体制#39④UI-3）。
+let loadedAlbumGroups: AlbumGroup[] = [];
 let serviceWorkerReady: Promise<void> | null = null;
 const catalogOperationGate = new CatalogOperationGate();
 // アプリ起動時に1回だけ生成し、以降のプレイリスト保存操作すべてで使い回す
@@ -213,6 +216,7 @@ function render(): void {
         <div><button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button></div>
         <ul id="catalog-list" class="result-list"></ul>
         <h3>アルバム</h3>
+        <label class="field"><span>アルバム検索</span><input id="album-search" type="search" placeholder="アルバム名・アーティスト名で検索" /></label>
         <ul id="album-list" class="result-list"></ul>
       </section>
       <section class="playlists">
@@ -274,25 +278,31 @@ function renderFilterSuggestions(songs: Song[]): void {
     }
   }
 }
+// アーティスト別の見出し付きで表示する（開発体制#39④UI-3、全アルバムがフラットに
+// 並んでいて探しにくい、という使いづらさへの対応）。
 function renderAlbumGroups(groups: AlbumGroup[]): void {
   const list = el<HTMLUListElement>("album-list"); list.innerHTML = "";
-  for (const group of groups) {
-    const item = document.createElement("li");
-    const label = `${group.album} — ${group.albumArtist}（${group.songs.length}曲） `;
-    const button = document.createElement("button"); button.type = "button"; button.textContent = "このアルバムを再生";
-    button.addEventListener("click", () => {
-      if (!queue) return;
-      const songs = catalogSession.createQueue(() => group.songs);
-      if (!songs) {
-        setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストを作成してください。", true);
-        return;
-      }
-      queue.setList(songs); renderQueue();
-      el<HTMLButtonElement>("next-btn").disabled = songs.length === 0; el<HTMLButtonElement>("previous-btn").disabled = songs.length === 0;
-      setStatus(`${group.album}の${songs.length}曲を再生リストに設定しました。`);
-      void handleQueuePlayback(() => queue?.playAt(0));
-    });
-    item.append(label, button); list.append(item);
+  for (const artistGroup of groupAlbumsByArtist(groups)) {
+    const heading = document.createElement("li"); heading.className = "album-artist-heading";
+    heading.textContent = artistGroup.albumArtist; list.append(heading);
+    for (const group of artistGroup.albums) {
+      const item = document.createElement("li");
+      const label = `${group.album}（${group.songs.length}曲） `;
+      const button = document.createElement("button"); button.type = "button"; button.textContent = "このアルバムを再生";
+      button.addEventListener("click", () => {
+        if (!queue) return;
+        const songs = catalogSession.createQueue(() => group.songs);
+        if (!songs) {
+          setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストを作成してください。", true);
+          return;
+        }
+        queue.setList(songs); renderQueue();
+        el<HTMLButtonElement>("next-btn").disabled = songs.length === 0; el<HTMLButtonElement>("previous-btn").disabled = songs.length === 0;
+        setStatus(`${group.album}の${songs.length}曲を再生リストに設定しました。`);
+        void handleQueuePlayback(() => queue?.playAt(0));
+      });
+      item.append(label, button); list.append(item);
+    }
   }
 }
 function playlistsSpreadsheetIO(spreadsheetId: string): PlaylistsIO {
@@ -647,7 +657,8 @@ async function loadCatalog(): Promise<void> {
     if (foldersTabReady) await persistFolderCache(spreadsheetId, newlyResolvedFromDrive, undefined, true);
     catalogSession.replace(songs);
     loadedCatalogSpreadsheetId = spreadsheetId;
-    renderAlbumGroups(groupSongsByAlbum(songs));
+    loadedAlbumGroups = groupSongsByAlbum(songs);
+    renderAlbumGroups(filterAlbumGroups(loadedAlbumGroups, el<HTMLInputElement>("album-search").value));
     renderFilterSuggestions(songs);
     el<HTMLButtonElement>("create-queue-btn").disabled = false;
     setStatus(`索引から${songs.length}曲を読み込みました${failedPathCount > 0 ? `（${failedPathCount}件はパス解決に失敗）` : ""}。条件を指定して再生リストを作れます。`);
@@ -1681,6 +1692,11 @@ function init(): void {
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
     el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
     el<HTMLButtonElement>("create-queue-btn").addEventListener("click", createQueueFromFilters);
+    // アルバム検索は曲の絞り込み（ボタン起点）とは別に、入力の都度その場で絞り込む
+    // （アルバム件数は曲数よりずっと少なく、jankの懸念が無いためユーザーとの相談で確認済み）。
+    el<HTMLInputElement>("album-search").addEventListener("input", () => {
+      renderAlbumGroups(filterAlbumGroups(loadedAlbumGroups, el<HTMLInputElement>("album-search").value));
+    });
     el<HTMLButtonElement>("next-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.next()));
     el<HTMLButtonElement>("previous-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.previous()));
     el<HTMLButtonElement>("save-playlist-btn").addEventListener("click", () => void handleSavePlaylist());

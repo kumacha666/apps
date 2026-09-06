@@ -93,3 +93,25 @@ export function groupSongsByAlbum(songs: Song[]): AlbumGroup[] {
     .map((group) => ({ ...group, songs: [...group.songs].sort((a, b) => numeric(a.discNumber) - numeric(b.discNumber) || numeric(a.trackNumber) - numeric(b.trackNumber)) }))
     .sort((a, b) => a.album.localeCompare(b.album) || a.albumArtist.localeCompare(b.albumArtist));
 }
+
+// アルバム一覧を全件フラットに並べると探しにくい、という使いづらさへの対応（開発体制#39④UI-3）。
+// アーティスト（albumArtist）別にまとめて表示するための見出し付きグルーピング。
+export interface ArtistAlbumGroup { albumArtist: string; albums: AlbumGroup[]; }
+export function groupAlbumsByArtist(groups: AlbumGroup[]): ArtistAlbumGroup[] {
+  const byArtist = new Map<string, AlbumGroup[]>();
+  for (const group of groups) {
+    const albums = byArtist.get(group.albumArtist) ?? [];
+    albums.push(group);
+    byArtist.set(group.albumArtist, albums);
+  }
+  return [...byArtist.entries()]
+    .map(([albumArtist, albums]) => ({ albumArtist, albums: [...albums].sort((a, b) => a.album.localeCompare(b.album)) }))
+    .sort((a, b) => a.albumArtist.localeCompare(b.albumArtist));
+}
+
+// アルバム名・アーティスト名での絞り込み（部分一致、大文字小文字を区別しない）。
+export function filterAlbumGroups(groups: AlbumGroup[], query: string): AlbumGroup[] {
+  const q = query.trim().toLocaleLowerCase();
+  if (!q) return groups;
+  return groups.filter((group) => group.album.toLocaleLowerCase().includes(q) || group.albumArtist.toLocaleLowerCase().includes(q));
+}
