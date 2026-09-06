@@ -213,7 +213,7 @@ function render(): void {
         <datalist id="filter-genre-options"></datalist>
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
-        <div><button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button></div>
+        <div><button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button></div>
         <ul id="catalog-list" class="result-list"></ul>
         <h3>アルバム</h3>
         <label class="field"><span>アルバム検索</span><input id="album-search" type="search" placeholder="アルバム名・アーティスト名で検索" /></label>
@@ -235,6 +235,13 @@ function render(): void {
 }
 
 function numberOrUndefined(value: string): number | undefined { const n = Number(value); return value.trim() === "" || !Number.isFinite(n) ? undefined : n; }
+// 前へ/次へ/シャッフルはいずれも「再生リストに曲がある間だけ使える」操作のため、有効/無効を
+// まとめて切り替える（開発体制#39④UI-4、シャッフル追加時に既存2ボタンと同じ条件のまま揃える）。
+function setQueueNavEnabled(enabled: boolean): void {
+  el<HTMLButtonElement>("next-btn").disabled = !enabled;
+  el<HTMLButtonElement>("previous-btn").disabled = !enabled;
+  el<HTMLButtonElement>("shuffle-btn").disabled = !enabled;
+}
 function renderQueue(): void {
   const list = el<HTMLUListElement>("catalog-list"); list.innerHTML = "";
   const currentFileId = queue?.currentPlayingFileId() ?? null;
@@ -297,7 +304,7 @@ function renderAlbumGroups(groups: AlbumGroup[]): void {
           return;
         }
         queue.setList(songs); renderQueue();
-        el<HTMLButtonElement>("next-btn").disabled = songs.length === 0; el<HTMLButtonElement>("previous-btn").disabled = songs.length === 0;
+        setQueueNavEnabled(songs.length > 0);
         setStatus(`${group.album}の${songs.length}曲を再生リストに設定しました。`);
         void handleQueuePlayback(() => queue?.playAt(0));
       });
@@ -511,8 +518,7 @@ async function handleLoadPlaylistIntoQueue(playlistId: string): Promise<void> {
   }
   queue.setList(songs);
   renderQueue();
-  el<HTMLButtonElement>("next-btn").disabled = songs.length === 0;
-  el<HTMLButtonElement>("previous-btn").disabled = songs.length === 0;
+  setQueueNavEnabled(songs.length > 0);
   const missingCount = orderedFileIds.length - songs.length;
   setStatus(`プレイリストから${songs.length}曲を再生リストに設定しました${missingCount > 0 ? `（${missingCount}曲は現在の索引に見つかりませんでした）` : ""}。`);
   if (songs.length > 0) {
@@ -683,7 +689,7 @@ function createQueueFromFilters(): void {
     setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストを作成してください。", true);
     return;
   }
-  queue.setList(songs); renderQueue(); el<HTMLButtonElement>("next-btn").disabled = songs.length === 0; el<HTMLButtonElement>("previous-btn").disabled = songs.length === 0;
+  queue.setList(songs); renderQueue(); setQueueNavEnabled(songs.length > 0);
   setStatus(`${songs.length}曲の再生リストを作りました。`);
 }
 
@@ -1699,6 +1705,14 @@ function init(): void {
     });
     el<HTMLButtonElement>("next-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.next()));
     el<HTMLButtonElement>("previous-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.previous()));
+    // シャッフルは絞り込み結果の並び順を変えるだけで何かを再生開始するわけではないため、
+    // handleQueuePlayback()（「再生中」表示・認証ゲート解除等、実際の再生成功時の副作用を伴う）は
+    // 経由しない（再生中の曲・除外設定はqueue.shuffle()自体が変更しない。次へ/前へは新しい
+    // 並び順をそのまま辿る）。ただしqueue.shuffle()自体は他のナビゲーション操作と同じ
+    // pendingMoveの直列化チェーンに参加するため（2026-09-06 レビュー指摘：進行中のnext()等が
+    // currentFileIdを確定させる前にシャッフルすると並べ替えの基準がずれる不具合の修正）、
+    // 完了を待ってからrenderQueue()する。
+    el<HTMLButtonElement>("shuffle-btn").addEventListener("click", () => { if (queue) void queue.shuffle().then(() => renderQueue()); });
     el<HTMLButtonElement>("save-playlist-btn").addEventListener("click", () => void handleSavePlaylist());
     el<HTMLButtonElement>("refresh-playlists-btn").addEventListener("click", () => void handleRefreshPlaylists());
   });

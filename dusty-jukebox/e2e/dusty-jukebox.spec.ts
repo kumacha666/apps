@@ -193,6 +193,36 @@ test("検索で曲を絞り込み、アルバムをdisc/track順のキューに�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
 });
 
+test("再生中にシャッフルしても現在曲は維持され、次へで残り曲を1曲も失わず辿れる", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  // アルバム再生開始時点で1曲目（album-track-1）が既に再生中の状態を作る。
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.getByRole("button", { name: "シャッフル" }).click();
+  // 2026-09-06、ChatGPTレビュー指摘：再生中の曲を含めて全体をシャッフルすると、現在曲より
+  // 前の位置に移動した未再生曲がnext()から永久に到達不能になり、残り曲があっても再生が
+  // 止まってしまう不具合があった。再生中の曲はシャッフル後も位置・再生状態とも維持され、
+  // 「次へ」で残り2曲を1曲も失わず・重複せず辿れることを検証する。
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  const reached: string[] = [];
+  for (let i = 0; i < 2; i += 1) {
+    await page.getByRole("button", { name: "次へ" }).click();
+    const src = await page.locator("#audio-player").getAttribute("src");
+    const match = /album-track-(\d)/.exec(src ?? "");
+    if (!match) throw new Error(`unexpected audio src: ${src}`);
+    reached.push(`album-track-${match[1]}`);
+  }
+  expect(reached.sort()).toEqual(["album-track-2", "album-track-3"]);
+});
+
 test("アルバム一覧はアーティスト別に見出し付きで表示され、検索欄でアルバム名/アーティスト名を絞り込める", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
