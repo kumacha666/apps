@@ -11,6 +11,20 @@
 // スコープ：Genre（" / "区切りの多値フィールド）は対象外（caseNormalization.tsと同じ理由、
 // トークン分解が必要で複雑さが増すため次回以降）。既に`<field>_override`が設定済みの曲も対象外
 // （手動補正を上書きしない）。
+//
+// garbledSuspect/garbledResolved列は意図的に書き込まない（2026-09-06 ChatGPTレビュー指摘：
+// このままでは行単位のgarbledResolvedが永久にFALSEのままになり列が実質使われない、という
+// 指摘を受けて検討した結果）。理由は2つ：①本体の`buildIndexRow()`はgarbledSuspect/
+// garbledResolvedを`_override`とは違う「タグ抽出値列」として扱っており、フルスキャン
+// （初回スキャン・410 Gone復旧時）で再抽出に成功するたびに無条件でgarbledSuspectを再計算・
+// garbledResolvedをFALSEへ引き戻す。このアプリが書いたTRUEは、この上書きが起きた時点で
+// 静かに失われる（`_override`列は保護されるためこの上書きの影響を受けないのと対照的）。
+// ②仮に書き込んでも、行のどのフィールドが「解決済み」かという情報の実体は既に
+// `<field>_override`の非空判定だけで完全に導出できるため、別列に同じ情報を二重管理する
+// 意味が薄い。列自体をスキーマから削除する判断（既存データとの互換性、ai-workspaceの
+// CONCEPT.md更新を伴う）はこのPRの範囲を超えるため、まずは「このアプリからは触らない」
+// 方針を明記するにとどめる（列自体の廃止判断は今後、非公開ai-workspace側の設計セッションで
+// 改めて検討する）。
 
 import { detectGarbled, repairGarbledText } from "./lib";
 import { INDEX_SHEET_HEADER, WRITE_BATCH_SIZE } from "./sheets";

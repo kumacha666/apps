@@ -25,7 +25,7 @@
 - 対象フィールドはtitle/artist/albumArtist/album/composer（本体の`buildIndexRow`が`garbledSuspect`判定に使うのと同じ5フィールド）。Genre（" / "区切りの多値フィールド）は表記ゆれ統一と同じ理由で対象外
 - 設計は表記ゆれ統一（`caseNormalization.ts`）と全く同じ安全パターンをそのまま踏襲する（複数ラウンドのレビューで検証済みの設計を独自に再設計しない方針）：対象`<field>_override`セルだけをピンポイント更新、チャンク（200件）ごとに索引を読み直してから書き込み、書き込み直前に元の値（`expectedSourceValue`）が変わっていないか確認、「元に戻す」は一度不一致を観測したエントリを`lastApplied`から永久に除去する
 - 表記ゆれ統一と異なり曲同士のグルーピングは無い（1曲＝1候補、合意形成不要）。UIでは候補ごとにチェックボックスで適用対象から個別に除外できる（`planGarbledRepair`の`acceptedKeys`）
-- `garbledSuspect`/`garbledResolved`列は書き込まない（対象`_override`セルのみを書く設計のため。`garbledResolved`は本体の`_override`以外の抽出値列と同様、次回スキャン時に本体側が上書きするため、このアプリから書いても意味を持たない）
+- **`garbledSuspect`/`garbledResolved`列は意図的に書き込まない**（2026-09-06、ChatGPTレビュー指摘を受けて検討・確定した方針）。理由：①本体の`buildIndexRow()`はこの2列を`_override`とは異なる「タグ抽出値列」として扱い、フルスキャン（初回スキャン・410 Gone復旧時）で再抽出に成功するたびに無条件で再計算・上書きする（`_override`列だけがこの上書きから保護される）。このアプリが`garbledResolved`にTRUEを書いても、次のフルスキャンで静かにFALSEへ引き戻される。②仮に書き込めたとしても、「どのフィールドが解決済みか」という情報は`<field>_override`の非空判定だけで完全に導出できるため、別列で二重管理する意味が薄い。列自体をスキーマから削除する判断（既存データとの互換性、ai-workspaceのCONCEPT.md更新を伴う）はこのアプリの範囲を超えるため、まずは「このアプリからは触らない」方針をここに明記するにとどめる（列自体の廃止判断は今後、非公開ai-workspace側の設計セッションで改めて検討する）
 
 ## UI
 
