@@ -211,6 +211,8 @@ function render(): void {
         <div class="filter-years"><label>年（最小）<input id="filter-min-year" type="number" /></label><label>年（最大）<input id="filter-max-year" type="number" /></label></div>
         <label class="field"><span>カテゴリ（Genre）</span><input id="filter-genre" type="search" list="filter-genre-options" /></label>
         <datalist id="filter-genre-options"></datalist>
+        <label class="field"><span>リリース種別</span><input id="filter-release-type" type="search" list="filter-release-type-options" /></label>
+        <datalist id="filter-release-type-options"></datalist>
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
         <div><button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button></div>
@@ -275,6 +277,7 @@ const AUTOCOMPLETE_DATALISTS: { field: AutocompleteField; datalistId: string }[]
   { field: "album", datalistId: "filter-album-options" },
   { field: "composer", datalistId: "filter-composer-options" },
   { field: "genre", datalistId: "filter-genre-options" },
+  { field: "releaseType", datalistId: "filter-release-type-options" },
 ];
 function renderFilterSuggestions(songs: Song[]): void {
   for (const { field, datalistId } of AUTOCOMPLETE_DATALISTS) {
@@ -684,6 +687,7 @@ function createQueueFromFilters(): void {
   if (!queue) return;
   const songs = catalogSession.createQueue((loadedSongs) => sortSongs(filterSongs(loadedSongs, { query: el<HTMLInputElement>("filter-query").value, artist: el<HTMLInputElement>("filter-artist").value,
     album: el<HTMLInputElement>("filter-album").value, composer: el<HTMLInputElement>("filter-composer").value, genre: el<HTMLInputElement>("filter-genre").value,
+    releaseType: el<HTMLInputElement>("filter-release-type").value,
     minYear: numberOrUndefined(el<HTMLInputElement>("filter-min-year").value), maxYear: numberOrUndefined(el<HTMLInputElement>("filter-max-year").value), includeUnknownYear: el<HTMLInputElement>("filter-unknown-year").checked })));
   if (!songs) {
     setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストを作成してください。", true);

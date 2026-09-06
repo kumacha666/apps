@@ -4,7 +4,7 @@ import type { Song } from "./catalog";
 
 const song = (overrides: Partial<Song> = {}): Song => ({
   fileId: "f1", parentId: "p", title: "Title", artist: "Artist", album: "Album",
-  composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", ...overrides,
+  composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", releaseType: "", ...overrides,
 });
 
 function fakeMediaSession(): MediaSessionLike & { handlers: Record<string, (() => void) | null> } {

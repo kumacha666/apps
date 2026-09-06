@@ -5,7 +5,7 @@ import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { PlaybackContinuationRegistry } from "./playbackContinuation";
 import { parseIndexRows, type Song } from "./catalog";
 import { INDEX_SHEET_HEADER } from "./sheets";
-const song = (fileId: string): Song => ({ fileId, parentId: "p", title: fileId, artist: "", album: "", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "" });
+const song = (fileId: string): Song => ({ fileId, parentId: "p", title: fileId, artist: "", album: "", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", releaseType: "" });
 const indexRow = (values: Record<string, string>): string[] => INDEX_SHEET_HEADER.map((header) => values[header] ?? "");
 class Audio { listener: (() => void) | undefined; addEventListener(_: "ended", listener: () => void) { this.listener = listener; } }
 describe("PlaybackQueue", () => {
@@ -290,12 +290,12 @@ describe("queueRowViews", () => {
 
 describe("songDisplayLabel / nowPlayingLabel", () => {
   test("タイトルのみの曲はタイトルだけを表示する", () => {
-    const bare: Song = { fileId: "x", parentId: "p", title: "Title", artist: "", album: "", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "" };
+    const bare: Song = { fileId: "x", parentId: "p", title: "Title", artist: "", album: "", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", releaseType: "" };
     expect(songDisplayLabel(bare)).toBe("Title");
   });
 
   test("アーティスト・アルバム・フォルダパスがあれば連結する", () => {
-    const full: Song = { fileId: "x", parentId: "p", title: "Title", artist: "Artist", album: "Album", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", folderPath: "A / B" };
+    const full: Song = { fileId: "x", parentId: "p", title: "Title", artist: "Artist", album: "Album", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", releaseType: "", folderPath: "A / B" };
     expect(songDisplayLabel(full)).toBe("Title — Artist / Album [A / B]");
   });
 
