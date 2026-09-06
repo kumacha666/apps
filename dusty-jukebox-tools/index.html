@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DustyJukebox Tools</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #17151a;
+      color: #e8e3d8;
+      font-family: 'Segoe UI', sans-serif;
+    }
+    #app {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100dvh;
+      text-align: center;
+      padding: 24px;
+      gap: 12px;
+    }
+    h1 { font-size: 22px; color: #d9a441; margin-bottom: 4px; }
+    h2 { align-self: flex-start; color: #d9a441; font-size: 16px; margin-top: 12px; }
+    p { color: #9a9488; font-size: 13px; }
+    p.lead { max-width: 32em; }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      width: 100%;
+      max-width: 28em;
+      text-align: left;
+      font-size: 13px;
+      color: #cfc9bb;
+    }
+    input {
+      background: #221f27;
+      border: 1px solid #3a3542;
+      border-radius: 6px;
+      color: #e8e3d8;
+      padding: 8px 10px;
+      font-size: 14px;
+    }
+    button {
+      background: #d9a441;
+      border: none;
+      border-radius: 6px;
+      color: #17151a;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled {
+      background: #4a4438;
+      color: #8a8578;
+      cursor: not-allowed;
+    }
+    .status { min-height: 1.4em; font-size: 13px; }
+    .status.error { color: #e07a5f; }
+    .section {
+      width: 100%;
+      max-width: 42em;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      text-align: left;
+      border-top: 1px solid #2c2833;
+      padding-top: 12px;
+      margin-top: 8px;
+    }
+    .result-list {
+      list-style: none;
+      width: 100%;
+      max-width: 42em;
+      text-align: left;
+      font-size: 13px;
+      color: #cfc9bb;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    select {
+      background: #221f27;
+      border: 1px solid #3a3542;
+      border-radius: 6px;
+      color: #e8e3d8;
+      padding: 4px 6px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

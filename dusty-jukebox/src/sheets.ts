@@ -199,8 +199,12 @@ export function buildIndexRow({
   const trackNumber = tags?.trackNumber ?? "";
   const discNumber = tags?.discNumber ?? "";
 
-  // 3.4節で確認済みのC1マーカー検出（detectGarbled）のみ。自動修復（4.4節）は後続PRで実装するため、
-  // ここでは疑いフラグを立てるだけでgarbledResolvedは常にfalseのまま記録する。
+  // 3.4節で確認済みのC1マーカー検出（detectGarbled）のみ。自動修復（4.4節）はdusty-jukebox-tools
+  // （2026-09-06、apps/dusty-jukebox-tools/参照）が`<field>_override`セルへ直接書き込む形で実装
+  // 済みだが、この関数（毎回のタグ抽出値）自体は常に疑いフラグを立てるだけでgarbledResolvedを
+  // falseのまま記録する。理由：garbledResolvedは`_override`とは異なる「タグ抽出値列」のため、
+  // ここで再スキャンのたびに書く値がoverride列を上書きすることなく常にリセットされてしまい、
+  // 恒久的な「解決済み」記録の置き場として機能しない（dusty-jukebox-tools/CLAUDE.md参照）。
   const garbledSuspect = [title, artist, albumArtist, album, composer].some((v) => detectGarbled(String(v)));
 
   return [
