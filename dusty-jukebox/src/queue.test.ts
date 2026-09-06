@@ -100,6 +100,22 @@ describe("PlaybackQueue", () => {
     expect(queue.currentPlayingFileId()).toBe("a");
     expect(queue.isExcluded("c")).toBe(true);
   });
+  test("シャッフル後にnext()で再生位置が進んでからunshuffleしても、未再生曲を飛ばさず・再生済み曲を再度辿らない（2026-09-06 PR #418 ChatGPTレビュー指摘）", async () => {
+    const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    queue.setList([song("a"), song("b"), song("c"), song("d")]);
+    await queue.playAt(0); // aが再生中
+    await queue.shuffle(() => 0); // b/c/dの区間をシャッフル → [a, c, d, b]
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "c", "d", "b"]);
+    await queue.next(); // cへ進む（シャッフル後の並びを辿った結果、bと再生順が入れ替わっている）
+    expect(queue.currentPlayingFileId()).toBe("c");
+    await queue.unshuffle();
+    // 再生済み（a, c）はその通りの順で先頭に残り、未再生（b, d）は元の相対順（b→d）で後ろに続く。
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "c", "b", "d"]);
+    while (await queue.next()) { /* 到達可能な限り辿る */ }
+    // 修正前は配列全体を元の並び[a,b,c,d]へ戻していたため、currentFileId="c"はindex2に位置し、
+    // next()がindex1のb（本来まだ未再生）を永久にスキップしていた。
+    expect(played).toEqual(["a", "c", "b", "d"]);
+  });
   test("連続してshuffleしても、unshuffleは一度も並べ替えていない元の並びに戻す", async () => {
     const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
     queue.setList([song("a"), song("b"), song("c"), song("d")]);

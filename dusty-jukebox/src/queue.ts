@@ -95,10 +95,20 @@ export class PlaybackQueue {
   // next()/playAt()等と同じpendingMoveの直列化チェーンに参加させる（shuffle()と同じ理由：
   // 進行中のnext()等がcurrentFileIdを確定させる前に実行すると、その後next()がsongs配列を
   // 参照する際に一時的な不整合を招きうるため）。
+  // 現在位置（プレフィックス）はそのまま残し、それより後ろ（未再生のサフィックス）だけを
+  // originalOrderの相対順に戻す（2026-09-06、PR #418 ChatGPTレビュー指摘：シャッフル後に
+  // next()で再生位置が進んだ状態で配列全体をoriginalOrderへ戻すと、currentFileIdの元配列上の
+  // 位置がプレフィックス長より後ろにずれてしまい、next()がその位置より前の未再生曲を
+  // 永久にスキップしたり、既に再生済みの曲を再度辿ったりする不具合があった。shuffle()自身が
+  // 現在位置より前を並べ替え対象から常に除外しているのと対称の設計にする）。
   unshuffle(): Promise<boolean> {
     return this.move(async () => {
       if (this.originalOrder === null) return false;
-      this.songs = this.originalOrder;
+      const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId);
+      const prefix = this.songs.slice(0, currentIndex + 1);
+      const playedIds = new Set(prefix.map((song) => song.fileId));
+      const suffix = this.originalOrder.filter((song) => !playedIds.has(song.fileId));
+      this.songs = [...prefix, ...suffix];
       this.originalOrder = null;
       return true;
     });
