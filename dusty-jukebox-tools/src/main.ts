@@ -24,6 +24,7 @@ import {
   type AppliedGarbledWrite,
   type GarbledCandidate,
 } from "./garbledRepair";
+import { runHealthCheck, type HealthCheckReport } from "./healthCheck";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
@@ -84,6 +85,12 @@ function render(): void {
         <button id="check-garbled-btn" type="button" disabled>文字化けをチェック</button>
         <ul id="garbled-results" class="result-list"></ul>
         <div><button id="apply-garbled-btn" type="button" disabled>修復を適用</button> <button id="revert-garbled-btn" type="button" disabled>直前の修復を元に戻す</button></div>
+      </section>
+      <section class="section">
+        <h2>ライブラリ健全性チェック</h2>
+        <p>索引データだけを見た読み取り専用のチェックです。書き込みは一切行いません。①文字化けの疑い（自動修復できないパターンも広めに拾います）②欠落フィールド（title/artist/album/genreが空欄）③同一フォルダ内でのタイトル重複（複数ファイル選択編集の事故検知用）④同一アルバム内でのリリース年の外れ値、の4項目を確認します。</p>
+        <button id="check-health-btn" type="button" disabled>健全性チェックを実行</button>
+        <div id="healthcheck-results"></div>
       </section>
       <p id="status" class="status"></p>
     `
@@ -424,6 +431,76 @@ async function handleRevertGarbledRepair(): Promise<void> {
   }
 }
 
+// ===== ライブラリ健全性チェック =====
+
+function renderHealthCheckReport(report: HealthCheckReport): void {
+  const container = el<HTMLDivElement>("healthcheck-results");
+  container.innerHTML = "";
+
+  const addSection = (title: string, lines: string[]): void => {
+    const h3 = document.createElement("h3");
+    h3.textContent = `${title}（${lines.length}件）`;
+    container.append(h3);
+    if (lines.length === 0) return;
+    const ul = document.createElement("ul");
+    ul.className = "result-list";
+    for (const line of lines) {
+      const li = document.createElement("li");
+      li.textContent = line;
+      ul.append(li);
+    }
+    container.append(ul);
+  };
+
+  addSection(
+    "① 文字化けの疑い",
+    report.garbledSuspects.map((s) => `${s.fileId.slice(0, 10)}... ${s.field}: 「${s.value}」`)
+  );
+  addSection(
+    "② 欠落フィールド",
+    report.missingFields.map((m) => `${m.fileId.slice(0, 10)}... ${m.field}が空欄`)
+  );
+  addSection(
+    "③ 同一フォルダ内でのタイトル重複",
+    report.duplicateTitles.map(
+      (g) => `フォルダ${g.parentId.slice(0, 10)}... 「${g.title}」が${g.fileIds.length}件（${g.fileIds.map((id) => id.slice(0, 10) + "...").join(", ")}）`
+    )
+  );
+  addSection(
+    "④ 同一アルバム内でのリリース年の外れ値",
+    report.yearOutliers.map((y) => `${y.fileId.slice(0, 10)}... 「${y.album}」: ${y.year}（他の曲は${y.majorityYear}）`)
+  );
+}
+
+async function handleHealthCheck(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId) {
+    setStatus("索引スプレッドシートIDを入力してください", true);
+    return;
+  }
+  if (!tryAcquire()) {
+    setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  try {
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
+      throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。");
+    }
+    const rows = await sheetsIO.listExistingRows();
+    const report = runHealthCheck(rows);
+    renderHealthCheckReport(report);
+    const total =
+      report.garbledSuspects.length + report.missingFields.length + report.duplicateTitles.length + report.yearOutliers.length;
+    setStatus(total > 0 ? `${total}件の要確認項目が見つかりました。書き込みは行っていません。` : "要確認項目は見つかりませんでした。");
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `健全性チェックに失敗しました: ${err.message}` : "健全性チェックに失敗しました", true);
+  } finally {
+    release();
+  }
+}
+
 // ===== ログイン・初期化 =====
 
 async function handleLogin(): Promise<void> {
@@ -435,6 +512,7 @@ async function handleLogin(): Promise<void> {
     setStatus("ログイン済み。スプレッドシートIDを入力してチェックできます。");
     el<HTMLButtonElement>("check-casing-btn").disabled = false;
     el<HTMLButtonElement>("check-garbled-btn").disabled = false;
+    el<HTMLButtonElement>("check-health-btn").disabled = false;
   } catch (err) {
     setStatus(err instanceof AuthError ? err.message : String(err), true);
   } finally {
@@ -460,6 +538,7 @@ function init(): void {
   el<HTMLButtonElement>("check-garbled-btn").addEventListener("click", () => void handleCheckGarbled());
   el<HTMLButtonElement>("apply-garbled-btn").addEventListener("click", () => void handleApplyGarbledRepair());
   el<HTMLButtonElement>("revert-garbled-btn").addEventListener("click", () => void handleRevertGarbledRepair());
+  el<HTMLButtonElement>("check-health-btn").addEventListener("click", () => void handleHealthCheck());
 }
 
 init();
