@@ -96,6 +96,29 @@ test("ライブラリ健全性チェックで4項目の結果が表示される�
   expect(mocks.sheetsWrites).toHaveLength(0);
 });
 
+test("欠落フィールドを一覧表示し、入力した項目だけを保存できる（元に戻せる）", async ({ page, context }) => {
+  await installGoogleMocks(context, {
+    rows: [makeRow({ fileId: "1", title: "Song A" })],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+
+  await page.getByRole("button", { name: "欠落フィールドをチェック" }).click();
+  await expect(page.locator("#status")).toContainText("2件の欠落フィールドが見つかりました");
+
+  // title="Song A"のためtitleは含まれず、artist/albumの2件が表示される（フィールド順）。
+  const inputs = page.locator("#missing-field-results input");
+  await expect(inputs).toHaveCount(2);
+  await inputs.nth(0).fill("手動入力アーティスト");
+  // albumの入力欄は空欄のままにする→保存対象から除外されるはず。
+
+  await page.getByRole("button", { name: "入力した内容を保存" }).click();
+  await expect(page.locator("#status")).toContainText("1件を保存しました");
+
+  await page.getByRole("button", { name: "直前の保存を元に戻す" }).click();
+  await expect(page.locator("#status")).toContainText("1件の保存を元に戻しました");
+});
+
 test("チェック時と異なるスプレッドシートIDで適用しようとすると拒否される", async ({ page, context }) => {
   await installGoogleMocks(context, {
     rows: [
