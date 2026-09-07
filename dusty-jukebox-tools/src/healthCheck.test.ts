@@ -165,6 +165,22 @@ describe("findYearOutliers", () => {
     expect(findYearOutliers(rows)).toEqual([]);
   });
 
+  it("does not conflate two different albums whose album+albumArtist strings collide under naive space-joining", () => {
+    // ChatGPT再レビュー指摘（PR #425、commit b125969）：albumGroupKey()が
+    // `${album} ${albumArtist} ${parentId}`という空白区切りの単純連結だと、
+    // album="A B"+albumArtist="C" と album="A"+albumArtist="B C" が同じ
+    // "A B C <parentId>" になり、本来別アルバムなのに同一グループへ混ざってしまう。
+    const rows = [
+      makeRow({ fileId: "1", parentId: "folderA", album: "A B", albumArtist: "C", releaseYear: "2005" }),
+      makeRow({ fileId: "2", parentId: "folderA", album: "A B", albumArtist: "C", releaseYear: "2005" }),
+      makeRow({ fileId: "3", parentId: "folderA", album: "A B", albumArtist: "C", releaseYear: "2005" }),
+      makeRow({ fileId: "4", parentId: "folderA", album: "A", albumArtist: "B C", releaseYear: "1999" }),
+      makeRow({ fileId: "5", parentId: "folderA", album: "A", albumArtist: "B C", releaseYear: "1999" }),
+      makeRow({ fileId: "6", parentId: "folderA", album: "A", albumArtist: "B C", releaseYear: "1999" }),
+    ];
+    expect(findYearOutliers(rows)).toHaveLength(0);
+  });
+
   it("does not flag an exact 2-vs-2 year split as having a majority (tie is not a majority)", () => {
     // ChatGPTレビュー指摘（PR #425）：majorityCount < withYear.length / 2 だと、4曲中2対2の
     // ちょうど半数でも最初に見つかった年が多数派扱いされ、残り2曲が誤って外れ値報告されてしまう。

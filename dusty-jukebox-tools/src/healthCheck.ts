@@ -157,7 +157,10 @@ function albumGroupKey(row: Row): string {
   const album = effective(row, "album");
   const albumArtist = effective(row, "albumArtist") || effective(row, "artist");
   const parentId = cell(row, "parentId");
-  return `${album} ${albumArtist} ${parentId}`;
+  // 空白区切りの単純連結だと、album/albumArtistの空白の位置が異なる別アルバム同士が
+  // 同じキー文字列に衝突しうる（ChatGPT再レビュー指摘、PR #425）。catalog.tsの
+  // groupSongsByAlbum()と同じくJSON.stringify()で境界を明確にする。
+  return JSON.stringify([album, albumArtist, parentId]);
 }
 
 export function findYearOutliers(rows: Row[]): YearOutlierEntry[] {
