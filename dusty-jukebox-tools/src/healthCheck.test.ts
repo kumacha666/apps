@@ -140,4 +140,40 @@ describe("findYearOutliers", () => {
     ];
     expect(findYearOutliers(rows)).toHaveLength(0);
   });
+
+  it("groups by effective album/albumArtist (override-aware), not the raw extracted value", () => {
+    // ChatGPTレビュー指摘（PR #425）：album_override/albumArtist_overrideで同一アルバムへ
+    // 補正済みの曲が、生の抽出値のままだと別グループに分かれて外れ値を見逃してしまう。
+    const rows = [
+      makeRow({ fileId: "1", album: "Best", album_override: "ベスト", artist: "X", releaseYear: "2005" }),
+      makeRow({ fileId: "2", album: "ベスト", artist: "X", releaseYear: "2005" }),
+      makeRow({ fileId: "3", album: "ベスト", artist: "X", releaseYear: "2005" }),
+      makeRow({ fileId: "4", album: "ベスト", artist: "X", releaseYear: "1999" }),
+    ];
+    expect(findYearOutliers(rows)).toEqual([{ fileId: "4", album: "ベスト", year: "1999", majorityYear: "2005" }]);
+  });
+
+  it("treats releaseYear_override '(none)' as unknown, not as the literal string '(none)'", () => {
+    // ChatGPTレビュー指摘（PR #425）：releaseYear_override="(none)"（明示的な空を表す規約上の
+    // センチネル値）を、文字列"(none)"のまま実在年として数えると誤って外れ値扱いしてしまう。
+    const rows = [
+      makeRow({ fileId: "1", album: "Best", artist: "X", releaseYear: "2005" }),
+      makeRow({ fileId: "2", album: "Best", artist: "X", releaseYear: "2005" }),
+      makeRow({ fileId: "3", album: "Best", artist: "X", releaseYear: "2005" }),
+      makeRow({ fileId: "4", album: "Best", artist: "X", releaseYear: "1999", releaseYear_override: "(none)" }),
+    ];
+    expect(findYearOutliers(rows)).toEqual([]);
+  });
+
+  it("does not flag an exact 2-vs-2 year split as having a majority (tie is not a majority)", () => {
+    // ChatGPTレビュー指摘（PR #425）：majorityCount < withYear.length / 2 だと、4曲中2対2の
+    // ちょうど半数でも最初に見つかった年が多数派扱いされ、残り2曲が誤って外れ値報告されてしまう。
+    const rows = [
+      makeRow({ fileId: "1", album: "Split", artist: "X", releaseYear: "2000" }),
+      makeRow({ fileId: "2", album: "Split", artist: "X", releaseYear: "2000" }),
+      makeRow({ fileId: "3", album: "Split", artist: "X", releaseYear: "2001" }),
+      makeRow({ fileId: "4", album: "Split", artist: "X", releaseYear: "2001" }),
+    ];
+    expect(findYearOutliers(rows)).toHaveLength(0);
+  });
 });
