@@ -16,7 +16,7 @@
 /7metch-tools/       7metch用デバッグ・プレビュー用の単独HTMLツール群
 /combrawl/           カード×オートバトラー・ローグライク「combrawl」（開発中）— Vite+TS、ビルド有
 /dusty-jukebox/      Googleドライブ音楽プレイヤー「DustyJukebox」（開発中・実機で音楽再生可能、絞り込み/プレイリスト/シャッフル等まで実装済み）— Vite+TS、ビルド有、Playwright e2e有、AGENTS.md有
-/dusty-jukebox-tools/ dusty-jukebox用カタログ補正ツール（表記ゆれ統一・文字化け修復、必要な時だけ起動する管理ツール）— Vite+TS、ビルド有、非掲載
+/dusty-jukebox-tools/ dusty-jukebox用カタログ補正ツール（表記ゆれ統一・文字化け修復・ライブラリ健全性チェック、必要な時だけ起動する管理ツール）— Vite+TS、ビルド有、非掲載
 /enblo/              ローグライクバトラー（開発中）— Vite+TS、ビルド有、Playwright e2e有
 /enblo-classic/      enbloの大規模再設計前の完成形（試作品v1）を凍結・独立公開したもの — Vite+TS、ビルド有
 /enblo-tools/        enblo用デバッグ・プレビュー用の単独HTMLツール群
@@ -65,7 +65,7 @@
 ### C. 補助ツール
 `7metch-tools`（7metch用）、`enblo-tools`（enblo用、音確認ツール等）は本体アプリのデバッグ・プレビュー用に単独で動作するHTMLファイル群。ビルド不要、ブラウザで直接開いて使う。
 
-`dusty-jukebox-tools`（dusty-jukebox用、2026-09-06新設）は同じ命名規則だが上記2つと異なりVite+TypeScriptビルドアプリ（B系と同じ構成、`npm test`→`npm run deploy`）。本体プレイヤーアプリのカタログ補正機能（表記ゆれ統一・文字化け修復）を、普段使わない機能のためバンドルサイズ増大を避けて分離したもの。OAuthクライアントIDは本体と共用（Google Identity Servicesのトークンモデルは JSオリジン単位の認可のため、同一ドメイン配下の別パスは追加設定不要で共用できる）。本体と同様に非掲載・URL直踏み運用。詳細は`dusty-jukebox-tools/CLAUDE.md`参照。
+`dusty-jukebox-tools`（dusty-jukebox用、2026-09-06新設）は同じ命名規則だが上記2つと異なりVite+TypeScriptビルドアプリ（B系と同じ構成、`npm test`→`npm run deploy`）。本体プレイヤーアプリのカタログ補正機能（表記ゆれ統一・文字化け修復）を、普段使わない機能のためバンドルサイズ増大を避けて分離したもの。OAuthクライアントIDは本体と共用（Google Identity Servicesのトークンモデルは JSオリジン単位の認可のため、同一ドメイン配下の別パスは追加設定不要で共用できる）。本体と同様に非掲載・URL直踏み運用。**2026-09-07、実ユーザーライブラリ（約1万曲）への文字化け対応を実施した結果、当初想定していた文字化けの発生方向（UTF-8→SJIS誤デコード）が実データでは逆（SJIS→Latin-1誤読）だったことが判明**（実際の対応はこのアプリ外の使い捨てスクリプトで実施）。続けて読み取り専用の**ライブラリ健全性チェック機能**（文字化け疑い・欠落フィールド・同一フォルダ内タイトル重複・同一アルバム内リリース年の外れ値の4項目）を追加。詳細は`dusty-jukebox-tools/CLAUDE.md`参照。
 
 ### D. Vite+TypeScriptビルド + Firebase RTDB（B系とemoji-dmのハイブリッド）
 `mori-no-yakai` が該当。ゲームロジック（役職構成・投票集計・勝敗判定）を持つためB系と同じVite+TS+Vitest構成（`prebuild`でテスト自動実行）を採るが、リアルタイム同期は`emoji-dm`と同じFirebase Realtime Databaseを使う（認証・Cloud Functionsは無し、役職の秘密性は信頼ベース）。Firebaseプロジェクトの新規作成・`firebaseConfig`取得は人間の手作業が必要（詳細は`mori-no-yakai/CLAUDE.md`）。詳細は`mori-no-yakai/CLAUDE.md`を参照。
