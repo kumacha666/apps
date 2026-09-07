@@ -110,7 +110,16 @@ export function buildMissingFieldRowUpdates(writes: MissingFieldWrite[], current
   let skippedStaleCount = 0;
   for (const write of writes) {
     const current = rowByFileId.get(write.fileId);
-    if (!current || cell(current.row, overrideColumnName(write.field)) !== write.expectedOverrideValue) {
+    // 両方の確認が必要（ChatGPT再レビュー指摘：どちらか一方だけでは検出できない競合が残る）。
+    // ①override列の生値がexpectedOverrideValueと一致するか（""→"(none)"等の競合を検出）
+    // ②実効値がまだ空欄のままか（再スキャン等で素のtitle/artist/album自体が埋まった場合、
+    //   overrideの生値自体は変わっていなくても、その新しい正しい値をこの手入力で隠してしまう
+    //   ことを防ぐ）。
+    if (
+      !current ||
+      cell(current.row, overrideColumnName(write.field)) !== write.expectedOverrideValue ||
+      effective(current.row, write.field) !== ""
+    ) {
       skippedStaleCount++;
       continue;
     }

@@ -92,6 +92,36 @@ describe("buildMissingFieldRowUpdates", () => {
     expect(applied).toHaveLength(0);
     expect(skippedStaleCount).toBe(1);
   });
+
+  it("skips a write when the raw field itself got filled by a rescan since the check, even though the override cell is unchanged (ChatGPT re-review P2)", () => {
+    // チェック時点はartist=""・artist_override=""だったが、適用直前に再スキャンで
+    // artist="Correct Artist"が取得された。override列自体は変わっていない（""のまま）ため
+    // override生値の一致確認だけでは通過してしまい、手入力値が新しい正しい抽出値を
+    // overrideで隠してしまう。effective()が空欄のままであることも合わせて確認する必要がある。
+    const currentRows = [makeRow({ fileId: "1", artist: "Correct Artist" })];
+    const { cellUpdates, applied, skippedStaleCount } = buildMissingFieldRowUpdates(
+      [{ field: "artist", fileId: "1", value: "Artist A", expectedOverrideValue: "" }],
+      currentRows
+    );
+    expect(cellUpdates).toHaveLength(0);
+    expect(applied).toHaveLength(0);
+    expect(skippedStaleCount).toBe(1);
+  });
+
+  it("still allows the write when the override was originally the (none) sentinel and remains unchanged", () => {
+    // 元々"(none)"だった項目は、素のtitle/artist/album自体に値があってもeffective()は
+    // 常に""になる（override優先のため）。overrideが変わっていない限り正常に保存できる必要がある。
+    const currentRows = [makeRow({ fileId: "1", album: "元の抽出値", album_override: "(none)" })];
+    const { cellUpdates, applied, skippedStaleCount } = buildMissingFieldRowUpdates(
+      [{ field: "album", fileId: "1", value: "手動入力アルバム", expectedOverrideValue: "(none)" }],
+      currentRows
+    );
+    expect(skippedStaleCount).toBe(0);
+    expect(applied).toHaveLength(1);
+    expect(cellUpdates).toEqual([
+      { rowNumber: 2, columnIndex: INDEX_SHEET_HEADER.indexOf("album_override"), value: "手動入力アルバム" },
+    ]);
+  });
 });
 
 describe("buildMissingFieldRevertUpdates", () => {
