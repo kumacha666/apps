@@ -36,6 +36,14 @@ function effective(row: Row, field: MissingFieldFillField): string {
 export interface MissingFieldEntry {
   fileId: string;
   field: MissingFieldFillField;
+  // チェック時点のoverride列の生値（""=override無し、"(none)"=明示的な空、のいずれか）。
+  // effective()は"(none)"を""に正規化してしまうため、元の状態を復元するにはこの値が必要
+  // （ChatGPTレビュー指摘P1：これが無いと「元に戻す」が常に空欄にしてしまい、override="(none)"
+  // だった曲を元に戻すと素の抽出値が復活してしまう）。書き込み直前の鮮度チェック（後述）にも使う。
+  originalOverrideValue: string;
+  // UI表示用の文脈（誤入力防止のため、対象曲のtitle/artist/albumを併記する。ChatGPTレビュー
+  // 指摘P2：fileIdの先頭10文字とフィールド名だけでは1万曲規模での手入力時に対象を判別しづらい）。
+  context: { title: string; artist: string; album: string };
 }
 
 // 実効値（override込み）が空欄のフィールドを列挙する。
@@ -47,8 +55,11 @@ export function findMissingFieldEntries(
   for (const row of rows) {
     const fileId = cell(row, "fileId");
     if (fileId === "") continue;
+    const context = { title: effective(row, "title"), artist: effective(row, "artist"), album: effective(row, "album") };
     for (const field of fields) {
-      if (effective(row, field) === "") results.push({ fileId, field });
+      if (effective(row, field) === "") {
+        results.push({ fileId, field, originalOverrideValue: cell(row, overrideColumnName(field)), context });
+      }
     }
   }
   return results;
@@ -59,6 +70,9 @@ export interface MissingFieldWrite {
   fileId: string;
   // ユーザーがUI上で入力した値。空文字は呼び出し元（UI層）で除外してからここへ渡す想定。
   value: string;
+  // チェック時点のoverride列の生値（MissingFieldEntry.originalOverrideValueをそのまま引き継ぐ）。
+  // 書き込み直前の鮮度チェックと「元に戻す」の両方で使う。
+  expectedOverrideValue: string;
 }
 
 export interface AppliedMissingFieldWrite extends MissingFieldWrite {
@@ -78,8 +92,13 @@ export interface BuildMissingFieldRowUpdatesResult {
 }
 
 // 書き込み直前に読み直した最新の索引行と突き合わせ、行が既に無い、または対象フィールドの
-// 実効値が既に空でない（チェック後〜適用までの間に他デバイス・再スキャンで埋まった）場合は
-// スキップする（caseNormalization.ts/garbledRepair.tsと同じ「書き込み直前の再確認」方針）。
+// override列の生値がチェック時点（expectedOverrideValue）から変わっている場合はスキップする
+// （caseNormalization.ts/garbledRepair.tsと同じ「書き込み直前の再確認」方針）。
+// **effective()の比較ではなくoverride列の生値そのものを比較する**（ChatGPTレビュー指摘P2：
+// effective()だけを見ると、チェック後に他デバイスがoverrideを""→"(none)"へ変更した場合も
+// 「まだ空欄扱い」のまま素通りしてしまい、その明示的な意図を上書きしてしまう）。overrideは
+// 常に抽出値より優先されるため、この間に素の抽出値（title/artist/album自体）が変わっていても
+// このフィールド埋めの書き込みが不適切になることはない。
 export function buildMissingFieldRowUpdates(writes: MissingFieldWrite[], currentRows: Row[]): BuildMissingFieldRowUpdatesResult {
   const rowByFileId = new Map<string, { rowNumber: number; row: Row }>();
   currentRows.forEach((row, i) => {
@@ -91,7 +110,7 @@ export function buildMissingFieldRowUpdates(writes: MissingFieldWrite[], current
   let skippedStaleCount = 0;
   for (const write of writes) {
     const current = rowByFileId.get(write.fileId);
-    if (!current || effective(current.row, write.field) !== "") {
+    if (!current || cell(current.row, overrideColumnName(write.field)) !== write.expectedOverrideValue) {
       skippedStaleCount++;
       continue;
     }
@@ -109,8 +128,11 @@ export interface BuildMissingFieldRevertUpdatesResult {
   skippedStaleCount: number;
 }
 
-// 「元に戻す」：このツールが書き込んだoverrideがそのまま残っている場合だけ空欄に戻す
-// （caseNormalization.ts/garbledRepair.tsと同じ方針）。
+// 「元に戻す」：このツールが書き込んだoverrideがそのまま残っている場合だけ、書き込み前の
+// 状態（expectedOverrideValue、""または"(none)"）へ戻す。**常に""へ戻すわけではない**
+// （ChatGPTレビュー指摘P1：album_override="(none)"だった曲にこの機能で値を書き込んだ後に
+// 元に戻すと、単純に""へ戻すのでは「override無し＝素の抽出値が復活」という異なる状態になり、
+// 元の「明示的に空」という状態には戻らない）。
 export function buildMissingFieldRevertUpdates(
   applied: AppliedMissingFieldWrite[],
   currentRows: Row[]
@@ -129,7 +151,11 @@ export function buildMissingFieldRevertUpdates(
       staleEntries.push(write);
       continue;
     }
-    cellUpdates.push({ rowNumber: current.rowNumber, columnIndex: col(overrideColumnName(write.field)), value: "" });
+    cellUpdates.push({
+      rowNumber: current.rowNumber,
+      columnIndex: col(overrideColumnName(write.field)),
+      value: write.expectedOverrideValue,
+    });
     revertedEntries.push(write);
   }
   return {

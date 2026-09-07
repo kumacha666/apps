@@ -19,10 +19,12 @@ function makeRow(overrides: Partial<Record<(typeof INDEX_SHEET_HEADER)[number], 
 }
 
 describe("findMissingFieldEntries", () => {
-  it("lists title/artist/album entries whose effective value is empty", () => {
+  it("lists title/artist/album entries whose effective value is empty, with context and the raw override value", () => {
     const rows = [makeRow({ fileId: "1", title: "Song" })];
     const entries = findMissingFieldEntries(rows);
     expect(entries.map((e) => e.field).sort()).toEqual(["album", "artist"]);
+    expect(entries[0].context).toEqual({ title: "Song", artist: "", album: "" });
+    expect(entries[0].originalOverrideValue).toBe("");
   });
 
   it("treats a field covered by an override (including the (none) sentinel) as not missing/still missing correctly", () => {
@@ -32,8 +34,12 @@ describe("findMissingFieldEntries", () => {
     ];
     const entries = findMissingFieldEntries(rows);
     // fileId1: artist is covered by override -> not missing. album has a value -> not missing.
-    // fileId2: album_override="(none)" means explicitly empty -> still missing.
-    expect(entries).toEqual([{ fileId: "2", field: "album" }]);
+    // fileId2: album_override="(none)" means explicitly empty -> still missing, and the raw
+    // "(none)" value must be captured (ChatGPT review P1: needed to restore it correctly later).
+    expect(entries).toHaveLength(1);
+    expect(entries[0].fileId).toBe("2");
+    expect(entries[0].field).toBe("album");
+    expect(entries[0].originalOverrideValue).toBe("(none)");
   });
 
   it("does not include genre (no override column, out of scope for this feature)", () => {
@@ -51,11 +57,13 @@ describe("buildMissingFieldRowUpdates", () => {
   it("targets only the override cell of the affected row, not the whole row", () => {
     const currentRows = [makeRow({ fileId: "1", title: "Song" })];
     const { cellUpdates, applied, skippedStaleCount } = buildMissingFieldRowUpdates(
-      [{ field: "artist", fileId: "1", value: "手動入力アーティスト" }],
+      [{ field: "artist", fileId: "1", value: "手動入力アーティスト", expectedOverrideValue: "" }],
       currentRows
     );
     expect(skippedStaleCount).toBe(0);
-    expect(applied).toEqual([{ field: "artist", fileId: "1", value: "手動入力アーティスト", rowNumber: 2 }]);
+    expect(applied).toEqual([
+      { field: "artist", fileId: "1", value: "手動入力アーティスト", expectedOverrideValue: "", rowNumber: 2 },
+    ]);
     expect(cellUpdates).toEqual([
       { rowNumber: 2, columnIndex: INDEX_SHEET_HEADER.indexOf("artist_override"), value: "手動入力アーティスト" },
     ]);
@@ -63,7 +71,7 @@ describe("buildMissingFieldRowUpdates", () => {
 
   it("skips a write when the row is gone", () => {
     const { cellUpdates, applied, skippedStaleCount } = buildMissingFieldRowUpdates(
-      [{ field: "artist", fileId: "gone", value: "X" }],
+      [{ field: "artist", fileId: "gone", value: "X", expectedOverrideValue: "" }],
       []
     );
     expect(cellUpdates).toHaveLength(0);
@@ -71,10 +79,13 @@ describe("buildMissingFieldRowUpdates", () => {
     expect(skippedStaleCount).toBe(1);
   });
 
-  it("skips a write when the field is no longer missing (filled by another device/rescan since the check)", () => {
-    const currentRows = [makeRow({ fileId: "1", artist: "既に埋まっている" })];
+  it("skips a write when the override cell changed since the check, even if effective() would still read as empty (ChatGPT review P2)", () => {
+    // チェック時点はoverride無し（""）だったが、適用直前に別デバイスがoverrideを
+    // "(none)"（明示的に空、という別の意図）へ変更していた。effective()だけを見ると
+    // どちらも""に見えてしまうため、override列の生値そのものを比較する必要がある。
+    const currentRows = [makeRow({ fileId: "1", album_override: "(none)" })];
     const { cellUpdates, applied, skippedStaleCount } = buildMissingFieldRowUpdates(
-      [{ field: "artist", fileId: "1", value: "手動入力" }],
+      [{ field: "album", fileId: "1", value: "手動入力アルバム", expectedOverrideValue: "" }],
       currentRows
     );
     expect(cellUpdates).toHaveLength(0);
@@ -84,9 +95,9 @@ describe("buildMissingFieldRowUpdates", () => {
 });
 
 describe("buildMissingFieldRevertUpdates", () => {
-  it("clears the override written by this tool back to blank, targeting only that cell", () => {
+  it("clears the override written by this tool back to blank when it was originally unset", () => {
     const currentRows = [makeRow({ fileId: "1", artist_override: "手動入力" })];
-    const applied = [{ field: "artist" as const, fileId: "1", value: "手動入力", rowNumber: 2 }];
+    const applied = [{ field: "artist" as const, fileId: "1", value: "手動入力", expectedOverrideValue: "", rowNumber: 2 }];
     const { cellUpdates, revertedEntries, staleEntries, revertedCount, skippedStaleCount } = buildMissingFieldRevertUpdates(
       applied,
       currentRows
@@ -98,9 +109,23 @@ describe("buildMissingFieldRevertUpdates", () => {
     expect(cellUpdates).toEqual([{ rowNumber: 2, columnIndex: INDEX_SHEET_HEADER.indexOf("artist_override"), value: "" }]);
   });
 
+  it("restores the (none) sentinel rather than blanking it out (ChatGPT review P1)", () => {
+    // album_override="(none)"（明示的な空）だった曲にこの機能で値を書き込んだ後、
+    // 元に戻すと単純に""へ戻すのではなく、元の"(none)"という状態へ戻す必要がある
+    // （""に戻すと、override無し＝素の抽出値が復活する、という異なる状態になってしまう）。
+    const currentRows = [makeRow({ fileId: "1", album: "元の抽出値", album_override: "手動入力アルバム" })];
+    const applied = [
+      { field: "album" as const, fileId: "1", value: "手動入力アルバム", expectedOverrideValue: "(none)", rowNumber: 2 },
+    ];
+    const { cellUpdates, revertedEntries, staleEntries } = buildMissingFieldRevertUpdates(applied, currentRows);
+    expect(staleEntries).toHaveLength(0);
+    expect(revertedEntries).toEqual(applied);
+    expect(cellUpdates).toEqual([{ rowNumber: 2, columnIndex: INDEX_SHEET_HEADER.indexOf("album_override"), value: "(none)" }]);
+  });
+
   it("does not revert if the override has since changed to something else, and reports it as permanently stale", () => {
     const currentRows = [makeRow({ fileId: "1", artist_override: "別の値に変更済み" })];
-    const applied = [{ field: "artist" as const, fileId: "1", value: "手動入力", rowNumber: 2 }];
+    const applied = [{ field: "artist" as const, fileId: "1", value: "手動入力", expectedOverrideValue: "", rowNumber: 2 }];
     const { cellUpdates, staleEntries, revertedCount, skippedStaleCount } = buildMissingFieldRevertUpdates(applied, currentRows);
     expect(cellUpdates).toHaveLength(0);
     expect(staleEntries).toEqual(applied);
@@ -113,15 +138,16 @@ describe("applyMissingFieldWritesInChunks", () => {
   it("re-reads the index immediately before each chunk", async () => {
     const rows: Row[] = [makeRow({ fileId: "1" }), makeRow({ fileId: "2" })];
     const writes = [
-      { field: "artist" as const, fileId: "1", value: "X" },
-      { field: "artist" as const, fileId: "2", value: "Y" },
+      { field: "artist" as const, fileId: "1", value: "X", expectedOverrideValue: "" },
+      { field: "artist" as const, fileId: "2", value: "Y", expectedOverrideValue: "" },
     ];
     const io = {
       listExistingRows: vi.fn(async () => rows.map((r) => [...r])),
       updateCells: vi.fn(async (updates: { rowNumber: number; columnIndex: number; value: string }[]) => {
         for (const { rowNumber, columnIndex, value } of updates) rows[rowNumber - 2][columnIndex] = value;
-        // 1件目のチャンク書き込み後、外部（別デバイス想定）が2件目のartistを既に埋めたことを模擬する。
-        if (updates[0]?.rowNumber === 2) rows[1][INDEX_SHEET_HEADER.indexOf("artist")] = "既存の値";
+        // 1件目のチャンク書き込み後、外部（別デバイス想定）が2件目のartist_overrideを既に
+        // "(none)"へ変更したことを模擬する。
+        if (updates[0]?.rowNumber === 2) rows[1][INDEX_SHEET_HEADER.indexOf("artist_override")] = "(none)";
       }),
     };
     const results: { chunkApplied: { fileId: string }[]; chunkSkippedStaleCount: number }[] = [];
@@ -134,10 +160,13 @@ describe("applyMissingFieldWritesInChunks", () => {
 
 describe("revertMissingFieldWritesInChunks", () => {
   it("notifies chunkReverted/chunkStale per chunk after re-reading the index immediately before writing it", async () => {
-    const rows: Row[] = [makeRow({ fileId: "1", artist_override: "X" }), makeRow({ fileId: "2", artist_override: "Y" })];
+    const rows: Row[] = [
+      makeRow({ fileId: "1", artist_override: "X" }),
+      makeRow({ fileId: "2", artist_override: "Y" }),
+    ];
     const applied = [
-      { field: "artist" as const, fileId: "1", value: "X", rowNumber: 2 },
-      { field: "artist" as const, fileId: "2", value: "Y", rowNumber: 3 },
+      { field: "artist" as const, fileId: "1", value: "X", expectedOverrideValue: "", rowNumber: 2 },
+      { field: "artist" as const, fileId: "2", value: "Y", expectedOverrideValue: "", rowNumber: 3 },
     ];
     const io = {
       listExistingRows: vi.fn(async () => rows.map((r) => [...r])),

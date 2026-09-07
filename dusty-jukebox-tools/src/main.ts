@@ -540,7 +540,10 @@ function renderMissingFieldEntries(): void {
   for (const entry of missingFieldUiState.entries) {
     const key = missingFieldEntryKey(entry);
     const item = document.createElement("p");
-    item.append(`${entry.fileId.slice(0, 10)}... ${MISSING_FIELD_LABELS[entry.field]}: `);
+    // 誤入力防止のため、対象曲の他のフィールド（title/artist/album）を併記する
+    // （ChatGPTレビュー指摘：fileIdの先頭10文字とフィールド名だけでは1万曲規模の手入力時に対象を判別しづらい）。
+    const context = `title:「${entry.context.title || "(空欄)"}」 artist:「${entry.context.artist || "(空欄)"}」 album:「${entry.context.album || "(空欄)"}」`;
+    item.append(`${entry.fileId.slice(0, 10)}... ${context} → ${MISSING_FIELD_LABELS[entry.field]}: `);
     const input = document.createElement("input");
     input.type = "text";
     input.value = missingFieldUiState.inputValues.get(key) ?? "";
@@ -600,15 +603,16 @@ async function handleApplyMissingFields(): Promise<void> {
     const writes: MissingFieldWrite[] = [];
     for (const entry of missingFieldUiState.entries) {
       const value = (missingFieldUiState.inputValues.get(missingFieldEntryKey(entry)) ?? "").trim();
-      if (value !== "") writes.push({ field: entry.field, fileId: entry.fileId, value });
+      if (value !== "") writes.push({ field: entry.field, fileId: entry.fileId, value, expectedOverrideValue: entry.originalOverrideValue });
     }
     if (writes.length === 0) {
       setStatus("保存対象がありません（すべての項目が空欄のままです）。");
       return;
     }
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    missingFieldUiState.entries = [];
-    missingFieldUiState.inputValues = new Map();
+    // entries/inputValuesはチャンクの成功が確定するたびに個別に取り除く（下記onChunkWritten）。
+    // ここで一括クリアしない：チャンクの途中でSheets APIの書き込みが失敗すると、まだ書き込めて
+    // いない項目のユーザー入力（再現不能な手入力値）が失われてしまうため（ChatGPTレビュー指摘）。
     const newlyApplied: AppliedMissingFieldWrite[] = [];
     let hasSwitchedToNewApplied = false;
     let totalSkippedStaleCount = 0;
@@ -620,6 +624,9 @@ async function handleApplyMissingFields(): Promise<void> {
         missingFieldUiState.lastApplied = newlyApplied;
         hasSwitchedToNewApplied = true;
       }
+      const appliedKeys = new Set(chunkApplied.map((w) => missingFieldEntryKey(w)));
+      missingFieldUiState.entries = missingFieldUiState.entries.filter((e) => !appliedKeys.has(missingFieldEntryKey(e)));
+      for (const key of appliedKeys) missingFieldUiState.inputValues.delete(key);
       renderMissingFieldEntries();
     });
     renderMissingFieldEntries();
