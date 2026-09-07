@@ -91,14 +91,9 @@ export interface BuildMissingFieldRowUpdatesResult {
   skippedStaleCount: number;
 }
 
-// 書き込み直前に読み直した最新の索引行と突き合わせ、行が既に無い、または対象フィールドの
-// override列の生値がチェック時点（expectedOverrideValue）から変わっている場合はスキップする
-// （caseNormalization.ts/garbledRepair.tsと同じ「書き込み直前の再確認」方針）。
-// **effective()の比較ではなくoverride列の生値そのものを比較する**（ChatGPTレビュー指摘P2：
-// effective()だけを見ると、チェック後に他デバイスがoverrideを""→"(none)"へ変更した場合も
-// 「まだ空欄扱い」のまま素通りしてしまい、その明示的な意図を上書きしてしまう）。overrideは
-// 常に抽出値より優先されるため、この間に素の抽出値（title/artist/album自体）が変わっていても
-// このフィールド埋めの書き込みが不適切になることはない。
+// 書き込み直前に読み直した最新の索引行と突き合わせ、行が既に無い場合はスキップする
+// （caseNormalization.ts/garbledRepair.tsと同じ「書き込み直前の再確認」方針）。行が存在する
+// 場合の鮮度チェックは下記コメント参照（override列の生値・実効値の両方を確認する）。
 export function buildMissingFieldRowUpdates(writes: MissingFieldWrite[], currentRows: Row[]): BuildMissingFieldRowUpdatesResult {
   const rowByFileId = new Map<string, { rowNumber: number; row: Row }>();
   currentRows.forEach((row, i) => {
