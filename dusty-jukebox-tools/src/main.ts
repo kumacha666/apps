@@ -25,6 +25,14 @@ import {
   type GarbledCandidate,
 } from "./garbledRepair";
 import { runHealthCheck, type HealthCheckReport } from "./healthCheck";
+import {
+  applyMissingFieldWritesInChunks,
+  findMissingFieldEntries,
+  revertMissingFieldWritesInChunks,
+  type AppliedMissingFieldWrite,
+  type MissingFieldEntry,
+  type MissingFieldWrite,
+} from "./missingFieldFill";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
@@ -91,6 +99,13 @@ function render(): void {
         <p>索引データだけを見た読み取り専用のチェックです。書き込みは一切行いません。①文字化けの疑い（自動修復できないパターンも広めに拾います）②欠落フィールド（title/artist/album/genreが空欄）③同一フォルダ内でのタイトル重複（複数ファイル選択編集の事故検知用）④同一アルバム内でのリリース年の外れ値、の4項目を確認します。</p>
         <button id="check-health-btn" type="button" disabled>健全性チェックを実行</button>
         <div id="healthcheck-results"></div>
+      </section>
+      <section class="section">
+        <h2>欠落フィールドの一括見直し</h2>
+        <p>タイトル・アーティスト・アルバムが空欄の曲を一覧表示し、1件ずつ入力して保存できます。他の曲からの自動推測は行いません（空欄のまま保存すると対象から除外されます）。Genreはoverride列が無いためこの機能の対象外です（Mp3tag等でタグ自体を編集してください）。</p>
+        <button id="check-missing-btn" type="button" disabled>欠落フィールドをチェック</button>
+        <div id="missing-field-results"></div>
+        <div><button id="apply-missing-btn" type="button" disabled>入力した内容を保存</button> <button id="revert-missing-btn" type="button" disabled>直前の保存を元に戻す</button></div>
       </section>
       <p id="status" class="status"></p>
     `
@@ -501,6 +516,168 @@ async function handleHealthCheck(): Promise<void> {
   }
 }
 
+// ===== 欠落フィールドの一括見直し =====
+
+const MISSING_FIELD_LABELS: Record<MissingFieldEntry["field"], string> = {
+  title: "タイトル",
+  artist: "アーティスト",
+  album: "アルバム",
+};
+
+interface MissingFieldUiState {
+  spreadsheetId: string | null;
+  entries: MissingFieldEntry[];
+  // key: `${field}:${fileId}`
+  inputValues: Map<string, string>;
+  lastApplied: AppliedMissingFieldWrite[];
+}
+let missingFieldUiState: MissingFieldUiState = { spreadsheetId: null, entries: [], inputValues: new Map(), lastApplied: [] };
+const missingFieldEntryKey = (e: Pick<MissingFieldEntry, "field" | "fileId">) => `${e.field}:${e.fileId}`;
+
+function renderMissingFieldEntries(): void {
+  const container = el<HTMLDivElement>("missing-field-results");
+  container.innerHTML = "";
+  for (const entry of missingFieldUiState.entries) {
+    const key = missingFieldEntryKey(entry);
+    const item = document.createElement("p");
+    item.append(`${entry.fileId.slice(0, 10)}... ${MISSING_FIELD_LABELS[entry.field]}: `);
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = missingFieldUiState.inputValues.get(key) ?? "";
+    input.addEventListener("input", () => missingFieldUiState.inputValues.set(key, input.value));
+    item.append(input);
+    container.append(item);
+  }
+  el<HTMLButtonElement>("apply-missing-btn").disabled = missingFieldUiState.entries.length === 0;
+  el<HTMLButtonElement>("revert-missing-btn").disabled = missingFieldUiState.lastApplied.length === 0;
+}
+
+async function handleCheckMissingFields(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId) {
+    setStatus("索引スプレッドシートIDを入力してください", true);
+    return;
+  }
+  if (!tryAcquire()) {
+    setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  try {
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
+      throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。");
+    }
+    const rows = await sheetsIO.listExistingRows();
+    const preservedLastApplied = missingFieldUiState.spreadsheetId === spreadsheetId ? missingFieldUiState.lastApplied : [];
+    const entries = findMissingFieldEntries(rows);
+    missingFieldUiState = { spreadsheetId, entries, inputValues: new Map(), lastApplied: preservedLastApplied };
+    renderMissingFieldEntries();
+    setStatus(
+      entries.length > 0
+        ? `${entries.length}件の欠落フィールドが見つかりました。値を入力して保存してください（空欄のままの項目は保存対象外です）。`
+        : "欠落しているタイトル・アーティスト・アルバムは見つかりませんでした。"
+    );
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `欠落フィールドのチェックに失敗しました: ${err.message}` : "欠落フィールドのチェックに失敗しました", true);
+  } finally {
+    release();
+  }
+}
+
+async function handleApplyMissingFields(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId || missingFieldUiState.entries.length === 0) return;
+  if (spreadsheetId !== missingFieldUiState.spreadsheetId) {
+    setStatus("チェック時と異なるスプレッドシートIDが入力されています。もう一度「欠落フィールドをチェック」を実行してください。", true);
+    return;
+  }
+  if (!tryAcquire()) {
+    setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  try {
+    const writes: MissingFieldWrite[] = [];
+    for (const entry of missingFieldUiState.entries) {
+      const value = (missingFieldUiState.inputValues.get(missingFieldEntryKey(entry)) ?? "").trim();
+      if (value !== "") writes.push({ field: entry.field, fileId: entry.fileId, value });
+    }
+    if (writes.length === 0) {
+      setStatus("保存対象がありません（すべての項目が空欄のままです）。");
+      return;
+    }
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    missingFieldUiState.entries = [];
+    missingFieldUiState.inputValues = new Map();
+    const newlyApplied: AppliedMissingFieldWrite[] = [];
+    let hasSwitchedToNewApplied = false;
+    let totalSkippedStaleCount = 0;
+    await applyMissingFieldWritesInChunks(sheetsIO, writes, ({ chunkApplied, chunkSkippedStaleCount }) => {
+      totalSkippedStaleCount += chunkSkippedStaleCount;
+      if (chunkApplied.length === 0) return;
+      newlyApplied.push(...chunkApplied);
+      if (!hasSwitchedToNewApplied) {
+        missingFieldUiState.lastApplied = newlyApplied;
+        hasSwitchedToNewApplied = true;
+      }
+      renderMissingFieldEntries();
+    });
+    renderMissingFieldEntries();
+    setStatus(
+      `${newlyApplied.length}件を保存しました${totalSkippedStaleCount > 0 ? `（${totalSkippedStaleCount}件は他の変更と競合したためスキップ）` : ""}。`
+    );
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(
+      err instanceof Error
+        ? `保存に失敗しました（一部は既に書き込まれている可能性があります。「直前の保存を元に戻す」で確認できます）: ${err.message}`
+        : "保存に失敗しました",
+      true
+    );
+    renderMissingFieldEntries();
+  } finally {
+    release();
+  }
+}
+
+async function handleRevertMissingFields(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId || missingFieldUiState.lastApplied.length === 0) return;
+  if (spreadsheetId !== missingFieldUiState.spreadsheetId) {
+    setStatus("チェック時と異なるスプレッドシートIDが入力されています。もう一度「欠落フィールドをチェック」を実行してください。", true);
+    return;
+  }
+  if (!tryAcquire()) {
+    setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  try {
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    let totalRevertedCount = 0;
+    let totalStaleCount = 0;
+    await revertMissingFieldWritesInChunks(sheetsIO, missingFieldUiState.lastApplied, ({ chunkReverted, chunkStale }) => {
+      totalRevertedCount += chunkReverted.length;
+      totalStaleCount += chunkStale.length;
+      const handled = new Set([...chunkReverted, ...chunkStale]);
+      missingFieldUiState.lastApplied = missingFieldUiState.lastApplied.filter((entry) => !handled.has(entry));
+      renderMissingFieldEntries();
+    });
+    renderMissingFieldEntries();
+    setStatus(
+      `${totalRevertedCount}件の保存を元に戻しました${totalStaleCount > 0 ? `（${totalStaleCount}件は既に他の変更があったためスキップ）` : ""}。`
+    );
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(
+      err instanceof Error ? `元に戻す処理に失敗しました（一部は既に元に戻っている可能性があります）: ${err.message}` : "元に戻す処理に失敗しました",
+      true
+    );
+    renderMissingFieldEntries();
+  } finally {
+    release();
+  }
+}
+
 // ===== ログイン・初期化 =====
 
 async function handleLogin(): Promise<void> {
@@ -513,6 +690,7 @@ async function handleLogin(): Promise<void> {
     el<HTMLButtonElement>("check-casing-btn").disabled = false;
     el<HTMLButtonElement>("check-garbled-btn").disabled = false;
     el<HTMLButtonElement>("check-health-btn").disabled = false;
+    el<HTMLButtonElement>("check-missing-btn").disabled = false;
   } catch (err) {
     setStatus(err instanceof AuthError ? err.message : String(err), true);
   } finally {
@@ -539,6 +717,9 @@ function init(): void {
   el<HTMLButtonElement>("apply-garbled-btn").addEventListener("click", () => void handleApplyGarbledRepair());
   el<HTMLButtonElement>("revert-garbled-btn").addEventListener("click", () => void handleRevertGarbledRepair());
   el<HTMLButtonElement>("check-health-btn").addEventListener("click", () => void handleHealthCheck());
+  el<HTMLButtonElement>("check-missing-btn").addEventListener("click", () => void handleCheckMissingFields());
+  el<HTMLButtonElement>("apply-missing-btn").addEventListener("click", () => void handleApplyMissingFields());
+  el<HTMLButtonElement>("revert-missing-btn").addEventListener("click", () => void handleRevertMissingFields());
 }
 
 init();
