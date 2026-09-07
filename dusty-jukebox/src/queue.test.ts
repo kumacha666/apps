@@ -181,6 +181,55 @@ describe("PlaybackQueue", () => {
     queue.setList([song("x"), song("y")]);
     expect(queue.hasShuffleHistory()).toBe(false);
   });
+  test("sortByは曲の並びを指定キー・方向で並べ替え、再生中の曲・除外設定を変えない", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("banana"), song("apple"), song("cherry")]);
+    queue.exclude("cherry", true);
+    await queue.playAt(0); // "banana"が再生中
+    const result = await queue.sortBy("title", "asc");
+    expect(result).toBe(true);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["apple", "banana", "cherry"]);
+    expect(queue.currentPlayingFileId()).toBe("banana");
+    expect(queue.isExcluded("cherry")).toBe(true);
+  });
+  test("sortBy後、next()はfileIdで現在位置を探し直すため新しい並びをそのまま辿れる", async () => {
+    const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    queue.setList([song("c"), song("a"), song("b")]);
+    await queue.playAt(0); // "c"が再生中
+    await queue.sortBy("title", "desc"); // 新しい並び: c, b, a（降順のためcは先頭のまま）
+    while (await queue.next()) { /* 到達可能な限り辿る */ }
+    expect(played).toEqual(["c", "b", "a"]);
+  });
+  test("sortByはシャッフル履歴を無効化する（手動並び替え後は「シャッフルを元に戻す」は使えなくなる）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("banana"), song("apple")]);
+    await queue.shuffle(() => 0);
+    expect(queue.hasShuffleHistory()).toBe(true);
+    await queue.sortBy("title", "asc");
+    expect(queue.hasShuffleHistory()).toBe(false);
+  });
+  test("sortByはアーティストでソートする際、同じアーティスト内をアルバム→ディスク→トラック番号順に揃える", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    const songs: Song[] = [
+      { ...song("1"), artist: "B", album: "Y", discNumber: "1", trackNumber: "2" },
+      { ...song("2"), artist: "A", album: "X", discNumber: "1", trackNumber: "2" },
+      { ...song("3"), artist: "A", album: "X", discNumber: "1", trackNumber: "1" },
+    ];
+    queue.setList(songs);
+    await queue.sortBy("artist", "asc");
+    expect(queue.all().map((s) => s.fileId)).toEqual(["3", "2", "1"]);
+  });
+  test("sortByはリリース年を数値として並べ替え、不明な年は末尾に置く", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    const songs: Song[] = [
+      { ...song("1"), releaseYear: "2" },
+      { ...song("2"), releaseYear: "10" },
+      { ...song("3"), releaseYear: "" },
+    ];
+    queue.setList(songs);
+    await queue.sortBy("releaseYear", "asc");
+    expect(queue.all().map((s) => s.fileId)).toEqual(["1", "2", "3"]);
+  });
   test("キュー再生の終了時だけ次の曲へ進み、単曲試聴後の終了では進まない", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b")]); await queue.playAt(0); audio.listener?.();

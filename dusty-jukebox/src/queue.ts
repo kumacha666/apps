@@ -1,4 +1,5 @@
 import type { Song } from "./catalog";
+import { sortSongsForQueue, type QueueSortDirection, type QueueSortField } from "./queueSort";
 export interface AudioEndedLike { addEventListener(type: "ended", listener: () => void): void; }
 export interface PlayerLike { play(fileId: string, position?: number): Promise<void>; }
 export type BeforeQueuePlay = (fileId: string) => void;
@@ -133,6 +134,25 @@ export class PlaybackQueue {
       const playedIds = new Set(prefix.map((song) => song.fileId));
       const suffix = this.originalOrder.filter((song) => !playedIds.has(song.fileId));
       this.songs = [...prefix, ...suffix];
+      this.originalOrder = null;
+      return true;
+    });
+  }
+  // 再生リストの手動並び替え（普通の音楽プレイヤーの「並び替え」機能）。currentFileId・excluded・
+  // generationはそのまま（再生中の曲を止めたり、除外設定をリセットしたりしない）。並び替えは
+  // 全曲を対象にする（shuffle()と異なり現在位置より前を除外する必要はない：ソートは決定的な
+  // 並び替えのため、currentIndexより前の位置に移動した曲があっても、それは「今の並びではまだ
+  // 再生していない曲」として扱ってよい——シャッフル済みの並びを覚えておく必要がある巻き戻し
+  // 用途とは異なる）。next()/previous()はfileIdでcurrentIndexを探し直すため、並び替え後の
+  // 新しい位置からそのまま辿れる。
+  // シャッフル履歴（originalOrder）は無効化する（setList()と同じ扱い）：手動で並び替えた後は
+  // 「シャッフル前の並び」という概念自体が意味を持たなくなるため、「シャッフルを元に戻す」
+  // ボタンは無効に戻る。
+  // next()/playAt()等と同じpendingMoveの直列化チェーンに参加させる（shuffle()と同じ理由：
+  // 進行中の移動と同期に配列を書き換えると一時的な不整合を招きうるため）。
+  sortBy(field: QueueSortField, direction: QueueSortDirection = "asc"): Promise<boolean> {
+    return this.move(async () => {
+      this.songs = sortSongsForQueue(this.songs, field, direction);
       this.originalOrder = null;
       return true;
     });
