@@ -5,7 +5,7 @@ import type { Song } from "./catalog";
 // ＝releaseYear→artist→album→discNumber→trackNumber）とは別物：こちらはユーザーが
 // 既存の再生リストに対して都度選ぶ、明示的な並び替え操作。
 
-export const QUEUE_SORT_FIELDS = ["title", "artist", "album", "releaseYear"] as const;
+export const QUEUE_SORT_FIELDS = ["title", "artist", "album", "releaseYear", "track"] as const;
 export type QueueSortField = (typeof QUEUE_SORT_FIELDS)[number];
 export type QueueSortDirection = "asc" | "desc";
 
@@ -54,20 +54,19 @@ function albumOrderTiebreak(a: Song, b: Song): number {
   return compareStrings(a.title, b.title, "asc");
 }
 
-export function compareSongsForQueueSort(a: Song, b: Song, field: QueueSortField, direction: QueueSortDirection): number {
+// 単一フィールドのみの比較（副次キー・最終的な決定性の付与はcompareSongsForQueueSort側で行う）。
+function compareByFieldOnly(a: Song, b: Song, field: QueueSortField, direction: QueueSortDirection): number {
   switch (field) {
     case "title":
-      return compareStrings(a.title, b.title, direction) || compareStrings(a.fileId, b.fileId, "asc");
-    case "artist": {
-      const cmp = compareStrings(a.artist, b.artist, direction);
-      return cmp !== 0 ? cmp : albumOrderTiebreak(a, b);
-    }
-    case "album": {
-      const cmp = compareStrings(a.album, b.album, direction);
-      return cmp !== 0 ? cmp : albumOrderTiebreak(a, b);
-    }
+      return compareStrings(a.title, b.title, direction);
+    case "artist":
+      return compareStrings(a.artist, b.artist, direction);
+    case "album":
+      return compareStrings(a.album, b.album, direction);
     case "releaseYear":
-      return compareNumeric(a.releaseYear, b.releaseYear, direction) || compareStrings(a.title, b.title, "asc");
+      return compareNumeric(a.releaseYear, b.releaseYear, direction);
+    case "track":
+      return compareNumeric(a.trackNumber, b.trackNumber, direction);
     default: {
       const exhaustive: never = field;
       return exhaustive;
@@ -75,7 +74,41 @@ export function compareSongsForQueueSort(a: Song, b: Song, field: QueueSortField
   }
 }
 
+// 第二候補のソートキー（開発体制#42、2026-09-08：単一アーティストで複数アルバムある場合に
+// 「アルバムを古い順に、かつそのアルバム内はトラック順に」のような2段階の並べ替えをしたい、
+// というユーザー要望を受けて追加）。第二候補を明示した場合は、第一候補が同値の曲同士を
+// 第二候補のフィールド・方向で比較し、それでも同値ならタイトル→fileIdで決定性を確保する。
+export function compareSongsForQueueSort(
+  a: Song,
+  b: Song,
+  field: QueueSortField,
+  direction: QueueSortDirection,
+  secondaryField?: QueueSortField,
+  secondaryDirection: QueueSortDirection = "asc"
+): number {
+  const primary = compareByFieldOnly(a, b, field, direction);
+  if (primary !== 0) return primary;
+  if (secondaryField) {
+    const secondary = compareByFieldOnly(a, b, secondaryField, secondaryDirection);
+    if (secondary !== 0) return secondary;
+    return compareStrings(a.title, b.title, "asc") || compareStrings(a.fileId, b.fileId, "asc");
+  }
+  // 第二候補を指定しない場合の既定の副次キー（後方互換）：アーティスト/アルバムは従来通り
+  // アルバム→ディスク→トラック→タイトルの安定順、それ以外はタイトル→fileIdで決定性を確保する。
+  if (field === "artist" || field === "album") {
+    const tiebreak = albumOrderTiebreak(a, b);
+    if (tiebreak !== 0) return tiebreak;
+  }
+  return compareStrings(a.title, b.title, "asc") || compareStrings(a.fileId, b.fileId, "asc");
+}
+
 // 破壊的変更をしない純粋関数（呼び出し元、queue.tsのPlaybackQueue.sortBy()が配列を差し替える）。
-export function sortSongsForQueue(songs: Song[], field: QueueSortField, direction: QueueSortDirection): Song[] {
-  return [...songs].sort((a, b) => compareSongsForQueueSort(a, b, field, direction));
+export function sortSongsForQueue(
+  songs: Song[],
+  field: QueueSortField,
+  direction: QueueSortDirection,
+  secondaryField?: QueueSortField,
+  secondaryDirection: QueueSortDirection = "asc"
+): Song[] {
+  return [...songs].sort((a, b) => compareSongsForQueueSort(a, b, field, direction, secondaryField, secondaryDirection));
 }

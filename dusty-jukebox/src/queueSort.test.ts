@@ -67,6 +67,38 @@ describe("sortSongsForQueue", () => {
     expect(sortSongsForQueue(songs, "releaseYear", "asc").map((s) => s.fileId)).toEqual(["1", "2", "3"]);
     expect(sortSongsForQueue(songs, "releaseYear", "desc").map((s) => s.fileId)).toEqual(["2", "1", "3"]);
   });
+
+  it("sorts numerically by trackNumber, not lexicographically, and pushes unknown track numbers last", () => {
+    const songs = [
+      makeSong({ fileId: "1", trackNumber: "2" }),
+      makeSong({ fileId: "2", trackNumber: "10" }),
+      makeSong({ fileId: "3", trackNumber: "" }),
+    ];
+    expect(sortSongsForQueue(songs, "track", "asc").map((s) => s.fileId)).toEqual(["1", "2", "3"]);
+    expect(sortSongsForQueue(songs, "track", "desc").map((s) => s.fileId)).toEqual(["2", "1", "3"]);
+  });
+
+  it("開発体制#42：第二候補を指定すると、第一候補が同値の曲同士を第二候補で並べ替える（例：リリース年→トラック番号）", () => {
+    const songs = [
+      makeSong({ fileId: "1", releaseYear: "2000", trackNumber: "2" }),
+      makeSong({ fileId: "2", releaseYear: "2000", trackNumber: "1" }),
+      makeSong({ fileId: "3", releaseYear: "1990", trackNumber: "5" }),
+    ];
+    expect(
+      sortSongsForQueue(songs, "releaseYear", "asc", "track", "asc").map((s) => s.fileId)
+    ).toEqual(["3", "2", "1"]);
+  });
+
+  it("第二候補を指定した場合、第一候補がアーティスト/アルバムでも既定の副次キー（アルバム→ディスク→トラック）は使わず第二候補を優先する", () => {
+    const songs = [
+      makeSong({ fileId: "1", artist: "A", album: "Z", trackNumber: "1", releaseYear: "2010" }),
+      makeSong({ fileId: "2", artist: "A", album: "Y", trackNumber: "1", releaseYear: "2000" }),
+    ];
+    // 第二候補が無ければアルバム名順（"Y"が先）だが、releaseYearを第二候補にすると年代順になる。
+    expect(
+      sortSongsForQueue(songs, "artist", "asc", "releaseYear", "asc").map((s) => s.fileId)
+    ).toEqual(["2", "1"]);
+  });
 });
 
 describe("compareSongsForQueueSort", () => {
