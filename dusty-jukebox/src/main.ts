@@ -25,6 +25,16 @@ import {
   type FolderCacheEntry,
 } from "./folderCache";
 import { PlaybackQueue, queueRowViews, songDisplayLabel, nowPlayingLabel } from "./queue";
+import { QUEUE_SORT_FIELDS, type QueueSortField } from "./queueSort";
+
+// union型の分岐をRecordの網羅性チェックに使う（AI開発ルール4）：QUEUE_SORT_FIELDSに
+// キーを追加した際、このRecordへのラベル追加漏れがあればコンパイルエラーで検出できる。
+const QUEUE_SORT_FIELD_LABELS: Record<QueueSortField, string> = {
+  title: "タイトル",
+  artist: "アーティスト",
+  album: "アルバム",
+  releaseYear: "リリース年",
+};
 import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState } from "./mediaSession";
 import { registerStreamAuthResponder } from "./streamAuth";
 import {
@@ -216,6 +226,18 @@ function render(): void {
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
         <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button></div>
+        <div>
+          <label>並び替え
+            <select id="sort-field" disabled>
+              ${QUEUE_SORT_FIELDS.map((field) => `<option value="${field}">${QUEUE_SORT_FIELD_LABELS[field]}</option>`).join("")}
+            </select>
+          </label>
+          <select id="sort-direction" disabled>
+            <option value="asc">昇順</option>
+            <option value="desc">降順</option>
+          </select>
+          <button id="sort-btn" type="button" disabled>並び替えを適用</button>
+        </div>
         <ul id="catalog-list" class="result-list"></ul>
         <h3>アルバム</h3>
         <label class="field"><span>アルバム検索</span><input id="album-search" type="search" placeholder="アルバム名・アーティスト名で検索" /></label>
@@ -244,6 +266,9 @@ function setQueueNavEnabled(enabled: boolean): void {
   el<HTMLButtonElement>("next-btn").disabled = !enabled;
   el<HTMLButtonElement>("previous-btn").disabled = !enabled;
   el<HTMLButtonElement>("shuffle-btn").disabled = !enabled;
+  el<HTMLSelectElement>("sort-field").disabled = !enabled;
+  el<HTMLSelectElement>("sort-direction").disabled = !enabled;
+  el<HTMLButtonElement>("sort-btn").disabled = !enabled;
   // 元に戻す対象（シャッフル履歴）は新しいリストでは常に無い状態からスタートするため、
   // ここでまとめて無効化する（シャッフル実行後にupdateUnshuffleEnabled()が個別に有効化する）。
   updateUnshuffleEnabled();
@@ -1729,6 +1754,15 @@ function init(): void {
     // シャッフルと同じ理由（並び順を変えるだけで再生を開始する操作ではない）でhandleQueuePlayback()は
     // 経由しない。完了を待ってから表示を更新する。
     el<HTMLButtonElement>("unshuffle-btn").addEventListener("click", () => { if (queue) void queue.unshuffle().then(() => { renderQueue(); updateUnshuffleEnabled(); }); });
+    // 並び替えもシャッフルと同じ理由（並び順を変えるだけで再生を開始する操作ではない）で
+    // handleQueuePlayback()は経由しない。手動並び替えはシャッフル履歴を無効化するため
+    // （queue.sortBy()参照）、完了後にupdateUnshuffleEnabled()も呼ぶ。
+    el<HTMLButtonElement>("sort-btn").addEventListener("click", () => {
+      if (!queue) return;
+      const field = el<HTMLSelectElement>("sort-field").value as QueueSortField;
+      const direction = el<HTMLSelectElement>("sort-direction").value === "desc" ? "desc" : "asc";
+      void queue.sortBy(field, direction).then(() => { renderQueue(); updateUnshuffleEnabled(); });
+    });
     // 「再生」ボタン：既に再生中の曲があればその位置から再開し（一時停止ボタンで止めた曲も
     // currentPlayingFileId()は保持され続けるためここで再開できる）、無ければ先頭の曲から再生する。
     // 絞り込みで再生リストを作った直後に必ず「次へ」を押す必要がある、という違和感への対応。

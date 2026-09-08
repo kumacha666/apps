@@ -260,6 +260,37 @@ test("「シャッフルを元に戻す」でシャッフル前の並び順に�
   await expect(page.getByRole("button", { name: "シャッフルを元に戻す" })).toBeDisabled();
 });
 
+test("並び替え機能でタイトル順（昇順/降順）に並べ替えられる", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(4);
+
+  await page.locator("#sort-field").selectOption("title");
+  await page.locator("#sort-direction").selectOption("asc");
+  await page.getByRole("button", { name: "並び替えを適用" }).click();
+  const ascTitles = await page.locator("#catalog-list li").allTextContents();
+  expect(ascTitles.map((t) => t.trim())).toEqual([
+    expect.stringContaining("Finale"),
+    expect.stringContaining("Jazz Song"),
+    expect.stringContaining("Opening"),
+    expect.stringContaining("Scherzo"),
+  ]);
+
+  await page.locator("#sort-direction").selectOption("desc");
+  await page.getByRole("button", { name: "並び替えを適用" }).click();
+  const descTitles = await page.locator("#catalog-list li").allTextContents();
+  expect(descTitles.map((t) => t.trim())).toEqual([
+    expect.stringContaining("Scherzo"),
+    expect.stringContaining("Opening"),
+    expect.stringContaining("Jazz Song"),
+    expect.stringContaining("Finale"),
+  ]);
+});
+
 test("「再生」ボタンで先頭曲から再生でき、一時停止中の曲は同じ位置から再開する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");

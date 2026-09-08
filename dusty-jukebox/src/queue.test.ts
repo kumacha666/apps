@@ -181,6 +181,92 @@ describe("PlaybackQueue", () => {
     queue.setList([song("x"), song("y")]);
     expect(queue.hasShuffleHistory()).toBe(false);
   });
+  test("sortByは曲の並びを指定キー・方向で並べ替え、再生中の曲・除外設定を変えない（現在曲より前は並べ替え対象外）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("banana"), song("apple"), song("cherry")]);
+    queue.exclude("cherry", true);
+    await queue.playAt(0); // "banana"が再生中（現在位置=0）
+    const result = await queue.sortBy("title", "asc");
+    expect(result).toBe(true);
+    // 現在曲"banana"はプレフィックスとして先頭に残り、後ろの["apple","cherry"]だけが並べ替えられる。
+    expect(queue.all().map((s) => s.fileId)).toEqual(["banana", "apple", "cherry"]);
+    expect(queue.currentPlayingFileId()).toBe("banana");
+    expect(queue.isExcluded("cherry")).toBe(true);
+  });
+  test("sortByで全曲を対象に並べ替えると現在曲より前に来る未再生曲がnext()から到達不能になる不具合の回帰防止（2026-09-07 ChatGPTレビュー指摘）", async () => {
+    const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    queue.setList([song("c"), song("a"), song("b")]);
+    await queue.playAt(0); // "c"が再生中（現在位置=0）
+    // 修正前は全曲を対象にソートしていたため、タイトル昇順で並べ替えると[a, b, c]となり、
+    // 現在曲cが末尾へ移動してnext()が空振りし、a/bへ永久に到達できなくなっていた。
+    await queue.sortBy("title", "asc");
+    expect(queue.all().map((s) => s.fileId)).toEqual(["c", "a", "b"]);
+    while (await queue.next()) { /* 到達可能な限り辿る */ }
+    expect(played).toEqual(["c", "a", "b"]);
+  });
+  test("キューを自然終了まで再生し終えた後にsortByすると、プレフィックス固定はされず全曲が並べ替えられる（2026-09-08 ChatGPTレビュー再指摘）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("c"), song("a"), song("b")]);
+    await queue.playAt(0); // "c"が再生中
+    await queue.next(); // "a"
+    await queue.next(); // "b"（末尾）
+    const advanced = await queue.advanceOnEnded(); // 次が無いためisQueuePlaybackがfalseに遷移
+    expect(advanced).toBe(false);
+    // 修正前はcurrentFileId!==nullだけで判定していたため、末尾のbまでがプレフィックス扱いされ
+    // 並び替えが実質何もしなかった（isQueuePlaybackがfalseならプレフィックスは無いのが正しい）。
+    const result = await queue.sortBy("title", "asc");
+    expect(result).toBe(true);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "c"]);
+  });
+  test("キュー曲再生中にキュー外の単曲試聴へ切り替えてからsortByすると、プレフィックス固定はされず全曲が並べ替えられる（2026-09-08 ChatGPTレビュー再指摘）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("c"), song("a"), song("b")]);
+    await queue.playAt(0); // "c"が再生中（キュー再生）
+    queue.notifyExternalPlaybackStarted(); // キュー外の単曲試聴へ切り替え（currentFileIdは温存）
+    // 修正前はcurrentFileId==="c"が残っているためcがプレフィックス扱いされ、
+    // 完全な並べ替えにならなかった（キュー再生中ではないのでプレフィックスは無いのが正しい）。
+    const result = await queue.sortBy("title", "asc");
+    expect(result).toBe(true);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "c"]);
+  });
+  test("sortBy後、next()はfileIdで現在位置を探し直すため新しい並びをそのまま辿れる", async () => {
+    const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    queue.setList([song("c"), song("a"), song("b")]);
+    await queue.playAt(0); // "c"が再生中
+    await queue.sortBy("title", "desc"); // 新しい並び: c, b, a（降順のためcは先頭のまま）
+    while (await queue.next()) { /* 到達可能な限り辿る */ }
+    expect(played).toEqual(["c", "b", "a"]);
+  });
+  test("sortByはシャッフル履歴を無効化する（手動並び替え後は「シャッフルを元に戻す」は使えなくなる）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("banana"), song("apple")]);
+    await queue.shuffle(() => 0);
+    expect(queue.hasShuffleHistory()).toBe(true);
+    await queue.sortBy("title", "asc");
+    expect(queue.hasShuffleHistory()).toBe(false);
+  });
+  test("sortByはアーティストでソートする際、同じアーティスト内をアルバム→ディスク→トラック番号順に揃える", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    const songs: Song[] = [
+      { ...song("1"), artist: "B", album: "Y", discNumber: "1", trackNumber: "2" },
+      { ...song("2"), artist: "A", album: "X", discNumber: "1", trackNumber: "2" },
+      { ...song("3"), artist: "A", album: "X", discNumber: "1", trackNumber: "1" },
+    ];
+    queue.setList(songs);
+    await queue.sortBy("artist", "asc");
+    expect(queue.all().map((s) => s.fileId)).toEqual(["3", "2", "1"]);
+  });
+  test("sortByはリリース年を数値として並べ替え、不明な年は末尾に置く", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    const songs: Song[] = [
+      { ...song("1"), releaseYear: "2" },
+      { ...song("2"), releaseYear: "10" },
+      { ...song("3"), releaseYear: "" },
+    ];
+    queue.setList(songs);
+    await queue.sortBy("releaseYear", "asc");
+    expect(queue.all().map((s) => s.fileId)).toEqual(["1", "2", "3"]);
+  });
   test("キュー再生の終了時だけ次の曲へ進み、単曲試聴後の終了では進まない", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b")]); await queue.playAt(0); audio.listener?.();
