@@ -295,7 +295,7 @@ function renderQueue(): void {
   const list = el<HTMLUListElement>("catalog-list"); list.innerHTML = "";
   const currentFileId = queue?.currentPlayingFileId() ?? null;
   const rows = queueRowViews(queue?.all() ?? [], (fileId) => queue?.isExcluded(fileId) ?? false, currentFileId);
-  for (const row of rows) {
+  rows.forEach((row, index) => {
     const item = document.createElement("li"); item.className = "queue-item";
     if (row.isCurrent) item.classList.add("now-playing");
     const check = document.createElement("input"); check.type = "checkbox"; check.checked = !row.excluded;
@@ -303,14 +303,30 @@ function renderQueue(): void {
     item.append(check, " ");
     const label = document.createElement("span"); label.textContent = songDisplayLabel(row.song);
     if (row.listIndex !== null) {
-      // 除外されていない曲だけクリックで再生できる（listIndex参照）。除外中の曲は
-      // playAt()のインデックス対象外のため、除外を解除してから再生する運用とする。
+      // 除外されていない曲だけクリックで再生できる（除外中の曲はlist()の対象外のため、
+      // 除外を解除してから再生する運用とする）。playAt(row.listIndex)ではなくfileIdを
+      // 渡すqueue.playFileId()を使う（2026-09-08、Codexレビュー指摘：listIndexは描画時点の
+      // スナップショットのため、moveSong()等がpendingMove待機中の間にこの行をクリックすると、
+      // 待機中の並べ替えが先に反映された後の配列に対して古いインデックスが評価され、
+      // クリックした曲と異なる曲が再生されうる。fileIdで探すplayFileId()なら、先に完了した
+      // 並べ替え後の状態を必ず反映する）。
       label.className = "song-link";
-      label.addEventListener("click", () => void handleQueuePlayback(() => queue?.playAt(row.listIndex!)));
+      const fileId = row.song.fileId;
+      label.addEventListener("click", () => void handleQueuePlayback(() => queue?.playFileId(fileId)));
     }
     item.append(label);
+    // 上下ボタン（開発体制#42②、実機フィードバック）：一覧の表示順そのままの隣接行と入れ替える
+    // （除外中の行も通常の行として一覧に表示されるため、除外の有無で特別扱いしない）。
+    // 並び順を変えるだけで再生を開始する操作ではないためhandleQueuePlayback()は経由しない。
+    const upBtn = document.createElement("button"); upBtn.type = "button"; upBtn.textContent = "↑";
+    upBtn.disabled = index === 0;
+    upBtn.addEventListener("click", () => { void queue?.moveSong(row.song.fileId, "up").then(() => { renderQueue(); updateUnshuffleEnabled(); }); });
+    const downBtn = document.createElement("button"); downBtn.type = "button"; downBtn.textContent = "↓";
+    downBtn.disabled = index === rows.length - 1;
+    downBtn.addEventListener("click", () => { void queue?.moveSong(row.song.fileId, "down").then(() => { renderQueue(); updateUnshuffleEnabled(); }); });
+    item.append(" ", upBtn, downBtn);
     list.append(item);
-  }
+  });
   const currentSong = rows.find((r) => r.isCurrent)?.song;
   el<HTMLParagraphElement>("now-playing").textContent = nowPlayingLabel(currentSong);
   // Bluetoothスピーカー・OSのロック画面に現在再生中の曲名・アーティストを表示する。
@@ -495,8 +511,9 @@ async function handleSavePlaylist(): Promise<void> {
   const name = nameInput.value.trim();
   if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
   if (!name) { setStatus("プレイリスト名を入力してください", true); return; }
-  const fileIds = queue?.list().map((song) => song.fileId) ?? [];
-  if (fileIds.length === 0) { setStatus("保存する再生リストがありません。条件を指定して再生リストを作ってから保存してください。", true); return; }
+  // 件数だけを見る早期リターン用の判定（曲数自体はmoveSong等の並べ替えでは変わらないため、
+  // 保留中の操作を待たなくても正確）。
+  if ((queue?.list().length ?? 0) === 0) { setStatus("保存する再生リストがありません。条件を指定して再生リストを作ってから保存してください。", true); return; }
   // createPlaylist()（収録曲の件数次第で数秒かかりうる）を待つ前、操作を開始した最初の
   // 同期的なタイミングで対象を予約する（2026-09-03 Codexレビュー指摘：P2。保存完了後に
   // 初めてloadPlaylists()内で対象を記録すると、保存の完了を待っている間にユーザーが別の
@@ -505,7 +522,35 @@ async function handleSavePlaylist(): Promise<void> {
   reservePlaylistsLoadTarget(spreadsheetId);
   const button = el<HTMLButtonElement>("save-playlist-btn");
   button.disabled = true;
+  // whenIdle()はpendingMove待機中の他の操作（アルバム再生・絞り込み等によるsetList()、
+  // またはチェックボックスでの除外）までは防げないため、保存を開始した時点の世代・
+  // 除外バージョンを記録しておく（2026-09-08、Codexレビュー指摘：P2）。
+  const startGeneration = queue?.generationId();
+  const startExclusionVersion = queue?.exclusionVersion();
   try {
+    // 上下ボタン（moveSong）等、queueへの直前の操作がplayer.play()の解決待ちでまだ
+    // pendingMove内に留まっている場合があるため、実際に保存する曲順を読む前に完了を待つ
+    // （2026-09-08、Codexレビュー指摘：P2。待たずに読むと、画面上で要求した並び替えより前の
+    // スナップショットを保存してしまう。reservePlaylistsLoadTargetより後にすることで、
+    // その対象予約自体の「操作開始時点の同期的なタイミング」という既存の前提は崩さない）。
+    await queue?.whenIdle();
+    // 待機中に全く別のキューへ差し替えられていないか（アルバム再生・絞り込み等）・
+    // チェックボックスで除外/除外解除されていないかを確認する（2026-09-08、Codexレビュー
+    // 指摘：P2続き。exclude()はsetList()を経由しないためgenerationId()だけでは検出できず、
+    // 一部の曲だけ除外された場合は0曲チェックにも該当しないまま、保存開始時点と異なる
+    // 内容が保存されてしまっていた）。いずれかが変わっていれば、保存開始時点の意図と
+    // 無関係な曲を保存してしまうため中止する。曲数チェックは差し替え確認と合わせて
+    // ここでも行う（待機中の除外操作で全曲除外された場合、世代も除外バージョンも
+    // チェックだけでは「元々何曲だったか」までは分からないため）。
+    if (queue?.generationId() !== startGeneration || queue?.exclusionVersion() !== startExclusionVersion) {
+      setStatus("保存を待っている間に再生リストが変更されたため、保存を中止しました。内容を確認してもう一度お試しください。", true);
+      return;
+    }
+    const fileIds = queue?.list().map((song) => song.fileId) ?? [];
+    if (fileIds.length === 0) {
+      setStatus("保存を待っている間に再生リストが空になったため、保存を中止しました。内容を確認してもう一度お試しください。", true);
+      return;
+    }
     const playlistsIO = playlistsSpreadsheetIO(spreadsheetId);
     await ensurePlaylistTabsReady(spreadsheetId, playlistsIO);
     await createPlaylist(playlistsIO, name, fileIds, deviceRandomId);

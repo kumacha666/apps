@@ -28,12 +28,31 @@ export class PlaybackQueue {
       else void this.next().catch(this.onError);
     });
   }
-  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.songs = songs; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
+  // 呼び出し元の配列をそのまま参照せずコピーする（2026-09-08、Codexレビュー指摘：P2）。
+  // shuffle()/moveSong()はthis.songsの要素をその場で入れ替えるため、呼び出し元
+  // （main.tsのアルバム再生ボタン等）が`group.songs`のような他の場所でも保持している配列を
+  // そのまま渡すと、この入れ替えが呼び出し元の配列まで書き換えてしまう（例：アルバム再生後に
+  // 上下ボタンで並び替えると、`loadedAlbumGroups`が保持する元のアルバム内曲順自体が
+  // 破壊され、以後そのアルバムを読み込み直しても正しいdisc/track順に戻らない）。
+  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.songs = [...songs]; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
   notifyExternalPlaybackStarted(): void { this.isQueuePlayback = false; }
-  exclude(fileId: string, excluded: boolean): void { excluded ? this.excluded.add(fileId) : this.excluded.delete(fileId); }
+  // 呼び出しのたびに1つ進む（2026-09-08、Codexレビュー指摘：P2続き）。exclude()はsetList()を
+  // 経由せず即座にexcludedを書き換えるため、generationId()では検出できない「除外/除外解除だけの
+  // 変更」を呼び出し元が検出できるようにする（exclusionVersion()参照）。
+  private exclusionVersionCounter = 0;
+  exclude(fileId: string, excluded: boolean): void { excluded ? this.excluded.add(fileId) : this.excluded.delete(fileId); this.exclusionVersionCounter += 1; }
   isExcluded(fileId: string): boolean { return this.excluded.has(fileId); }
   all(): Song[] { return [...this.songs]; }
   list(): Song[] { return this.songs.filter((s) => !this.isExcluded(s.fileId)); }
+  // setList()のたびに1つ進む、現在のリストの世代（2026-09-08、Codexレビュー指摘：P2向け）。
+  // whenIdle()はpendingMove待機中の他の操作（アルバム再生・絞り込み等によるsetList()）までは
+  // 防げないため、呼び出し元（handleSavePlaylist()等）が「待っている間に全く別のリストへ
+  // 差し替えられていないか」を確認するのに使う。
+  generationId(): number { return this.generation; }
+  // exclude()の呼び出し回数（2026-09-08、Codexレビュー指摘：P2続き）。generationId()と
+  // 組み合わせて使う：待機中にチェックボックスで一部の曲だけ除外/除外解除された場合、
+  // setList()を経由しないためgenerationId()は変わらないが、これは変わる。
+  exclusionVersion(): number { return this.exclusionVersionCounter; }
   currentPlayingFileId(): string | null { return this.currentFileId; }
   // 「再生」ボタン（開発体制#40）向け：現在の曲を再開してよいかどうか。currentFileIdは
   // notifyExternalPlaybackStarted()後も温存され続けるため、これ単独では「キュー由来の再生
@@ -70,6 +89,28 @@ export class PlaybackQueue {
     return result;
   }
   playAt(index: number): Promise<boolean> { return this.move(async (generation) => { const list = this.list(); if (index < 0 || index >= list.length) return false; return this.playAndCommit(list[index].fileId, generation); }); }
+  // 再生リストの曲名クリック向け：playAt(index)と異なりfileIdで直接指定する（2026-09-08、
+  // Codexレビュー指摘：DOM側は描画時点の`QueueRowView.listIndex`をクリックハンドラの
+  // クロージャに固定して持つため、moveSong()/sortBy()等でpendingMove待機中に配列の並びが
+  // 変わると、実行時にはそのインデックスが指す曲が変わっており、クリックした曲と異なる曲が
+  // 再生されうる。move()経由でthis.list()をpendingMoveチェーン内の実行時点で評価し、
+  // fileIdで探すことで、先に完了した並べ替え後の状態を必ず反映する）。除外中の曲は
+  // this.list()の対象外のため見つからずfalseになる（playAt()と同じ挙動）。
+  playFileId(fileId: string): Promise<boolean> {
+    return this.move(async (generation) => {
+      const song = this.list().find((s) => s.fileId === fileId);
+      return song ? this.playAndCommit(song.fileId, generation) : false;
+    });
+  }
+  // それまでにキューイングされた操作（moveSong/sortBy/shuffle/next/previous等）がすべて
+  // 完了するのを待つ（2026-09-08、Codexレビュー指摘：P2）。list()/all()を読む前にこれを
+  // awaitすれば、上下ボタンを押した直後（moveSong()がplayer.play()の解決待ちで
+  // pendingMove内に留まっている間）に「保存」ボタンを押しても、まだ反映されていない
+  // 並び替え前のスナップショットを保存してしまう競合を避けられる。呼び出し時点の
+  // pendingMoveだけを捕捉して待つ（以降に新しくキューイングされる操作までは待たない）。
+  async whenIdle(): Promise<void> {
+    await this.pendingMove.catch(() => {});
+  }
   next(): Promise<boolean> { return this.move(async (generation) => { const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId); const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId)); return next ? this.playAndCommit(next.fileId, generation) : false; }); }
   // 曲の自然終了（<audio>のended）専用のnext()。next()自体にこのロジックを組み込まないのは、
   // 末尾で「次へ」ボタンを空振りクリックしただけ（曲はまだ再生中）でも再開不可状態へ遷移して
@@ -171,6 +212,25 @@ export class PlaybackQueue {
         : false,
       true
     );
+  }
+  // 再生リスト内の曲を1つ上/下へ手動で入れ替える（上下ボタン、開発体制#42②）。除外中の曲も
+  // 通常の行として一覧に表示され続けるため（main.tsのrenderQueue参照）、除外の有無に関わらず
+  // 表示順そのままの隣接する2件を入れ替える（除外中の曲だけ飛び越える等の特別扱いはしない。
+  // 見た目の並びと配列の並びを常に一致させ、挙動を単純・予測可能にするため）。currentFileId・
+  // 除外設定は変えない。sortBy()と同じ理由でシャッフル履歴（originalOrder）は無効化する：
+  // 手動で並び替えた後は「シャッフル前の並び」という概念自体が意味を持たなくなるため。
+  // next()/playAt()等と同じpendingMoveの直列化チェーンに参加させる（進行中の移動と同期に
+  // 配列を書き換えると一時的な不整合を招きうるため）。
+  moveSong(fileId: string, direction: "up" | "down"): Promise<boolean> {
+    return this.move(async () => {
+      const index = this.songs.findIndex((song) => song.fileId === fileId);
+      if (index === -1) return false;
+      const target = direction === "up" ? index - 1 : index + 1;
+      if (target < 0 || target >= this.songs.length) return false;
+      [this.songs[index], this.songs[target]] = [this.songs[target], this.songs[index]];
+      this.originalOrder = null;
+      return true;
+    });
   }
 }
 
