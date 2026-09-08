@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { PlaybackQueue, queueRowViews, songDisplayLabel, nowPlayingLabel } from "./queue";
-import { PlaybackAuthenticationRequiredError } from "./playback";
+import { PlaybackAuthenticationRequiredError, PlaybackController, PlaybackInterruptedError, PlaybackPausedError, type AudioElementLike } from "./playback";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { PlaybackContinuationRegistry } from "./playbackContinuation";
 import { parseIndexRows, type Song } from "./catalog";
@@ -400,6 +400,161 @@ describe("PlaybackQueue", () => {
     expect(played[played.length - 1]).toBe("c");
     expect(queue.all().map((s) => s.fileId)).toEqual(["a", "c", "b"]);
   });
+  test("next/previous/playFileIdはfadeOut引数をplayer.play()のoptionsへそのまま渡す（開発体制#42④、手動スキップ時のみtrueにする責務はmain.ts側）", async () => {
+    const calls: Array<{ fileId: string; options: { fadeOut?: boolean } | undefined }> = [];
+    const audio = new Audio();
+    const queue = new PlaybackQueue({
+      play: async (fileId, _position, options) => { calls.push({ fileId, options }); },
+    }, audio);
+    queue.setList([song("a"), song("b"), song("c"), song("d")]);
+    await queue.playAt(0);
+    await queue.next(true);
+    await queue.previous(true);
+    await queue.playFileId("c", true);
+    await queue.next(); // 既定値false（曲の自然終了と同じ扱い）
+
+    expect(calls.map((c) => c.options?.fadeOut)).toEqual([undefined, true, true, true, undefined]);
+  });
+  test("advanceOnEndedは常にfadeOut=falseでnext()を呼ぶ（自然終了はフェードアウト対象外）", async () => {
+    const calls: Array<{ fadeOut?: boolean }> = [];
+    const audio = new Audio();
+    const queue = new PlaybackQueue({
+      play: async (_fileId, _position, options) => { calls.push({ fadeOut: options?.fadeOut }); },
+    }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0);
+    await queue.advanceOnEnded();
+
+    expect(calls[calls.length - 1].fadeOut).toBeUndefined();
+  });
+  test("フェード中にPlaybackInterruptedErrorが投げられた場合（ネイティブ一時停止）、再生成功として誤commitしない（2026-09-08、Codexレビュー指摘：P1）", async () => {
+    const audio = new Audio();
+    const queue = new PlaybackQueue({
+      play: async (_fileId, _position, options) => {
+        if (options?.fadeOut) throw new PlaybackPausedError();
+      },
+    }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0); // "a"が再生中（fadeOutなしなので正常にcommitされる）
+    expect(queue.currentPlayingFileId()).toBe("a");
+
+    // 「次へ」をフェードあり（true）で実行するが、ネイティブ一時停止によりPlaybackInterruptedError
+    // がスローされる。
+    const result = await queue.next(true);
+
+    // currentFileIdは"a"のまま（"b"へ誤ってcommitされていない）で、falseを返す。
+    expect(result).toBe(false);
+    expect(queue.currentPlayingFileId()).toBe("a");
+  });
+  test("フェード中の一時停止でPlaybackInterruptedErrorが投げられた場合、既にpendingMoveへ積まれていた後続のナビゲーションも取り消す（2026-09-08、Codexレビュー指摘：P1。中断された操作自体は既にfalseを返すよう修正済みだが、素早い連続クリックや旧曲の自然終了によるadvanceOnEnded()が同時にqueueされていた場合、その後続操作はaudio.pausedを見て無条件に次の曲へplay()してしまい、ユーザーの一時停止を勝手に取り消していた）", async () => {
+    const played: string[] = [];
+    let rejectB!: (err: unknown) => void;
+    const audio = new Audio();
+    const queue = new PlaybackQueue({
+      play: async (fileId, _position, options) => {
+        if (fileId === "b" && options?.fadeOut) {
+          await new Promise<void>((_resolve, reject) => { rejectB = reject; });
+          return;
+        }
+        played.push(fileId);
+      },
+    }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    await queue.playAt(0); // "a"が再生中
+
+    const manualNext = queue.next(true); // "b"へフェードあり、player.play()はまだ未解決
+    await vi.waitFor(() => expect(rejectB).toBeDefined());
+
+    // "b"へのplay()が解決する前に、後続のnext()がさらにもう1件pendingMoveへqueueされる
+    // （素早い連続クリック、またはフェード中に旧曲が自然終了した場合のadvanceOnEnded()と同じ状況）。
+    const queuedNext = queue.next();
+
+    // ネイティブ一時停止（またはアプリ内「一時停止」ボタン）により、フェード中の"b"へのplay()が
+    // PlaybackPausedError（PlaybackInterruptedErrorのうち一時停止によるもの）で中断される。
+    rejectB(new PlaybackPausedError());
+
+    expect(await manualNext).toBe(false);
+    // 一時停止を検知した時点で待機中だったqueuedNextも、実際には実行されずfalseを返す
+    // （実行されていれば"c"がplayed配列に追加され、一時停止が勝手に取り消されてしまう。
+    // played配列にはplayAt(0)による初回の"a"のみが入っている想定）。
+    expect(await queuedNext).toBe(false);
+    expect(played).toEqual(["a"]);
+    expect(queue.currentPlayingFileId()).toBe("a");
+  });
+  test("フェード中に別の正当なplay()（例：別アルバム選択によるsetList()+playAt()）に追い越された場合、その新しい操作の世代確認を巻き込んで無効化しない（2026-09-08、Codexレビュー指摘：P1。一時停止ではなく追い越しによるPlaybackInterruptedErrorでthis.generationを進めると、新しく開始した正当な操作が自身の世代確認に失敗し、実際には再生が始まっているのにキューの現在曲・UIが更新されなくなる）", async () => {
+    const played: string[] = [];
+    let rejectB!: (err: unknown) => void;
+    let resolveX!: () => void;
+    const audio = new Audio();
+    const queue = new PlaybackQueue({
+      play: async (fileId, _position, options) => {
+        if (fileId === "b" && options?.fadeOut) {
+          await new Promise<void>((_resolve, reject) => { rejectB = reject; });
+          return;
+        }
+        if (fileId === "x") {
+          await new Promise<void>((resolve) => { resolveX = resolve; });
+        }
+        played.push(fileId);
+      },
+    }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0); // "a"が再生中
+
+    const manualNext = queue.next(true); // "b"へフェードあり、player.play()はまだ未解決
+    await vi.waitFor(() => expect(rejectB).toBeDefined());
+
+    // フェード待機中に、ユーザーが別アルバムを選ぶ等でsetList()を呼び、新しいリストの先頭を
+    // 再生する（一時停止ではない正当な追い越し）。
+    queue.setList([song("x"), song("y")]);
+    const newPlay = queue.playAt(0); // "x"、player.play()はまだ未解決
+    await vi.waitFor(() => expect(resolveX).toBeDefined());
+
+    // 旧世代のフェード待機（"b"へのplay()）が、新しいplay()に追い越されたことによる
+    // PlaybackInterruptedError（PlaybackPausedErrorではない＝一時停止によるものではない）で
+    // 中断される。"x"がまだcommitされる前にこの中断処理が走ることを保証するため、
+    // "x"側のplay()をまだ未解決のまま維持しておく。
+    rejectB(new PlaybackInterruptedError());
+    await Promise.resolve(); // manualNextのcatchが実行されるのを待つ
+
+    resolveX();
+
+    expect(await manualNext).toBe(false);
+    // 新しい操作は追い越しの巻き添えで無効化されず、正常にcommitされる。
+    expect(await newPlay).toBe(true);
+    expect(played).toEqual(["a", "x"]);
+    expect(queue.currentPlayingFileId()).toBe("x");
+  });
+  test("フェードアウトを伴う手動スキップの待機中に旧曲が自然終了しても、二重に進めない（2026-09-08、Codexレビュー指摘：P1。フェード中はaudio.srcがまだ旧曲のままのため、待機中に旧曲がendedを発火すると、手動スキップがcommitした直後にさらにもう1曲自動で進んでしまい、手動スキップの対象曲が丸ごとスキップされていた）", async () => {
+    const played: string[] = [];
+    let releasePlayB: (() => void) | null = null;
+    const audio = new Audio();
+    const queue = new PlaybackQueue({
+      play: async (id) => {
+        played.push(id);
+        if (id === "b") await new Promise<void>((resolve) => { releasePlayB = resolve; });
+      },
+    }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    await queue.playAt(0); // "a"が再生中
+
+    // 「次へ」をフェードあり（true）で実行、"b"へのplay()がまだ保留中。
+    const manualNext = queue.next(true);
+    await vi.waitFor(() => expect(releasePlayB).not.toBeNull());
+    // この待機中に、旧曲"a"が自然終了する（フェード中はaudio.srcがまだ"a"のまま鳴り続けて
+    // いるため実際に起こりうる）。
+    audio.listener?.();
+    releasePlayB!();
+    await manualNext;
+    // "a"の自然終了によるnext()もpendingMoveチェーンへキューイングされ、手動スキップの
+    // 完了後に実行される。fire-and-forgetのため、その完了も明示的に待つ。
+    await queue.whenIdle();
+
+    // "a"の自然終了によるadvanceOnEnded()が、手動で選んだ"b"を追い越して"c"へ進めていない
+    // ことを確認する（"b"がキューイングされたコールに含まれず、現在曲は"b"のまま）。
+    expect(played).toEqual(["a", "b"]);
+    expect(queue.currentPlayingFileId()).toBe("b");
+  });
   test("キュー再生の終了時だけ次の曲へ進み、単曲試聴後の終了では進まない", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b")]); await queue.playAt(0); audio.listener?.();
@@ -424,7 +579,7 @@ describe("PlaybackQueue", () => {
 
     const firstNext = queue.next();
     const secondNext = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a"));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, undefined));
     expect(play).toHaveBeenCalledTimes(1);
     resolveFirst?.();
     await Promise.all([firstNext, secondNext]);
@@ -439,7 +594,7 @@ describe("PlaybackQueue", () => {
     queue.setList([song("old-a"), song("old-b")]);
 
     const oldMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a"));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a", undefined, undefined));
     queue.setList([song("new-a"), song("new-b")]);
     resolvePlayback?.();
     await oldMove;
@@ -457,10 +612,10 @@ describe("PlaybackQueue", () => {
     queue.setList([song("old-a")]);
 
     const oldMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a"));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a", undefined, undefined));
     queue.setList([song("new-a")]);
     const newMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("new-a"));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("new-a", undefined, undefined));
     await newMove;
 
     resolveOldPlayback?.();
@@ -505,7 +660,7 @@ describe("PlaybackQueue", () => {
     await queue.next();
     await queue.resumeCurrent(42.25);
 
-    expect(play.mock.calls).toEqual([["a"], ["a", 42.25]]);
+    expect(play.mock.calls).toEqual([["a", undefined, undefined], ["a", 42.25, undefined]]);
   });
 
   test("最初の曲のnative playが未解決でも、開始前フックが継続情報を登録できる", async () => {
@@ -535,13 +690,160 @@ describe("PlaybackQueue", () => {
     queue.setList([song("a")]);
 
     const originalMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a"));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, undefined));
     const resumed = queue.resume("a", 12.5);
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", 12.5));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", 12.5, undefined));
     await expect(resumed).resolves.toBe(true);
 
     settleOriginal();
     await expect(originalMove).resolves.toBe(true);
+  });
+
+  test("フェード中に認証継続（resume、replacePending）でチェーンが置き換わった場合、fadeInFlightが取り残されず以後の自然終了で正しく次へ進む（2026-09-08、Codexレビュー指摘：P1。置き換えられた古いplayer.play()呼び出しがいつ解決するか保証されないため、try/finallyだけに頼るとfadeInFlightが恒久的にtrueのまま残り、以後'ended'が無視され続けてキューが自動で進まなくなる不具合があった）", async () => {
+    const audio = new Audio();
+    let settleOriginal!: () => void;
+    const originalPlay = new Promise<void>(() => { settleOriginal = () => {}; }); // 意図的に解決しないまま残す
+    const played: string[] = [];
+    const play = vi.fn(async (fileId: string, _position, options) => {
+      if (fileId === "a" && options?.fadeOut) return originalPlay; // フェード中のまま未解決で残る
+      played.push(fileId);
+    });
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+
+    const originalMove = queue.next(true); // "a"へフェードあり移動、player.play()は未解決のまま残る
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, { fadeOut: true }));
+    // 認証継続がチェーンを置き換える（resumeはreplacePending=trueで内部move()を呼ぶ）。
+    const resumed = queue.resume("b", 0);
+    await expect(resumed).resolves.toBe(true);
+    expect(queue.currentPlayingFileId()).toBe("b");
+
+    // "b"の自然終了が正しくnext()を呼び出せる（fadeInFlightが取り残されて無視されていないこと）。
+    audio.listener?.();
+    await vi.waitFor(() => expect(played).toContain("c"));
+
+    void originalMove; void settleOriginal; // 意図的に未解決のまま残す（現実のHTMLMediaElement.play()を模した状況）
+  });
+
+  test("resumeで置き換えられ孤立した古いフェード操作が後から解決しても、その後に始まった新しいフェード操作の状態を誤って解除しない（2026-09-08、Codexレビュー指摘：P1。単純なboolean（旧fadeInFlight）だと、孤立した古い操作のfinallyが共有フラグをfalseに戻してしまい、進行中の新しいフェード操作中の'ended'抑止が壊れて二重送りが起きていた）", async () => {
+    const audio = new Audio();
+    let rejectOrphan!: (err: unknown) => void;
+    const orphanPlay = new Promise<void>((_resolve, reject) => { rejectOrphan = reject; });
+    let settleNewFade!: () => void;
+    const newFadePlay = new Promise<void>((resolve) => { settleNewFade = resolve; });
+    const played: string[] = [];
+    const play = vi.fn(async (fileId: string, _position, options) => {
+      if (fileId === "b" && options?.fadeOut) return orphanPlay; // 孤立させる古いフェード操作
+      if (fileId === "d" && options?.fadeOut) return newFadePlay; // 後から始まる新しいフェード操作
+      played.push(fileId);
+    });
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a"), song("b"), song("c"), song("d"), song("e")]);
+    await queue.playAt(0); // "a"が再生中
+
+    const orphanedMove = queue.next(true); // "a"→"b"へフェード、未解決のまま孤立させる
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("b", undefined, { fadeOut: true }));
+
+    // 認証継続でチェーンが置き換わり、"c"へ直接遷移する（上のフェード操作は孤立する）。
+    const resumed = queue.resume("c", 0);
+    await expect(resumed).resolves.toBe(true);
+    expect(queue.currentPlayingFileId()).toBe("c");
+
+    // resume後、ユーザーが新しく別のフェード付きスキップを開始する（"c"→"d"）。
+    const newFadeMove = queue.next(true);
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("d", undefined, { fadeOut: true }));
+
+    // ここで、孤立していた古いフェード操作（"b"）が（例えば元々の再生要求がネットワークエラー等で
+    // 最終的に失敗して）ようやく解決する。この時点で新しいフェード操作（"d"）はまだ進行中のため、
+    // 孤立操作側のfinallyがそれを巻き込んで解除してしまわないことを検証する
+    // （PlaybackInterruptedError以外の一般的なErrorで拒否し、"b"のcommit可否には関与しない
+    // finally自体の挙動だけを切り分けてテストする）。
+    rejectOrphan(new Error("orphaned stream failed"));
+    await expect(orphanedMove).rejects.toThrow("orphaned stream failed");
+
+    // 新しいフェード操作（"d"）がまだ進行中の間に、"d"の自然終了('ended')が発火しても、
+    // 孤立操作のfinallyによって誤って'ended'抑止が解除されていれば、"d"がまだcommitされて
+    // いないのに次のnext()が呼ばれ、"e"へ二重に進んでしまう。
+    audio.listener?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(played).not.toContain("e"); // まだ"d"がcommitされていないため、二重送りが起きていない
+
+    // 新しいフェード操作（"d"）が正常に解決する。
+    settleNewFade();
+    await expect(newFadeMove).resolves.toBe(true);
+    expect(queue.currentPlayingFileId()).toBe("d");
+
+    // "d"の自然終了で、正しく次（"e"）へ進める（activeFadeTokenが正しく解除されていること）。
+    audio.listener?.();
+    await vi.waitFor(() => expect(played).toContain("e"));
+  });
+
+  test("setList()（別アルバム・プレイリスト選択）で古いフェード操作が孤立した場合も、activeFadeTokenを失効させ以後の自然終了を正しく処理する（2026-09-08、Codexレビュー指摘：P1。setList()はmove()のreplacePendingと同じくpendingMoveを即座に差し替える独立経路だが、activeFadeTokenは解除していなかったため、フェード付きの古いplayer.play()がネットワーク待ち等で未解決のまま残っている間に別アルバムを選ぶと、新しい曲が再生されても古いトークンが残り続け、'endedガードが無期限に無視して自動送りが止まっていた）", async () => {
+    const audio = new Audio();
+    let settleOrphan!: () => void;
+    const orphanPlay = new Promise<void>((resolve) => { settleOrphan = resolve; });
+    const played: string[] = [];
+    const play = vi.fn(async (fileId: string, _position, options) => {
+      if (fileId === "b" && options?.fadeOut) return orphanPlay; // 孤立させる古いフェード操作
+      played.push(fileId);
+    });
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0); // "a"が再生中
+
+    const orphanedMove = queue.next(true); // "a"→"b"へフェード、未解決のまま孤立させる
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("b", undefined, { fadeOut: true }));
+
+    // フェード待機中に、別アルバム・プレイリストを選んでsetList()＋playAt()する
+    // （resume()のreplacePendingとは異なる独立した経路で孤立が発生する）。
+    queue.setList([song("x"), song("y")]);
+    await queue.playAt(0); // "x"が再生中（フェードなしなので即commitされる）
+    expect(queue.currentPlayingFileId()).toBe("x");
+
+    // "x"の自然終了で、正しく次（"y"）へ進められること
+    // （setList()がactiveFadeTokenを失効させていなければ、孤立した古いトークンが残り続け、
+    // 'endedガードがこれを無期限に無視してしまう）。
+    audio.listener?.();
+    await vi.waitFor(() => expect(played).toContain("y"));
+
+    // 孤立していた古いフェード操作（"b"）が後から解決しても、上記の検証には影響しない。
+    settleOrphan();
+    await orphanedMove;
+  });
+
+  test("setList()（別アルバム・プレイリスト選択）は、実PlaybackController内で進行中だったフェードもキャンセルし、フェード完了後に選ばれていない旧リストの曲が実際に鳴らないようにする（2026-09-08、Codexレビュー指摘：P1続き。activeFadeTokenの失効だけではキュー側の状態を正すのみで、PlaybackController内で進行中のフェード付きplay()自体はキャンセルされないため、フェード完了後に旧リストの曲のaudio.srcが設定されaudio.play()が実際に呼ばれてしまっていた）", async () => {
+    vi.useFakeTimers();
+    class IntegrationAudio implements AudioElementLike {
+      src = ""; currentTime = 0; volume = 1; paused = true; ended = false;
+      private listeners: Record<string, Array<() => void>> = {};
+      async play(): Promise<void> { this.paused = false; this.ended = false; }
+      pause(): void { this.paused = true; }
+      addEventListener(type: string, listener: () => void): void {
+        (this.listeners[type] ??= []).push(listener);
+      }
+    }
+    const audio = new IntegrationAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+    const queue = new PlaybackQueue(playback, audio as unknown as { addEventListener(type: "ended", listener: () => void): void });
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0); // "a"が再生中
+    const srcDuringA = audio.src;
+
+    const manualNext = queue.next(true).catch((err) => err); // "a"→"b"へフェード開始（2秒間）
+    await vi.advanceTimersByTimeAsync(500); // フェード進行中（旧曲がまだ鳴っている）
+
+    // フェード完了前に、別アルバム・プレイリストへ切り替える（setList()のみ、playAt()は伴わない
+    // ケース——Codex指摘の「この順序」）。
+    queue.setList([song("x"), song("y")]);
+
+    // フェードの残り時間が経過しても、もう選ばれていない旧リストの"b"へは切り替わらない
+    // （audio.srcが変わらない＝実際には鳴らない）。
+    await vi.runAllTimersAsync();
+    await manualNext;
+
+    expect(audio.src).toBe(srcDuringA);
+    expect(queue.currentPlayingFileId()).toBeNull(); // 新リストではまだ何も再生していない
   });
 
   test("自動送り中の認証待ちは次曲を保留し、明示的な継続後に同じ次曲を再開する", async () => {
