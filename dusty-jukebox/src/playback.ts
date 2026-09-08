@@ -83,6 +83,13 @@ export class PlaybackController {
   // もって「一時停止による中断」と判定する（一致しなければ、それ以降に別のplay()が実行され
   // generationがさらに進んでいる＝一時停止ではなく追い越しと判定できる）。
   private pausedAtGeneration: number | null = null;
+  // cancelPendingTransition()（PlaybackQueue.setList()経由）が最後にgenerationを進めた時点の値
+  // （2026-09-08、Codexレビュー指摘：P1）。pausedAtGenerationと同じ判定パターンだが、pause()と
+  // 異なりaudioを止めないため別フィールドで管理する。この一致が成立する場合、次に来るのが
+  // 新しいplay()（volumeを自分で制御する）とは限らない（setList()単独で終わる経路もある）ため、
+  // pause()と同じくフェード開始前のvolumeを復元する。復元しないと、フェード完了直後に別アルバム
+  // を選んでも旧曲の音量が下がったまま残り続け、以後の（フェードしない）通常再生すべてに影響する。
+  private cancelledAtGeneration: number | null = null;
 
   constructor(
     private readonly audio: AudioElementLike,
@@ -136,6 +143,14 @@ export class PlaybackController {
           this.audio.volume = preFadeVolume;
           throw new PlaybackPausedError();
         }
+        // cancelPendingTransition()（setList()）によるものも同様にvolumeを復元する
+        // （2026-09-08、Codexレビュー指摘：P1続き）。pause()と異なりPlaybackPausedErrorは
+        // 投げない：PlaybackQueue側は既にsetList()自身の呼び出しでキュー側の状態
+        // （generation・activeFadeToken）を直接無効化済みのため、PlaybackPausedError扱いに
+        // よる追加のgeneration進行は不要（意味的にも「一時停止」ではないため区別する）。
+        if (this.generation === this.cancelledAtGeneration) {
+          this.audio.volume = preFadeVolume;
+        }
         throw new PlaybackInterruptedError();
       }
       // フェード中にネイティブ操作（<audio controls>・Media Session）で明示的に一時停止された
@@ -170,7 +185,19 @@ export class PlaybackController {
     // metadata is available, and the fake audio used by unit tests mirrors that
     // observable contract.
     if (Number.isFinite(position) && position > 0) this.audio.currentTime = position;
+    const thisRequestSrc = this.audio.src;
     await this.audio.play();
+    // ここまで到達した後（audio.src差し替え後、ネイティブaudio.play()の解決待ち中）にも
+    // cancelPendingTransition()やpause()等でこの要求が無効化されうる（2026-09-08、Codexレビュー
+    // 指摘：P1）。このplay()呼び出し自体はエラーを投げずに解決するため、PlaybackQueue側の
+    // commit判定（キュー自身のgeneration確認）は既に正しく拒否するが、audio要素自体は実際に
+    // 「もう選ばれていない曲」を鳴らし続けてしまう。ただし、この停止は自分がsrcを設定した時点
+    // からまだ誰も上書きしていない場合に限る：既に別の（より新しい）play()呼び出しがsrcを
+    // 差し替えて再生を開始している場合、ここで無条件にpause()するとその正当な新しい再生まで
+    // 誤って止めてしまうため、audio.srcが依然として自分の設定したものと一致する場合だけ止める。
+    if (isSuperseded() && this.audio.src === thisRequestSrc) {
+      this.audio.pause();
+    }
   }
 
   // The media element does not expose the HTTP status that made it fail.  The
@@ -196,6 +223,7 @@ export class PlaybackController {
   // 行わない（setList()の直後に新しいplayAt()が続く場合、無関係にaudioを止めてしまわないため）。
   cancelPendingTransition(): void {
     this.generation += 1;
+    this.cancelledAtGeneration = this.generation;
   }
 
   pause(): void {

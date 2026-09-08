@@ -359,4 +359,79 @@ describe("PlaybackController", () => {
     // （volumeMidFadeのままのはず＝Cのvolume制御に一切触れていないことの確認）。
     expect(audio.volume).toBe(volumeMidFade);
   });
+  test("cancelPendingTransition()（PlaybackQueue.setList()経由）でフェード中に中断された場合も、フェード開始前のvolumeへ戻す（2026-09-08、Codexレビュー指摘：P1。setList()単独の経路〈直後にplayAt()しない場合を含む〉では他に誰もvolumeを復元しないため、復元しないと旧曲の音量が下がったまま残り続け、以後の通常再生すべてに影響する）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.8;
+    const playError = playback.play("B", 0, { fadeOut: true }).catch((err: unknown) => err);
+    await vi.advanceTimersByTimeAsync(500);
+    const volumeMidFade = audio.volume;
+    expect(volumeMidFade).toBeLessThan(0.8);
+
+    // PlaybackQueue.setList()に相当する中断（pause()ではない）。
+    playback.cancelPendingTransition();
+    await vi.runAllTimersAsync();
+
+    const error = await playError;
+    expect(error).toBeInstanceOf(PlaybackInterruptedError);
+    expect(error).not.toBeInstanceOf(PlaybackPausedError); // 一時停止ではないため区別する
+    expect(audio.volume).toBe(0.8); // フェードで下がった音量のまま取り残されない
+  });
+  test("フェード完了後、audio.srcを設定しaudio.play()の解決待ち中にcancelPendingTransition()で中断された場合も、実際に鳴らないよう一時停止する（2026-09-08、Codexレビュー指摘：P1。従来のgeneration確認はaudio.src設定より前までしか効かず、この区間で中断されると『もう選ばれていない曲』のネイティブaudio.play()がそのまま解決し実際に鳴ってしまっていた）", async () => {
+    let resolvePlay!: () => void;
+    class SlowPlayAudio extends FakeAudio {
+      override async play(): Promise<void> {
+        await new Promise<void>((resolve) => { resolvePlay = resolve; });
+        return super.play();
+      }
+    }
+    const audio = new SlowPlayAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    const playPromise = playback.play("A"); // フェードなし、audio.play()が未解決のまま保留
+    await vi.waitFor(() => expect(resolvePlay).toBeDefined());
+    expect(audio.src).toContain("A");
+
+    // audio.srcの設定後・ネイティブaudio.play()の解決待ち中に、setList()相当の中断が入る。
+    playback.cancelPendingTransition();
+    resolvePlay(); // ネイティブplay()自体は今になって解決する
+    await playPromise;
+
+    // 「もう選ばれていない曲」が実際に鳴り続けないよう一時停止されている。
+    expect(audio.paused).toBe(true);
+  });
+  test("audio.play()の解決待ち中に中断されても、既に別の新しいplay()がsrcを差し替えて再生を開始していた場合はその新しい再生を誤って止めない（2026-09-08、Codexレビュー指摘：P1続き。孤立した古い要求のsrcが既に上書きされているかどうかを確認せず無条件にpause()すると、正当な新しい再生まで巻き込んで止めてしまう）", async () => {
+    let resolveOldPlay!: () => void;
+    class SlowPlayAudio extends FakeAudio {
+      private isFirstPlay = true;
+      override async play(): Promise<void> {
+        if (this.isFirstPlay) {
+          this.isFirstPlay = false;
+          await new Promise<void>((resolve) => { resolveOldPlay = resolve; });
+        }
+        return super.play();
+      }
+    }
+    const audio = new SlowPlayAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    const oldPlay = playback.play("A"); // audio.play()が未解決のまま保留
+    await vi.waitFor(() => expect(resolveOldPlay).toBeDefined());
+
+    // 別の正当な新しいplay()が先に完了し、audio.srcを"B"へ上書きして再生を開始する。
+    await playback.play("B");
+    expect(audio.src).toContain("B");
+    expect(audio.paused).toBe(false);
+
+    // 孤立していた古い要求("A")のネイティブplay()が今になって解決する。
+    resolveOldPlay();
+    await oldPlay;
+
+    // 新しい正当な再生("B")は誤って止められていない。
+    expect(audio.paused).toBe(false);
+    expect(audio.src).toContain("B");
+  });
 });
