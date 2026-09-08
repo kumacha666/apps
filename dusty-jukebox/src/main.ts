@@ -13,6 +13,7 @@ import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStat
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
 import { parseIndexRows, filterSongs, groupSongsByAlbum, groupAlbumsByArtist, filterAlbumGroups, sortSongs, distinctFieldValuesForFilters, type AlbumGroup, type AutocompleteField, type Song, type SongFilters } from "./catalog";
+import { withTimeout } from "./withTimeout";
 import { CatalogOperationGate } from "./catalogOperationGate";
 import { CatalogSession } from "./catalogSession";
 import { FolderPathResolver, type FolderGetFn, type FolderMeta } from "./folderPaths";
@@ -129,6 +130,13 @@ function isAuthFailure(err: unknown): boolean {
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
+// Service Workerがこのページを制御する（navigator.serviceWorker.controllerが立つ）までの
+// 上限（開発体制#44、2026-09-08：強制リロードはService Workerの制御下に入らない仕様の
+// ブラウザ挙動があり、この待機が永久に終わらず再生系ボタンが「押せるが何も起きない・
+// エラーも出ない」まま固まる不具合の対応）。E2Eでは実時間で待つとテストが遅くなるため
+// 短縮する（他の機能のVITE_E2E分岐と同じ方針、playback.tsのFADE_OUT_DURATION_MS参照）。
+export const SERVICE_WORKER_READY_TIMEOUT_MS = import.meta.env.VITE_E2E === "true" ? 2000 : 8000;
+
 const auth = new DriveAuth();
 let playback: PlaybackController | null = null;
 let queue: PlaybackQueue | null = null;
@@ -205,7 +213,6 @@ function render(): void {
         <input id="play-file-id" type="text" placeholder="Google DriveファイルID" />
       </label>
       <button id="play-btn" type="button" disabled>この曲を再生</button>
-      <button id="pause-btn" type="button" disabled>一時停止</button>
       <audio id="audio-player" controls></audio>
       <p id="now-playing" class="status"></p>
       <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
@@ -226,7 +233,7 @@ function render(): void {
         <datalist id="filter-release-type-options"></datalist>
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
-        <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button></div>
+        <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="pause-btn" type="button" disabled>一時停止</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button></div>
         <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ時にフェードアウトする</label>
         <div>
           <label>並び替え
@@ -1773,11 +1780,20 @@ function init(): void {
 
   if ("serviceWorker" in navigator) {
     registerStreamAuthResponder(navigator.serviceWorker, () => auth.getAccessToken(), handleStreamTokenRejected, handleStreamTokenIssued);
-    serviceWorkerReady = (async () => {
-      await navigator.serviceWorker.register("./sw.js");
-      await navigator.serviceWorker.ready;
-      await waitForServiceWorkerControl();
-    })();
+    serviceWorkerReady = withTimeout(
+      (async () => {
+        await navigator.serviceWorker.register("./sw.js");
+        await navigator.serviceWorker.ready;
+        await waitForServiceWorkerControl();
+      })(),
+      SERVICE_WORKER_READY_TIMEOUT_MS,
+      "Service Workerの準備がタイムアウトしました。強制リロード（キャッシュを無視した再読み込み）を行った場合はこのページを制御しない仕様のため、通常の再読み込みかタブを閉じて開き直してください。"
+    );
+    // このpromiseは各呼び出し元（handlePlaybackAction経由のtry/catch）が個別にcatchするため、
+    // ここでは誰も待っていないタイミングでタイムアウトした場合の「unhandled promise rejection」
+    // コンソール警告を抑制するだけの空catch（.catch()を1つ付ければ、他の.then()/awaitからの
+    // 個別の拒否検知は妨げられない）。
+    serviceWorkerReady.catch(() => {});
   }
 
   whenPageLoaded(() => {

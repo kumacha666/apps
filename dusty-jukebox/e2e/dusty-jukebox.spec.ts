@@ -64,6 +64,14 @@ test("初回制御前の再生もService Worker準備後にストリームへ到
   expect(mock.authFailures).toEqual([]);
 });
 
+test("Service Workerの制御待ちがタイムアウトした場合、固まらずエラーメッセージを表示する（開発体制#44：強制リロード時、Service Workerの制御が永久に来ずボタンが無反応のまま固まっていた不具合の対策）", async ({ context, page }) => {
+  // releaseServiceWorker()を一度も呼ばない＝Service Workerの制御が永久に来ない状態を再現する。
+  await installGoogleMocks(context, { delayServiceWorkerActivation: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#play-file-id").fill("song-1"); await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#status")).toContainText("Service Workerの準備がタイムアウトしました", { timeout: 5000 });
+});
+
 test("Driveが期限前のトークンを拒否しても、明示的な認証継続で保留した再生を再開できる", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { rejectFirstStreamToken: true });
   await page.goto("/"); await login(page);
