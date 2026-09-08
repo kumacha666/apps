@@ -90,16 +90,34 @@ function compareByFieldOnly(a: Song, b: Song, field: QueueSortField, direction: 
 // （catalog.ts参照）のため、そもそも曲ペアごとの条件比較ではなく、アルバム単位で一貫した
 // グループキーを事前に用意する設計変更が必要になり、今回のバグ修正のスコープを超えるため、
 // releaseTypeによるグループ化自体を撤回しアルバム名のみでグループ化するシンプルな実装に
-// 戻した。なお元々releaseTypeはアルバム名が異なる曲同士の順序にしか影響し得ない設計だった
-// （アルバム名で確定した時点でreturnするため）ため、実質的な機能低下は無い。
+// 戻した。なお元々releaseTypeが実際に比較へ影響していたのはアルバム名が完全一致する場合
+// だけだった（アルバム名が異なれば比較はそこでreturnし、releaseTypeまで到達しないため）。
+// 異なるアルバム名同士の順序には元から影響していなかったため、撤回による実質的な
+// 機能低下は無い。
 // シングル/アルバムの区分けという当初のユーザー要望自体は、releaseType・アルバム/シングル
 // 通し番号等を外部検索によるカタログ補正で補完する別の新機能（設計は別途、`dusty-jukebox-tools`
 // 側の拡張として検討）で改めて扱う。
-// グループ間（異なるアルバム名同士）の前後関係はアルバム名の文字列順になる（メタデータに
+// グループ間（異なるアルバム同士）の前後関係はアルバム名の文字列順になる（メタデータに
 // 月日が無いため、同じ年内での実際のリリース順までは決定できない、既知の限界）。
 // 第二候補・方向の指定（direction）には依存させず、常にこの安定順を先に適用する。
+// **アルバム名だけでなく、アルバムアーティスト（無ければartist）→parentIdも比較する**
+// （2026-09-08、ChatGPTレビュー指摘：P2、3ラウンド目。アルバム名のみをグループキーに
+// すると、別アーティストの同名アルバム〈例：複数アーティストが同じ"Greatest Hits"という
+// アルバム名を持つ〉が同じグループとして扱われてしまい、その後のトラック番号比較で
+// 再びアルバムを跨いで曲が混ざる、今回直したかった問題と同型の不具合が残っていた。
+// `catalog.ts`の`groupSongsByAlbum()`が採用しているアルバム同一性のキー
+// （album + albumArtist||artist + parentId）に合わせることで、同名でも別アルバムは
+// 区別されるようにした。3つとも単純な文字列比較のみで推移律は保たれる）。
 function releaseYearGroupingTiebreak(a: Song, b: Song): number {
-  return compareStrings(a.album, b.album, "asc");
+  const albumCmp = compareStrings(a.album, b.album, "asc");
+  if (albumCmp !== 0) return albumCmp;
+  const albumArtistCmp = compareStrings(
+    a.albumArtist.trim() || a.artist,
+    b.albumArtist.trim() || b.artist,
+    "asc"
+  );
+  if (albumArtistCmp !== 0) return albumArtistCmp;
+  return compareStrings(a.parentId, b.parentId, "asc");
 }
 
 // 第二候補のソートキー（開発体制#42、2026-09-08：単一アーティストで複数アルバムある場合に

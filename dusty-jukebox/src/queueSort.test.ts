@@ -167,6 +167,39 @@ describe("sortSongsForQueue", () => {
     ]);
   });
 
+  it("2026-09-08：同じアルバム名でもアーティストが異なれば別グループとして扱われ、トラック番号だけで混ざらない（ChatGPTレビュー指摘：P2、3ラウンド目。アルバム名のみをグループキーにすると、別アーティストの同名アルバム〈例：複数アーティストが同じ『Greatest Hits』という名前のアルバムを持つ〉が同一グループとして扱われ、再びトラック番号だけで曲が混ざってしまっていた）", () => {
+    const songs = [
+      makeSong({ fileId: "b2", album: "Greatest Hits", artist: "Artist B", trackNumber: "2", releaseYear: "2000" }),
+      makeSong({ fileId: "a1", album: "Greatest Hits", artist: "Artist A", trackNumber: "1", releaseYear: "2000" }),
+      makeSong({ fileId: "b1", album: "Greatest Hits", artist: "Artist B", trackNumber: "1", releaseYear: "2000" }),
+      makeSong({ fileId: "a2", album: "Greatest Hits", artist: "Artist A", trackNumber: "2", releaseYear: "2000" }),
+    ];
+    // アルバム名だけでグループ化すると"1,1,2,2"のようにアーティストを跨いでトラック番号だけで
+    // 混ざってしまうが、アーティスト（albumArtist未入力時はartist）でも区別されるため、
+    // Artist Aの2曲→Artist Bの2曲（artist名の文字列順）にまとまる。
+    expect(sortSongsForQueue(songs, "releaseYear", "asc").map((s) => s.fileId)).toEqual([
+      "a1",
+      "a2",
+      "b1",
+      "b2",
+    ]);
+  });
+
+  it("2026-09-08：同じアルバム名・同じアーティストでも、albumArtistが入力済みならalbumArtistで区別される（artistではなくalbumArtistを優先するcatalog.tsの既存規則に合わせる）", () => {
+    const songs = [
+      makeSong({ fileId: "y2", album: "Compilation", artist: "Same Artist", albumArtist: "Various Artists Y", trackNumber: "2", releaseYear: "2000" }),
+      makeSong({ fileId: "x1", album: "Compilation", artist: "Same Artist", albumArtist: "Various Artists X", trackNumber: "1", releaseYear: "2000" }),
+      makeSong({ fileId: "y1", album: "Compilation", artist: "Same Artist", albumArtist: "Various Artists Y", trackNumber: "1", releaseYear: "2000" }),
+      makeSong({ fileId: "x2", album: "Compilation", artist: "Same Artist", albumArtist: "Various Artists X", trackNumber: "2", releaseYear: "2000" }),
+    ];
+    expect(sortSongsForQueue(songs, "releaseYear", "asc").map((s) => s.fileId)).toEqual([
+      "x1",
+      "x2",
+      "y1",
+      "y2",
+    ]);
+  });
+
   it("2026-09-08：リリース年ソートで第二候補にtrack以外（例：artist）を指定した場合、暗黙のアルバムグループ化を適用せず第二候補をそのまま優先する（ChatGPTレビュー指摘：P2。第二候補を明示した場合は第二候補で直接比較するという既存契約を、releaseYearだけ無条件に壊してはならない）", () => {
     const songs = [
       // アルバム名順（Alpha→Zeta）とartist順（A→B）が逆になるデータにする：
