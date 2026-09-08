@@ -295,6 +295,15 @@ describe("PlaybackQueue", () => {
     expect(idleResolved).toBe(true);
     expect(queue.all().map((s) => s.fileId)).toEqual(["a", "c", "b"]); // whenIdle後は反映済み
   });
+  test("generationIdはsetList()のたびに進み、moveSong等の並べ替えでは変わらない（2026-09-08、Codexレビュー指摘：P2続き。whenIdle()待機中に全く別のキューへ差し替えられていないかを呼び出し元が確認するために使う）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    const generation1 = queue.generationId();
+    await queue.moveSong("a", "down");
+    expect(queue.generationId()).toBe(generation1); // 並べ替えでは進まない
+    queue.setList([song("c"), song("d")]);
+    expect(queue.generationId()).not.toBe(generation1); // 差し替えでは進む
+  });
   test("moveSongは指定した曲を1つ上/下へ入れ替える（開発体制#42②、上下ボタン）", async () => {
     const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
     queue.setList([song("a"), song("b"), song("c")]);

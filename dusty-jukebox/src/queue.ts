@@ -40,6 +40,11 @@ export class PlaybackQueue {
   isExcluded(fileId: string): boolean { return this.excluded.has(fileId); }
   all(): Song[] { return [...this.songs]; }
   list(): Song[] { return this.songs.filter((s) => !this.isExcluded(s.fileId)); }
+  // setList()のたびに1つ進む、現在のリストの世代（2026-09-08、Codexレビュー指摘：P2向け）。
+  // whenIdle()はpendingMove待機中の他の操作（アルバム再生・絞り込み等によるsetList()）までは
+  // 防げないため、呼び出し元（handleSavePlaylist()等）が「待っている間に全く別のリストへ
+  // 差し替えられていないか」を確認するのに使う。
+  generationId(): number { return this.generation; }
   currentPlayingFileId(): string | null { return this.currentFileId; }
   // 「再生」ボタン（開発体制#40）向け：現在の曲を再開してよいかどうか。currentFileIdは
   // notifyExternalPlaybackStarted()後も温存され続けるため、これ単独では「キュー由来の再生

@@ -522,6 +522,10 @@ async function handleSavePlaylist(): Promise<void> {
   reservePlaylistsLoadTarget(spreadsheetId);
   const button = el<HTMLButtonElement>("save-playlist-btn");
   button.disabled = true;
+  // whenIdle()はpendingMove待機中の他の操作（アルバム再生・絞り込み等によるsetList()、
+  // またはチェックボックスでの除外）までは防げないため、保存を開始した時点の世代を
+  // 記録しておく（2026-09-08、Codexレビュー指摘：P2）。
+  const startGeneration = queue?.generationId();
   try {
     // 上下ボタン（moveSong）等、queueへの直前の操作がplayer.play()の解決待ちでまだ
     // pendingMove内に留まっている場合があるため、実際に保存する曲順を読む前に完了を待つ
@@ -529,7 +533,20 @@ async function handleSavePlaylist(): Promise<void> {
     // スナップショットを保存してしまう。reservePlaylistsLoadTargetより後にすることで、
     // その対象予約自体の「操作開始時点の同期的なタイミング」という既存の前提は崩さない）。
     await queue?.whenIdle();
+    // 待機中に全く別のキューへ差し替えられていないか（アルバム再生・絞り込み等）を確認する
+    // （2026-09-08、Codexレビュー指摘：P2続き）。差し替えられていた場合、保存開始時点の
+    // 意図と無関係な曲を保存してしまうため中止する。曲数チェックは差し替え確認と合わせて
+    // ここでも行う（待機中の除外操作で全曲除外された場合、差し替わっていなくても0曲に
+    // なりうるため）。
+    if (queue?.generationId() !== startGeneration) {
+      setStatus("保存を待っている間に再生リストが変更されたため、保存を中止しました。内容を確認してもう一度お試しください。", true);
+      return;
+    }
     const fileIds = queue?.list().map((song) => song.fileId) ?? [];
+    if (fileIds.length === 0) {
+      setStatus("保存を待っている間に再生リストが空になったため、保存を中止しました。内容を確認してもう一度お試しください。", true);
+      return;
+    }
     const playlistsIO = playlistsSpreadsheetIO(spreadsheetId);
     await ensurePlaylistTabsReady(spreadsheetId, playlistsIO);
     await createPlaylist(playlistsIO, name, fileIds, deviceRandomId);
