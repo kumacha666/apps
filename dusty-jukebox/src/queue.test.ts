@@ -204,6 +204,31 @@ describe("PlaybackQueue", () => {
     while (await queue.next()) { /* 到達可能な限り辿る */ }
     expect(played).toEqual(["c", "a", "b"]);
   });
+  test("キューを自然終了まで再生し終えた後にsortByすると、プレフィックス固定はされず全曲が並べ替えられる（2026-09-08 ChatGPTレビュー再指摘）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("c"), song("a"), song("b")]);
+    await queue.playAt(0); // "c"が再生中
+    await queue.next(); // "a"
+    await queue.next(); // "b"（末尾）
+    const advanced = await queue.advanceOnEnded(); // 次が無いためisQueuePlaybackがfalseに遷移
+    expect(advanced).toBe(false);
+    // 修正前はcurrentFileId!==nullだけで判定していたため、末尾のbまでがプレフィックス扱いされ
+    // 並び替えが実質何もしなかった（isQueuePlaybackがfalseならプレフィックスは無いのが正しい）。
+    const result = await queue.sortBy("title", "asc");
+    expect(result).toBe(true);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "c"]);
+  });
+  test("キュー曲再生中にキュー外の単曲試聴へ切り替えてからsortByすると、プレフィックス固定はされず全曲が並べ替えられる（2026-09-08 ChatGPTレビュー再指摘）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("c"), song("a"), song("b")]);
+    await queue.playAt(0); // "c"が再生中（キュー再生）
+    queue.notifyExternalPlaybackStarted(); // キュー外の単曲試聴へ切り替え（currentFileIdは温存）
+    // 修正前はcurrentFileId==="c"が残っているためcがプレフィックス扱いされ、
+    // 完全な並べ替えにならなかった（キュー再生中ではないのでプレフィックスは無いのが正しい）。
+    const result = await queue.sortBy("title", "asc");
+    expect(result).toBe(true);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "c"]);
+  });
   test("sortBy後、next()はfileIdで現在位置を探し直すため新しい並びをそのまま辿れる", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("c"), song("a"), song("b")]);

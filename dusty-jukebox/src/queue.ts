@@ -147,6 +147,13 @@ export class PlaybackQueue {
   // 「next()/previous()はfileIdでcurrentIndexを探し直すため新しい並びをそのまま辿れる」という
   // 説明だけでは、前方へ移動した未再生曲の到達性までは保証できない）。現在位置より後ろの区間は
   // 常に現在曲より後ろの位置に留まるため、next()は並べ替え後の新しい順序をそのまま辿れる。
+  // プレフィックス固定はisQueuePlaybackがtrueの場合だけに限定する（2026-09-08、ChatGPTレビュー
+  // 再指摘：currentFileIdはキュー再生が終わった後も温存され続けるため（advanceOnEnded()が
+  // キュー末尾到達時にisQueuePlaybackだけをfalseにする、notifyExternalPlaybackStarted()が
+  // キュー外の単曲試聴開始時に同様にisQueuePlaybackだけをfalseにする、いずれもcanResumeCurrent()
+  // と同じ理由でcurrentFileId自体は意図的に温存）、currentFileId!==nullだけを条件にすると、
+  // キュー再生が実質終わっている状態でもプレフィックスが固定され、並び替えが部分適用または
+  // （末尾まで再生済みの場合）全く効かなくなる不具合があった）。
   // シャッフル履歴（originalOrder）は無効化する（setList()と同じ扱い）：手動で並び替えた後は
   // 「シャッフル前の並び」という概念自体が意味を持たなくなるため、「シャッフルを元に戻す」
   // ボタンは無効に戻る。
@@ -154,7 +161,9 @@ export class PlaybackQueue {
   // 進行中の移動と同期に配列を書き換えると一時的な不整合を招きうるため）。
   sortBy(field: QueueSortField, direction: QueueSortDirection = "asc"): Promise<boolean> {
     return this.move(async () => {
-      const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId);
+      const currentIndex = this.isQueuePlayback && this.currentFileId !== null
+        ? this.songs.findIndex((song) => song.fileId === this.currentFileId)
+        : -1;
       const prefix = this.songs.slice(0, currentIndex + 1);
       const suffix = sortSongsForQueue(this.songs.slice(currentIndex + 1), field, direction);
       this.songs = [...prefix, ...suffix];
