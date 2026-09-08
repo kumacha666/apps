@@ -90,7 +90,16 @@ export class PlaybackQueue {
       // commitしてはならない（currentFileId/isQueuePlaybackを更新せずfalseを返す）。
       // 「一時停止しただけ」はエラー表示すべき状況ではないため、呼び出し元へは再送出しない
       // （queue操作が「何も始まらなかった」を示すfalseを返すという既存の設計に合わせる）。
-      if (err instanceof PlaybackInterruptedError) return false;
+      // 中断を検知した時点でthis.generationを進め、既にpendingMoveへ積まれている後続の
+      // ナビゲーション操作（素早い連続クリックや、フェード中の旧曲自然終了によるadvanceOnEnded()
+      // 経由のnext()等）も無効化する（2026-09-08、Codexレビュー指摘：P1）。move()はoperation実行
+      // 直前に`generation === this.generation`を確認するため（setList()と同じ既存の無効化機構）、
+      // ここで進めないと、ユーザーが明示的に一時停止した直後に後続操作が次の曲を再生してしまい
+      // 一時停止が勝手に取り消される。
+      if (err instanceof PlaybackInterruptedError) {
+        this.generation += 1;
+        return false;
+      }
       throw err;
     } finally {
       if (fadeOut) this.fadeInFlight = false;
@@ -105,6 +114,14 @@ export class PlaybackQueue {
     // Authentication continuation must not wait behind the original native
     // play(), which can remain pending after its stream has already returned
     // 401. Replace that chain while keeping ordinary navigation serialized.
+    // replacePending（認証継続のresume()）でチェーンを置き換える場合、置き換えられた側の
+    // 古いplayer.play()呼び出しが実際にいつ解決するかは保証されない（2026-09-08、Codexレビュー
+    // 指摘：P1。ブラウザのHTMLMediaElement.play()自体が長時間未解決のままになりうるため、
+    // playAndCommit()のtry/finallyがfadeInFlightを確実に解除できるとは限らない）。fadeInFlightを
+    // 解除せず取り残すと、それ以降の曲の自然終了（'ended'）が恒久的に無視され続け、キューが
+    // 二度と自動で進まなくなってしまう。新しいチェーンを開始する時点で、古いフェード待機状態は
+    // もはや意味を持たないため、ここで明示的に解除する。
+    if (replacePending) this.fadeInFlight = false;
     const predecessor = replacePending ? Promise.resolve(false) : this.pendingMove;
     const result = predecessor.then(() => generation === this.generation ? operation(generation) : false);
     // A rejected playback must reject its own caller, but must not prevent a

@@ -241,7 +241,9 @@ describe("PlaybackController", () => {
     const playback = new PlaybackController(audio, () => "valid-token");
 
     await playback.play("A");
-    const firstFade = playback.play("B", 0, { fadeOut: true });
+    // 生成直後にハンドラを付けておく（追い越された側は最終的にPlaybackInterruptedErrorで
+    // rejectするため、unhandled rejection警告を避ける）。
+    const firstFadeError = playback.play("B", 0, { fadeOut: true }).catch((err: unknown) => err);
     // フェードが半分ほど進み、実際にvolumeが下がった後に、追い越す形で新しい再生が
     // 開始される（例：フェード中にキュー外の単曲試聴を始めた場合）。
     await vi.advanceTimersByTimeAsync(1000);
@@ -249,7 +251,9 @@ describe("PlaybackController", () => {
     expect(volumeMidFade).toBeLessThan(1);
     const secondPlay = playback.play("C");
     await vi.runAllTimersAsync();
-    await firstFade;
+    // 追い越された側は、次の曲へ誤ってcommitされないようPlaybackInterruptedErrorで
+    // 中断する（2026-09-08、Codexレビュー指摘：P1続き。以前は正常returnしていた）。
+    expect(await firstFadeError).toBeInstanceOf(PlaybackInterruptedError);
     await secondPlay;
 
     // 最新の再生（C）が正しく開始され、追い越された古いフェードの残りステップによる
@@ -306,5 +310,23 @@ describe("PlaybackController", () => {
     expect(audio.src).toBe(streamUrl("B", playback.currentStreamGeneration() ?? undefined));
     expect(audio.volume).toBe(0.5);
     expect(audio.playCount).toBe(2); // 曲A・曲Bの両方
+  });
+
+  test("フェード中にアプリ内の「一時停止」ボタン（PlaybackController.pause()）で中断された場合も、再生成功として誤commitされないようPlaybackInterruptedErrorを投げる（2026-09-08、Codexレビュー指摘：P1続き。pause()はgenerationを進めるため、この分岐はネイティブpauseとは別経路を通る）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    const srcDuringA = audio.src;
+    const playError = playback.play("B", 0, { fadeOut: true }).catch((err: unknown) => err);
+    // フェードの途中で、アプリ内の「一時停止」ボタンが押される（PlaybackController.pause()を
+    // 直接呼ぶため、audio.pause()だけでなくgenerationも進む）。
+    await vi.advanceTimersByTimeAsync(500);
+    playback.pause();
+    await vi.runAllTimersAsync();
+
+    expect(await playError).toBeInstanceOf(PlaybackInterruptedError);
+    expect(audio.src).toBe(srcDuringA); // 曲Bへは切り替わらない
   });
 });

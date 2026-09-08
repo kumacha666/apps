@@ -100,7 +100,12 @@ export class PlaybackController {
       // フェード完了を待たず別のplay()が既に開始していた場合（Codexレビュー指摘：P1）、
       // そちらのvolume制御を古いフェードのタイマーが上書きしないよう直ちに中断する。
       await fadeOutVolume(this.audio, FADE_OUT_DURATION_MS, { isCancelled: isSuperseded });
-      if (isSuperseded()) return;
+      // 2026-09-08、Codexレビュー指摘：P1続き。アプリ内の「一時停止」ボタンは
+      // PlaybackController.pause()を直接呼びgenerationを進めるため、この分岐（ネイティブ
+      // pauseとは別経路）を通る。以前はここで正常return（voidの成功扱い）していたため、
+      // 呼び出し元のPlaybackQueue.playAndCommit()が誤って次の曲へcommitしてしまっていた。
+      // volumeは既にisCancelled経由でこれ以上更新されない（新しい世代の制御を妨げないため）。
+      if (isSuperseded()) throw new PlaybackInterruptedError();
       // フェード中にネイティブ操作（<audio controls>・Media Session）で明示的に一時停止された
       // 場合、generationは変わらないため上のチェックだけでは検知できない（2026-09-08、Codexレビュー
       // 指摘：P1）。ユーザーが止めた直後に再生が勝手に始まらないよう、ここで中断してvolumeを戻す。
