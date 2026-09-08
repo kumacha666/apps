@@ -404,6 +404,41 @@ describe("PlaybackController", () => {
     // 正しく0.8へ復元されている。
     expect(audio.volume).toBe(0.8);
   });
+  test("フェードを追い越した後の、全く無関係な世代でのpause()を、追い越された古い要求が誤って自分への一時停止と取り違えない（2026-09-08、Codexレビュー指摘：P1。不等号比較〈自分より後に一度でもpause()が呼ばれたか〉は、A→Bのフェードを正当な追い越し（Cの再生）で中断した後、Cを一時停止して再開する操作まで拾ってしまい、その全く無関係な一時停止・再開操作をB要求のPlaybackPausedErrorとして誤って投げ、PlaybackQueue側がCの再開操作まで無効化してしまっていた）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.8;
+    const firstError = playback.play("B", 0, { fadeOut: true }).catch((err: unknown) => err);
+    await vi.advanceTimersByTimeAsync(500);
+    const volumeMidFade = audio.volume;
+    expect(volumeMidFade).toBeLessThan(0.8);
+
+    // Bのフェードを、正当な追い越し（Cの再生）が中断する（一時停止ではない）。
+    await playback.play("C");
+    expect(audio.paused).toBe(false);
+
+    // 古いB要求がまだ次のフェードタイマーステップへ戻る前に、Cを一時停止してすぐ再開する
+    // （Bの追い越しとは全く無関係な、Cについての操作）。
+    playback.pause();
+    await playback.play("C");
+    expect(audio.paused).toBe(false);
+
+    // 古いB要求のフェードタイマーが今になって進み、isSuperseded()判定に到達する。
+    await vi.runAllTimersAsync();
+    const error = await firstError;
+
+    // Bを中断したのは（Cへの）正当な追い越しであって一時停止ではないため、
+    // PlaybackPausedErrorではなくPlaybackInterruptedErrorのはず（Cの一時停止・再開操作を
+    // Bへの一時停止と誤って取り違えていないことの確認）。
+    expect(error).toBeInstanceOf(PlaybackInterruptedError);
+    expect(error).not.toBeInstanceOf(PlaybackPausedError);
+    // Cは（Bの追い越し中断処理の誤動作により）引き続き再生中のはず。
+    expect(audio.paused).toBe(false);
+    expect(audio.src).toContain("C");
+  });
   test("フェード完了後、audio.srcを設定しaudio.play()の解決待ち中にcancelPendingTransition()で中断された場合も、実際に鳴らないよう一時停止する（2026-09-08、Codexレビュー指摘：P1。従来のgeneration確認はaudio.src設定より前までしか効かず、この区間で中断されると『もう選ばれていない曲』のネイティブaudio.play()がそのまま解決し実際に鳴ってしまっていた）", async () => {
     let resolvePlay!: () => void;
     class SlowPlayAudio extends FakeAudio {
