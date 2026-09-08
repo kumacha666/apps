@@ -72,6 +72,22 @@ test("Service Workerの制御待ちがタイムアウトした場合、固まら
   await expect(page.locator("#status")).toContainText("Service Workerの準備がタイムアウトしました", { timeout: 5000 });
 });
 
+test("Service Worker制御待ちが一度タイムアウトしても、その後実際に制御を取得できればページを再読み込みせず次の再生が成功する（2026-09-08 ChatGPTレビュー指摘：タイムアウト結果をserviceWorkerReady自体に固定してしまうと、初回インストール時の低速回線等で8秒を超えて制御を取得できた場合でも、その後の再生がリロードするまで永久に失敗し続けてしまっていた）", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context, { delayServiceWorkerActivation: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#play-file-id").fill("song-1"); await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#status")).toContainText("Service Workerの準備がタイムアウトしました", { timeout: 5000 });
+
+  // タイムアウト後に、実際にはService Workerの制御を取得できたとする。
+  mock.releaseServiceWorker();
+  await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
+
+  // ページを再読み込みせず、同じセッションのまま再度「この曲を再生」を押す。
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/song-1(\?|$)/);
+  await expect.poll(() => mock.streamRequests.length).toBeGreaterThan(0);
+});
+
 test("Driveが期限前のトークンを拒否しても、明示的な認証継続で保留した再生を再開できる", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { rejectFirstStreamToken: true });
   await page.goto("/"); await login(page);

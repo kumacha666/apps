@@ -871,7 +871,7 @@ async function handlePlay(): Promise<void> {
 }
 
 async function startExternalPlayback(fileId: string, currentPlayback: PlaybackController): Promise<boolean> {
-  if (serviceWorkerReady) await serviceWorkerReady;
+  await awaitServiceWorkerReady();
   // Register first: HTMLMediaElement.play() can remain pending (or reject) while
   // the first stream request already receives a Drive 401.
   let continuation!: PlaybackContinuation;
@@ -892,7 +892,7 @@ async function startExternalPlayback(fileId: string, currentPlayback: PlaybackCo
 }
 
 async function startExternalPlaybackAt(fileId: string, currentPlayback: PlaybackController, position: number): Promise<boolean> {
-  if (serviceWorkerReady) await serviceWorkerReady;
+  await awaitServiceWorkerReady();
   let continuation!: PlaybackContinuation;
   continuation = playbackContinuations.register({
     fileId,
@@ -909,10 +909,26 @@ async function startExternalPlaybackAt(fileId: string, currentPlayback: Playback
 
 async function handleQueuePlayback(action: () => Promise<boolean> | undefined): Promise<void> {
   await handlePlaybackAction(async () => {
-    if (serviceWorkerReady) await serviceWorkerReady;
+    await awaitServiceWorkerReady();
     const started = await action();
     return Boolean(started);
   });
+}
+
+// serviceWorkerReady自体はタイムアウトでラップしない生のpromise（init()参照）：もしここで
+// ラップした結果をserviceWorkerReadyへ保存してしまうと、一度タイムアウトした時点でreject済みの
+// まま固定され、その後Service Workerが実際に制御を取得できても以後の再生が永久に失敗し続ける
+// （2026-09-08、ChatGPTレビュー指摘：P2。強制リロード以外にも、初回インストール時の低速回線・
+// 一時的なネットワーク遅延でService Workerのactivate/controlが8秒を超えるケースはありうるため、
+// この回帰は許容できない）。呼び出しのたびにここでタイムアウトを適用することで、前回タイムアウト
+// した後でも元のserviceWorkerReadyが解決していれば次の呼び出しはすぐ成功する。
+function awaitServiceWorkerReady(): Promise<void> {
+  if (!serviceWorkerReady) return Promise.resolve();
+  return withTimeout(
+    serviceWorkerReady,
+    SERVICE_WORKER_READY_TIMEOUT_MS,
+    "Service Workerの準備がタイムアウトしました。強制リロード（キャッシュを無視した再読み込み）を行った場合はこのページを制御しない仕様のため、通常の再読み込みかタブを閉じて開き直してください。"
+  );
 }
 
 function registerQueuePlaybackContinuation(fileId: string, currentPlayback: PlaybackController): void {
@@ -1780,19 +1796,17 @@ function init(): void {
 
   if ("serviceWorker" in navigator) {
     registerStreamAuthResponder(navigator.serviceWorker, () => auth.getAccessToken(), handleStreamTokenRejected, handleStreamTokenIssued);
-    serviceWorkerReady = withTimeout(
-      (async () => {
-        await navigator.serviceWorker.register("./sw.js");
-        await navigator.serviceWorker.ready;
-        await waitForServiceWorkerControl();
-      })(),
-      SERVICE_WORKER_READY_TIMEOUT_MS,
-      "Service Workerの準備がタイムアウトしました。強制リロード（キャッシュを無視した再読み込み）を行った場合はこのページを制御しない仕様のため、通常の再読み込みかタブを閉じて開き直してください。"
-    );
-    // このpromiseは各呼び出し元（handlePlaybackAction経由のtry/catch）が個別にcatchするため、
-    // ここでは誰も待っていないタイミングでタイムアウトした場合の「unhandled promise rejection」
-    // コンソール警告を抑制するだけの空catch（.catch()を1つ付ければ、他の.then()/awaitからの
-    // 個別の拒否検知は妨げられない）。
+    // タイムアウトはここでは適用しない（awaitServiceWorkerReady()参照）：ここで一度きり
+    // withTimeout()した結果を保存すると、タイムアウト後にService Workerが実際に制御を
+    // 取得できても、このpromise自体は既にreject確定済みのままになってしまう。
+    serviceWorkerReady = (async () => {
+      await navigator.serviceWorker.register("./sw.js");
+      await navigator.serviceWorker.ready;
+      await waitForServiceWorkerControl();
+    })();
+    // 誰も待っていないタイミングでこのpromiseが拒否された場合の「unhandled promise rejection」
+    // コンソール警告を抑制するだけの空catch（.catch()を1つ付けても、awaitServiceWorkerReady()側の
+    // 個別のawait/then経由の拒否検知は妨げられない）。
     serviceWorkerReady.catch(() => {});
   }
 
