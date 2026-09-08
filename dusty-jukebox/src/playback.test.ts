@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { PlaybackAuthenticationRequiredError, PlaybackController, streamUrl, type AudioElementLike } from "./playback";
+import { PlaybackAuthenticationRequiredError, PlaybackController, PlaybackInterruptedError, streamUrl, type AudioElementLike } from "./playback";
 
 class FakeAudio implements AudioElementLike {
   src = "";
@@ -267,14 +267,19 @@ describe("PlaybackController", () => {
     await playback.play("A");
     audio.volume = 0.5;
     const srcDuringA = audio.src;
-    const playPromise = playback.play("B", 0, { fadeOut: true });
+    // 生成直後にハンドラを付けておく（runAllTimersAsync()の間に解決してしまうと、
+    // 後から.rejects/.catchを付けるまでの間unhandled rejection警告が出るため）。
+    const playError = playback.play("B", 0, { fadeOut: true }).catch((err: unknown) => err);
     // フェードの途中で、ユーザーが<audio controls>のネイティブ一時停止ボタンを押す
     // （PlaybackController.pause()を経由しないため、generationは変化しない）。
     await vi.advanceTimersByTimeAsync(500);
     audio.pause();
     expect(audio.paused).toBe(true);
     await vi.runAllTimersAsync();
-    await playPromise;
+
+    // 呼び出し元（PlaybackQueue）が誤って再生成功とみなしcommitしないよう、
+    // PlaybackInterruptedErrorをスローする（2026-09-08、Codexレビュー指摘：P1続き）。
+    expect(await playError).toBeInstanceOf(PlaybackInterruptedError);
 
     // 曲Bへは切り替わらず、フェード開始前のvolumeへ戻るだけで再生は始まらない。
     expect(audio.src).toBe(srcDuringA);

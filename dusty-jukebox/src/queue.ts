@@ -1,5 +1,6 @@
 import type { Song } from "./catalog";
 import { sortSongsForQueue, type QueueSortDirection, type QueueSortField } from "./queueSort";
+import { PlaybackInterruptedError } from "./playback";
 export interface AudioEndedLike { addEventListener(type: "ended", listener: () => void): void; }
 export interface PlayerLike { play(fileId: string, position?: number, options?: { fadeOut?: boolean }): Promise<void>; }
 export type BeforeQueuePlay = (fileId: string) => void;
@@ -83,6 +84,14 @@ export class PlaybackQueue {
     if (fadeOut) this.fadeInFlight = true;
     try {
       await this.player.play(fileId, position, fadeOut ? { fadeOut: true } : undefined);
+    } catch (err) {
+      // フェード中にユーザーが明示的に一時停止した場合（2026-09-08、Codexレビュー指摘：P1）。
+      // player.play()は次の曲へ実際には切り替わっていないため、これを再生成功として
+      // commitしてはならない（currentFileId/isQueuePlaybackを更新せずfalseを返す）。
+      // 「一時停止しただけ」はエラー表示すべき状況ではないため、呼び出し元へは再送出しない
+      // （queue操作が「何も始まらなかった」を示すfalseを返すという既存の設計に合わせる）。
+      if (err instanceof PlaybackInterruptedError) return false;
+      throw err;
     } finally {
       if (fadeOut) this.fadeInFlight = false;
     }

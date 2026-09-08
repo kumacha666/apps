@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { PlaybackQueue, queueRowViews, songDisplayLabel, nowPlayingLabel } from "./queue";
-import { PlaybackAuthenticationRequiredError } from "./playback";
+import { PlaybackAuthenticationRequiredError, PlaybackInterruptedError } from "./playback";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { PlaybackContinuationRegistry } from "./playbackContinuation";
 import { parseIndexRows, type Song } from "./catalog";
@@ -426,6 +426,25 @@ describe("PlaybackQueue", () => {
     await queue.advanceOnEnded();
 
     expect(calls[calls.length - 1].fadeOut).toBeUndefined();
+  });
+  test("フェード中にPlaybackInterruptedErrorが投げられた場合（ネイティブ一時停止）、再生成功として誤commitしない（2026-09-08、Codexレビュー指摘：P1）", async () => {
+    const audio = new Audio();
+    const queue = new PlaybackQueue({
+      play: async (_fileId, _position, options) => {
+        if (options?.fadeOut) throw new PlaybackInterruptedError();
+      },
+    }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0); // "a"が再生中（fadeOutなしなので正常にcommitされる）
+    expect(queue.currentPlayingFileId()).toBe("a");
+
+    // 「次へ」をフェードあり（true）で実行するが、ネイティブ一時停止によりPlaybackInterruptedError
+    // がスローされる。
+    const result = await queue.next(true);
+
+    // currentFileIdは"a"のまま（"b"へ誤ってcommitされていない）で、falseを返す。
+    expect(result).toBe(false);
+    expect(queue.currentPlayingFileId()).toBe("a");
   });
   test("フェードアウトを伴う手動スキップの待機中に旧曲が自然終了しても、二重に進めない（2026-09-08、Codexレビュー指摘：P1。フェード中はaudio.srcがまだ旧曲のままのため、待機中に旧曲がendedを発火すると、手動スキップがcommitした直後にさらにもう1曲自動で進んでしまい、手動スキップの対象曲が丸ごとスキップされていた）", async () => {
     const played: string[] = [];

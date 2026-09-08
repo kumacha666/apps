@@ -42,6 +42,18 @@ export class PlaybackAuthenticationRequiredError extends Error {
   }
 }
 
+// フェード中にユーザーが明示的に一時停止した（自然終了ではない）ため、次の曲への切り替えを
+// 中断したことを呼び出し元へ伝える（2026-09-08、Codexレビュー指摘：P1）。play()がこれを
+// スローせず単に正常終了すると、PlaybackQueue.playAndCommit()はplay()の解決を再生成功と
+// みなして対象曲をcurrentFileIdへcommitしてしまい、実際にはaudio要素が旧曲のsrcで停止した
+// ままなのにUIとキューだけが次の曲を再生中と表示する不整合が生じる。
+export class PlaybackInterruptedError extends Error {
+  constructor() {
+    super("再生が中断されました");
+    this.name = "PlaybackInterruptedError";
+  }
+}
+
 // 再生キューを持たない最小の再生器。Service Worker がトークンを待つ後追い方式にはせず、
 // audio.src を設定する前にページ側で有効トークンを確認する。audio の error はファイル不正・
 // 未対応形式なども区別できないため、ここから認証更新や自動リトライは行わない。
@@ -97,7 +109,10 @@ export class PlaybackController {
       // 呼び出し元のPlaybackQueue.playAndCommit()はplay()の正常解決を再生成功とみなして
       // currentFileIdを次の曲へcommitしてしまい、実際には旧曲のsrcで停止したままなのに
       // UIとキューだけが次の曲を再生中と表示する不整合が生じる）。
-      if (this.audio.paused && !this.audio.ended) { this.audio.volume = preFadeVolume; return; }
+      if (this.audio.paused && !this.audio.ended) {
+        this.audio.volume = preFadeVolume;
+        throw new PlaybackInterruptedError();
+      }
     }
     const token = await this.getValidAccessToken();
     if (!token) {
