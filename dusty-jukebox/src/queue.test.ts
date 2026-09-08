@@ -427,6 +427,36 @@ describe("PlaybackQueue", () => {
 
     expect(calls[calls.length - 1].fadeOut).toBeUndefined();
   });
+  test("フェードアウトを伴う手動スキップの待機中に旧曲が自然終了しても、二重に進めない（2026-09-08、Codexレビュー指摘：P1。フェード中はaudio.srcがまだ旧曲のままのため、待機中に旧曲がendedを発火すると、手動スキップがcommitした直後にさらにもう1曲自動で進んでしまい、手動スキップの対象曲が丸ごとスキップされていた）", async () => {
+    const played: string[] = [];
+    let releasePlayB: (() => void) | null = null;
+    const audio = new Audio();
+    const queue = new PlaybackQueue({
+      play: async (id) => {
+        played.push(id);
+        if (id === "b") await new Promise<void>((resolve) => { releasePlayB = resolve; });
+      },
+    }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    await queue.playAt(0); // "a"が再生中
+
+    // 「次へ」をフェードあり（true）で実行、"b"へのplay()がまだ保留中。
+    const manualNext = queue.next(true);
+    await vi.waitFor(() => expect(releasePlayB).not.toBeNull());
+    // この待機中に、旧曲"a"が自然終了する（フェード中はaudio.srcがまだ"a"のまま鳴り続けて
+    // いるため実際に起こりうる）。
+    audio.listener?.();
+    releasePlayB!();
+    await manualNext;
+    // "a"の自然終了によるnext()もpendingMoveチェーンへキューイングされ、手動スキップの
+    // 完了後に実行される。fire-and-forgetのため、その完了も明示的に待つ。
+    await queue.whenIdle();
+
+    // "a"の自然終了によるadvanceOnEnded()が、手動で選んだ"b"を追い越して"c"へ進めていない
+    // ことを確認する（"b"がキューイングされたコールに含まれず、現在曲は"b"のまま）。
+    expect(played).toEqual(["a", "b"]);
+    expect(queue.currentPlayingFileId()).toBe("b");
+  });
   test("キュー再生の終了時だけ次の曲へ進み、単曲試聴後の終了では進まない", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b")]); await queue.playAt(0); audio.listener?.();

@@ -15,6 +15,17 @@ export class PlaybackQueue {
   // started it. Keep navigation requests ordered so a second quick "next" sees
   // the result of the first request instead of requesting the same song again.
   private pendingMove: Promise<boolean> = Promise.resolve(false);
+  // フェードアウトを伴う手動スキップ（next/previous/playFileIdにfadeOut=trueで呼ぶ経路）が
+  // player.play()の完了を待っている間trueにする（2026-09-08、Codexレビュー指摘：P1、開発体制
+  // #42④）。フェード中はaudio.srcがまだ旧曲のままのため、旧曲がこの待機中に自然終了すると
+  // 'ended'が発火するが、旧曲のcurrentFileIdはまだ更新されていない（手動スキップがまだ
+  // committされていない）ため、この'ended'から通常通りnext()/advanceOnEnded()すると、手動
+  // スキップがcommitした直後の新しい曲を追い越してさらに1曲進めてしまう（例：A再生末尾で
+  // 「次へ」でBへフェード中にAが自然終了→Bがcommitされた直後にB→Cへ自動進行し、Bが丸ごと
+  // スキップされる）。フェード中の自然終了は、手動スキップが既にこの遷移を代表しているため
+  // 無視する（フェードを伴わない通常のsrc即時差し替えでは、ブラウザは新しいsrcへの差し替えを
+  // 中断＝load abortとして扱い'ended'自体を発火しないため、この問題は起きない）。
+  private fadeInFlight = false;
   constructor(
     private readonly player: PlayerLike,
     audio: AudioEndedLike,
@@ -23,7 +34,7 @@ export class PlaybackQueue {
     private readonly onBeforePlay: BeforeQueuePlay = () => {}
   ) {
     audio.addEventListener("ended", () => {
-      if (!this.isQueuePlayback) return;
+      if (!this.isQueuePlayback || this.fadeInFlight) return;
       if (this.onEnded) this.onEnded();
       else void this.next().catch(this.onError);
     });
@@ -69,7 +80,12 @@ export class PlaybackQueue {
     // Register a continuation before the native play promise settles: the
     // initial stream request can receive a 401 while that promise is pending.
     this.onBeforePlay(fileId);
-    await this.player.play(fileId, position, fadeOut ? { fadeOut: true } : undefined);
+    if (fadeOut) this.fadeInFlight = true;
+    try {
+      await this.player.play(fileId, position, fadeOut ? { fadeOut: true } : undefined);
+    } finally {
+      if (fadeOut) this.fadeInFlight = false;
+    }
     if (generation !== this.generation) return false;
     this.currentFileId = fileId;
     this.isQueuePlayback = true;

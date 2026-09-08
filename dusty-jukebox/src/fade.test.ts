@@ -41,4 +41,18 @@ describe("fadeOutVolume", () => {
     expect(audio.volume).toBe(0);
     expect(waitCalled).toBe(false);
   });
+
+  test("isCancelledがtrueを返した時点でvolumeの更新を止める（2026-09-08、Codexレビュー指摘：P1。フェード中に別のplay()が開始した場合、そちらのvolume制御を上書きしないため）", async () => {
+    const audio = { volume: 1 };
+    let step = 0;
+    await fadeOutVolume(audio, 1000, {
+      steps: 4,
+      wait: async () => { step += 1; },
+      isCancelled: () => step >= 2,
+    });
+
+    // 2ステップ目でキャンセルされるため、1ステップ目のvolume更新（0.75）だけが反映され、
+    // 2ステップ目以降のvolume更新（0.5, 0.25, 0）は行われない。
+    expect(audio.volume).toBe(0.75);
+  });
 });

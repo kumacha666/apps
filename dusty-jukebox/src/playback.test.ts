@@ -159,55 +159,118 @@ describe("PlaybackController", () => {
     expect(audio.currentTime).toBe(73.5);
   });
 
-  test("fadeOut指定時は現在再生中の音声をフェードアウトしてから次の曲へ切り替え、volumeを1へ戻す（開発体制#42④）", async () => {
+  test("fadeOut指定時は現在再生中の音声をフェードアウトしてから次の曲へ切り替え、フェード開始前のvolumeへ戻す（開発体制#42④）", async () => {
     vi.useFakeTimers();
     const audio = new FakeAudio();
     const playback = new PlaybackController(audio, () => "valid-token");
 
     await playback.play("A");
     expect(audio.paused).toBe(false);
+    // ユーザーが<audio controls>で0.6に調整していた想定（2026-09-08、Codexレビュー指摘：P1。
+    // 以前は次の曲の開始時に無条件でvolume=1へ戻していたため、この設定が失われていた）。
+    audio.volume = 0.6;
 
     const srcDuringA = audio.src;
     const playPromise = playback.play("B", 0, { fadeOut: true });
     // フェードの途中（半分程度）まで時間を進めた時点で、srcはまだ曲Aのままで
-    // volumeは1未満に下がっている（実際にフェードが起きていることの検証）。
+    // volumeは0.6未満に下がっている（実際にフェードが起きていることの検証）。
     await vi.advanceTimersByTimeAsync(1000);
     expect(audio.src).toBe(srcDuringA);
     expect(audio.volume).toBeGreaterThan(0);
-    expect(audio.volume).toBeLessThan(1);
+    expect(audio.volume).toBeLessThan(0.6);
 
     await vi.runAllTimersAsync();
     await playPromise;
 
     expect(audio.src).toBe(streamUrl("B", playback.currentStreamGeneration() ?? undefined));
-    expect(audio.volume).toBe(1);
+    expect(audio.volume).toBe(0.6);
   });
 
-  test("再生中でない（一時停止中の）曲へのfadeOut指定はフェードを待たずすぐに切り替える", async () => {
+  test("再生中でない（一時停止中の）曲へのfadeOut指定はフェードを待たずすぐに切り替え、volumeに触れない", async () => {
     const audio = new FakeAudio();
     const playback = new PlaybackController(audio, () => "valid-token");
 
     await playback.play("A");
     playback.pause();
     expect(audio.paused).toBe(true);
+    audio.volume = 0.4; // 一時停止中にユーザーが調整した想定
 
     await playback.play("B", 0, { fadeOut: true });
 
     expect(audio.src).toBe(streamUrl("B", playback.currentStreamGeneration() ?? undefined));
-    expect(audio.volume).toBe(1);
+    expect(audio.volume).toBe(0.4);
   });
 
-  test("fadeOut中にトークンが取得できなかった場合もvolumeを1へ戻す", async () => {
+  test("fadeOutを指定しない通常の再生ではvolumeへ一切触れない（2026-09-08、Codexレビュー指摘：P1の回帰防止。曲の自然終了時の次曲再生や、フェード無効時の手動スキップでユーザーの音量設定を壊さないこと）", async () => {
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.25;
+    await playback.play("B"); // fadeOut未指定
+
+    expect(audio.volume).toBe(0.25);
+  });
+
+  test("fadeOut中にトークンが取得できなかった場合もフェード開始前のvolumeへ戻す", async () => {
     vi.useFakeTimers();
     const audio = new FakeAudio();
     const playback = new PlaybackController(audio, () => null);
     audio.paused = false; // 何かが再生中の状態を模擬
+    audio.volume = 0.7;
 
     const playPromise = playback.play("A", 0, { fadeOut: true }).catch(() => {});
     await vi.runAllTimersAsync();
     await playPromise;
 
-    expect(audio.volume).toBe(1);
+    expect(audio.volume).toBe(0.7);
     expect(audio.src).toBe("");
+  });
+
+  test("フェード完了時に別のplay()へ追い越されていた場合、そちらのvolume制御を上書きせず直ちに中断する（2026-09-08、Codexレビュー指摘：P1）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    const firstFade = playback.play("B", 0, { fadeOut: true });
+    // フェードが半分ほど進み、実際にvolumeが下がった後に、追い越す形で新しい再生が
+    // 開始される（例：フェード中にキュー外の単曲試聴を始めた場合）。
+    await vi.advanceTimersByTimeAsync(1000);
+    const volumeMidFade = audio.volume;
+    expect(volumeMidFade).toBeLessThan(1);
+    const secondPlay = playback.play("C");
+    await vi.runAllTimersAsync();
+    await firstFade;
+    await secondPlay;
+
+    // 最新の再生（C）が正しく開始され、追い越された古いフェードの残りステップによる
+    // volume書き換えでは上書きされていない（isCancelledで即座に中断するため、Cが
+    // 開始した時点のvolume以降は変化しない）。
+    expect(audio.src).toBe(streamUrl("C", playback.currentStreamGeneration() ?? undefined));
+    expect(audio.volume).toBe(volumeMidFade);
+  });
+
+  test("フェード中にネイティブ操作で明示的に一時停止された場合、フェード完了後も次の曲を勝手に再生しない（2026-09-08、Codexレビュー指摘：P1）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.5;
+    const srcDuringA = audio.src;
+    const playPromise = playback.play("B", 0, { fadeOut: true });
+    // フェードの途中で、ユーザーが<audio controls>のネイティブ一時停止ボタンを押す
+    // （PlaybackController.pause()を経由しないため、generationは変化しない）。
+    await vi.advanceTimersByTimeAsync(500);
+    audio.pause();
+    expect(audio.paused).toBe(true);
+    await vi.runAllTimersAsync();
+    await playPromise;
+
+    // 曲Bへは切り替わらず、フェード開始前のvolumeへ戻るだけで再生は始まらない。
+    expect(audio.src).toBe(srcDuringA);
+    expect(audio.volume).toBe(0.5);
+    expect(audio.playCount).toBe(1); // 曲Aの1回のみ（Bのplay()は呼ばれない）
   });
 });

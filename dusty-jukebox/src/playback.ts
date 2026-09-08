@@ -68,26 +68,41 @@ export class PlaybackController {
   async play(fileId: string, position = 0, options: PlayOptions = {}): Promise<void> {
     this.generation += 1;
     const playGeneration = this.generation;
-    // フェードアウトは現在再生中の音声（これから置き換わる方）に対して行う。src差し替え・
-    // トークン確認より前に行うことで、「まだ次の曲が確定するか分からない段階で無音にしてしまう」
-    // 事態を避ける（次の曲が実際に見つからずplay()自体が呼ばれない場合はフェードも発生しない、
-    // moveSong等と同じ「見つかった時だけ動く」設計）。フェード完了時に別のplay()が既に開始して
-    // いた場合（generation不一致）は、そちらのvolume制御を上書きしないようreturnする。
+    const isSuperseded = () => this.generation !== playGeneration;
+    // フェードアウトを実際に行った場合だけ、フェード開始前のvolumeを覚えておく（2026-09-08、
+    // Codexレビュー指摘：P1。以前は毎回volume=1へ強制リセットしていたため、ユーザーが
+    // <audio controls>で音量を調整していても、フェード無効時の通常再生や曲の自然終了時の
+    // 次曲再生で突然最大音量へ戻ってしまっていた。フェードを行っていない限りvolumeには
+    // 一切触れない）。
+    let preFadeVolume: number | null = null;
     if (options.fadeOut && !this.audio.paused) {
-      await fadeOutVolume(this.audio, FADE_OUT_DURATION_MS);
-      if (this.generation !== playGeneration) return;
+      preFadeVolume = this.audio.volume;
+      // 現在再生中の音声（これから置き換わる方）に対して行う。src差し替え・トークン確認より前に
+      // 行うことで、「まだ次の曲が確定するか分からない段階で無音にしてしまう」事態を避ける
+      // （次の曲が実際に見つからずplay()自体が呼ばれない場合はフェードも発生しない、moveSong等と
+      // 同じ「見つかった時だけ動く」設計）。isCancelledで各ステップ後にgenerationを再確認し、
+      // フェード完了を待たず別のplay()が既に開始していた場合（Codexレビュー指摘：P1）、
+      // そちらのvolume制御を古いフェードのタイマーが上書きしないよう直ちに中断する。
+      await fadeOutVolume(this.audio, FADE_OUT_DURATION_MS, { isCancelled: isSuperseded });
+      if (isSuperseded()) return;
+      // フェード中にネイティブ操作（<audio controls>・Media Session）で明示的に一時停止された
+      // 場合、generationは変わらないため上のチェックだけでは検知できない（2026-09-08、Codexレビュー
+      // 指摘：P1）。ユーザーが止めた直後に再生が勝手に始まらないよう、ここで中断してvolumeを戻す。
+      if (this.audio.paused) { this.audio.volume = preFadeVolume; return; }
     }
     const token = await this.getValidAccessToken();
     if (!token) {
-      this.audio.volume = 1;
+      if (preFadeVolume !== null && !isSuperseded()) this.audio.volume = preFadeVolume;
       throw new PlaybackAuthenticationRequiredError();
     }
     // トークン確認中に停止または別曲の再生が入った場合、古い要求はsrcを変更しない。
-    if (this.generation !== playGeneration) { this.audio.volume = 1; return; }
+    if (isSuperseded()) return;
     this.currentFileId = fileId;
     this.audio.src = streamUrl(fileId, playGeneration);
-    // 次の曲の開始時は必ず全音量に戻す（フェードアウトはこの1回のスキップだけの演出のため）。
-    this.audio.volume = 1;
+    // フェードアウトした分だけ、次の曲の開始時にフェード開始前のvolumeへ戻す
+    // （フェードアウトはこの1回のスキップだけの演出のため）。フェードしていない場合は
+    // volumeへ一切触れず、ユーザーが<audio controls>で設定した値をそのまま維持する。
+    if (preFadeVolume !== null) this.audio.volume = preFadeVolume;
     this.streamGeneration = playGeneration;
     // Set this after src so a resumed stream seeks instead of being reset by
     // assigning the new media URL. Browsers retain the requested position until
