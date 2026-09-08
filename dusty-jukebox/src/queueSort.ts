@@ -74,6 +74,22 @@ function compareByFieldOnly(a: Song, b: Song, field: QueueSortField, direction: 
   }
 }
 
+// リリース年でソートする際、同じ年の曲を常にリリース種別→アルバムでグループ化する
+// （2026-09-08、ユーザー指摘：アーティストの活動歴を追いたい場合、同じ年に複数アルバムが
+// あると、アルバム名でのグループ化すら無いためトラック番号やタイトルで曲がバラバラに
+// 混ざってしまい実用にならなかった）。releaseTypeはタグから自動抽出されないユーザー入力欄
+// （catalog.ts参照）だが、埋まっていれば同じ年のシングルとアルバムも別グループにできる。
+// 空欄同士は常に等しい（compareStringsの「不明値は末尾」規則により、片方だけ空欄なら
+// 常に末尾へ回るため、リリース種別を入力していない曲が多い場合でも既存の並びを壊さない）。
+// グループ間の前後関係はアルバム名・種別名の文字列順になる（メタデータに月日が無いため、
+// 同じ年内での実際のリリース順までは決定できない、既知の限界）。第二候補・方向の指定
+// （direction）には依存させず、常にこの安定順を先に適用する。
+function releaseYearGroupingTiebreak(a: Song, b: Song): number {
+  const releaseTypeCmp = compareStrings(a.releaseType, b.releaseType, "asc");
+  if (releaseTypeCmp !== 0) return releaseTypeCmp;
+  return compareStrings(a.album, b.album, "asc");
+}
+
 // 第二候補のソートキー（開発体制#42、2026-09-08：単一アーティストで複数アルバムある場合に
 // 「アルバムを古い順に、かつそのアルバム内はトラック順に」のような2段階の並べ替えをしたい、
 // というユーザー要望を受けて追加）。第二候補を明示した場合は、第一候補が同値の曲同士を
@@ -88,6 +104,14 @@ export function compareSongsForQueueSort(
 ): number {
   const primary = compareByFieldOnly(a, b, field, direction);
   if (primary !== 0) return primary;
+  // リリース年が同値の場合、第二候補・既定の副次キーより先にリリース種別→アルバムで
+  // グループ化する（2026-09-08、ユーザー指摘）。第二候補にtrackを選んでいても、
+  // このグループ化を経てからトラック順を適用することで「アルバムを跨いでトラック番号だけで
+  // 混ざる」ことを防ぐ。
+  if (field === "releaseYear") {
+    const grouping = releaseYearGroupingTiebreak(a, b);
+    if (grouping !== 0) return grouping;
+  }
   if (secondaryField) {
     const secondary = compareByFieldOnly(a, b, secondaryField, secondaryDirection);
     if (secondary !== 0) return secondary;
@@ -98,6 +122,14 @@ export function compareSongsForQueueSort(
   if (field === "artist" || field === "album") {
     const tiebreak = albumOrderTiebreak(a, b);
     if (tiebreak !== 0) return tiebreak;
+  }
+  if (field === "releaseYear") {
+    // グループ化後（同じリリース種別・アルバム内）は、ディスク→トラック→タイトルの
+    // 自然な再生順で安定させる（アーティスト/アルバムの既定副次キーと同じ考え方）。
+    const discCmp = compareNumeric(a.discNumber, b.discNumber, "asc");
+    if (discCmp !== 0) return discCmp;
+    const trackCmp = compareNumeric(a.trackNumber, b.trackNumber, "asc");
+    if (trackCmp !== 0) return trackCmp;
   }
   return compareStrings(a.title, b.title, "asc") || compareStrings(a.fileId, b.fileId, "asc");
 }

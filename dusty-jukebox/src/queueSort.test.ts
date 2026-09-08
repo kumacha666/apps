@@ -99,6 +99,54 @@ describe("sortSongsForQueue", () => {
       sortSongsForQueue(songs, "artist", "asc", "releaseYear", "asc").map((s) => s.fileId)
     ).toEqual(["2", "1"]);
   });
+
+  it("2026-09-08：リリース年でソートすると、同じ年の複数アルバムがアルバム名単位でまとまり、トラック番号だけで曲が混ざらない（ユーザー指摘：アーティストの活動歴を追う用途で、同じ年に複数アルバムがあるとバラバラに混ざってしまっていた）", () => {
+    const songs = [
+      makeSong({ fileId: "b2", album: "Beta", trackNumber: "2", releaseYear: "2000" }),
+      makeSong({ fileId: "a1", album: "Alpha", trackNumber: "1", releaseYear: "2000" }),
+      makeSong({ fileId: "b1", album: "Beta", trackNumber: "1", releaseYear: "2000" }),
+      makeSong({ fileId: "a2", album: "Alpha", trackNumber: "2", releaseYear: "2000" }),
+    ];
+    // 第二候補を指定しない場合：アルバム名順（Alpha→Beta）でグループ化され、
+    // 各アルバム内はトラック順（旧実装ではトラック番号だけで1,1,2,2と混ざっていた）。
+    expect(sortSongsForQueue(songs, "releaseYear", "asc").map((s) => s.fileId)).toEqual([
+      "a1",
+      "a2",
+      "b1",
+      "b2",
+    ]);
+  });
+
+  it("2026-09-08：リリース年ソートで第二候補にtrackを指定していても、アルバムのグループ化が優先される（第二候補はグループ化後の並び替えに使われる）", () => {
+    const songs = [
+      makeSong({ fileId: "b2", album: "Beta", trackNumber: "2", releaseYear: "2000" }),
+      makeSong({ fileId: "a1", album: "Alpha", trackNumber: "1", releaseYear: "2000" }),
+      makeSong({ fileId: "b1", album: "Beta", trackNumber: "1", releaseYear: "2000" }),
+      makeSong({ fileId: "a2", album: "Alpha", trackNumber: "2", releaseYear: "2000" }),
+    ];
+    expect(
+      sortSongsForQueue(songs, "releaseYear", "asc", "track", "asc").map((s) => s.fileId)
+    ).toEqual(["a1", "a2", "b1", "b2"]);
+  });
+
+  it("2026-09-08：リリース年でソートすると、releaseTypeを入力済みの曲は同じ年でも種別ごとにグループ化される（シングルとアルバムの区別）", () => {
+    const songs = [
+      makeSong({ fileId: "single", album: "Zeta Single", releaseType: "Single", releaseYear: "2000" }),
+      makeSong({ fileId: "album", album: "Alpha Album", releaseType: "Album", releaseYear: "2000" }),
+    ];
+    // アルバム名だけならZetaが先だが、releaseType（Album<Single、文字列順）を優先してグループ化する。
+    expect(
+      sortSongsForQueue(songs, "releaseYear", "asc").map((s) => s.fileId)
+    ).toEqual(["album", "single"]);
+  });
+
+  it("2026-09-08：releaseTypeが未入力の曲同士は、リリース年ソートでも従来通りアルバム名でグループ化される（releaseType空欄は互いに区別しない）", () => {
+    const songs = [
+      makeSong({ fileId: "b", album: "Beta", releaseYear: "2000" }),
+      makeSong({ fileId: "a", album: "Alpha", releaseYear: "2000" }),
+    ];
+    expect(sortSongsForQueue(songs, "releaseYear", "asc").map((s) => s.fileId)).toEqual(["a", "b"]);
+  });
 });
 
 describe("compareSongsForQueueSort", () => {
