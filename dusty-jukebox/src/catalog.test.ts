@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { INDEX_SHEET_HEADER } from "./sheets";
-import { distinctFieldValues, filterAlbumGroups, filterSongs, groupAlbumsByArtist, groupSongsByAlbum, parseIndexRows, readOverride, sortSongs, type Song } from "./catalog";
+import { distinctFieldValues, distinctFieldValuesForFilters, filterAlbumGroups, filterSongs, groupAlbumsByArtist, groupSongsByAlbum, parseIndexRows, readOverride, sortSongs, type Song } from "./catalog";
 const row = (values: Record<string, string>): string[] => INDEX_SHEET_HEADER.map((header) => values[header] ?? "");
 describe("索引行の読み取り", () => {
   test("overrideの空欄/(none)/値とfileIdフォールバックを扱う", () => {
@@ -71,6 +71,29 @@ describe("オートコンプリート候補の抽出", () => {
   });
   test("空欄は候補に含めない", () => {
     expect(distinctFieldValues([song({ album: "" }), song({ album: "  " })], "album")).toEqual([]);
+  });
+  test("開発体制#43：他の絞り込み条件で候補を連動して絞り込む（アーティストを選んでいればアルバム候補もそのアーティストのものだけになる）", () => {
+    const songs = [
+      song({ fileId: "1", artist: "Alpha", album: "A-1" }),
+      song({ fileId: "2", artist: "Alpha", album: "A-2" }),
+      song({ fileId: "3", artist: "Beta", album: "B-1" }),
+    ];
+    expect(distinctFieldValuesForFilters(songs, "album", { artist: "Alpha", includeUnknownYear: true })).toEqual(["A-1", "A-2"]);
+    expect(distinctFieldValuesForFilters(songs, "album", { includeUnknownYear: true })).toEqual(["A-1", "A-2", "B-1"]);
+  });
+  test("開発体制#43：フィールド自身の現在の入力値は自分自身の候補の絞り込みには使わない（自分以外の条件だけで絞り込む）", () => {
+    const songs = [song({ fileId: "1", artist: "Alpha" }), song({ fileId: "2", artist: "Beta" })];
+    // artist欄自身に何か入力中でも、artist候補一覧はその入力で絞り込まれず全件のまま出す
+    // （ネイティブdatalistのprefixフィルタと二重に絞り込まれることを避けるため）。
+    expect(distinctFieldValuesForFilters(songs, "artist", { artist: "Alp", includeUnknownYear: true })).toEqual(["Alpha", "Beta"]);
+  });
+  test("開発体制#43：query・年範囲・includeUnknownYearはフィールド固有ではないため常に絞り込みに使う", () => {
+    const songs = [
+      song({ fileId: "1", artist: "Alpha", album: "Old", releaseYear: "1990" }),
+      song({ fileId: "2", artist: "Alpha", album: "New", releaseYear: "2020" }),
+    ];
+    expect(distinctFieldValuesForFilters(songs, "album", { minYear: 2000, includeUnknownYear: false })).toEqual(["New"]);
+    expect(distinctFieldValuesForFilters(songs, "album", { query: "Old", includeUnknownYear: true })).toEqual(["Old"]);
   });
 });
 describe("アルバムグルーピング", () => {

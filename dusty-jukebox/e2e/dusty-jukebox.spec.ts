@@ -111,6 +111,28 @@ test("索引読み込み後、アーティスト/Genre欄の候補一覧（datal
   await expect(page.locator("#filter-genre-options option")).toHaveText(["Rock"]);
 });
 
+test("絞り込み欄同士が連動し、アーティストを選ぶとアルバム欄の候補がそのアーティストのものだけに絞られる（開発体制#43）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  // 絞り込み前はSoloist（Symphony）とQuartet（Blue Notes）の両方のアルバムが候補に出る。
+  await expect(page.locator("#filter-album-options option")).toHaveText(["Blue Notes", "Symphony"]);
+
+  await page.locator("#filter-artist").fill("Soloist");
+  // アーティストをSoloistに絞ると、そのアーティストのアルバム（Symphony）だけが候補に残る。
+  await expect(page.locator("#filter-album-options option")).toHaveText(["Symphony"]);
+
+  // アーティスト欄自身の候補は、自分自身の入力では絞り込まれず全アーティストのまま出る
+  // （ネイティブdatalistのprefixフィルタと二重に絞り込まれることを避けるため）。
+  await expect(page.locator("#filter-artist-options option")).toHaveText(["Quartet", "Soloist"]);
+
+  await page.locator("#filter-artist").fill("");
+  // アーティスト条件を解除すると、アルバム候補も全アルバムに戻る。
+  await expect(page.locator("#filter-album-options option")).toHaveText(["Blue Notes", "Symphony"]);
+});
+
 test("再生リストの曲をクリックするとその曲が再生され、再生中の曲名表示と行のハイライトが更新される", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
 

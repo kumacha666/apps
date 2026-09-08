@@ -83,6 +83,18 @@ export function distinctFieldValues(songs: Song[], field: AutocompleteField): st
   return [...values].sort((a, b) => a.localeCompare(b));
 }
 
+// 絞り込み欄同士を連動させる（開発体制#43、2026-09-08 ユーザー指摘：アーティストを選んで
+// いるのに、アルバム欄の候補にそのアーティスト以外のアルバムまで出るのは意味が無い）。
+// `field`自身の現在の入力値は候補の絞り込みに使わない（自分の欄を除いた他の条件だけで
+// 絞り込んだ結果から候補一覧を作る）：もし自分自身も絞り込みに使うと、入力途中の文字列で
+// 候補自体が先細りしてしまい、ネイティブのdatalistが持つ「入力中の文字列で候補をprefix
+// フィルタする」機能と二重に絞り込まれておかしくなるため。query・年範囲・
+// includeUnknownYearは常に絞り込みに使う（フィールド固有の条件ではないため）。
+export function distinctFieldValuesForFilters(songs: Song[], field: AutocompleteField, filters: SongFilters): string[] {
+  const scopedFilters: SongFilters = { ...filters, [field]: undefined };
+  return distinctFieldValues(filterSongs(songs, scopedFilters), field);
+}
+
 const numeric = (v: string) => { const n = Number(v); return v.trim() !== "" && Number.isFinite(n) ? n : Number.POSITIVE_INFINITY; };
 export function sortSongs(songs: Song[]): Song[] {
   return [...songs].sort((a, b) => numeric(a.releaseYear) - numeric(b.releaseYear) || a.artist.localeCompare(b.artist) ||
