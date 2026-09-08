@@ -186,6 +186,18 @@ export class PlaybackController {
   currentGeneration(): number { return this.generation; }
   currentStreamGeneration(): number | null { return this.streamGeneration; }
 
+  // フェードを含む進行中のplay()を、audioを止めずに無効化する（2026-09-08、Codexレビュー指摘：
+  // P1）。PlaybackQueue.setList()（別アルバム・プレイリストの選択）はキュー側の状態
+  // （activeFadeToken等）だけを失効させても、PlaybackController内で進行中のフェード付き
+  // play()自体はキャンセルされないため、そのままにするとフェード完了後に「もう選ばれていない
+  // 旧リストの曲」のaudio.srcが設定されaudio.play()が呼ばれ、実際に鳴ってしまう
+  // （isSuperseded()はthis.generationの変化でしか検知できず、setList()はcontroller側の
+  // generationを一切進めないため）。pause()と異なりaudio.pause()やcurrentFileIdのクリアは
+  // 行わない（setList()の直後に新しいplayAt()が続く場合、無関係にaudioを止めてしまわないため）。
+  cancelPendingTransition(): void {
+    this.generation += 1;
+  }
+
   pause(): void {
     this.generation += 1;
     this.pausedAtGeneration = this.generation;

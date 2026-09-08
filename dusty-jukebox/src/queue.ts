@@ -2,7 +2,13 @@ import type { Song } from "./catalog";
 import { sortSongsForQueue, type QueueSortDirection, type QueueSortField } from "./queueSort";
 import { PlaybackInterruptedError, PlaybackPausedError } from "./playback";
 export interface AudioEndedLike { addEventListener(type: "ended", listener: () => void): void; }
-export interface PlayerLike { play(fileId: string, position?: number, options?: { fadeOut?: boolean }): Promise<void>; }
+export interface PlayerLike {
+  play(fileId: string, position?: number, options?: { fadeOut?: boolean }): Promise<void>;
+  // setList()（別アルバム・プレイリスト選択）でPlaybackController側の進行中フェードも
+  // 無効化するために使う（2026-09-08、Codexレビュー指摘：P1、詳細はplayback.tsの実装参照）。
+  // 実PlaybackController以外の簡易モック（既存テスト等）を壊さないためoptionalにする。
+  cancelPendingTransition?(): void;
+}
 export type BeforeQueuePlay = (fileId: string) => void;
 
 export class PlaybackQueue {
@@ -60,7 +66,11 @@ export class PlaybackQueue {
   // 等で未解決のまま残っている間に別アルバム・プレイリストを選ぶと、新しい曲が再生されても
   // 古いトークンが残り続け、コンストラクタの'ended'ガードがそれを無期限に一時停止扱いのまま
   // 無視してしまい、自動送りが止まる。
-  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.activeFadeToken = null; this.songs = [...songs]; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
+  // activeFadeTokenの失効だけではキュー側の状態を正すのみで、PlaybackController内で進行中の
+  // フェード付きplay()自体はキャンセルされない（2026-09-08、Codexレビュー指摘：P1続き）。
+  // player.cancelPendingTransition()でcontroller側のgenerationも進め、フェード完了後に
+  // 「もう選ばれていない旧リストの曲」が実際に鳴ってしまうのを防ぐ。
+  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.activeFadeToken = null; this.player.cancelPendingTransition?.(); this.songs = [...songs]; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
   notifyExternalPlaybackStarted(): void { this.isQueuePlayback = false; }
   // 呼び出しのたびに1つ進む（2026-09-08、Codexレビュー指摘：P2続き）。exclude()はsetList()を
   // 経由せず即座にexcludedを書き換えるため、generationId()では検出できない「除外/除外解除だけの

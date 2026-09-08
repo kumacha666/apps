@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { PlaybackQueue, queueRowViews, songDisplayLabel, nowPlayingLabel } from "./queue";
-import { PlaybackAuthenticationRequiredError, PlaybackInterruptedError, PlaybackPausedError } from "./playback";
+import { PlaybackAuthenticationRequiredError, PlaybackController, PlaybackInterruptedError, PlaybackPausedError, type AudioElementLike } from "./playback";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { PlaybackContinuationRegistry } from "./playbackContinuation";
 import { parseIndexRows, type Song } from "./catalog";
@@ -810,6 +810,40 @@ describe("PlaybackQueue", () => {
     // 孤立していた古いフェード操作（"b"）が後から解決しても、上記の検証には影響しない。
     settleOrphan();
     await orphanedMove;
+  });
+
+  test("setList()（別アルバム・プレイリスト選択）は、実PlaybackController内で進行中だったフェードもキャンセルし、フェード完了後に選ばれていない旧リストの曲が実際に鳴らないようにする（2026-09-08、Codexレビュー指摘：P1続き。activeFadeTokenの失効だけではキュー側の状態を正すのみで、PlaybackController内で進行中のフェード付きplay()自体はキャンセルされないため、フェード完了後に旧リストの曲のaudio.srcが設定されaudio.play()が実際に呼ばれてしまっていた）", async () => {
+    vi.useFakeTimers();
+    class IntegrationAudio implements AudioElementLike {
+      src = ""; currentTime = 0; volume = 1; paused = true; ended = false;
+      private listeners: Record<string, Array<() => void>> = {};
+      async play(): Promise<void> { this.paused = false; this.ended = false; }
+      pause(): void { this.paused = true; }
+      addEventListener(type: string, listener: () => void): void {
+        (this.listeners[type] ??= []).push(listener);
+      }
+    }
+    const audio = new IntegrationAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+    const queue = new PlaybackQueue(playback, audio as unknown as { addEventListener(type: "ended", listener: () => void): void });
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0); // "a"が再生中
+    const srcDuringA = audio.src;
+
+    const manualNext = queue.next(true).catch((err) => err); // "a"→"b"へフェード開始（2秒間）
+    await vi.advanceTimersByTimeAsync(500); // フェード進行中（旧曲がまだ鳴っている）
+
+    // フェード完了前に、別アルバム・プレイリストへ切り替える（setList()のみ、playAt()は伴わない
+    // ケース——Codex指摘の「この順序」）。
+    queue.setList([song("x"), song("y")]);
+
+    // フェードの残り時間が経過しても、もう選ばれていない旧リストの"b"へは切り替わらない
+    // （audio.srcが変わらない＝実際には鳴らない）。
+    await vi.runAllTimersAsync();
+    await manualNext;
+
+    expect(audio.src).toBe(srcDuringA);
+    expect(queue.currentPlayingFileId()).toBeNull(); // 新リストではまだ何も再生していない
   });
 
   test("自動送り中の認証待ちは次曲を保留し、明示的な継続後に同じ次曲を再開する", async () => {
