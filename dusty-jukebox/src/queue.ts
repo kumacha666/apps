@@ -172,6 +172,25 @@ export class PlaybackQueue {
       true
     );
   }
+  // 再生リスト内の曲を1つ上/下へ手動で入れ替える（上下ボタン、開発体制#42②）。除外中の曲も
+  // 通常の行として一覧に表示され続けるため（main.tsのrenderQueue参照）、除外の有無に関わらず
+  // 表示順そのままの隣接する2件を入れ替える（除外中の曲だけ飛び越える等の特別扱いはしない。
+  // 見た目の並びと配列の並びを常に一致させ、挙動を単純・予測可能にするため）。currentFileId・
+  // 除外設定は変えない。sortBy()と同じ理由でシャッフル履歴（originalOrder）は無効化する：
+  // 手動で並び替えた後は「シャッフル前の並び」という概念自体が意味を持たなくなるため。
+  // next()/playAt()等と同じpendingMoveの直列化チェーンに参加させる（進行中の移動と同期に
+  // 配列を書き換えると一時的な不整合を招きうるため）。
+  moveSong(fileId: string, direction: "up" | "down"): Promise<boolean> {
+    return this.move(async () => {
+      const index = this.songs.findIndex((song) => song.fileId === fileId);
+      if (index === -1) return false;
+      const target = direction === "up" ? index - 1 : index + 1;
+      if (target < 0 || target >= this.songs.length) return false;
+      [this.songs[index], this.songs[target]] = [this.songs[target], this.songs[index]];
+      this.originalOrder = null;
+      return true;
+    });
+  }
 }
 
 // 索引ライブラリUI（main.tsのrenderQueue）向けの純粋な表示計算。DOM操作自体はmain.tsに残すが、

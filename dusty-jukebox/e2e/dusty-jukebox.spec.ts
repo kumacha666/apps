@@ -348,6 +348,34 @@ test("並び替えの第二候補を指定すると、第一候補が同値の�
   ]);
 });
 
+test("再生リストの上下ボタンで曲の順番を手動で入れ替えられる（開発体制#42②）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  const items = page.locator("#catalog-list li");
+  await expect(items).toHaveCount(4);
+  const originalOrder = await items.allTextContents();
+
+  // 2番目の行を上へ移動 → 先頭の曲と入れ替わる。
+  await items.nth(1).getByRole("button", { name: "↑", exact: true }).click();
+  const afterUp = await items.allTextContents();
+  expect(afterUp[0]).toEqual(originalOrder[1]);
+  expect(afterUp[1]).toEqual(originalOrder[0]);
+
+  // 先頭行の「↑」は無効化されている（これ以上上へ動かせない）。
+  await expect(items.nth(0).getByRole("button", { name: "↑", exact: true })).toBeDisabled();
+  // 末尾行の「↓」も無効化されている。
+  await expect(items.nth(3).getByRole("button", { name: "↓", exact: true })).toBeDisabled();
+
+  // 先頭の曲（元々2番目だった曲）を下へ動かすと、元の並びに戻る。
+  await items.nth(0).getByRole("button", { name: "↓", exact: true }).click();
+  const afterDown = await items.allTextContents();
+  expect(afterDown).toEqual(originalOrder);
+});
+
 test("「再生」ボタンで先頭曲から再生でき、一時停止中の曲は同じ位置から再開する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");

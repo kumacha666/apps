@@ -263,6 +263,56 @@ describe("PlaybackQueue", () => {
     await queue.sortBy("releaseYear", "asc", "track", "asc");
     expect(queue.all().map((s) => s.fileId)).toEqual(["3", "2", "1"]);
   });
+  test("moveSongは指定した曲を1つ上/下へ入れ替える（開発体制#42②、上下ボタン）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    expect(await queue.moveSong("b", "up")).toBe(true);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["b", "a", "c"]);
+    expect(await queue.moveSong("b", "down")).toBe(true);
+    expect(await queue.moveSong("b", "down")).toBe(true);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "c", "b"]);
+  });
+  test("moveSongは先頭を上へ・末尾を下へ動かそうとすると何もせずfalseを返す", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    expect(await queue.moveSong("a", "up")).toBe(false);
+    expect(await queue.moveSong("b", "down")).toBe(false);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b"]);
+  });
+  test("moveSongは除外中の曲も特別扱いせず、表示順そのままの隣接行と入れ替える", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    queue.exclude("b", true);
+    // "c"を上へ動かすと、除外中の"b"を飛び越えず、隣接する"b"とだけ入れ替わる。
+    expect(await queue.moveSong("c", "up")).toBe(true);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "c", "b"]);
+    expect(queue.isExcluded("b")).toBe(true);
+  });
+  test("moveSongは存在しないfileIdに対してfalseを返す", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    expect(await queue.moveSong("missing", "up")).toBe(false);
+  });
+  test("moveSongはcurrentFileId・除外設定を変えず、シャッフル履歴を無効化する", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    queue.exclude("c", true);
+    await queue.playAt(0); // "a"が再生中
+    await queue.shuffle(() => 0);
+    expect(queue.hasShuffleHistory()).toBe(true);
+    await queue.moveSong("b", "up");
+    expect(queue.currentPlayingFileId()).toBe("a");
+    expect(queue.isExcluded("c")).toBe(true);
+    expect(queue.hasShuffleHistory()).toBe(false);
+  });
+  test("moveSongは再生中の曲自体も動かせる（常にリスト全体が対象、開発体制#42と同じ方針）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    await queue.playAt(0); // "a"が再生中
+    expect(await queue.moveSong("a", "down")).toBe(true);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["b", "a", "c"]);
+    expect(queue.currentPlayingFileId()).toBe("a");
+  });
   test("キュー再生の終了時だけ次の曲へ進み、単曲試聴後の終了では進まない", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b")]); await queue.playAt(0); audio.listener?.();

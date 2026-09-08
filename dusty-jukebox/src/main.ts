@@ -295,7 +295,7 @@ function renderQueue(): void {
   const list = el<HTMLUListElement>("catalog-list"); list.innerHTML = "";
   const currentFileId = queue?.currentPlayingFileId() ?? null;
   const rows = queueRowViews(queue?.all() ?? [], (fileId) => queue?.isExcluded(fileId) ?? false, currentFileId);
-  for (const row of rows) {
+  rows.forEach((row, index) => {
     const item = document.createElement("li"); item.className = "queue-item";
     if (row.isCurrent) item.classList.add("now-playing");
     const check = document.createElement("input"); check.type = "checkbox"; check.checked = !row.excluded;
@@ -309,8 +309,18 @@ function renderQueue(): void {
       label.addEventListener("click", () => void handleQueuePlayback(() => queue?.playAt(row.listIndex!)));
     }
     item.append(label);
+    // 上下ボタン（開発体制#42②、実機フィードバック）：一覧の表示順そのままの隣接行と入れ替える
+    // （除外中の行も通常の行として一覧に表示されるため、除外の有無で特別扱いしない）。
+    // 並び順を変えるだけで再生を開始する操作ではないためhandleQueuePlayback()は経由しない。
+    const upBtn = document.createElement("button"); upBtn.type = "button"; upBtn.textContent = "↑";
+    upBtn.disabled = index === 0;
+    upBtn.addEventListener("click", () => { void queue?.moveSong(row.song.fileId, "up").then(() => { renderQueue(); updateUnshuffleEnabled(); }); });
+    const downBtn = document.createElement("button"); downBtn.type = "button"; downBtn.textContent = "↓";
+    downBtn.disabled = index === rows.length - 1;
+    downBtn.addEventListener("click", () => { void queue?.moveSong(row.song.fileId, "down").then(() => { renderQueue(); updateUnshuffleEnabled(); }); });
+    item.append(" ", upBtn, downBtn);
     list.append(item);
-  }
+  });
   const currentSong = rows.find((r) => r.isCurrent)?.song;
   el<HTMLParagraphElement>("now-playing").textContent = nowPlayingLabel(currentSong);
   // Bluetoothスピーカー・OSのロック画面に現在再生中の曲名・アーティストを表示する。
