@@ -376,6 +376,56 @@ test("再生リストの上下ボタンで曲の順番を手動で入れ替え�
   expect(afterDown).toEqual(originalOrder);
 });
 
+test("並べ替え待機中に曲名をクリックしても、待機中の並べ替え完了後の位置ではなくクリックした曲がfileIdで正しく再生される（開発体制#42②、2026-09-08 Codexレビュー指摘の回帰防止）", async ({ context, page }) => {
+  // delayFirstMediaPlay: 最初のHTMLMediaElement.play()を意図的に保留し、「↑」ボタンと
+  // 曲名クリックの両方がpendingMove待機中にキューイングされる状況を再現する。
+  await installGoogleMocks(context, { delayFirstMediaPlay: true });
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  const items = page.locator("#catalog-list li");
+  await expect(items).toHaveCount(2);
+  // 先頭曲（song-1）の再生を開始する。最初のplay()は保留されたまま。
+  await page.getByRole("button", { name: "再生", exact: true }).click();
+
+  // 保留中に、2番目の行（song-2）を上へ動かす（[song-1, song-2] → [song-2, song-1]）。
+  await items.nth(1).getByRole("button", { name: "↑", exact: true }).click();
+  // まだ再描画されていない古いDOM上で、"song-2"の行（クリック時点ではindex1）をクリックする。
+  await items.nth(1).locator(".song-link").click();
+
+  await page.evaluate(() => (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay());
+
+  // 修正前（listIndexをそのまま使う実装）だと、並べ替え後にindex1が指す"song-1"が
+  // 再生されてしまっていた。fileIdで解決する現在の実装では、クリックした"song-2"が
+  // 正しく再生される。
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+  await expect(page.locator("#now-playing")).toContainText("Second song");
+});
+
+test("並べ替え待機中に保存ボタンを押しても、要求した新しい順序で保存される（開発体制#42②、2026-09-08 Codexレビュー指摘の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context, { delayFirstMediaPlay: true });
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  const items = page.locator("#catalog-list li");
+  await page.getByRole("button", { name: "再生", exact: true }).click(); // song-1の再生開始、play()は保留のまま
+
+  // 保留中に2番目の行を上へ動かし（[song-1, song-2] → [song-2, song-1]）、
+  // 反映を待たずにそのまま保存する。
+  await items.nth(1).getByRole("button", { name: "↑", exact: true }).click();
+  await page.locator("#playlist-name").fill("並べ替え直後保存");
+  await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
+
+  await page.evaluate(() => (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay());
+
+  await expect(page.locator("#status")).toContainText("プレイリスト「並べ替え直後保存」（2曲）を保存しました");
+
+  // 保存されたプレイリストを読み込み直し、要求した新しい順序（song-2が先頭）で
+  // 保存されたことを確認する（修正前は並べ替え前のスナップショットが保存されていた）。
+  await page.getByRole("button", { name: "読み込んで再生リストにする" }).click();
+  await expect(items).toHaveCount(2);
+  await expect(items.nth(0).locator(".song-link")).toContainText("Second song");
+  await expect(items.nth(1).locator(".song-link")).toContainText("First song");
+});
+
 test("「再生」ボタンで先頭曲から再生でき、一時停止中の曲は同じ位置から再開する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");

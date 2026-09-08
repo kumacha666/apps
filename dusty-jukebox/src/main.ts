@@ -511,8 +511,9 @@ async function handleSavePlaylist(): Promise<void> {
   const name = nameInput.value.trim();
   if (!spreadsheetId) { setStatus("索引スプレッドシートIDを入力してください", true); return; }
   if (!name) { setStatus("プレイリスト名を入力してください", true); return; }
-  const fileIds = queue?.list().map((song) => song.fileId) ?? [];
-  if (fileIds.length === 0) { setStatus("保存する再生リストがありません。条件を指定して再生リストを作ってから保存してください。", true); return; }
+  // 件数だけを見る早期リターン用の判定（曲数自体はmoveSong等の並べ替えでは変わらないため、
+  // 保留中の操作を待たなくても正確）。
+  if ((queue?.list().length ?? 0) === 0) { setStatus("保存する再生リストがありません。条件を指定して再生リストを作ってから保存してください。", true); return; }
   // createPlaylist()（収録曲の件数次第で数秒かかりうる）を待つ前、操作を開始した最初の
   // 同期的なタイミングで対象を予約する（2026-09-03 Codexレビュー指摘：P2。保存完了後に
   // 初めてloadPlaylists()内で対象を記録すると、保存の完了を待っている間にユーザーが別の
@@ -522,6 +523,13 @@ async function handleSavePlaylist(): Promise<void> {
   const button = el<HTMLButtonElement>("save-playlist-btn");
   button.disabled = true;
   try {
+    // 上下ボタン（moveSong）等、queueへの直前の操作がplayer.play()の解決待ちでまだ
+    // pendingMove内に留まっている場合があるため、実際に保存する曲順を読む前に完了を待つ
+    // （2026-09-08、Codexレビュー指摘：P2。待たずに読むと、画面上で要求した並び替えより前の
+    // スナップショットを保存してしまう。reservePlaylistsLoadTargetより後にすることで、
+    // その対象予約自体の「操作開始時点の同期的なタイミング」という既存の前提は崩さない）。
+    await queue?.whenIdle();
+    const fileIds = queue?.list().map((song) => song.fileId) ?? [];
     const playlistsIO = playlistsSpreadsheetIO(spreadsheetId);
     await ensurePlaylistTabsReady(spreadsheetId, playlistsIO);
     await createPlaylist(playlistsIO, name, fileIds, deviceRandomId);

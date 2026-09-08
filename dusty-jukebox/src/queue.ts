@@ -28,7 +28,13 @@ export class PlaybackQueue {
       else void this.next().catch(this.onError);
     });
   }
-  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.songs = songs; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
+  // 呼び出し元の配列をそのまま参照せずコピーする（2026-09-08、Codexレビュー指摘：P2）。
+  // shuffle()/moveSong()はthis.songsの要素をその場で入れ替えるため、呼び出し元
+  // （main.tsのアルバム再生ボタン等）が`group.songs`のような他の場所でも保持している配列を
+  // そのまま渡すと、この入れ替えが呼び出し元の配列まで書き換えてしまう（例：アルバム再生後に
+  // 上下ボタンで並び替えると、`loadedAlbumGroups`が保持する元のアルバム内曲順自体が
+  // 破壊され、以後そのアルバムを読み込み直しても正しいdisc/track順に戻らない）。
+  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.songs = [...songs]; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
   notifyExternalPlaybackStarted(): void { this.isQueuePlayback = false; }
   exclude(fileId: string, excluded: boolean): void { excluded ? this.excluded.add(fileId) : this.excluded.delete(fileId); }
   isExcluded(fileId: string): boolean { return this.excluded.has(fileId); }
@@ -82,6 +88,15 @@ export class PlaybackQueue {
       const song = this.list().find((s) => s.fileId === fileId);
       return song ? this.playAndCommit(song.fileId, generation) : false;
     });
+  }
+  // それまでにキューイングされた操作（moveSong/sortBy/shuffle/next/previous等）がすべて
+  // 完了するのを待つ（2026-09-08、Codexレビュー指摘：P2）。list()/all()を読む前にこれを
+  // awaitすれば、上下ボタンを押した直後（moveSong()がplayer.play()の解決待ちで
+  // pendingMove内に留まっている間）に「保存」ボタンを押しても、まだ反映されていない
+  // 並び替え前のスナップショットを保存してしまう競合を避けられる。呼び出し時点の
+  // pendingMoveだけを捕捉して待つ（以降に新しくキューイングされる操作までは待たない）。
+  async whenIdle(): Promise<void> {
+    await this.pendingMove.catch(() => {});
   }
   next(): Promise<boolean> { return this.move(async (generation) => { const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId); const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId)); return next ? this.playAndCommit(next.fileId, generation) : false; }); }
   // 曲の自然終了（<audio>のended）専用のnext()。next()自体にこのロジックを組み込まないのは、

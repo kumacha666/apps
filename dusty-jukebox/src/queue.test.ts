@@ -263,6 +263,38 @@ describe("PlaybackQueue", () => {
     await queue.sortBy("releaseYear", "asc", "track", "asc");
     expect(queue.all().map((s) => s.fileId)).toEqual(["3", "2", "1"]);
   });
+  test("setListは呼び出し元の配列をコピーする。moveSong/shuffleのその場での入れ替えが呼び出し元の配列自体を破壊しない（2026-09-08、Codexレビュー指摘：P2。例えばアルバム再生ボタンがloadedAlbumGroups由来の配列をそのまま渡すと、以前は上下ボタン後に同じアルバムを再度読み込んでもdisc/track順に戻らなくなっていた）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    const original = [song("a"), song("b"), song("c")];
+    const originalOrderSnapshot = original.map((s) => s.fileId);
+    queue.setList(original);
+    await queue.moveSong("c", "up");
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "c", "b"]);
+    // 呼び出し元が保持し続けている配列自体は変更されていない。
+    expect(original.map((s) => s.fileId)).toEqual(originalOrderSnapshot);
+  });
+  test("whenIdleはそれまでにキューイングされた操作（moveSong等）が完了するまで待つ（2026-09-08、Codexレビュー指摘：P2。保存ボタン等がlist()を読む前にこれを待たないと、pendingMove待機中の並べ替え未反映のスナップショットを読んでしまう）", async () => {
+    let releaseFirstPlay: (() => void) | null = null;
+    const audio = new Audio();
+    const queue = new PlaybackQueue({
+      play: async () => { await new Promise<void>((resolve) => { releaseFirstPlay = resolve; }); },
+    }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    const firstPlay = queue.playAt(0); // "a"の再生開始、まだ解決しない（保留中）
+    await vi.waitFor(() => expect(releaseFirstPlay).not.toBeNull());
+    const movePromise = queue.moveSong("c", "up"); // "a"の再生保留中にキューイングされる
+    let idleResolved = false;
+    const idlePromise = queue.whenIdle().then(() => { idleResolved = true; });
+    // マイクロタスクを1回消化させても、まだ最初のplay()を解放していないため、
+    // moveSongもwhenIdleもまだ完了していないはず。
+    await Promise.resolve(); await Promise.resolve();
+    expect(idleResolved).toBe(false);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "c"]); // moveSong未反映
+    releaseFirstPlay!();
+    await firstPlay; await movePromise; await idlePromise;
+    expect(idleResolved).toBe(true);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "c", "b"]); // whenIdle後は反映済み
+  });
   test("moveSongは指定した曲を1つ上/下へ入れ替える（開発体制#42②、上下ボタン）", async () => {
     const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
     queue.setList([song("a"), song("b"), song("c")]);
