@@ -6,6 +6,7 @@ class FakeAudio implements AudioElementLike {
   currentTime = 0;
   volume = 1;
   paused = true;
+  ended = false;
   playCount = 0;
   pauseCount = 0;
   private errorListener: (() => void) | undefined;
@@ -14,11 +15,18 @@ class FakeAudio implements AudioElementLike {
   async play(): Promise<void> {
     this.playCount += 1;
     this.paused = false;
+    this.ended = false;
   }
 
   pause(): void {
     this.pauseCount += 1;
     this.paused = true;
+  }
+
+  // 曲が最後まで再生され自然終了した状態を模擬する（pause()と異なりendedもtrueになる）。
+  emitEnded(): void {
+    this.paused = true;
+    this.ended = true;
   }
 
   addEventListener(type: "error" | "pause", listener: () => void): void {
@@ -272,5 +280,26 @@ describe("PlaybackController", () => {
     expect(audio.src).toBe(srcDuringA);
     expect(audio.volume).toBe(0.5);
     expect(audio.playCount).toBe(1); // 曲Aの1回のみ（Bのplay()は呼ばれない）
+  });
+
+  test("フェード中に旧曲が自然終了した場合は、明示的な一時停止と区別して次の曲への切り替えを継続する（2026-09-08、Codexレビュー指摘：P1続き。自然終了もaudio.pausedはtrueになるため、区別しないと次の曲へcommitされたのに実際にはaudio要素が旧曲のsrcで停止したまま、というUI/キューとの不整合が生じる）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.5;
+    const playPromise = playback.play("B", 0, { fadeOut: true });
+    // フェードの途中で、旧曲Aが自然終了する（emitEndedはpause()と異なりendedもtrueにする）。
+    await vi.advanceTimersByTimeAsync(500);
+    audio.emitEnded();
+    expect(audio.paused).toBe(true);
+    await vi.runAllTimersAsync();
+    await playPromise;
+
+    // 一時停止として扱われず、曲Bへ正しく切り替わる。
+    expect(audio.src).toBe(streamUrl("B", playback.currentStreamGeneration() ?? undefined));
+    expect(audio.volume).toBe(0.5);
+    expect(audio.playCount).toBe(2); // 曲A・曲Bの両方
   });
 });

@@ -15,6 +15,10 @@ export interface AudioElementLike {
   currentTime: number;
   volume: number;
   paused: boolean;
+  // 曲が最後まで再生され自然終了した場合にtrueになる（ネイティブブラウザの挙動）。
+  // 自然終了時も`paused`はtrueになるため、明示的な一時停止と区別するために必要
+  // （2026-09-08、Codexレビュー指摘：P1）。
+  ended: boolean;
   play(): Promise<void>;
   pause(): void;
   addEventListener(type: "error" | "pause", listener: () => void): void;
@@ -88,7 +92,12 @@ export class PlaybackController {
       // フェード中にネイティブ操作（<audio controls>・Media Session）で明示的に一時停止された
       // 場合、generationは変わらないため上のチェックだけでは検知できない（2026-09-08、Codexレビュー
       // 指摘：P1）。ユーザーが止めた直後に再生が勝手に始まらないよう、ここで中断してvolumeを戻す。
-      if (this.audio.paused) { this.audio.volume = preFadeVolume; return; }
+      // 旧曲がフェード中に自然終了した場合も`paused`はtrueになるが、これは明示的な一時停止では
+      // ないため中断しない（2026-09-08、Codexレビュー指摘：P1続き。ここでreturnしてしまうと、
+      // 呼び出し元のPlaybackQueue.playAndCommit()はplay()の正常解決を再生成功とみなして
+      // currentFileIdを次の曲へcommitしてしまい、実際には旧曲のsrcで停止したままなのに
+      // UIとキューだけが次の曲を再生中と表示する不整合が生じる）。
+      if (this.audio.paused && !this.audio.ended) { this.audio.volume = preFadeVolume; return; }
     }
     const token = await this.getValidAccessToken();
     if (!token) {
