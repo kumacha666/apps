@@ -380,6 +380,30 @@ describe("PlaybackController", () => {
     expect(error).not.toBeInstanceOf(PlaybackPausedError); // 一時停止ではないため区別する
     expect(audio.volume).toBe(0.8); // フェードで下がった音量のまま取り残されない
   });
+  test("cancelPendingTransition()の直後にさらに別のplay()が続く実際の流れ（setList()の直後にplayAt(0)）でも、フェード開始前のvolumeへ戻す（2026-09-08、Codexレビュー指摘：P1続き。当初の`this.generation === this.cancelledAtGeneration`という厳密一致判定は、cancelPendingTransition()の直後に別のplay()がgenerationをさらに進めてしまう一般的な流れでは不一致になり、volumeが復元されないまま取り残されていた）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.8;
+    const playError = playback.play("B", 0, { fadeOut: true }).catch((err: unknown) => err);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(audio.volume).toBeLessThan(0.8);
+
+    // PlaybackQueue.setList()相当の中断の直後に、フェードなしの新しいplay()が続く
+    // （main.tsのcreateQueueFromFilters()と同じ、setList()の直後にplayAt(0)する実際の流れ）。
+    playback.cancelPendingTransition();
+    await playback.play("C"); // フェードなしなのでvolumeには一切触れない
+
+    await vi.runAllTimersAsync();
+    const error = await playError;
+    expect(error).toBeInstanceOf(PlaybackInterruptedError);
+    expect(error).not.toBeInstanceOf(PlaybackPausedError);
+    // "C"はフェードなしのためvolumeに触れないが、孤立した古いフェードの中断処理により
+    // 正しく0.8へ復元されている。
+    expect(audio.volume).toBe(0.8);
+  });
   test("フェード完了後、audio.srcを設定しaudio.play()の解決待ち中にcancelPendingTransition()で中断された場合も、実際に鳴らないよう一時停止する（2026-09-08、Codexレビュー指摘：P1。従来のgeneration確認はaudio.src設定より前までしか効かず、この区間で中断されると『もう選ばれていない曲』のネイティブaudio.play()がそのまま解決し実際に鳴ってしまっていた）", async () => {
     let resolvePlay!: () => void;
     class SlowPlayAudio extends FakeAudio {

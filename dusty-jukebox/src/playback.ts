@@ -78,18 +78,23 @@ export class PlaybackController {
   private rejectedGeneration: number | null = null;
   // pause()が最後にgenerationを進めた時点のgenerationの値（2026-09-08、Codexレビュー指摘：P1）。
   // フェード完了後の isSuperseded() 判定だけでは、generationがpause()自身によって進んだのか、
-  // 別の正当なplay()呼び出しによって進んだのかを区別できない。pause()の直後にまだ他のplay()が
-  // 呼ばれていなければ`this.generation === this.pausedAtGeneration`が成立するため、この一致を
-  // もって「一時停止による中断」と判定する（一致しなければ、それ以降に別のplay()が実行され
-  // generationがさらに進んでいる＝一時停止ではなく追い越しと判定できる）。
-  private pausedAtGeneration: number | null = null;
+  // 別の正当なplay()呼び出しによって進んだのかを区別できない。判定は`this.pausedAtGeneration >
+  // playGeneration`（自分のplay()開始後にpause()が呼ばれたか）で行う（2026-09-08、Codexレビュー
+  // 指摘：P1続き。当初は`this.generation === this.pausedAtGeneration`という厳密一致で判定して
+  // いたが、pause()/cancelPendingTransition()の直後にさらに別のplay()が続く一般的な流れ
+  // 〈例：setList()の直後にplayAt(0)〉では、その新しいplay()がgenerationをさらに進めてしまい
+  // 一致しなくなる。「pause()/cancelPendingTransition()が“自分より後”に一度でも呼ばれたか」を
+  // 見るには単調増加する不等号比較が必要で、その後さらに別のplay()が続いたかどうかには
+  // 依存しない）。
+  private pausedAtGeneration = 0;
   // cancelPendingTransition()（PlaybackQueue.setList()経由）が最後にgenerationを進めた時点の値
-  // （2026-09-08、Codexレビュー指摘：P1）。pausedAtGenerationと同じ判定パターンだが、pause()と
-  // 異なりaudioを止めないため別フィールドで管理する。この一致が成立する場合、次に来るのが
-  // 新しいplay()（volumeを自分で制御する）とは限らない（setList()単独で終わる経路もある）ため、
-  // pause()と同じくフェード開始前のvolumeを復元する。復元しないと、フェード完了直後に別アルバム
-  // を選んでも旧曲の音量が下がったまま残り続け、以後の（フェードしない）通常再生すべてに影響する。
-  private cancelledAtGeneration: number | null = null;
+  // （2026-09-08、Codexレビュー指摘：P1）。pausedAtGenerationと同じ判定パターン・同じ理由で
+  // 不等号比較を使う。pause()と異なりaudioを止めないため別フィールドで管理する。この判定が
+  // 成立する場合、次に来るのが新しいplay()（volumeを自分で制御する）とは限らない（setList()
+  // 単独で終わる経路もある）ため、pause()と同じくフェード開始前のvolumeを復元する。復元しないと、
+  // フェード完了直後に別アルバムを選んでも旧曲の音量が下がったまま残り続け、以後の
+  // （フェードしない）通常再生すべてに影響する。
+  private cancelledAtGeneration = 0;
 
   constructor(
     private readonly audio: AudioElementLike,
@@ -139,7 +144,7 @@ export class PlaybackController {
         // と同じくフェード開始前のvolumeへ戻し、PlaybackPausedErrorとして区別して投げる
         // （そうでなければ、別の正当なplay()に追い越されただけなので、そちらのvolume制御を
         // 妨げないよう一切触れず、区別しないPlaybackInterruptedErrorを投げる）。
-        if (this.generation === this.pausedAtGeneration) {
+        if (this.pausedAtGeneration > playGeneration) {
           this.audio.volume = preFadeVolume;
           throw new PlaybackPausedError();
         }
@@ -148,7 +153,7 @@ export class PlaybackController {
         // 投げない：PlaybackQueue側は既にsetList()自身の呼び出しでキュー側の状態
         // （generation・activeFadeToken）を直接無効化済みのため、PlaybackPausedError扱いに
         // よる追加のgeneration進行は不要（意味的にも「一時停止」ではないため区別する）。
-        if (this.generation === this.cancelledAtGeneration) {
+        if (this.cancelledAtGeneration > playGeneration) {
           this.audio.volume = preFadeVolume;
         }
         throw new PlaybackInterruptedError();
