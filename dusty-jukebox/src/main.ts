@@ -380,9 +380,11 @@ function renderFilterSuggestions(songs: Song[]): void {
     }
   }
 }
-// 絞り込み欄のいずれかが変わるたびに、他の欄の候補一覧を連動して再計算する。件数は多くても
-// 単純な文字列比較の絞り込み（filterSongs）を数千曲規模で1回走らせるだけのため、
-// キー入力のたびに呼んでもjankの懸念は無い（album-searchの入力連動と同じ判断）。
+// 絞り込み欄のいずれかが変わるたびに、他の欄の候補一覧を連動して再計算する。renderFilterSuggestions()が
+// AUTOCOMPLETE_DATALISTSの5フィールド分distinctFieldValuesForFilters()（内部でfilterSongsを1回呼ぶ）を
+// 呼ぶため、1回のrefreshにつき単純な文字列比較の絞り込みが数千曲規模で最大5回走るが、
+// キー入力のたびに呼んでもjankの懸念は無い（album-searchの入力連動と同じ判断。カタログ規模が
+// 大きくなった場合の最適化ポイントにはなりうる、2026-09-08 ChatGPTレビュー指摘）。
 // カタログ未読み込み（catalogSession.createQueue()がnullを返す）時は何もしない。
 function refreshFilterSuggestions(): void {
   const songs = catalogSession.createQueue((loadedSongs) => loadedSongs);
