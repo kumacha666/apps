@@ -70,6 +70,19 @@ export class PlaybackQueue {
     return result;
   }
   playAt(index: number): Promise<boolean> { return this.move(async (generation) => { const list = this.list(); if (index < 0 || index >= list.length) return false; return this.playAndCommit(list[index].fileId, generation); }); }
+  // 再生リストの曲名クリック向け：playAt(index)と異なりfileIdで直接指定する（2026-09-08、
+  // Codexレビュー指摘：DOM側は描画時点の`QueueRowView.listIndex`をクリックハンドラの
+  // クロージャに固定して持つため、moveSong()/sortBy()等でpendingMove待機中に配列の並びが
+  // 変わると、実行時にはそのインデックスが指す曲が変わっており、クリックした曲と異なる曲が
+  // 再生されうる。move()経由でthis.list()をpendingMoveチェーン内の実行時点で評価し、
+  // fileIdで探すことで、先に完了した並べ替え後の状態を必ず反映する）。除外中の曲は
+  // this.list()の対象外のため見つからずfalseになる（playAt()と同じ挙動）。
+  playFileId(fileId: string): Promise<boolean> {
+    return this.move(async (generation) => {
+      const song = this.list().find((s) => s.fileId === fileId);
+      return song ? this.playAndCommit(song.fileId, generation) : false;
+    });
+  }
   next(): Promise<boolean> { return this.move(async (generation) => { const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId); const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId)); return next ? this.playAndCommit(next.fileId, generation) : false; }); }
   // 曲の自然終了（<audio>のended）専用のnext()。next()自体にこのロジックを組み込まないのは、
   // 末尾で「次へ」ボタンを空振りクリックしただけ（曲はまだ再生中）でも再開不可状態へ遷移して

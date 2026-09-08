@@ -313,6 +313,43 @@ describe("PlaybackQueue", () => {
     expect(queue.all().map((s) => s.fileId)).toEqual(["b", "a", "c"]);
     expect(queue.currentPlayingFileId()).toBe("a");
   });
+  test("playFileIdは指定したfileIdの曲を再生する", async () => {
+    const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    expect(await queue.playFileId("b")).toBe(true);
+    expect(played).toEqual(["b"]);
+    expect(queue.currentPlayingFileId()).toBe("b");
+  });
+  test("playFileIdは除外中の曲・存在しないfileIdに対してfalseを返す", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    queue.exclude("b", true);
+    expect(await queue.playFileId("b")).toBe(false);
+    expect(await queue.playFileId("missing")).toBe(false);
+  });
+  test("playFileIdはpendingMove待機中の並べ替えの後でもfileIdで解決するため、待機中にクリックしても意図した曲が再生される（2026-09-08、Codexレビュー指摘の回帰防止：main.tsの曲名クリックが描画時点のインデックスに依存していると、待機中の並べ替え完了後に別の曲が再生されうる）", async () => {
+    const played: string[] = [];
+    let releaseFirstPlay: (() => void) | null = null;
+    const audio = new Audio();
+    const queue = new PlaybackQueue({
+      play: async (id) => {
+        played.push(id);
+        if (played.length === 1) await new Promise<void>((resolve) => { releaseFirstPlay = resolve; });
+      },
+    }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    const firstPlay = queue.playAt(0); // "a"の再生開始、まだ解決しない（保留中）
+    await vi.waitFor(() => expect(releaseFirstPlay).not.toBeNull());
+    // "a"の再生が保留中の間に、「cを上へ動かす」操作と「cをクリックする」操作を続けてキューイングする。
+    const movePromise = queue.moveSong("c", "up"); // 完了すると[a, c, b]になる
+    const clickPromise = queue.playFileId("c"); // クリック時点のインデックスに関わらず"c"を再生するべき
+    releaseFirstPlay!();
+    await firstPlay;
+    await movePromise;
+    expect(await clickPromise).toBe(true);
+    expect(played[played.length - 1]).toBe("c");
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "c", "b"]);
+  });
   test("キュー再生の終了時だけ次の曲へ進み、単曲試聴後の終了では進まない", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b")]); await queue.playAt(0); audio.listener?.();

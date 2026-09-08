@@ -303,10 +303,16 @@ function renderQueue(): void {
     item.append(check, " ");
     const label = document.createElement("span"); label.textContent = songDisplayLabel(row.song);
     if (row.listIndex !== null) {
-      // 除外されていない曲だけクリックで再生できる（listIndex参照）。除外中の曲は
-      // playAt()のインデックス対象外のため、除外を解除してから再生する運用とする。
+      // 除外されていない曲だけクリックで再生できる（除外中の曲はlist()の対象外のため、
+      // 除外を解除してから再生する運用とする）。playAt(row.listIndex)ではなくfileIdを
+      // 渡すqueue.playFileId()を使う（2026-09-08、Codexレビュー指摘：listIndexは描画時点の
+      // スナップショットのため、moveSong()等がpendingMove待機中の間にこの行をクリックすると、
+      // 待機中の並べ替えが先に反映された後の配列に対して古いインデックスが評価され、
+      // クリックした曲と異なる曲が再生されうる。fileIdで探すplayFileId()なら、先に完了した
+      // 並べ替え後の状態を必ず反映する）。
       label.className = "song-link";
-      label.addEventListener("click", () => void handleQueuePlayback(() => queue?.playAt(row.listIndex!)));
+      const fileId = row.song.fileId;
+      label.addEventListener("click", () => void handleQueuePlayback(() => queue?.playFileId(fileId)));
     }
     item.append(label);
     // 上下ボタン（開発体制#42②、実機フィードバック）：一覧の表示順そのままの隣接行と入れ替える

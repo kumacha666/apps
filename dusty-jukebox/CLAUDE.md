@@ -145,7 +145,8 @@
 - 先頭を上へ・末尾を下へ動かそうとした場合は何もせず`false`を返す。存在しないfileIdも`false`。
 - `sortBy()`/`shuffle()`等と同じ`pendingMove`直列化チェーンに参加する。
 - UI：`renderQueue()`の各行に「↑」「↓」ボタンを追加。行のインデックス（`rows`配列内の位置、`queue.all()`と同じ並び）が先頭/末尾のボタンは`disabled`にする。並び順を変えるだけで再生を開始する操作ではないため`handleQueuePlayback()`は経由しない。シャッフル履歴を無効化するため、クリック後に`updateUnshuffleEnabled()`も呼ぶ。
-- ユニットテスト：`queue.test.ts`（隣接入れ替え・先頭/末尾での`false`・除外中の曲を含む隣接入れ替え・存在しないfileId・currentFileId/除外設定の維持・シャッフル履歴の無効化・再生中の曲自体を動かせること）。E2E（`e2e/dusty-jukebox.spec.ts`「再生リストの上下ボタンで曲の順番を手動で入れ替えられる」）は、該当コードを一時的に無効化して実際に失敗することを確認済み。
+- **2026-09-08、Codexレビュー指摘（P2）を修正**：曲名クリック（再生開始）が`QueueRowView.listIndex`（描画時点のスナップショット）を`playAt(index)`にそのまま渡していたため、`moveSong()`等が`pendingMove`待機中の間にこの行をクリックすると、待機中の並べ替えが先に反映された後の配列に対して古いインデックスが評価され、クリックした曲と異なる曲が再生されうる不具合があった。`PlaybackQueue`に`playFileId(fileId)`（`this.list()`をpendingMoveチェーン内の実行時点で評価し、fileIdで探す。除外中の曲は`list()`の対象外のため見つからず`false`になる点は`playAt()`と同じ）を追加し、`main.ts`の曲名クリックハンドラを`playAt(row.listIndex)`から`playFileId(row.song.fileId)`へ変更して解消（`row.listIndex`自体はクリック可否の判定＝除外中かどうかにのみ引き続き使う）。
+- ユニットテスト：`queue.test.ts`（隣接入れ替え・先頭/末尾での`false`・除外中の曲を含む隣接入れ替え・存在しないfileId・currentFileId/除外設定の維持・シャッフル履歴の無効化・再生中の曲自体を動かせること、`playFileId`の基本動作・除外中/存在しないfileIdでの`false`、上記P2の回帰防止〈`pendingMove`待機中に並べ替え→クリックの順で操作しても意図した曲が再生されることを、待機を制御可能なフェイク`play()`で検証〉）。E2E（`e2e/dusty-jukebox.spec.ts`「再生リストの上下ボタンで曲の順番を手動で入れ替えられる」）は、該当コードを一時的に無効化して実際に失敗することを確認済み（回帰防止のユニットテストは、`playAt(2)`〈旧実装が使っていた描画時点のstale index〉に置き換えると実際に失敗することを確認済み）。
 - **実機での動作確認はまだ実施していない**（次回このアプリを触るセッションでまず実施すること）。
 - **次PR以降に持ち越したもの**：保存済みプレイリストの並び編集（`src/playlists.ts`の`playlist_tracks`タブの`order`値更新を伴う。今回のスコープ外としてユーザーと合意済み）。
 
