@@ -12,7 +12,7 @@ import { PlaybackAuthenticationRequiredError, PlaybackController } from "./playb
 import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStatus";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
-import { parseIndexRows, filterSongs, groupSongsByAlbum, groupAlbumsByArtist, filterAlbumGroups, sortSongs, distinctFieldValues, type AlbumGroup, type AutocompleteField, type Song } from "./catalog";
+import { parseIndexRows, filterSongs, groupSongsByAlbum, groupAlbumsByArtist, filterAlbumGroups, sortSongs, distinctFieldValuesForFilters, type AlbumGroup, type AutocompleteField, type Song, type SongFilters } from "./catalog";
 import { CatalogOperationGate } from "./catalogOperationGate";
 import { CatalogSession } from "./catalogSession";
 import { FolderPathResolver, type FolderGetFn, type FolderMeta } from "./folderPaths";
@@ -351,14 +351,42 @@ const AUTOCOMPLETE_DATALISTS: { field: AutocompleteField; datalistId: string }[]
   { field: "genre", datalistId: "filter-genre-options" },
   { field: "releaseType", datalistId: "filter-release-type-options" },
 ];
+// 現在絞り込み欄に入力されている値一式（フィールド連動の候補計算・「この条件で再生
+// リストを作る」の両方で使う絞り込み条件を1箇所に集約）。
+function currentFilterValues(): SongFilters {
+  return {
+    query: el<HTMLInputElement>("filter-query").value,
+    artist: el<HTMLInputElement>("filter-artist").value,
+    album: el<HTMLInputElement>("filter-album").value,
+    composer: el<HTMLInputElement>("filter-composer").value,
+    genre: el<HTMLInputElement>("filter-genre").value,
+    releaseType: el<HTMLInputElement>("filter-release-type").value,
+    minYear: numberOrUndefined(el<HTMLInputElement>("filter-min-year").value),
+    maxYear: numberOrUndefined(el<HTMLInputElement>("filter-max-year").value),
+    includeUnknownYear: el<HTMLInputElement>("filter-unknown-year").checked,
+  };
+}
+// フィールド同士を連動させる（開発体制#43：アーティストを選んでいるのに、アルバム欄の
+// 候補にそのアーティスト以外のアルバムまで出るのは意味が無い、というユーザー指摘への対応）。
+// 各欄の候補は、その欄自身を除いた現在の絞り込み条件で絞り込んだ曲一覧から算出する
+// （distinctFieldValuesForFilters参照）。
 function renderFilterSuggestions(songs: Song[]): void {
+  const filters = currentFilterValues();
   for (const { field, datalistId } of AUTOCOMPLETE_DATALISTS) {
     const datalist = el<HTMLDataListElement>(datalistId);
     datalist.innerHTML = "";
-    for (const value of distinctFieldValues(songs, field)) {
+    for (const value of distinctFieldValuesForFilters(songs, field, filters)) {
       const option = document.createElement("option"); option.value = value; option.textContent = value; datalist.append(option);
     }
   }
+}
+// 絞り込み欄のいずれかが変わるたびに、他の欄の候補一覧を連動して再計算する。件数は多くても
+// 単純な文字列比較の絞り込み（filterSongs）を数千曲規模で1回走らせるだけのため、
+// キー入力のたびに呼んでもjankの懸念は無い（album-searchの入力連動と同じ判断）。
+// カタログ未読み込み（catalogSession.createQueue()がnullを返す）時は何もしない。
+function refreshFilterSuggestions(): void {
+  const songs = catalogSession.createQueue((loadedSongs) => loadedSongs);
+  if (songs) renderFilterSuggestions(songs);
 }
 // アーティスト別の見出し付きで表示する（開発体制#39④UI-3、全アルバムがフラットに
 // 並んでいて探しにくい、という使いづらさへの対応）。
@@ -786,10 +814,7 @@ async function loadCatalog(): Promise<void> {
 }
 function createQueueFromFilters(): void {
   if (!queue) return;
-  const songs = catalogSession.createQueue((loadedSongs) => sortSongs(filterSongs(loadedSongs, { query: el<HTMLInputElement>("filter-query").value, artist: el<HTMLInputElement>("filter-artist").value,
-    album: el<HTMLInputElement>("filter-album").value, composer: el<HTMLInputElement>("filter-composer").value, genre: el<HTMLInputElement>("filter-genre").value,
-    releaseType: el<HTMLInputElement>("filter-release-type").value,
-    minYear: numberOrUndefined(el<HTMLInputElement>("filter-min-year").value), maxYear: numberOrUndefined(el<HTMLInputElement>("filter-max-year").value), includeUnknownYear: el<HTMLInputElement>("filter-unknown-year").checked })));
+  const songs = catalogSession.createQueue((loadedSongs) => sortSongs(filterSongs(loadedSongs, currentFilterValues())));
   if (!songs) {
     setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストを作成してください。", true);
     return;
@@ -1808,6 +1833,17 @@ function init(): void {
     el<HTMLInputElement>("album-search").addEventListener("input", () => {
       renderAlbumGroups(filterAlbumGroups(loadedAlbumGroups, el<HTMLInputElement>("album-search").value));
     });
+    // 絞り込み欄同士の連動（開発体制#43）：いずれかの欄が変わるたびに、他の欄の候補一覧を
+    // 現在の絞り込み条件で絞り込み直す。年欄はtype=numberのため"input"に加え、スピナー
+    // 操作やブラウザ差異を考慮し"change"でも拾う。
+    for (const id of ["filter-query", "filter-artist", "filter-album", "filter-composer", "filter-genre", "filter-release-type"]) {
+      el<HTMLInputElement>(id).addEventListener("input", refreshFilterSuggestions);
+    }
+    for (const id of ["filter-min-year", "filter-max-year"]) {
+      el<HTMLInputElement>(id).addEventListener("input", refreshFilterSuggestions);
+      el<HTMLInputElement>(id).addEventListener("change", refreshFilterSuggestions);
+    }
+    el<HTMLInputElement>("filter-unknown-year").addEventListener("change", refreshFilterSuggestions);
     el<HTMLButtonElement>("next-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.next(fadeOutEnabled())));
     el<HTMLButtonElement>("previous-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.previous(fadeOutEnabled())));
     // シャッフルは絞り込み結果の並び順を変えるだけで何かを再生開始するわけではないため、

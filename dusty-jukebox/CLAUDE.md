@@ -200,6 +200,15 @@
 - **既知のE2E制限**：E2Eモック（`e2e/google-mocks.ts`）は`HTMLMediaElement.play()`を完全に置き換え、実際のネイティブ再生を一切発生させないため、`audio.paused`は常に`true`のままになる（Media Session対応節の`playbackState`と同じ制約）。フェードは`!audio.paused`をゲートにしているため、この既存モックの下では常にフェード自体が発生せず、E2Eでの実ブラウザ検証ができない。フェード挙動自体はユニットテスト（`playback.test.ts`、`vi.useFakeTimers()`でvolumeが段階的に下がり通過中はsrcが旧曲のままであることを検証、`fade.test.ts`で`fadeOutVolume`自体の段階計算を検証）でカバーし、該当コードを一時的に無効化して実際に失敗することを確認済み。UI配線自体（ビルド・型検査）は確認済みだが、**実機での動作確認はまだ実施していない**。
 - ユニットテスト：`fade.test.ts`（段階的な減衰・比率計算・durationMs≤0/既にvolume0の場合の即時終了・isCancelledでの中断）、`playback.test.ts`（fadeOut指定時のフェード完了後の曲切り替え・フェード開始前volumeへの復元、再生中でない場合はフェードをスキップしvolumeに触れないこと、fadeOut未指定の通常再生はvolumeに一切触れないこと、フェード中にトークン取得が失敗した場合もフェード開始前volumeへ戻すこと、追い越された古いフェードが新しい再生のvolumeを上書きしないこと、フェード中のネイティブ一時停止を尊重すること）、`queue.test.ts`（`next`/`previous`/`playFileId`がfadeOut引数を`player.play()`のoptionsへそのまま渡すこと、`advanceOnEnded()`は常に`fadeOut=false`でnext()を呼ぶこと、フェード中の自然終了で二重に進まないこと）。
 
+## 絞り込み欄同士の連動（開発体制#43、2026-09-08）
+
+ユーザー指摘：アーティストを選んでいるのに、アルバム欄の候補にそのアーティスト以外のアルバムまで出るのは意味が無い（一般的な「カスケードフィルタ」UXへの改善要望）。従来は`artist`/`album`/`composer`/`genre`/`releaseType`の5つの絞り込み欄すべての候補（datalist）が、他の欄の現在値に関わらず索引全体から一律に算出されていた。
+
+- **`catalog.ts`に`distinctFieldValuesForFilters(songs, field, filters)`を追加**：既存の`distinctFieldValues()`（索引全体から候補を出す）とは別に、`field`自身を除いた現在の絞り込み条件（`filterSongs()`と同じ`SongFilters`）で絞り込んだ曲一覧から候補を算出する。**`field`自身の現在の入力値は絞り込みに使わない**（自分の欄を除いた他の条件だけで絞り込む）：もし自分自身も使うと、入力途中の文字列で候補自体が先細りし、ネイティブdatalistが持つ「入力中の文字列で候補をprefixフィルタする」機能と二重に絞り込まれておかしくなるため。`query`・年範囲・`includeUnknownYear`はフィールド固有ではないため常に絞り込みに使う。
+- **`main.ts`**：`currentFilterValues()`（絞り込み欄8つのDOM値を`SongFilters`へまとめる、`renderFilterSuggestions()`と`createQueueFromFilters()`の両方で共用）を追加。絞り込み欄（`filter-query`/`filter-artist`/`filter-album`/`filter-composer`/`filter-genre`/`filter-release-type`は`input`、`filter-min-year`/`filter-max-year`は`input`+`change`、`filter-unknown-year`は`change`）のいずれかが変わるたびに`refreshFilterSuggestions()`（`catalogSession`から現在の曲一覧を取得し直し全datalistを再計算、カタログ未読み込み時は何もしない）を呼ぶ。件数が多くても単純な文字列比較の絞り込みを1回走らせるだけのため、キー入力のたびに呼んでもjankの懸念は無い（album-search欄の入力連動と同じ判断、ユーザーとの相談は不要と判断）。
+- ユニットテスト：`catalog.test.ts`に、他の絞り込み条件（artist）で候補が連動して絞り込まれること、フィールド自身の入力値は自分自身の候補には使わないこと、query・年範囲・includeUnknownYearは常に絞り込みに使うことの3ケースを追加。いずれも該当コードを一時的に無効化して実際に失敗することを確認済み。
+- E2E（`e2e/dusty-jukebox.spec.ts`「絞り込み欄同士が連動し、アーティストを選ぶとアルバム欄の候補がそのアーティストのものだけに絞られる」）：`albumCatalog`モック（Soloist/Symphony、Quartet/Blue Notesの2アーティスト・2アルバム）で、アーティストをSoloistに絞るとアルバム候補がSymphonyのみになること、アーティスト欄自身の候補は自分の入力で絞り込まれないこと、条件解除で全候補に戻ることを検証。該当コードを一時的に無効化して実際に失敗することを確認済み。
+
 ## 保存済みプレイリスト（2026-09-03、PR #406）
 
 CONCEPT.md 4.3節「絞り込み→除外→保存という操作フローで作る「保存済みプレイリスト」機能」を実装。`src/playlists.ts`が`playlists`（`playlistId, name, createdAt, updatedAt`）・`playlist_tracks`（`playlistId, order, fileId`、1プレイリスト＝複数行の縦持ち）の2タブへの読み書きを担う。`sheetsSetup.ts`の`ensurePlaylistsTabsExist`が両タブを（index/syncタブとは独立して）ユーザーが初めてプレイリスト機能を使おうとした時点で自動作成する。
