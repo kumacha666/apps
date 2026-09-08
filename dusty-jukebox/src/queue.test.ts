@@ -779,6 +779,39 @@ describe("PlaybackQueue", () => {
     await vi.waitFor(() => expect(played).toContain("e"));
   });
 
+  test("setList()（別アルバム・プレイリスト選択）で古いフェード操作が孤立した場合も、activeFadeTokenを失効させ以後の自然終了を正しく処理する（2026-09-08、Codexレビュー指摘：P1。setList()はmove()のreplacePendingと同じくpendingMoveを即座に差し替える独立経路だが、activeFadeTokenは解除していなかったため、フェード付きの古いplayer.play()がネットワーク待ち等で未解決のまま残っている間に別アルバムを選ぶと、新しい曲が再生されても古いトークンが残り続け、'endedガードが無期限に無視して自動送りが止まっていた）", async () => {
+    const audio = new Audio();
+    let settleOrphan!: () => void;
+    const orphanPlay = new Promise<void>((resolve) => { settleOrphan = resolve; });
+    const played: string[] = [];
+    const play = vi.fn(async (fileId: string, _position, options) => {
+      if (fileId === "b" && options?.fadeOut) return orphanPlay; // 孤立させる古いフェード操作
+      played.push(fileId);
+    });
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0); // "a"が再生中
+
+    const orphanedMove = queue.next(true); // "a"→"b"へフェード、未解決のまま孤立させる
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("b", undefined, { fadeOut: true }));
+
+    // フェード待機中に、別アルバム・プレイリストを選んでsetList()＋playAt()する
+    // （resume()のreplacePendingとは異なる独立した経路で孤立が発生する）。
+    queue.setList([song("x"), song("y")]);
+    await queue.playAt(0); // "x"が再生中（フェードなしなので即commitされる）
+    expect(queue.currentPlayingFileId()).toBe("x");
+
+    // "x"の自然終了で、正しく次（"y"）へ進められること
+    // （setList()がactiveFadeTokenを失効させていなければ、孤立した古いトークンが残り続け、
+    // 'endedガードがこれを無期限に無視してしまう）。
+    audio.listener?.();
+    await vi.waitFor(() => expect(played).toContain("y"));
+
+    // 孤立していた古いフェード操作（"b"）が後から解決しても、上記の検証には影響しない。
+    settleOrphan();
+    await orphanedMove;
+  });
+
   test("自動送り中の認証待ちは次曲を保留し、明示的な継続後に同じ次曲を再開する", async () => {
     const audio = new Audio();
     const played: string[] = [];

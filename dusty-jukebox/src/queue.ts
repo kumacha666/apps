@@ -54,7 +54,13 @@ export class PlaybackQueue {
   // そのまま渡すと、この入れ替えが呼び出し元の配列まで書き換えてしまう（例：アルバム再生後に
   // 上下ボタンで並び替えると、`loadedAlbumGroups`が保持する元のアルバム内曲順自体が
   // 破壊され、以後そのアルバムを読み込み直しても正しいdisc/track順に戻らない）。
-  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.songs = [...songs]; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
+  // setList()もmove()のreplacePendingと同じく、pendingMoveを即座に差し替えて新しいリストの
+  // 操作を始められる独立した経路のため、activeFadeTokenも同様に失効させる（2026-09-08、
+  // Codexレビュー指摘：P1）。失効させないと、フェード付きの古いplayer.play()がネットワーク待ち
+  // 等で未解決のまま残っている間に別アルバム・プレイリストを選ぶと、新しい曲が再生されても
+  // 古いトークンが残り続け、コンストラクタの'ended'ガードがそれを無期限に一時停止扱いのまま
+  // 無視してしまい、自動送りが止まる。
+  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.activeFadeToken = null; this.songs = [...songs]; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
   notifyExternalPlaybackStarted(): void { this.isQueuePlayback = false; }
   // 呼び出しのたびに1つ進む（2026-09-08、Codexレビュー指摘：P2続き）。exclude()はsetList()を
   // 経由せず即座にexcludedを書き換えるため、generationId()では検出できない「除外/除外解除だけの
