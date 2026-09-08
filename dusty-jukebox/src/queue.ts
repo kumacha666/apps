@@ -1,7 +1,7 @@
 import type { Song } from "./catalog";
 import { sortSongsForQueue, type QueueSortDirection, type QueueSortField } from "./queueSort";
 export interface AudioEndedLike { addEventListener(type: "ended", listener: () => void): void; }
-export interface PlayerLike { play(fileId: string, position?: number): Promise<void>; }
+export interface PlayerLike { play(fileId: string, position?: number, options?: { fadeOut?: boolean }): Promise<void>; }
 export type BeforeQueuePlay = (fileId: string) => void;
 
 export class PlaybackQueue {
@@ -65,12 +65,11 @@ export class PlaybackQueue {
   canResumeCurrent(): boolean {
     return this.isQueuePlayback && this.currentFileId !== null && !this.isExcluded(this.currentFileId);
   }
-  private async playAndCommit(fileId: string, generation: number, position?: number): Promise<boolean> {
+  private async playAndCommit(fileId: string, generation: number, position?: number, fadeOut = false): Promise<boolean> {
     // Register a continuation before the native play promise settles: the
     // initial stream request can receive a 401 while that promise is pending.
     this.onBeforePlay(fileId);
-    if (position === undefined) await this.player.play(fileId);
-    else await this.player.play(fileId, position);
+    await this.player.play(fileId, position, fadeOut ? { fadeOut: true } : undefined);
     if (generation !== this.generation) return false;
     this.currentFileId = fileId;
     this.isQueuePlayback = true;
@@ -96,10 +95,12 @@ export class PlaybackQueue {
   // 再生されうる。move()経由でthis.list()をpendingMoveチェーン内の実行時点で評価し、
   // fileIdで探すことで、先に完了した並べ替え後の状態を必ず反映する）。除外中の曲は
   // this.list()の対象外のため見つからずfalseになる（playAt()と同じ挙動）。
-  playFileId(fileId: string): Promise<boolean> {
+  // fadeOut（開発体制#42④）：手動スキップのフェードアウトを適用するかどうか。
+  // main.tsの曲名クリックハンドラがフェード設定の現在値を渡す。
+  playFileId(fileId: string, fadeOut = false): Promise<boolean> {
     return this.move(async (generation) => {
       const song = this.list().find((s) => s.fileId === fileId);
-      return song ? this.playAndCommit(song.fileId, generation) : false;
+      return song ? this.playAndCommit(song.fileId, generation, undefined, fadeOut) : false;
     });
   }
   // それまでにキューイングされた操作（moveSong/sortBy/shuffle/next/previous等）がすべて
@@ -111,7 +112,11 @@ export class PlaybackQueue {
   async whenIdle(): Promise<void> {
     await this.pendingMove.catch(() => {});
   }
-  next(): Promise<boolean> { return this.move(async (generation) => { const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId); const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId)); return next ? this.playAndCommit(next.fileId, generation) : false; }); }
+  // fadeOut（開発体制#42④）：手動の「次へ」ボタン・Bluetooth/OSメディアキーからの呼び出し時のみ
+  // trueを渡す。曲の自然終了（advanceOnEnded()経由）ではfalse（既定値）のまま呼ぶ——将来の
+  // クロスフェード機能（曲間で2曲が重なる本格版）がこの経路を専用に扱うため、フェードアウト
+  // （単曲の音量を下げてから切り替える簡易版）とは役割を分ける。
+  next(fadeOut = false): Promise<boolean> { return this.move(async (generation) => { const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId); const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId)); return next ? this.playAndCommit(next.fileId, generation, undefined, fadeOut) : false; }); }
   // 曲の自然終了（<audio>のended）専用のnext()。next()自体にこのロジックを組み込まないのは、
   // 末尾で「次へ」ボタンを空振りクリックしただけ（曲はまだ再生中）でも再開不可状態へ遷移して
   // しまうと、その後「一時停止して再生」で現在位置から再開する既存の想定動作を壊すため
@@ -125,7 +130,8 @@ export class PlaybackQueue {
       return started;
     });
   }
-  previous(): Promise<boolean> { return this.move(async (generation) => { if (this.currentFileId === null) return false; const currentIndex = this.songs.findIndex((song) => song.fileId === this.currentFileId); for (let index = currentIndex - 1; index >= 0; index -= 1) { const song = this.songs[index]; if (!this.isExcluded(song.fileId)) return this.playAndCommit(song.fileId, generation); } return false; }); }
+  // fadeOut：next()と同じ（開発体制#42④）。
+  previous(fadeOut = false): Promise<boolean> { return this.move(async (generation) => { if (this.currentFileId === null) return false; const currentIndex = this.songs.findIndex((song) => song.fileId === this.currentFileId); for (let index = currentIndex - 1; index >= 0; index -= 1) { const song = this.songs[index]; if (!this.isExcluded(song.fileId)) return this.playAndCommit(song.fileId, generation, undefined, fadeOut); } return false; }); }
   resumeCurrent(position: number): Promise<boolean> { return this.move(async (generation) => this.currentFileId ? this.playAndCommit(this.currentFileId, generation, position) : false, true); }
   // 絞り込んだ再生リストをその場でランダムな順番に並べ替える（開発体制#39④UI-4）。
   // CONCEPT.mdの設計方針「気分はフィルタ条件で満たす、シャッフルは任意の再生モードの1つ」

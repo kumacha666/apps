@@ -227,6 +227,7 @@ function render(): void {
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
         <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button></div>
+        <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ時にフェードアウトする</label>
         <div>
           <label>並び替え
             <select id="sort-field" disabled>
@@ -270,6 +271,14 @@ function render(): void {
 }
 
 function numberOrUndefined(value: string): number | undefined { const n = Number(value); return value.trim() === "" || !Number.isFinite(n) ? undefined : n; }
+// 手動スキップ（次へ/前へ/曲名クリック/Bluetooth・OSメディアキー）時のフェードアウト設定
+// （開発体制#42④の一部）。チェックボックスの現在値をそのまま読む（永続化はしない、
+// 他のUIトグルと同じくセッション内限定）。曲の自然終了時（advanceOnEnded()経由）には
+// 適用しない——将来のクロスフェード機能（曲間で2曲が重なる本格版、別PR）がこの経路を
+// 専用に扱うため。
+function fadeOutEnabled(): boolean {
+  return el<HTMLInputElement>("fade-out-toggle").checked;
+}
 // 再生/前へ/次へ/シャッフルはいずれも「再生リストに曲がある間だけ使える」操作のため、有効/無効を
 // まとめて切り替える（開発体制#39④UI-4、シャッフル追加時に既存2ボタンと同じ条件のまま揃える）。
 function setQueueNavEnabled(enabled: boolean): void {
@@ -312,7 +321,7 @@ function renderQueue(): void {
       // 並べ替え後の状態を必ず反映する）。
       label.className = "song-link";
       const fileId = row.song.fileId;
-      label.addEventListener("click", () => void handleQueuePlayback(() => queue?.playFileId(fileId)));
+      label.addEventListener("click", () => void handleQueuePlayback(() => queue?.playFileId(fileId, fadeOutEnabled())));
     }
     item.append(label);
     // 上下ボタン（開発体制#42②、実機フィードバック）：一覧の表示順そのままの隣接行と入れ替える
@@ -1783,8 +1792,8 @@ function init(): void {
     registerActionHandlers(navigator.mediaSession, {
       play: () => { void audioPlayer.play(); },
       pause: () => audioPlayer.pause(),
-      previoustrack: () => void handleQueuePlayback(() => queue?.previous()),
-      nexttrack: () => void handleQueuePlayback(() => queue?.next()),
+      previoustrack: () => void handleQueuePlayback(() => queue?.previous(fadeOutEnabled())),
+      nexttrack: () => void handleQueuePlayback(() => queue?.next(fadeOutEnabled())),
     });
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
@@ -1799,8 +1808,8 @@ function init(): void {
     el<HTMLInputElement>("album-search").addEventListener("input", () => {
       renderAlbumGroups(filterAlbumGroups(loadedAlbumGroups, el<HTMLInputElement>("album-search").value));
     });
-    el<HTMLButtonElement>("next-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.next()));
-    el<HTMLButtonElement>("previous-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.previous()));
+    el<HTMLButtonElement>("next-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.next(fadeOutEnabled())));
+    el<HTMLButtonElement>("previous-btn").addEventListener("click", () => void handleQueuePlayback(() => queue?.previous(fadeOutEnabled())));
     // シャッフルは絞り込み結果の並び順を変えるだけで何かを再生開始するわけではないため、
     // handleQueuePlayback()（「再生中」表示・認証ゲート解除等、実際の再生成功時の副作用を伴う）は
     // 経由しない（再生中の曲・除外設定はqueue.shuffle()自体が変更しない。次へ/前へは新しい

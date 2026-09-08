@@ -1,9 +1,11 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { PlaybackAuthenticationRequiredError, PlaybackController, streamUrl, type AudioElementLike } from "./playback";
 
 class FakeAudio implements AudioElementLike {
   src = "";
   currentTime = 0;
+  volume = 1;
+  paused = true;
   playCount = 0;
   pauseCount = 0;
   private errorListener: (() => void) | undefined;
@@ -11,10 +13,12 @@ class FakeAudio implements AudioElementLike {
 
   async play(): Promise<void> {
     this.playCount += 1;
+    this.paused = false;
   }
 
   pause(): void {
     this.pauseCount += 1;
+    this.paused = true;
   }
 
   addEventListener(type: "error" | "pause", listener: () => void): void {
@@ -153,5 +157,57 @@ describe("PlaybackController", () => {
     await playback.play("A", 73.5);
 
     expect(audio.currentTime).toBe(73.5);
+  });
+
+  test("fadeOut指定時は現在再生中の音声をフェードアウトしてから次の曲へ切り替え、volumeを1へ戻す（開発体制#42④）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    expect(audio.paused).toBe(false);
+
+    const srcDuringA = audio.src;
+    const playPromise = playback.play("B", 0, { fadeOut: true });
+    // フェードの途中（半分程度）まで時間を進めた時点で、srcはまだ曲Aのままで
+    // volumeは1未満に下がっている（実際にフェードが起きていることの検証）。
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(audio.src).toBe(srcDuringA);
+    expect(audio.volume).toBeGreaterThan(0);
+    expect(audio.volume).toBeLessThan(1);
+
+    await vi.runAllTimersAsync();
+    await playPromise;
+
+    expect(audio.src).toBe(streamUrl("B", playback.currentStreamGeneration() ?? undefined));
+    expect(audio.volume).toBe(1);
+  });
+
+  test("再生中でない（一時停止中の）曲へのfadeOut指定はフェードを待たずすぐに切り替える", async () => {
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    playback.pause();
+    expect(audio.paused).toBe(true);
+
+    await playback.play("B", 0, { fadeOut: true });
+
+    expect(audio.src).toBe(streamUrl("B", playback.currentStreamGeneration() ?? undefined));
+    expect(audio.volume).toBe(1);
+  });
+
+  test("fadeOut中にトークンが取得できなかった場合もvolumeを1へ戻す", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => null);
+    audio.paused = false; // 何かが再生中の状態を模擬
+
+    const playPromise = playback.play("A", 0, { fadeOut: true }).catch(() => {});
+    await vi.runAllTimersAsync();
+    await playPromise;
+
+    expect(audio.volume).toBe(1);
+    expect(audio.src).toBe("");
   });
 });

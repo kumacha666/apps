@@ -400,6 +400,33 @@ describe("PlaybackQueue", () => {
     expect(played[played.length - 1]).toBe("c");
     expect(queue.all().map((s) => s.fileId)).toEqual(["a", "c", "b"]);
   });
+  test("next/previous/playFileIdはfadeOut引数をplayer.play()のoptionsへそのまま渡す（開発体制#42④、手動スキップ時のみtrueにする責務はmain.ts側）", async () => {
+    const calls: Array<{ fileId: string; options: { fadeOut?: boolean } | undefined }> = [];
+    const audio = new Audio();
+    const queue = new PlaybackQueue({
+      play: async (fileId, _position, options) => { calls.push({ fileId, options }); },
+    }, audio);
+    queue.setList([song("a"), song("b"), song("c"), song("d")]);
+    await queue.playAt(0);
+    await queue.next(true);
+    await queue.previous(true);
+    await queue.playFileId("c", true);
+    await queue.next(); // 既定値false（曲の自然終了と同じ扱い）
+
+    expect(calls.map((c) => c.options?.fadeOut)).toEqual([undefined, true, true, true, undefined]);
+  });
+  test("advanceOnEndedは常にfadeOut=falseでnext()を呼ぶ（自然終了はフェードアウト対象外）", async () => {
+    const calls: Array<{ fadeOut?: boolean }> = [];
+    const audio = new Audio();
+    const queue = new PlaybackQueue({
+      play: async (_fileId, _position, options) => { calls.push({ fadeOut: options?.fadeOut }); },
+    }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0);
+    await queue.advanceOnEnded();
+
+    expect(calls[calls.length - 1].fadeOut).toBeUndefined();
+  });
   test("キュー再生の終了時だけ次の曲へ進み、単曲試聴後の終了では進まない", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b")]); await queue.playAt(0); audio.listener?.();
@@ -424,7 +451,7 @@ describe("PlaybackQueue", () => {
 
     const firstNext = queue.next();
     const secondNext = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a"));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, undefined));
     expect(play).toHaveBeenCalledTimes(1);
     resolveFirst?.();
     await Promise.all([firstNext, secondNext]);
@@ -439,7 +466,7 @@ describe("PlaybackQueue", () => {
     queue.setList([song("old-a"), song("old-b")]);
 
     const oldMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a"));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a", undefined, undefined));
     queue.setList([song("new-a"), song("new-b")]);
     resolvePlayback?.();
     await oldMove;
@@ -457,10 +484,10 @@ describe("PlaybackQueue", () => {
     queue.setList([song("old-a")]);
 
     const oldMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a"));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a", undefined, undefined));
     queue.setList([song("new-a")]);
     const newMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("new-a"));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("new-a", undefined, undefined));
     await newMove;
 
     resolveOldPlayback?.();
@@ -505,7 +532,7 @@ describe("PlaybackQueue", () => {
     await queue.next();
     await queue.resumeCurrent(42.25);
 
-    expect(play.mock.calls).toEqual([["a"], ["a", 42.25]]);
+    expect(play.mock.calls).toEqual([["a", undefined, undefined], ["a", 42.25, undefined]]);
   });
 
   test("最初の曲のnative playが未解決でも、開始前フックが継続情報を登録できる", async () => {
@@ -535,9 +562,9 @@ describe("PlaybackQueue", () => {
     queue.setList([song("a")]);
 
     const originalMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a"));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, undefined));
     const resumed = queue.resume("a", 12.5);
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", 12.5));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", 12.5, undefined));
     await expect(resumed).resolves.toBe(true);
 
     settleOriginal();
