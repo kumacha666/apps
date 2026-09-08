@@ -291,6 +291,63 @@ test("並び替え機能でタイトル順（昇順/降順）に並べ替えら�
   ]);
 });
 
+test("並び替えは再生中の曲を含むリスト全体を対象にする（開発体制#42、以前は再生中の曲より前を固定していた）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  // アルバム再生で自動的に先頭曲（Opening、disc1/track1）が再生される。
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await expect(page.locator("#now-playing")).toContainText("Opening");
+  // アルバム再生直後の並びはdisc/track順: Opening, Scherzo, Finale（Openingが先頭）。
+  const beforeSort = await page.locator("#catalog-list li").allTextContents();
+  expect(beforeSort.map((t) => t.trim())[0]).toContain("Opening");
+
+  // タイトル昇順で並び替えると、修正前は再生中のOpeningが先頭に固定されたままだったが、
+  // 修正後は再生中の曲も含めてリスト全体がタイトル順（Finale, Opening, Scherzo）になる。
+  await page.locator("#sort-field").selectOption("title");
+  await page.locator("#sort-direction").selectOption("asc");
+  await page.getByRole("button", { name: "並び替えを適用" }).click();
+  const afterSort = await page.locator("#catalog-list li").allTextContents();
+  expect(afterSort.map((t) => t.trim())).toEqual([
+    expect.stringContaining("Finale"),
+    expect.stringContaining("Opening"),
+    expect.stringContaining("Scherzo"),
+  ]);
+  // 再生中の曲自体（Opening）は変わらず、ハイライトも新しい位置へ移動している。
+  await expect(page.locator("#now-playing")).toContainText("Opening");
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+});
+
+test("並び替えの第二候補を指定すると、第一候補が同値の曲同士を第二候補で並べ替える（開発体制#42）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(4);
+
+  // 第一候補: リリース年（昇順）、第二候補: トラック番号（昇順）。
+  // Jazz Song(2020,track1) → Symphonyの3曲(2024)はtrack番号順、track1同士（Finale/Opening）は
+  // タイトルで最終的な決定性を確保するため Finale が先。
+  await page.locator("#sort-field").selectOption("releaseYear");
+  await page.locator("#sort-direction").selectOption("asc");
+  await page.locator("#sort-secondary-field").selectOption("track");
+  await page.locator("#sort-secondary-direction").selectOption("asc");
+  await page.getByRole("button", { name: "並び替えを適用" }).click();
+  const titles = await page.locator("#catalog-list li").allTextContents();
+  expect(titles.map((t) => t.trim())).toEqual([
+    expect.stringContaining("Jazz Song"),
+    expect.stringContaining("Finale"),
+    expect.stringContaining("Opening"),
+    expect.stringContaining("Scherzo"),
+  ]);
+});
+
 test("「再生」ボタンで先頭曲から再生でき、一時停止中の曲は同じ位置から再開する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");

@@ -34,6 +34,7 @@ const QUEUE_SORT_FIELD_LABELS: Record<QueueSortField, string> = {
   artist: "アーティスト",
   album: "アルバム",
   releaseYear: "リリース年",
+  track: "トラック",
 };
 import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState } from "./mediaSession";
 import { registerStreamAuthResponder } from "./streamAuth";
@@ -236,6 +237,16 @@ function render(): void {
             <option value="asc">昇順</option>
             <option value="desc">降順</option>
           </select>
+          <label>第二候補
+            <select id="sort-secondary-field" disabled>
+              <option value="">（なし）</option>
+              ${QUEUE_SORT_FIELDS.map((field) => `<option value="${field}">${QUEUE_SORT_FIELD_LABELS[field]}</option>`).join("")}
+            </select>
+          </label>
+          <select id="sort-secondary-direction" disabled>
+            <option value="asc">昇順</option>
+            <option value="desc">降順</option>
+          </select>
           <button id="sort-btn" type="button" disabled>並び替えを適用</button>
         </div>
         <ul id="catalog-list" class="result-list"></ul>
@@ -268,6 +279,8 @@ function setQueueNavEnabled(enabled: boolean): void {
   el<HTMLButtonElement>("shuffle-btn").disabled = !enabled;
   el<HTMLSelectElement>("sort-field").disabled = !enabled;
   el<HTMLSelectElement>("sort-direction").disabled = !enabled;
+  el<HTMLSelectElement>("sort-secondary-field").disabled = !enabled;
+  el<HTMLSelectElement>("sort-secondary-direction").disabled = !enabled;
   el<HTMLButtonElement>("sort-btn").disabled = !enabled;
   // 元に戻す対象（シャッフル履歴）は新しいリストでは常に無い状態からスタートするため、
   // ここでまとめて無効化する（シャッフル実行後にupdateUnshuffleEnabled()が個別に有効化する）。
@@ -1757,11 +1770,16 @@ function init(): void {
     // 並び替えもシャッフルと同じ理由（並び順を変えるだけで再生を開始する操作ではない）で
     // handleQueuePlayback()は経由しない。手動並び替えはシャッフル履歴を無効化するため
     // （queue.sortBy()参照）、完了後にupdateUnshuffleEnabled()も呼ぶ。
+    // 第二候補（開発体制#42）：「（なし）」選択時は空文字列のためundefinedとして渡し、
+    // queueSort.ts側の既定の副次キー（アーティスト/アルバムはアルバム→ディスク→トラック順）を使う。
     el<HTMLButtonElement>("sort-btn").addEventListener("click", () => {
       if (!queue) return;
       const field = el<HTMLSelectElement>("sort-field").value as QueueSortField;
       const direction = el<HTMLSelectElement>("sort-direction").value === "desc" ? "desc" : "asc";
-      void queue.sortBy(field, direction).then(() => { renderQueue(); updateUnshuffleEnabled(); });
+      const secondaryFieldValue = el<HTMLSelectElement>("sort-secondary-field").value;
+      const secondaryField = secondaryFieldValue === "" ? undefined : (secondaryFieldValue as QueueSortField);
+      const secondaryDirection = el<HTMLSelectElement>("sort-secondary-direction").value === "desc" ? "desc" : "asc";
+      void queue.sortBy(field, direction, secondaryField, secondaryDirection).then(() => { renderQueue(); updateUnshuffleEnabled(); });
     });
     // 「再生」ボタン：既に再生中の曲があればその位置から再開し（一時停止ボタンで止めた曲も
     // currentPlayingFileId()は保持され続けるためここで再開できる）、無ければ先頭の曲から再生する。
