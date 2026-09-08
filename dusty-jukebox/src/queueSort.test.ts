@@ -129,15 +129,17 @@ describe("sortSongsForQueue", () => {
     ).toEqual(["a1", "a2", "b1", "b2"]);
   });
 
-  it("2026-09-08：リリース年でソートすると、releaseTypeを入力済みの曲は同じ年でも種別ごとにグループ化される（シングルとアルバムの区別）", () => {
+  it("2026-09-08：リリース年でソートすると、releaseTypeの値に関わらずアルバム名の文字列順でグループ化される（ChatGPTレビュー指摘：P2、2ラウンド目。releaseTypeを条件付きで比較に使うとcomparatorの推移律が壊れるため、releaseTypeによるグループ化自体を撤回しアルバム名のみに一本化した）", () => {
     const songs = [
-      makeSong({ fileId: "single", album: "Zeta Single", releaseType: "Single", releaseYear: "2000" }),
-      makeSong({ fileId: "album", album: "Alpha Album", releaseType: "Album", releaseYear: "2000" }),
+      // releaseTypeの値（Album<Single、文字列順）だけを見ればalbum→singleの順になりうるが、
+      // アルバム名（Zeta→Alpha）を見ればsingle→albumの順になるべき、というように矛盾する
+      // データにする（releaseTypeが実際には比較に使われていないことを確認するため）。
+      makeSong({ fileId: "single", album: "Alpha Single", releaseType: "Single", releaseYear: "2000" }),
+      makeSong({ fileId: "album", album: "Zeta Album", releaseType: "Album", releaseYear: "2000" }),
     ];
-    // アルバム名だけならZetaが先だが、releaseType（Album<Single、文字列順）を優先してグループ化する。
     expect(
       sortSongsForQueue(songs, "releaseYear", "asc").map((s) => s.fileId)
-    ).toEqual(["album", "single"]);
+    ).toEqual(["single", "album"]);
   });
 
   it("2026-09-08：releaseTypeが未入力の曲同士は、リリース年ソートでも従来通りアルバム名でグループ化される（releaseType空欄は互いに区別しない）", () => {
