@@ -304,6 +304,15 @@ describe("PlaybackQueue", () => {
     queue.setList([song("c"), song("d")]);
     expect(queue.generationId()).not.toBe(generation1); // 差し替えでは進む
   });
+  test("exclusionVersionはexclude()のたびに進む（2026-09-08、Codexレビュー指摘：P2続き。exclude()はsetList()を経由しないためgenerationIdでは検出できない「除外/除外解除だけの変更」を呼び出し元が検出するために使う）", async () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    const version1 = queue.exclusionVersion();
+    const generation1 = queue.generationId();
+    queue.exclude("b", true);
+    expect(queue.exclusionVersion()).not.toBe(version1);
+    expect(queue.generationId()).toBe(generation1); // exclude()はgenerationIdを進めない
+  });
   test("moveSongは指定した曲を1つ上/下へ入れ替える（開発体制#42②、上下ボタン）", async () => {
     const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
     queue.setList([song("a"), song("b"), song("c")]);

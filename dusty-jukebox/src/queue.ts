@@ -36,7 +36,11 @@ export class PlaybackQueue {
   // 破壊され、以後そのアルバムを読み込み直しても正しいdisc/track順に戻らない）。
   setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.songs = [...songs]; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
   notifyExternalPlaybackStarted(): void { this.isQueuePlayback = false; }
-  exclude(fileId: string, excluded: boolean): void { excluded ? this.excluded.add(fileId) : this.excluded.delete(fileId); }
+  // 呼び出しのたびに1つ進む（2026-09-08、Codexレビュー指摘：P2続き）。exclude()はsetList()を
+  // 経由せず即座にexcludedを書き換えるため、generationId()では検出できない「除外/除外解除だけの
+  // 変更」を呼び出し元が検出できるようにする（exclusionVersion()参照）。
+  private exclusionVersionCounter = 0;
+  exclude(fileId: string, excluded: boolean): void { excluded ? this.excluded.add(fileId) : this.excluded.delete(fileId); this.exclusionVersionCounter += 1; }
   isExcluded(fileId: string): boolean { return this.excluded.has(fileId); }
   all(): Song[] { return [...this.songs]; }
   list(): Song[] { return this.songs.filter((s) => !this.isExcluded(s.fileId)); }
@@ -45,6 +49,10 @@ export class PlaybackQueue {
   // 防げないため、呼び出し元（handleSavePlaylist()等）が「待っている間に全く別のリストへ
   // 差し替えられていないか」を確認するのに使う。
   generationId(): number { return this.generation; }
+  // exclude()の呼び出し回数（2026-09-08、Codexレビュー指摘：P2続き）。generationId()と
+  // 組み合わせて使う：待機中にチェックボックスで一部の曲だけ除外/除外解除された場合、
+  // setList()を経由しないためgenerationId()は変わらないが、これは変わる。
+  exclusionVersion(): number { return this.exclusionVersionCounter; }
   currentPlayingFileId(): string | null { return this.currentFileId; }
   // 「再生」ボタン（開発体制#40）向け：現在の曲を再開してよいかどうか。currentFileIdは
   // notifyExternalPlaybackStarted()後も温存され続けるため、これ単独では「キュー由来の再生

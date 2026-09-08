@@ -444,6 +444,32 @@ test("保存ボタンの待機中に別の再生リストへ差し替えられ�
   await expect(page.locator("#playlist-list li")).toHaveCount(0);
 });
 
+test("保存ボタンの待機中に一部の曲だけチェックを外した場合も、保存は中止され意図しない曲は保存されない（開発体制#42②、2026-09-08 Codexレビュー指摘の回帰防止）", async ({ context, page }) => {
+  // 4曲（albumCatalog）を使い、除外後も0曲チェックに引っかからない（1曲だけ除外→3曲残る）
+  // 状況を再現する。
+  await installGoogleMocks(context, { albumCatalog: true, delayFirstMediaPlay: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  const items = page.locator("#catalog-list li");
+  await expect(items).toHaveCount(4);
+
+  await page.getByRole("button", { name: "再生", exact: true }).click(); // 先頭曲の再生開始、play()は保留のまま
+  await page.locator("#playlist-name").fill("除外テスト");
+  await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
+
+  // 保存がpendingMove待機中の間に、1曲だけチェックを外す（setList()は経由しないため
+  // exclusionVersionだけが進み、除外後も3曲残るため0曲チェックにも該当しない）。
+  await items.nth(1).locator("input[type=checkbox]").uncheck();
+
+  await page.evaluate(() => (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay());
+
+  await expect(page.locator("#status")).toContainText("保存を待っている間に再生リストが変更されたため、保存を中止しました。");
+  await expect(page.locator("#playlist-list li")).toHaveCount(0);
+});
+
 test("「再生」ボタンで先頭曲から再生でき、一時停止中の曲は同じ位置から再開する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");

@@ -523,9 +523,10 @@ async function handleSavePlaylist(): Promise<void> {
   const button = el<HTMLButtonElement>("save-playlist-btn");
   button.disabled = true;
   // whenIdle()はpendingMove待機中の他の操作（アルバム再生・絞り込み等によるsetList()、
-  // またはチェックボックスでの除外）までは防げないため、保存を開始した時点の世代を
-  // 記録しておく（2026-09-08、Codexレビュー指摘：P2）。
+  // またはチェックボックスでの除外）までは防げないため、保存を開始した時点の世代・
+  // 除外バージョンを記録しておく（2026-09-08、Codexレビュー指摘：P2）。
   const startGeneration = queue?.generationId();
+  const startExclusionVersion = queue?.exclusionVersion();
   try {
     // 上下ボタン（moveSong）等、queueへの直前の操作がplayer.play()の解決待ちでまだ
     // pendingMove内に留まっている場合があるため、実際に保存する曲順を読む前に完了を待つ
@@ -533,12 +534,15 @@ async function handleSavePlaylist(): Promise<void> {
     // スナップショットを保存してしまう。reservePlaylistsLoadTargetより後にすることで、
     // その対象予約自体の「操作開始時点の同期的なタイミング」という既存の前提は崩さない）。
     await queue?.whenIdle();
-    // 待機中に全く別のキューへ差し替えられていないか（アルバム再生・絞り込み等）を確認する
-    // （2026-09-08、Codexレビュー指摘：P2続き）。差し替えられていた場合、保存開始時点の
-    // 意図と無関係な曲を保存してしまうため中止する。曲数チェックは差し替え確認と合わせて
-    // ここでも行う（待機中の除外操作で全曲除外された場合、差し替わっていなくても0曲に
-    // なりうるため）。
-    if (queue?.generationId() !== startGeneration) {
+    // 待機中に全く別のキューへ差し替えられていないか（アルバム再生・絞り込み等）・
+    // チェックボックスで除外/除外解除されていないかを確認する（2026-09-08、Codexレビュー
+    // 指摘：P2続き。exclude()はsetList()を経由しないためgenerationId()だけでは検出できず、
+    // 一部の曲だけ除外された場合は0曲チェックにも該当しないまま、保存開始時点と異なる
+    // 内容が保存されてしまっていた）。いずれかが変わっていれば、保存開始時点の意図と
+    // 無関係な曲を保存してしまうため中止する。曲数チェックは差し替え確認と合わせて
+    // ここでも行う（待機中の除外操作で全曲除外された場合、世代も除外バージョンも
+    // チェックだけでは「元々何曲だったか」までは分からないため）。
+    if (queue?.generationId() !== startGeneration || queue?.exclusionVersion() !== startExclusionVersion) {
       setStatus("保存を待っている間に再生リストが変更されたため、保存を中止しました。内容を確認してもう一度お試しください。", true);
       return;
     }
