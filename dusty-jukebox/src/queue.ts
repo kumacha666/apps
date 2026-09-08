@@ -1,6 +1,6 @@
 import type { Song } from "./catalog";
 import { sortSongsForQueue, type QueueSortDirection, type QueueSortField } from "./queueSort";
-import { PlaybackInterruptedError } from "./playback";
+import { PlaybackInterruptedError, PlaybackPausedError } from "./playback";
 export interface AudioEndedLike { addEventListener(type: "ended", listener: () => void): void; }
 export interface PlayerLike { play(fileId: string, position?: number, options?: { fadeOut?: boolean }): Promise<void>; }
 export type BeforeQueuePlay = (fileId: string) => void;
@@ -17,8 +17,15 @@ export class PlaybackQueue {
   // the result of the first request instead of requesting the same song again.
   private pendingMove: Promise<boolean> = Promise.resolve(false);
   // フェードアウトを伴う手動スキップ（next/previous/playFileIdにfadeOut=trueで呼ぶ経路）が
-  // player.play()の完了を待っている間trueにする（2026-09-08、Codexレビュー指摘：P1、開発体制
-  // #42④）。フェード中はaudio.srcがまだ旧曲のままのため、旧曲がこの待機中に自然終了すると
+  // player.play()の完了を待っている間、その操作を表すトークンをactiveFadeTokenへ持たせる
+  // （2026-09-08、Codexレビュー指摘：P1、開発体制#42④。単純なboolean（旧fadeInFlight）だと、
+  // replacePending（認証継続のresume()）で置き換えられ「孤立」した古いplayAndCommit()が、
+  // 後から（新しいフェード操作が既に進行中の状態で）解決・拒否した際、その古い操作自身の
+  // finallyが共有のboolean/フラグをfalseへ戻してしまい、進行中の新しいフェード操作の状態を
+  // 誤って解除してしまう競合があった。各操作に一意なトークンを持たせ、`finally`では
+  // 「現在のactiveFadeTokenが依然として自分自身のトークンである場合のみ」解除することで、
+  // 後から解決した孤立操作が新しい操作の状態を巻き込んで壊さないようにする）。
+  // フェード中はaudio.srcがまだ旧曲のままのため、旧曲がこの待機中に自然終了すると
   // 'ended'が発火するが、旧曲のcurrentFileIdはまだ更新されていない（手動スキップがまだ
   // committされていない）ため、この'ended'から通常通りnext()/advanceOnEnded()すると、手動
   // スキップがcommitした直後の新しい曲を追い越してさらに1曲進めてしまう（例：A再生末尾で
@@ -26,7 +33,8 @@ export class PlaybackQueue {
   // スキップされる）。フェード中の自然終了は、手動スキップが既にこの遷移を代表しているため
   // 無視する（フェードを伴わない通常のsrc即時差し替えでは、ブラウザは新しいsrcへの差し替えを
   // 中断＝load abortとして扱い'ended'自体を発火しないため、この問題は起きない）。
-  private fadeInFlight = false;
+  private fadeTokenCounter = 0;
+  private activeFadeToken: number | null = null;
   constructor(
     private readonly player: PlayerLike,
     audio: AudioEndedLike,
@@ -35,7 +43,7 @@ export class PlaybackQueue {
     private readonly onBeforePlay: BeforeQueuePlay = () => {}
   ) {
     audio.addEventListener("ended", () => {
-      if (!this.isQueuePlayback || this.fadeInFlight) return;
+      if (!this.isQueuePlayback || this.activeFadeToken !== null) return;
       if (this.onEnded) this.onEnded();
       else void this.next().catch(this.onError);
     });
@@ -81,7 +89,13 @@ export class PlaybackQueue {
     // Register a continuation before the native play promise settles: the
     // initial stream request can receive a 401 while that promise is pending.
     this.onBeforePlay(fileId);
-    if (fadeOut) this.fadeInFlight = true;
+    // このフェード操作自身のトークンを発行する（2026-09-08、Codexレビュー指摘：P1）。
+    let myFadeToken: number | null = null;
+    if (fadeOut) {
+      this.fadeTokenCounter += 1;
+      myFadeToken = this.fadeTokenCounter;
+      this.activeFadeToken = myFadeToken;
+    }
     try {
       await this.player.play(fileId, position, fadeOut ? { fadeOut: true } : undefined);
     } catch (err) {
@@ -90,19 +104,28 @@ export class PlaybackQueue {
       // commitしてはならない（currentFileId/isQueuePlaybackを更新せずfalseを返す）。
       // 「一時停止しただけ」はエラー表示すべき状況ではないため、呼び出し元へは再送出しない
       // （queue操作が「何も始まらなかった」を示すfalseを返すという既存の設計に合わせる）。
-      // 中断を検知した時点でthis.generationを進め、既にpendingMoveへ積まれている後続の
-      // ナビゲーション操作（素早い連続クリックや、フェード中の旧曲自然終了によるadvanceOnEnded()
-      // 経由のnext()等）も無効化する（2026-09-08、Codexレビュー指摘：P1）。move()はoperation実行
-      // 直前に`generation === this.generation`を確認するため（setList()と同じ既存の無効化機構）、
-      // ここで進めないと、ユーザーが明示的に一時停止した直後に後続操作が次の曲を再生してしまい
-      // 一時停止が勝手に取り消される。
       if (err instanceof PlaybackInterruptedError) {
-        this.generation += 1;
+        // 一時停止（PlaybackPausedError）による中断の場合だけthis.generationを進め、既に
+        // pendingMoveへ積まれている後続のナビゲーション操作（素早い連続クリックや、フェード中の
+        // 旧曲自然終了によるadvanceOnEnded()経由のnext()等）も無効化する（2026-09-08、Codexレビュー
+        // 指摘：P1）。move()はoperation実行直前に`generation === this.generation`を確認するため
+        // （setList()と同じ既存の無効化機構）、ここで進めないと、ユーザーが明示的に一時停止した
+        // 直後に後続操作が次の曲を再生してしまい一時停止が勝手に取り消される。
+        // 一時停止によるものではなく、フェード中に別の正当なplay()（例：別アルバム選択による
+        // setList()＋playAt()）に追い越されただけの場合は進めない（2026-09-08、Codexレビュー
+        // 指摘：P1続き。ここで無条件に進めると、新しく開始した正当な操作がpendingMove内で
+        // 自身のgeneration確認に失敗し、実際には再生が始まっているのにキューの現在曲・UIが
+        // 更新されなくなってしまう）。
+        if (err instanceof PlaybackPausedError) this.generation += 1;
         return false;
       }
       throw err;
     } finally {
-      if (fadeOut) this.fadeInFlight = false;
+      // 自分自身が発行したトークンが依然として「現在アクティブなフェード」である場合のみ解除する
+      // （2026-09-08、Codexレビュー指摘：P1）。置き換えられて孤立した古い操作がここに後から
+      // 到達しても、既にactiveFadeTokenは新しい操作のトークンへ差し替わっているため、この
+      // 古い操作のfinallyは新しい操作の状態を誤って解除しない。
+      if (myFadeToken !== null && this.activeFadeToken === myFadeToken) this.activeFadeToken = null;
     }
     if (generation !== this.generation) return false;
     this.currentFileId = fileId;
@@ -120,8 +143,9 @@ export class PlaybackQueue {
     // playAndCommit()のtry/finallyがfadeInFlightを確実に解除できるとは限らない）。fadeInFlightを
     // 解除せず取り残すと、それ以降の曲の自然終了（'ended'）が恒久的に無視され続け、キューが
     // 二度と自動で進まなくなってしまう。新しいチェーンを開始する時点で、古いフェード待機状態は
-    // もはや意味を持たないため、ここで明示的に解除する。
-    if (replacePending) this.fadeInFlight = false;
+    // もはや意味を持たないため、ここで明示的に解除する（トークン方式のため、後から古い操作の
+    // finallyが誤って新しい操作の状態を解除することもない）。
+    if (replacePending) this.activeFadeToken = null;
     const predecessor = replacePending ? Promise.resolve(false) : this.pendingMove;
     const result = predecessor.then(() => generation === this.generation ? operation(generation) : false);
     // A rejected playback must reject its own caller, but must not prevent a

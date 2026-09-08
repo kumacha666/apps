@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { PlaybackAuthenticationRequiredError, PlaybackController, PlaybackInterruptedError, streamUrl, type AudioElementLike } from "./playback";
+import { PlaybackAuthenticationRequiredError, PlaybackController, PlaybackInterruptedError, PlaybackPausedError, streamUrl, type AudioElementLike } from "./playback";
 
 class FakeAudio implements AudioElementLike {
   src = "";
@@ -312,21 +312,51 @@ describe("PlaybackController", () => {
     expect(audio.playCount).toBe(2); // 曲A・曲Bの両方
   });
 
-  test("フェード中にアプリ内の「一時停止」ボタン（PlaybackController.pause()）で中断された場合も、再生成功として誤commitされないようPlaybackInterruptedErrorを投げる（2026-09-08、Codexレビュー指摘：P1続き。pause()はgenerationを進めるため、この分岐はネイティブpauseとは別経路を通る）", async () => {
+  test("フェード中にアプリ内の「一時停止」ボタン（PlaybackController.pause()）で中断された場合も、再生成功として誤commitされないようPlaybackPausedErrorを投げ、フェード開始前のvolumeへ戻す（2026-09-08、Codexレビュー指摘：P1続き。pause()はgenerationを進めるため、この分岐はネイティブpauseとは別経路を通る。当初はPlaybackInterruptedErrorを投げるだけでvolumeを戻していなかったため、再開時にフェードで下がったままの音量で再生されてしまっていた）", async () => {
     vi.useFakeTimers();
     const audio = new FakeAudio();
     const playback = new PlaybackController(audio, () => "valid-token");
 
     await playback.play("A");
     const srcDuringA = audio.src;
+    audio.volume = 0.8;
     const playError = playback.play("B", 0, { fadeOut: true }).catch((err: unknown) => err);
     // フェードの途中で、アプリ内の「一時停止」ボタンが押される（PlaybackController.pause()を
     // 直接呼ぶため、audio.pause()だけでなくgenerationも進む）。
     await vi.advanceTimersByTimeAsync(500);
+    const volumeMidFade = audio.volume;
+    expect(volumeMidFade).toBeLessThan(0.8); // フェードが実際に途中まで進んでいることの前提確認
     playback.pause();
     await vi.runAllTimersAsync();
 
-    expect(await playError).toBeInstanceOf(PlaybackInterruptedError);
+    const error = await playError;
+    expect(error).toBeInstanceOf(PlaybackPausedError);
+    expect(error).toBeInstanceOf(PlaybackInterruptedError); // PlaybackPausedErrorはPlaybackInterruptedErrorの一種
     expect(audio.src).toBe(srcDuringA); // 曲Bへは切り替わらない
+    expect(audio.volume).toBe(0.8); // フェードで下がった音量のまま取り残されない
+  });
+  test("フェード中に別のplay()（一時停止ではなく正当な追い越し）に追い越された場合はPlaybackPausedErrorではなくPlaybackInterruptedErrorを投げ、volumeには触れない（2026-09-08、Codexレビュー指摘：P1。一時停止によるものと誤判定すると、PlaybackQueue側が追い越し成功後の新しい操作まで巻き込んで無効化してしまう）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.8;
+    const firstError = playback.play("B", 0, { fadeOut: true }).catch((err: unknown) => err);
+    await vi.advanceTimersByTimeAsync(500);
+    const volumeMidFade = audio.volume;
+    expect(volumeMidFade).toBeLessThan(0.8);
+
+    // pause()ではなく、別の正当なplay()（例：別アルバム選択）に追い越される。
+    const secondPlay = playback.play("C");
+    await vi.runAllTimersAsync();
+    await secondPlay;
+
+    const error = await firstError;
+    expect(error).toBeInstanceOf(PlaybackInterruptedError);
+    expect(error).not.toBeInstanceOf(PlaybackPausedError);
+    // 追い越した側（C）が既に設定したvolumeを、古いフェードの中断処理が上書きしない
+    // （volumeMidFadeのままのはず＝Cのvolume制御に一切触れていないことの確認）。
+    expect(audio.volume).toBe(volumeMidFade);
   });
 });

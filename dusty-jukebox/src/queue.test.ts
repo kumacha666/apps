@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { PlaybackQueue, queueRowViews, songDisplayLabel, nowPlayingLabel } from "./queue";
-import { PlaybackAuthenticationRequiredError, PlaybackInterruptedError } from "./playback";
+import { PlaybackAuthenticationRequiredError, PlaybackInterruptedError, PlaybackPausedError } from "./playback";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { PlaybackContinuationRegistry } from "./playbackContinuation";
 import { parseIndexRows, type Song } from "./catalog";
@@ -431,7 +431,7 @@ describe("PlaybackQueue", () => {
     const audio = new Audio();
     const queue = new PlaybackQueue({
       play: async (_fileId, _position, options) => {
-        if (options?.fadeOut) throw new PlaybackInterruptedError();
+        if (options?.fadeOut) throw new PlaybackPausedError();
       },
     }, audio);
     queue.setList([song("a"), song("b")]);
@@ -470,8 +470,8 @@ describe("PlaybackQueue", () => {
     const queuedNext = queue.next();
 
     // ネイティブ一時停止（またはアプリ内「一時停止」ボタン）により、フェード中の"b"へのplay()が
-    // PlaybackInterruptedErrorで中断される。
-    rejectB(new PlaybackInterruptedError());
+    // PlaybackPausedError（PlaybackInterruptedErrorのうち一時停止によるもの）で中断される。
+    rejectB(new PlaybackPausedError());
 
     expect(await manualNext).toBe(false);
     // 一時停止を検知した時点で待機中だったqueuedNextも、実際には実行されずfalseを返す
@@ -480,6 +480,50 @@ describe("PlaybackQueue", () => {
     expect(await queuedNext).toBe(false);
     expect(played).toEqual(["a"]);
     expect(queue.currentPlayingFileId()).toBe("a");
+  });
+  test("フェード中に別の正当なplay()（例：別アルバム選択によるsetList()+playAt()）に追い越された場合、その新しい操作の世代確認を巻き込んで無効化しない（2026-09-08、Codexレビュー指摘：P1。一時停止ではなく追い越しによるPlaybackInterruptedErrorでthis.generationを進めると、新しく開始した正当な操作が自身の世代確認に失敗し、実際には再生が始まっているのにキューの現在曲・UIが更新されなくなる）", async () => {
+    const played: string[] = [];
+    let rejectB!: (err: unknown) => void;
+    let resolveX!: () => void;
+    const audio = new Audio();
+    const queue = new PlaybackQueue({
+      play: async (fileId, _position, options) => {
+        if (fileId === "b" && options?.fadeOut) {
+          await new Promise<void>((_resolve, reject) => { rejectB = reject; });
+          return;
+        }
+        if (fileId === "x") {
+          await new Promise<void>((resolve) => { resolveX = resolve; });
+        }
+        played.push(fileId);
+      },
+    }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0); // "a"が再生中
+
+    const manualNext = queue.next(true); // "b"へフェードあり、player.play()はまだ未解決
+    await vi.waitFor(() => expect(rejectB).toBeDefined());
+
+    // フェード待機中に、ユーザーが別アルバムを選ぶ等でsetList()を呼び、新しいリストの先頭を
+    // 再生する（一時停止ではない正当な追い越し）。
+    queue.setList([song("x"), song("y")]);
+    const newPlay = queue.playAt(0); // "x"、player.play()はまだ未解決
+    await vi.waitFor(() => expect(resolveX).toBeDefined());
+
+    // 旧世代のフェード待機（"b"へのplay()）が、新しいplay()に追い越されたことによる
+    // PlaybackInterruptedError（PlaybackPausedErrorではない＝一時停止によるものではない）で
+    // 中断される。"x"がまだcommitされる前にこの中断処理が走ることを保証するため、
+    // "x"側のplay()をまだ未解決のまま維持しておく。
+    rejectB(new PlaybackInterruptedError());
+    await Promise.resolve(); // manualNextのcatchが実行されるのを待つ
+
+    resolveX();
+
+    expect(await manualNext).toBe(false);
+    // 新しい操作は追い越しの巻き添えで無効化されず、正常にcommitされる。
+    expect(await newPlay).toBe(true);
+    expect(played).toEqual(["a", "x"]);
+    expect(queue.currentPlayingFileId()).toBe("x");
   });
   test("フェードアウトを伴う手動スキップの待機中に旧曲が自然終了しても、二重に進めない（2026-09-08、Codexレビュー指摘：P1。フェード中はaudio.srcがまだ旧曲のままのため、待機中に旧曲がendedを発火すると、手動スキップがcommitした直後にさらにもう1曲自動で進んでしまい、手動スキップの対象曲が丸ごとスキップされていた）", async () => {
     const played: string[] = [];
@@ -679,6 +723,60 @@ describe("PlaybackQueue", () => {
     await vi.waitFor(() => expect(played).toContain("c"));
 
     void originalMove; void settleOriginal; // 意図的に未解決のまま残す（現実のHTMLMediaElement.play()を模した状況）
+  });
+
+  test("resumeで置き換えられ孤立した古いフェード操作が後から解決しても、その後に始まった新しいフェード操作の状態を誤って解除しない（2026-09-08、Codexレビュー指摘：P1。単純なboolean（旧fadeInFlight）だと、孤立した古い操作のfinallyが共有フラグをfalseに戻してしまい、進行中の新しいフェード操作中の'ended'抑止が壊れて二重送りが起きていた）", async () => {
+    const audio = new Audio();
+    let rejectOrphan!: (err: unknown) => void;
+    const orphanPlay = new Promise<void>((_resolve, reject) => { rejectOrphan = reject; });
+    let settleNewFade!: () => void;
+    const newFadePlay = new Promise<void>((resolve) => { settleNewFade = resolve; });
+    const played: string[] = [];
+    const play = vi.fn(async (fileId: string, _position, options) => {
+      if (fileId === "b" && options?.fadeOut) return orphanPlay; // 孤立させる古いフェード操作
+      if (fileId === "d" && options?.fadeOut) return newFadePlay; // 後から始まる新しいフェード操作
+      played.push(fileId);
+    });
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a"), song("b"), song("c"), song("d"), song("e")]);
+    await queue.playAt(0); // "a"が再生中
+
+    const orphanedMove = queue.next(true); // "a"→"b"へフェード、未解決のまま孤立させる
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("b", undefined, { fadeOut: true }));
+
+    // 認証継続でチェーンが置き換わり、"c"へ直接遷移する（上のフェード操作は孤立する）。
+    const resumed = queue.resume("c", 0);
+    await expect(resumed).resolves.toBe(true);
+    expect(queue.currentPlayingFileId()).toBe("c");
+
+    // resume後、ユーザーが新しく別のフェード付きスキップを開始する（"c"→"d"）。
+    const newFadeMove = queue.next(true);
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("d", undefined, { fadeOut: true }));
+
+    // ここで、孤立していた古いフェード操作（"b"）が（例えば元々の再生要求がネットワークエラー等で
+    // 最終的に失敗して）ようやく解決する。この時点で新しいフェード操作（"d"）はまだ進行中のため、
+    // 孤立操作側のfinallyがそれを巻き込んで解除してしまわないことを検証する
+    // （PlaybackInterruptedError以外の一般的なErrorで拒否し、"b"のcommit可否には関与しない
+    // finally自体の挙動だけを切り分けてテストする）。
+    rejectOrphan(new Error("orphaned stream failed"));
+    await expect(orphanedMove).rejects.toThrow("orphaned stream failed");
+
+    // 新しいフェード操作（"d"）がまだ進行中の間に、"d"の自然終了('ended')が発火しても、
+    // 孤立操作のfinallyによって誤って'ended'抑止が解除されていれば、"d"がまだcommitされて
+    // いないのに次のnext()が呼ばれ、"e"へ二重に進んでしまう。
+    audio.listener?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(played).not.toContain("e"); // まだ"d"がcommitされていないため、二重送りが起きていない
+
+    // 新しいフェード操作（"d"）が正常に解決する。
+    settleNewFade();
+    await expect(newFadeMove).resolves.toBe(true);
+    expect(queue.currentPlayingFileId()).toBe("d");
+
+    // "d"の自然終了で、正しく次（"e"）へ進める（activeFadeTokenが正しく解除されていること）。
+    audio.listener?.();
+    await vi.waitFor(() => expect(played).toContain("e"));
   });
 
   test("自動送り中の認証待ちは次曲を保留し、明示的な継続後に同じ次曲を再開する", async () => {

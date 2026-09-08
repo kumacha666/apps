@@ -48,9 +48,23 @@ export class PlaybackAuthenticationRequiredError extends Error {
 // みなして対象曲をcurrentFileIdへcommitしてしまい、実際にはaudio要素が旧曲のsrcで停止した
 // ままなのにUIとキューだけが次の曲を再生中と表示する不整合が生じる。
 export class PlaybackInterruptedError extends Error {
-  constructor() {
-    super("再生が中断されました");
+  constructor(message = "再生が中断されました") {
+    super(message);
     this.name = "PlaybackInterruptedError";
+  }
+}
+
+// PlaybackInterruptedErrorのうち、ユーザーが明示的に一時停止した（ネイティブ<audio controls>・
+// Media Session・アプリ内「一時停止」ボタンのいずれか）ことによる中断だけを表す（2026-09-08、
+// Codexレビュー指摘：P1）。フェード中に別の正当なplay()（例：別アルバム選択によるsetList()＋
+// playAt()）に追い越された場合も同じisSuperseded()分岐からPlaybackInterruptedErrorが投げられる
+// ため、区別しないとPlaybackQueue側が「一時停止時は待機中の後続操作も無効化する」処理を
+// 追い越しのケースにも適用してしまい、正当に成功した新しい曲への切り替えまで巻き込んで
+// 無効化してしまう（詳細はqueue.tsのplayAndCommit()参照）。
+export class PlaybackPausedError extends PlaybackInterruptedError {
+  constructor() {
+    super("再生が一時停止されました");
+    this.name = "PlaybackPausedError";
   }
 }
 
@@ -62,6 +76,13 @@ export class PlaybackController {
   private currentFileId: string | null = null;
   private streamGeneration: number | null = null;
   private rejectedGeneration: number | null = null;
+  // pause()が最後にgenerationを進めた時点のgenerationの値（2026-09-08、Codexレビュー指摘：P1）。
+  // フェード完了後の isSuperseded() 判定だけでは、generationがpause()自身によって進んだのか、
+  // 別の正当なplay()呼び出しによって進んだのかを区別できない。pause()の直後にまだ他のplay()が
+  // 呼ばれていなければ`this.generation === this.pausedAtGeneration`が成立するため、この一致を
+  // もって「一時停止による中断」と判定する（一致しなければ、それ以降に別のplay()が実行され
+  // generationがさらに進んでいる＝一時停止ではなく追い越しと判定できる）。
+  private pausedAtGeneration: number | null = null;
 
   constructor(
     private readonly audio: AudioElementLike,
@@ -105,7 +126,18 @@ export class PlaybackController {
       // pauseとは別経路）を通る。以前はここで正常return（voidの成功扱い）していたため、
       // 呼び出し元のPlaybackQueue.playAndCommit()が誤って次の曲へcommitしてしまっていた。
       // volumeは既にisCancelled経由でこれ以上更新されない（新しい世代の制御を妨げないため）。
-      if (isSuperseded()) throw new PlaybackInterruptedError();
+      if (isSuperseded()) {
+        // 2026-09-08、Codexレビュー指摘：P1続き。このgenerationの変化がpause()自身による
+        // ものであれば（＝pause()以降まだ他のplay()が呼ばれていなければ）、ネイティブ一時停止
+        // と同じくフェード開始前のvolumeへ戻し、PlaybackPausedErrorとして区別して投げる
+        // （そうでなければ、別の正当なplay()に追い越されただけなので、そちらのvolume制御を
+        // 妨げないよう一切触れず、区別しないPlaybackInterruptedErrorを投げる）。
+        if (this.generation === this.pausedAtGeneration) {
+          this.audio.volume = preFadeVolume;
+          throw new PlaybackPausedError();
+        }
+        throw new PlaybackInterruptedError();
+      }
       // フェード中にネイティブ操作（<audio controls>・Media Session）で明示的に一時停止された
       // 場合、generationは変わらないため上のチェックだけでは検知できない（2026-09-08、Codexレビュー
       // 指摘：P1）。ユーザーが止めた直後に再生が勝手に始まらないよう、ここで中断してvolumeを戻す。
@@ -116,7 +148,7 @@ export class PlaybackController {
       // UIとキューだけが次の曲を再生中と表示する不整合が生じる）。
       if (this.audio.paused && !this.audio.ended) {
         this.audio.volume = preFadeVolume;
-        throw new PlaybackInterruptedError();
+        throw new PlaybackPausedError();
       }
     }
     const token = await this.getValidAccessToken();
@@ -156,6 +188,7 @@ export class PlaybackController {
 
   pause(): void {
     this.generation += 1;
+    this.pausedAtGeneration = this.generation;
     this.currentFileId = null;
     this.streamGeneration = null;
     this.rejectedGeneration = null;
