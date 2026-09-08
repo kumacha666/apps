@@ -74,20 +74,35 @@ function compareByFieldOnly(a: Song, b: Song, field: QueueSortField, direction: 
   }
 }
 
-// リリース年でソートする際、同じ年の曲を常にリリース種別→アルバムでグループ化する
+// リリース年でソートする際、同じ年の曲を常にアルバム→リリース種別でグループ化する
 // （2026-09-08、ユーザー指摘：アーティストの活動歴を追いたい場合、同じ年に複数アルバムが
 // あると、アルバム名でのグループ化すら無いためトラック番号やタイトルで曲がバラバラに
-// 混ざってしまい実用にならなかった）。releaseTypeはタグから自動抽出されないユーザー入力欄
-// （catalog.ts参照）だが、埋まっていれば同じ年のシングルとアルバムも別グループにできる。
+// 混ざってしまい実用にならなかった）。
+// **アルバムを先に比較する**（2026-09-08、ChatGPTレビュー指摘：P2。releaseTypeを先に
+// 比較すると、releaseTypeは曲ごとのユーザー入力欄のため同じアルバム内で一部の曲だけ入力
+// 済み・残りが空欄という状態がありうる。その場合releaseTypeの差だけで同じアルバム・
+// 同じリリース年の曲が別グループに分断されてしまい、今回の主目的「同じアルバムの曲をまとめる」
+// に反する。アルバムを先に比較すれば、アルバム名が同じ曲は常に同じグループにまとまり、
+// releaseTypeはアルバム名が異なる曲同士（＝そもそも別グループになる）の順序を補助的に
+// 決めるだけになる）。releaseTypeはタグから自動抽出されないユーザー入力欄（catalog.ts参照）
+// で、埋まっていれば同じ年の異なるアルバム名同士（シングルとアルバム等）の並び順の参考になる。
 // 空欄同士は常に等しい（compareStringsの「不明値は末尾」規則により、片方だけ空欄なら
 // 常に末尾へ回るため、リリース種別を入力していない曲が多い場合でも既存の並びを壊さない）。
 // グループ間の前後関係はアルバム名・種別名の文字列順になる（メタデータに月日が無いため、
 // 同じ年内での実際のリリース順までは決定できない、既知の限界）。第二候補・方向の指定
 // （direction）には依存させず、常にこの安定順を先に適用する。
 function releaseYearGroupingTiebreak(a: Song, b: Song): number {
-  const releaseTypeCmp = compareStrings(a.releaseType, b.releaseType, "asc");
-  if (releaseTypeCmp !== 0) return releaseTypeCmp;
-  return compareStrings(a.album, b.album, "asc");
+  const albumCmp = compareStrings(a.album, b.album, "asc");
+  if (albumCmp !== 0) return albumCmp;
+  // アルバム名が同じ場合、releaseTypeが片方だけ入力済み（もう片方は空欄）なら比較しない
+  // （2026-09-08、アルバム名を先に比較する変更だけでは不十分だったことが判明した追加修正：
+  // アルバム名が同一の場合はalbumCmpが0になり必ずこの行まで到達するため、releaseTypeが
+  // 一部の曲だけ入力済みだと「非空欄は空欄より必ず先」というcompareStringsの規則により
+  // 同じアルバム内でまた分断されてしまっていた。releaseTypeは両方とも入力済みの場合に限り
+  // 比較する＝「同名だが実は別物のアルバム」を種別で区別する目的にとどめ、通常の
+  // 「同じアルバムの一部の曲だけ入力済み」ケースでは常に等しい＝分断しないとみなす）。
+  if (a.releaseType === "" || b.releaseType === "") return 0;
+  return compareStrings(a.releaseType, b.releaseType, "asc");
 }
 
 // 第二候補のソートキー（開発体制#42、2026-09-08：単一アーティストで複数アルバムある場合に
@@ -104,11 +119,18 @@ export function compareSongsForQueueSort(
 ): number {
   const primary = compareByFieldOnly(a, b, field, direction);
   if (primary !== 0) return primary;
-  // リリース年が同値の場合、第二候補・既定の副次キーより先にリリース種別→アルバムで
-  // グループ化する（2026-09-08、ユーザー指摘）。第二候補にtrackを選んでいても、
-  // このグループ化を経てからトラック順を適用することで「アルバムを跨いでトラック番号だけで
-  // 混ざる」ことを防ぐ。
-  if (field === "releaseYear") {
+  // リリース年が同値の場合、第二候補・既定の副次キーより先にアルバム→リリース種別で
+  // グループ化する（2026-09-08、ユーザー指摘）。ただし第二候補を明示した場合は、
+  // 「第一候補が同値の曲同士を第二候補のフィールド・方向で直接比較する」という既存の契約
+  // （CLAUDE.md・既存テストで明記）を壊さないよう、第二候補が未指定またはtrackの場合だけに
+  // 限定する（2026-09-08、ChatGPTレビュー指摘：P2。当初は無条件に適用しており、releaseYear
+  // primary＋artist/title等を第二候補に選んだ場合でも暗黙グループ化が先に確定してしまい、
+  // 第二候補が事実上無視される回帰になっていた）。trackを第二候補にする組み合わせは、
+  // アルバム内のトラック番号がアルバムを跨ぐと意味を持たない数値のため、グループ化との併用が
+  // 前提の既存の使い方（CLAUDE.md「アルバムを古い順に、アルバム内はトラック順に」の例）であり、
+  // 他のフィールド（artist/title/album）を第二候補にする場合は、ユーザーが明示的にその
+  // フィールドでの直接比較を意図しているとみなし、暗黙グループ化を適用しない。
+  if (field === "releaseYear" && (secondaryField === undefined || secondaryField === "track")) {
     const grouping = releaseYearGroupingTiebreak(a, b);
     if (grouping !== 0) return grouping;
   }
