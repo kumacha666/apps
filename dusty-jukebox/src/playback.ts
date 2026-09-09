@@ -95,6 +95,12 @@ export class PlaybackController {
   // ため、`playGeneration + 1`の理由を引ければ、それが自分を最初に追い越した操作だと確定できる
   // （エントリが無ければ、それは通常のplay()呼び出しだったということ）。
   private generationReasons = new Map<number, "pause" | "cancel">();
+  // 進行中の一時停止フェード（pause(true)）が記録した「フェード開始前のvolume」
+  // （2026-09-09、ChatGPTレビュー指摘：P2）。一時停止ボタンをフェード中に連打すると、
+  // 2回目以降のpause(true)がその時点で既に下がっているaudio.volumeを新しい基準値として
+  // 取り込んでしまい、最終的に本来の音量へ戻らなくなる回帰があった。フェードが進行中の間は
+  // ここに元の値を保持し、後続のpause(true)呼び出しはこの値をそのまま引き継ぐ。
+  private pendingPauseFadeVolume: number | null = null;
 
   constructor(
     private readonly audio: AudioElementLike,
@@ -249,13 +255,31 @@ export class PlaybackController {
     this.rejectedGeneration = null;
 
     if (fadeOut && !this.audio.paused) {
-      const preFadeVolume = this.audio.volume;
+      // 進行中の一時停止フェードがあれば、その元のvolume（フェード開始前の値）をそのまま
+      // 引き継ぐ。無ければ現在のvolumeを新たに記録する（2026-09-09、ChatGPTレビュー指摘：
+      // P2。一時停止ボタンをフェード中に連打すると、2回目以降が「フェードで既に下がった
+      // 値」を新しい基準にしてしまい、最終的に本来の音量へ戻らなくなる回帰があった）。
+      const preFadeVolume = this.pendingPauseFadeVolume ?? this.audio.volume;
+      this.pendingPauseFadeVolume = preFadeVolume;
       const isCancelled = () => this.generation !== pauseGeneration;
       await fadeOutVolume(this.audio, FADE_OUT_DURATION_MS, { isCancelled });
-      // フェード中に新しい操作（play()等）に追い越された場合、audioの状態は既にその
-      // 新しい操作が管理しているため、ここでは一切触れない（play()と同じ設計）。
-      if (isCancelled()) return;
+      if (isCancelled()) {
+        // 新しい一時停止フェード（連打）に追い越された場合は、そちらが同じ元のvolumeを
+        // pendingPauseFadeVolume経由で引き継いで滑らかにフェードを継続するため、ここでは
+        // 一切触れない（触れるとフェード中に音量が上がってしまう）。それ以外（fadeOutを
+        // 指定しない通常のplay()・cancelPendingTransition()等）に追い越された場合は、
+        // 下がったままのvolumeを新しい再生へ引き継がせないようフェード開始前の値へ戻す
+        // （2026-09-09、ChatGPTレビュー指摘：P2続き。以前はここで一切volumeに触れなかった
+        // ため、fadeOutを指定しない通常のplay()〈単曲試聴・曲の自然終了時のnext()等〉に
+        // 追い越された場合、下がったままのvolumeが新しい再生へ引き継がれていた）。
+        if (this.generationReasons.get(pauseGeneration + 1) !== "pause") {
+          this.audio.volume = preFadeVolume;
+          this.pendingPauseFadeVolume = null;
+        }
+        return;
+      }
       this.audio.volume = preFadeVolume;
+      this.pendingPauseFadeVolume = null;
     }
     this.audio.pause();
   }
