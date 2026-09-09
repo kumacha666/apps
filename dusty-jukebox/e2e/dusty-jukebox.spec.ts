@@ -135,6 +135,44 @@ test("索引読み込み後、アーティスト/Genre欄の候補一覧（datal
   await expect(page.locator("#filter-genre-options option")).toHaveText(["Rock"]);
 });
 
+test("再生バー（音声コントロール・再生中の曲名・ステータス/エラーメッセージ）は画面下に固定され、再生リストをスクロールしても隠れない（2026-09-09、ユーザー指摘：単曲試聴欄の直下にあると再生リスト操作中に見えなくなっていた。肝心なときに目に入らないステータス/エラーメッセージ〈#status〉も同様の理由で統合）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  const bar = page.locator(".now-playing-bar");
+  await expect(bar).toHaveCSS("position", "fixed");
+  // #statusも同じ固定バーの一部になっていること（画面最下部に単独で残っていないこと）。
+  await expect(bar.locator("#status")).toHaveCount(1);
+  const before = await bar.boundingBox();
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  const after = await bar.boundingBox();
+  // position:fixedのため、スクロールしてもビューポート内の座標は変わらない
+  // （テストの前後でy座標が同じ＝実際に画面上へ固定され続けていることの確認）。
+  expect(after?.y).toBe(before?.y);
+});
+
+test("再生バーの高さが認証通知＋長いステータス文言で伸びても、末尾コンテンツと重ならない（2026-09-09、ChatGPTレビュー指摘：P2。固定padding-bottomだけでは長い#status文言＋#playback-auth-noticeが同時に表示された場合に末尾コンテンツがバーの下に隠れうる）", async ({ context, page }) => {
+  await installGoogleMocks(context, { rejectFirstStreamToken: true });
+  await page.goto("/"); await login(page); await openCatalog(page);
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.locator("#play-file-id").fill("song-1");
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeVisible();
+  // 実際のAPI/ネットワークエラーで文言が長くなるケースを模擬する（#playback-auth-noticeと
+  // 同時に表示された最悪ケースの高さで検証するため、テスト側から直接注入する）。
+  await page.evaluate(() => {
+    document.getElementById("status")!.textContent = "非常に長いエラーメッセージのサンプルです。".repeat(10);
+  });
+  // ResizeObserverのコールバックは次のレイアウト後（非同期）に発火するため、
+  // --now-playing-bar-heightの反映を待ってからボックスを計測する。
+  await page.waitForTimeout(200);
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  const lastContentBox = await page.locator("#refresh-playlists-btn").boundingBox();
+  const barBox = await page.locator(".now-playing-bar").boundingBox();
+  expect(lastContentBox).not.toBeNull();
+  expect(barBox).not.toBeNull();
+  // 末尾コンテンツの下端が固定バーの上端以下（＝バーの裏に隠れていない）であること。
+  expect(lastContentBox!.y + lastContentBox!.height).toBeLessThanOrEqual(barBox!.y);
+});
+
 test("絞り込み欄同士が連動し、アーティストを選ぶとアルバム欄の候補がそのアーティストのものだけに絞られる（開発体制#43）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");

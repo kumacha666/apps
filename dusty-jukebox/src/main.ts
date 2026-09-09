@@ -213,9 +213,12 @@ function render(): void {
         <input id="play-file-id" type="text" placeholder="Google DriveファイルID" />
       </label>
       <button id="play-btn" type="button" disabled>この曲を再生</button>
-      <audio id="audio-player" controls></audio>
-      <p id="now-playing" class="status"></p>
-      <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
+      <div class="now-playing-bar">
+        <audio id="audio-player" controls></audio>
+        <p id="now-playing" class="status"></p>
+        <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
+        <p id="status" class="status"></p>
+      </div>
       <section class="catalog">
         <h2>ライブラリ</h2>
         <button id="load-catalog-btn" type="button" disabled>索引から曲一覧を読み込む</button>
@@ -269,12 +272,28 @@ function render(): void {
         <button id="refresh-playlists-btn" type="button">プレイリスト一覧を更新</button>
         <ul id="playlist-list" class="result-list"></ul>
       </section>
-      <p id="status" class="status"></p>
       <ul id="result-list" class="result-list"></ul>
     `
         : `<p class="status error">VITE_GOOGLE_CLIENT_ID が未設定です。.env に設定してください。</p>`
     }
   `;
+}
+
+// .now-playing-bar（画面下に固定表示、開発体制#45参照）の実際の高さを`--now-playing-bar-height`
+// CSS変数へ反映する。バーの高さは#statusの文言の長さ・#playback-auth-notice表示の有無・
+// OSの文字サイズ拡大等で変動するため、固定のpadding-bottomだけでは末尾コンテンツがバーの
+// 下に隠れうる（2026-09-09、ChatGPTレビュー指摘：P2）。ResizeObserverでバー自身の高さの
+// 変化を監視し、`#app`側の余白（index.htmlのCSS参照）をそのつど追従させる。
+// render()は起動時に1回しか呼ばれないため、このobserverも1回だけ設置すれば足りる。
+function observeNowPlayingBarHeight(): void {
+  if (typeof ResizeObserver === "undefined") return;
+  const bar = document.querySelector<HTMLElement>(".now-playing-bar");
+  if (!bar) return;
+  const observer = new ResizeObserver((entries) => {
+    const height = entries[0]?.contentRect.height;
+    if (height !== undefined) document.documentElement.style.setProperty("--now-playing-bar-height", `${height}px`);
+  });
+  observer.observe(bar);
 }
 
 function numberOrUndefined(value: string): number | undefined { const n = Number(value); return value.trim() === "" || !Number.isFinite(n) ? undefined : n; }
@@ -1792,6 +1811,7 @@ function whenPageLoaded(cb: () => void): void {
 
 function init(): void {
   render();
+  observeNowPlayingBarHeight();
   if (!CLIENT_ID) return;
 
   if ("serviceWorker" in navigator) {

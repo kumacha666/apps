@@ -20,8 +20,35 @@
       min-height: 100dvh;
       text-align: center;
       padding: 24px;
+      /* 画面下に固定される.now-playing-barぶんの余白。バーの高さは状態（#status文言の
+         長さ・#playback-auth-notice表示の有無・OSの文字サイズ拡大等）で変動するため、
+         固定値ではなくJS側（ResizeObserver、main.ts参照）が実測して--now-playing-bar-height
+         へ反映する。JS実行前・ResizeObserver非対応環境向けのフォールバックとして
+         220pxを既定値にしておく（2026-09-09、ChatGPTレビュー指摘：固定値だけでは
+         認証通知＋長いエラー文言が重なった場合に末尾コンテンツがバーの下に隠れうる）。 */
+      padding-bottom: calc(var(--now-playing-bar-height, 220px) + 16px);
       gap: 12px;
     }
+    /* 再生中の操作（シークバー・音量含む<audio controls>と現在再生中の曲名）・肝心なときに
+       見落としやすいステータス/エラーメッセージ（#status）を、再生リストの操作中でも
+       スクロールで見失わないよう画面下に固定する（2026-09-09、ユーザー指摘：単曲試聴欄の
+       直下にあると再生リスト操作時に見えなくなる。#statusも同様に画面最下部にあり、
+       肝心なときに目に入らないとの指摘を受け同じバーへ統合）。*/
+    .now-playing-bar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 100;
+      background: #221f27;
+      border-top: 1px solid #3a3542;
+      padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px));
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .now-playing-bar audio { width: 100%; }
+    .now-playing-bar .status { text-align: left; }
     h1 { font-size: 24px; color: #d9a441; margin-bottom: 8px; }
     p { color: #9a9488; font-size: 14px; }
     p.lead { max-width: 32em; }
