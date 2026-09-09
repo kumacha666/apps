@@ -173,6 +173,22 @@ test("再生バーの高さが認証通知＋長いステータス文言で伸�
   expect(lastContentBox!.y + lastContentBox!.height).toBeLessThanOrEqual(barBox!.y);
 });
 
+test("折り返し点の無い長い1単語（フォルダ名・曲名等）が再生リストに混ざっても、ページが横方向にはみ出さず固定バーも画面幅に収まる（2026-09-09、実機確認時にユーザー指摘：シークバー/ステータス表示が画面外へはみ出して見えた。実際の原因は、区切りに空白を含まない長いフォルダ名等がページ全体を横に広げ、position: fixedの固定バーもそのレイアウトビューポート幅で描画されていたこと）", async ({ context, page }) => {
+  await installGoogleMocks(context);
+  await page.goto("/"); await login(page); await openCatalog(page);
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.evaluate(() => {
+    const label = document.querySelector("#catalog-list .song-link");
+    if (label) label.textContent = "A".repeat(300);
+  });
+  const overflowsHorizontally = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+  expect(overflowsHorizontally).toBe(false);
+  const barBox = await page.locator(".now-playing-bar").boundingBox();
+  expect(barBox).not.toBeNull();
+  expect(barBox!.x).toBeGreaterThanOrEqual(0);
+  expect(barBox!.x + barBox!.width).toBeLessThanOrEqual(321); // 1px許容（サブピクセル丸め）
+});
+
 test("絞り込み欄同士が連動し、アーティストを選ぶとアルバム欄の候補がそのアーティストのものだけに絞られる（開発体制#43）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
