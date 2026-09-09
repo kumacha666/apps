@@ -334,6 +334,13 @@ function updateUnshuffleEnabled(): void {
 // 場合の既存の停止処理と同じ理由。フェードは掛けず即座に止める）。
 function handleClearQueue(): void {
   void playback?.pause();
+  // Drive側の401等でPlaybackAuthenticationGateに再生継続操作が保留され、
+  // 「認証を更新して続行」（#playback-auth-notice）が表示されている状態は
+  // キューとは別管理のため、setList([])だけでは解消されない（2026-09-09、
+  // ChatGPTレビュー指摘：P2。放置すると、キューが空・操作ボタン無効化された
+  // 後もこの通知だけが残り、「クリア済み」と「再生継続待ち」の状態が矛盾する）。
+  playbackAuthGate?.clear();
+  setPlaybackAuthNotice(false);
   queue?.setList([]);
   renderQueue();
   setQueueNavEnabled(false);
