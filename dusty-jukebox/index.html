@@ -20,10 +20,13 @@
       min-height: 100dvh;
       text-align: center;
       padding: 24px;
-      /* 画面下に固定される.now-playing-barぶんの余白（実際の高さより多めに確保し、
-         スクロール末尾のコンテンツがバーの下に隠れないようにする。#statusの文言は
-         長くなることがあるため、audio-player単体だった頃より余裕を大きめに取る）。 */
-      padding-bottom: 220px;
+      /* 画面下に固定される.now-playing-barぶんの余白。バーの高さは状態（#status文言の
+         長さ・#playback-auth-notice表示の有無・OSの文字サイズ拡大等）で変動するため、
+         固定値ではなくJS側（ResizeObserver、main.ts参照）が実測して--now-playing-bar-height
+         へ反映する。JS実行前・ResizeObserver非対応環境向けのフォールバックとして
+         220pxを既定値にしておく（2026-09-09、ChatGPTレビュー指摘：固定値だけでは
+         認証通知＋長いエラー文言が重なった場合に末尾コンテンツがバーの下に隠れうる）。 */
+      padding-bottom: calc(var(--now-playing-bar-height, 220px) + 16px);
       gap: 12px;
     }
     /* 再生中の操作（シークバー・音量含む<audio controls>と現在再生中の曲名）・肝心なときに
