@@ -897,3 +897,40 @@ test("スキャン開始後のアルバム再生は再読み込みエラーに�
   await expect(page.locator("#catalog-list")).toContainText("Jazz Song");
   await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /album-track-/);
 });
+
+test("ネイティブの<audio controls>は表示されず、独自シークバー（#seek-slider）に置き換わっている（開発体制#42③、2026-09-09）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  expect(await page.locator("#audio-player").evaluate((el) => el.hasAttribute("controls"))).toBe(false);
+  await expect(page.locator("#seek-slider")).toBeAttached();
+  await expect(page.locator("#seek-current-time")).toBeVisible();
+  await expect(page.locator("#seek-duration")).toBeVisible();
+});
+
+test("独自シークバーはドラッグ中は反映されず、離した時点（changeイベント）でのみaudio.currentTimeへ反映される（開発体制#42③、2026-09-09）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  // E2Eモックの音声は実際にはデコードできないダミーデータのため、loadedmetadata/durationchangeが
+  // 発火せずシークバーは無効のまま残る（既存のMedia Session E2Eの制限と同じ理由）。ドラッグ→離す
+  // という結線自体の検証のため、メタデータ確定済みの状態をテスト側から直接作る。
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.disabled = false;
+    slider.max = "180";
+  });
+  await page.evaluate(() => { (document.querySelector("#audio-player") as HTMLAudioElement).currentTime = 0; });
+
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.value = "42";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#seek-current-time")).toHaveText("0:42");
+  expect(await page.evaluate(() => (document.querySelector("#audio-player") as HTMLAudioElement).currentTime)).toBe(0);
+
+  await page.evaluate(() => {
+    document.querySelector<HTMLInputElement>("#seek-slider")!.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect.poll(() => page.evaluate(() => (document.querySelector("#audio-player") as HTMLAudioElement).currentTime)).toBe(42);
+});

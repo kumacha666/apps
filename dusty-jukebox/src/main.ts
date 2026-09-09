@@ -38,6 +38,7 @@ const QUEUE_SORT_FIELD_LABELS: Record<QueueSortField, string> = {
   track: "トラック",
 };
 import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState } from "./mediaSession";
+import { formatSeekTime, isSeekableDuration } from "./seekBar";
 import { registerStreamAuthResponder } from "./streamAuth";
 import {
   createChangesListFn,
@@ -214,7 +215,12 @@ function render(): void {
       </label>
       <button id="play-btn" type="button" disabled>この曲を再生</button>
       <div class="now-playing-bar">
-        <audio id="audio-player" controls></audio>
+        <audio id="audio-player"></audio>
+        <div class="seek-bar">
+          <span id="seek-current-time" class="seek-time">0:00</span>
+          <input id="seek-slider" type="range" min="0" max="0" step="0.1" value="0" disabled />
+          <span id="seek-duration" class="seek-time">0:00</span>
+        </div>
         <p id="now-playing" class="status"></p>
         <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
         <p id="status" class="status"></p>
@@ -294,6 +300,54 @@ function observeNowPlayingBarHeight(): void {
     if (height !== undefined) document.documentElement.style.setProperty("--now-playing-bar-height", `${height}px`);
   });
   observer.observe(bar);
+}
+
+// 開発体制#42③（プレイヤーのUI見直し、2026-09-09）：ネイティブ<audio controls>を廃止し、
+// #seek-sliderへ結線する。ドラッグ中（inputイベント）は表示のみ更新し、実際のシーク
+// （audio.currentTimeへの反映）はドラッグを離した時点（changeイベント）でのみ行う
+// （ユーザーとの相談で確認済み：ドラッグ中に逐次シークすると、Service Worker経由の
+// ストリーミングで無駄なRange要求が連発するため）。
+let seekBarDragging = false;
+
+function updateSeekDuration(duration: number): void {
+  const slider = el<HTMLInputElement>("seek-slider");
+  if (isSeekableDuration(duration)) {
+    slider.max = String(duration);
+    slider.disabled = false;
+    el<HTMLSpanElement>("seek-duration").textContent = formatSeekTime(duration);
+  } else {
+    slider.max = "0";
+    slider.disabled = true;
+    el<HTMLSpanElement>("seek-duration").textContent = "0:00";
+  }
+}
+
+function updateSeekPosition(currentTime: number): void {
+  if (seekBarDragging) return;
+  el<HTMLInputElement>("seek-slider").value = String(currentTime);
+  el<HTMLSpanElement>("seek-current-time").textContent = formatSeekTime(currentTime);
+}
+
+function wireSeekBar(audioPlayer: HTMLAudioElement): void {
+  const slider = el<HTMLInputElement>("seek-slider");
+  audioPlayer.addEventListener("loadedmetadata", () => updateSeekDuration(audioPlayer.duration));
+  audioPlayer.addEventListener("durationchange", () => updateSeekDuration(audioPlayer.duration));
+  audioPlayer.addEventListener("timeupdate", () => updateSeekPosition(audioPlayer.currentTime));
+  // src差し替え時（新しい曲への切り替え）にメタデータ確定前の古いdurationを表示し
+  // 続けないよう、いったんリセットする（`emptied`はリソース選択アルゴリズムの再開時に
+  // 発火する、`src`属性の書き換えを含む）。
+  audioPlayer.addEventListener("emptied", () => {
+    updateSeekDuration(NaN);
+    updateSeekPosition(0);
+  });
+  slider.addEventListener("input", () => {
+    seekBarDragging = true;
+    el<HTMLSpanElement>("seek-current-time").textContent = formatSeekTime(Number(slider.value));
+  });
+  slider.addEventListener("change", () => {
+    audioPlayer.currentTime = Number(slider.value);
+    seekBarDragging = false;
+  });
 }
 
 function numberOrUndefined(value: string): number | undefined { const n = Number(value); return value.trim() === "" || !Number.isFinite(n) ? undefined : n; }
@@ -1858,6 +1912,7 @@ function init(): void {
       return;
     }
     const audioPlayer = el<HTMLAudioElement>("audio-player");
+    wireSeekBar(audioPlayer);
     playback = new PlaybackController(
       audioPlayer,
       () => auth.getAccessToken(),
