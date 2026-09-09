@@ -349,7 +349,15 @@ function wireSeekBar(audioPlayer: HTMLAudioElement): void {
   // src差し替え時（新しい曲への切り替え）にメタデータ確定前の古いdurationを表示し
   // 続けないよう、いったんリセットする（`emptied`はリソース選択アルゴリズムの再開時に
   // 発火する、`src`属性の書き換えを含む）。
+  // 2026-09-09、ChatGPTレビュー指摘：P2。ドラッグ中（input→seekBarDragging=true）に
+  // 曲が切り替わる（自然終了・次へ/前へ・Bluetooth/OSメディアキー等）と、updateSeekPosition()は
+  // seekBarDragging中は早期returnするため、旧曲のドラッグ状態がクリアされないまま新曲へ
+  // 引き継がれてしまっていた。この状態では新曲のtimeupdateが全て無視され表示が固まるうえ、
+  // 遅れて発火した旧ドラッグのchangeイベントが新曲のcurrentTimeへ旧曲の値を誤って適用しうる。
+  // `emptied`はドラッグ対象自体が失効した境界のため、duration/positionのリセットより先に
+  // 必ずドラッグ状態を解除する。
   audioPlayer.addEventListener("emptied", () => {
+    seekBarDragging = false;
     updateSeekDuration(NaN);
     updateSeekPosition(0);
   });

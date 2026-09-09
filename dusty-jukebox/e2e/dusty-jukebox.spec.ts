@@ -955,3 +955,35 @@ test("独自シークバーはドラッグ中は反映されず、離した時�
   });
   await expect.poll(() => page.evaluate(() => (document.querySelector("#audio-player") as HTMLAudioElement).currentTime)).toBe(42);
 });
+
+test("シークバーをドラッグ中に曲が切り替わっても、ドラッグ状態が残らず新曲のtimeupdateに追従する（2026-09-09、ChatGPTレビュー指摘：P2。emptiedがseekBarDraggingを解除せず、新曲のtimeupdateが無視され続けたまま固まっていた）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.disabled = false;
+    slider.max = "180";
+  });
+
+  // ドラッグを開始したまま（changeで離さないまま）曲が切り替わる状況を模擬する。
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.value = "50";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#seek-current-time")).toHaveText("0:50");
+
+  // E2Eモックの音声はsrc差し替えで実際にemptied/timeupdateが発火しないため、曲切り替え時の
+  // ブラウザの挙動をテスト側から直接模擬する（既存のシークバー系E2Eと同じ理由）。
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("emptied"));
+  });
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    audio.currentTime = 77;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  // ドラッグ状態が残っていれば0:50のまま固まる。修正後は新曲の位置（77秒）へ追従する。
+  await expect(page.locator("#seek-current-time")).toHaveText("1:17");
+});
