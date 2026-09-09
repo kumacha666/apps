@@ -658,6 +658,27 @@ test("キュー曲再生中に「この曲を再生」でキュー外の単曲�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 });
 
+test("単曲試聴中に一時停止した後、同じファイルIDでもう一度「この曲を再生」を押すと、先頭からではなく一時停止位置から再開する（開発体制#42③、2026-09-09 ChatGPTレビュー指摘：P2。ネイティブ<audio controls>廃止で、従来ネイティブの再生アイコンが担っていた「停止位置からの再開」が単曲試聴では失われていた）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page);
+  await page.locator("#play-file-id").fill("song-1");
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/song-1(\?|$)/);
+  // 初回は先頭（position 0）から開始していることを確認しておく。
+  expect(await page.evaluate(() => (window as unknown as { __e2e: { getLastExternalPlaybackPosition(): number | null } }).__e2e.getLastExternalPlaybackPosition())).toBe(0);
+
+  // 再生位置を進めた状態を模擬する（E2Eモックの音声は実際にはデコードできないダミーデータの
+  // ため、実ブラウザのように時間経過で自然には進まない。またE2Eモックのsrc差し替えは
+  // currentTimeのリセットタイミングが実ブラウザの挙動と一致するとは限らないため、DOM上の
+  // currentTime読み取りではなく__e2e.getLastExternalPlaybackPosition()で実際に渡された
+  // position引数を直接検証する）。
+  await page.evaluate(() => { (document.querySelector("#audio-player") as HTMLAudioElement).currentTime = 30; });
+  await page.getByRole("button", { name: "一時停止" }).click();
+
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/song-1(\?|$)/);
+  expect(await page.evaluate(() => (window as unknown as { __e2e: { getLastExternalPlaybackPosition(): number | null } }).__e2e.getLastExternalPlaybackPosition())).toBe(30);
+});
+
 test("再生中の曲をチェック解除で除外してから「再生」ボタンを押すと、除外中の曲を再開しようとせず次の未除外曲から再生する（2026-09-06 PR #418 ChatGPTレビュー再々指摘）", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
   await page.getByRole("button", { name: "再生", exact: true }).click();
@@ -896,4 +917,107 @@ test("スキャン開始後のアルバム再生は再読み込みエラーに�
   await expect(page.locator("#catalog-list li")).toHaveCount(1);
   await expect(page.locator("#catalog-list")).toContainText("Jazz Song");
   await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /album-track-/);
+});
+
+test("ネイティブの<audio controls>は表示されず、独自シークバー（#seek-slider）に置き換わっている（開発体制#42③、2026-09-09）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  expect(await page.locator("#audio-player").evaluate((el) => el.hasAttribute("controls"))).toBe(false);
+  await expect(page.locator("#seek-slider")).toBeAttached();
+  await expect(page.locator("#seek-current-time")).toBeVisible();
+  await expect(page.locator("#seek-duration")).toBeVisible();
+});
+
+test("独自シークバーはドラッグ中は反映されず、離した時点（changeイベント）でのみaudio.currentTimeへ反映される（開発体制#42③、2026-09-09）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  // E2Eモックの音声は実際にはデコードできないダミーデータのため、loadedmetadata/durationchangeが
+  // 発火せずシークバーは無効のまま残る（既存のMedia Session E2Eの制限と同じ理由）。ドラッグ→離す
+  // という結線自体の検証のため、メタデータ確定済みの状態をテスト側から直接作る。
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.disabled = false;
+    slider.max = "180";
+  });
+  await page.evaluate(() => { (document.querySelector("#audio-player") as HTMLAudioElement).currentTime = 0; });
+
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.value = "42";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#seek-current-time")).toHaveText("0:42");
+  expect(await page.evaluate(() => (document.querySelector("#audio-player") as HTMLAudioElement).currentTime)).toBe(0);
+
+  await page.evaluate(() => {
+    document.querySelector<HTMLInputElement>("#seek-slider")!.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect.poll(() => page.evaluate(() => (document.querySelector("#audio-player") as HTMLAudioElement).currentTime)).toBe(42);
+});
+
+test("シークバーをドラッグ中に曲が切り替わっても、ドラッグ状態が残らず新曲のtimeupdateに追従する（2026-09-09、ChatGPTレビュー指摘：P2。emptiedがseekBarDraggingを解除せず、新曲のtimeupdateが無視され続けたまま固まっていた）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.disabled = false;
+    slider.max = "180";
+  });
+
+  // ドラッグを開始したまま（changeで離さないまま）曲が切り替わる状況を模擬する。
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.value = "50";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#seek-current-time")).toHaveText("0:50");
+
+  // E2Eモックの音声はsrc差し替えで実際にemptied/timeupdateが発火しないため、曲切り替え時の
+  // ブラウザの挙動をテスト側から直接模擬する（既存のシークバー系E2Eと同じ理由）。
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("emptied"));
+  });
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    audio.currentTime = 77;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  // ドラッグ状態が残っていれば0:50のまま固まる。修正後は新曲の位置（77秒）へ追従する。
+  await expect(page.locator("#seek-current-time")).toHaveText("1:17");
+});
+
+test("シークバーをドラッグ中に曲が切り替わった後、旧ドラッグ由来のchangeイベントが遅れて発火しても新曲の再生位置を書き換えない（2026-09-09、ChatGPTレビュー再指摘：P2続き）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.disabled = false;
+    slider.max = "180";
+  });
+
+  // 旧曲をドラッグ開始（changeで離さないまま）→曲切り替え（emptied）→新曲が実際に
+  // 再生位置99秒まで進んだ、という状況を模擬する。
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.value = "50";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("emptied"));
+  });
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    audio.currentTime = 99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+
+  // 旧ドラッグ由来のchangeイベントが遅れて発火しても、seekBarDraggingは既にemptiedで
+  // falseへ戻っているため、無関係な値で新曲のcurrentTimeを書き換えてはならない。
+  await page.evaluate(() => {
+    document.querySelector<HTMLInputElement>("#seek-slider")!.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(await page.evaluate(() => (document.querySelector("#audio-player") as HTMLAudioElement).currentTime)).toBe(99);
 });

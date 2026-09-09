@@ -38,6 +38,8 @@ const QUEUE_SORT_FIELD_LABELS: Record<QueueSortField, string> = {
   track: "トラック",
 };
 import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState } from "./mediaSession";
+import { formatSeekTime, isSeekableDuration } from "./seekBar";
+import { shouldResumeExternalPlayback } from "./externalPlayback";
 import { registerStreamAuthResponder } from "./streamAuth";
 import {
   createChangesListFn,
@@ -141,6 +143,18 @@ const auth = new DriveAuth();
 let playback: PlaybackController | null = null;
 let queue: PlaybackQueue | null = null;
 let playbackAuthGate: PlaybackAuthenticationGate | null = null;
+// 単曲試聴（「この曲を再生」、キュー外）で最後に再生を開始したfileId（2026-09-09、ChatGPT
+// レビュー指摘：P2。ネイティブ<audio controls>を廃止したことで、従来ネイティブの再生アイコンが
+// 担っていた「一時停止位置からの再開」が単曲試聴では失われていた——キュー曲は`queue-play-btn`が
+// `queue.canResumeCurrent()`で同じことをするが、キュー外の単曲試聴には対応する仕組みが無かった）。
+// audio.srcがキュー側の再生に取って代わられると、audio.currentTimeがこのfileIdとは無関係な
+// 位置を指すため、キュー由来の再生を試みるたびに必ずnullへ戻す（handleQueuePlayback()参照）。
+let lastExternalFileId: string | null = null;
+// テスト専用：直前の単曲試聴開始要求（startExternalPlayback/startExternalPlaybackAt）に
+// 渡されたposition引数。E2Eモックの<audio>はcurrentTimeのリセットタイミングが実ブラウザの
+// 挙動と一致するとは限らないため、shouldResumeExternalPlayback()の判定結果が実際に正しい
+// 引数でstartExternalPlaybackAt()へ渡ったこと自体を直接検証する（__e2eフック経由）。
+let lastExternalPlaybackPositionForE2E: number | null = null;
 const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
 // catalogSessionへ最後に読み込んだ（有効な）曲一覧の出所スプレッドシートID。プレイリストの
@@ -214,7 +228,12 @@ function render(): void {
       </label>
       <button id="play-btn" type="button" disabled>この曲を再生</button>
       <div class="now-playing-bar">
-        <audio id="audio-player" controls></audio>
+        <audio id="audio-player"></audio>
+        <div class="seek-bar">
+          <span id="seek-current-time" class="seek-time">0:00</span>
+          <input id="seek-slider" type="range" min="0" max="0" step="0.1" value="0" disabled />
+          <span id="seek-duration" class="seek-time">0:00</span>
+        </div>
         <p id="now-playing" class="status"></p>
         <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
         <p id="status" class="status"></p>
@@ -294,6 +313,68 @@ function observeNowPlayingBarHeight(): void {
     if (height !== undefined) document.documentElement.style.setProperty("--now-playing-bar-height", `${height}px`);
   });
   observer.observe(bar);
+}
+
+// 開発体制#42③（プレイヤーのUI見直し、2026-09-09）：ネイティブ<audio controls>を廃止し、
+// #seek-sliderへ結線する。ドラッグ中（inputイベント）は表示のみ更新し、実際のシーク
+// （audio.currentTimeへの反映）はドラッグを離した時点（changeイベント）でのみ行う
+// （ユーザーとの相談で確認済み：ドラッグ中に逐次シークすると、Service Worker経由の
+// ストリーミングで無駄なRange要求が連発するため）。
+let seekBarDragging = false;
+
+function updateSeekDuration(duration: number): void {
+  const slider = el<HTMLInputElement>("seek-slider");
+  if (isSeekableDuration(duration)) {
+    slider.max = String(duration);
+    slider.disabled = false;
+    el<HTMLSpanElement>("seek-duration").textContent = formatSeekTime(duration);
+  } else {
+    slider.max = "0";
+    slider.disabled = true;
+    el<HTMLSpanElement>("seek-duration").textContent = "0:00";
+  }
+}
+
+function updateSeekPosition(currentTime: number): void {
+  if (seekBarDragging) return;
+  el<HTMLInputElement>("seek-slider").value = String(currentTime);
+  el<HTMLSpanElement>("seek-current-time").textContent = formatSeekTime(currentTime);
+}
+
+function wireSeekBar(audioPlayer: HTMLAudioElement): void {
+  const slider = el<HTMLInputElement>("seek-slider");
+  audioPlayer.addEventListener("loadedmetadata", () => updateSeekDuration(audioPlayer.duration));
+  audioPlayer.addEventListener("durationchange", () => updateSeekDuration(audioPlayer.duration));
+  audioPlayer.addEventListener("timeupdate", () => updateSeekPosition(audioPlayer.currentTime));
+  // src差し替え時（新しい曲への切り替え）にメタデータ確定前の古いdurationを表示し
+  // 続けないよう、いったんリセットする（`emptied`はリソース選択アルゴリズムの再開時に
+  // 発火する、`src`属性の書き換えを含む）。
+  // 2026-09-09、ChatGPTレビュー指摘：P2。ドラッグ中（input→seekBarDragging=true）に
+  // 曲が切り替わる（自然終了・次へ/前へ・Bluetooth/OSメディアキー等）と、updateSeekPosition()は
+  // seekBarDragging中は早期returnするため、旧曲のドラッグ状態がクリアされないまま新曲へ
+  // 引き継がれてしまっていた。この状態では新曲のtimeupdateが全て無視され表示が固まるうえ、
+  // 遅れて発火した旧ドラッグのchangeイベントが新曲のcurrentTimeへ旧曲の値を誤って適用しうる。
+  // `emptied`はドラッグ対象自体が失効した境界のため、duration/positionのリセットより先に
+  // 必ずドラッグ状態を解除する。
+  audioPlayer.addEventListener("emptied", () => {
+    seekBarDragging = false;
+    updateSeekDuration(NaN);
+    updateSeekPosition(0);
+  });
+  slider.addEventListener("input", () => {
+    seekBarDragging = true;
+    el<HTMLSpanElement>("seek-current-time").textContent = formatSeekTime(Number(slider.value));
+  });
+  slider.addEventListener("change", () => {
+    // 2026-09-09、ChatGPTレビュー指摘：P2続き。emptiedがseekBarDraggingを解除した後
+    // （曲切り替え）に、旧曲へのドラッグ由来のchangeイベントが遅れて発火することがある。
+    // seekBarDraggingが既にfalseなら、このchangeはもう有効なドラッグを表さない（emptiedで
+    // 打ち切られた）ため、無条件にaudio.currentTimeへ適用すると新曲の再生位置を無関係な
+    // 値で誤って書き換えてしまう。ドラッグが継続中だった場合だけ実際にシークする。
+    if (!seekBarDragging) return;
+    audioPlayer.currentTime = Number(slider.value);
+    seekBarDragging = false;
+  });
 }
 
 function numberOrUndefined(value: string): number | undefined { const n = Number(value); return value.trim() === "" || !Number.isFinite(n) ? undefined : n; }
@@ -903,13 +984,26 @@ async function handlePlay(): Promise<void> {
     setStatus("再生するGoogle DriveファイルIDを入力してください", true);
     return;
   }
+  const audioPlayer = el<HTMLAudioElement>("audio-player");
+  // 同じ曲を単曲試聴中に（黄色い「一時停止」ボタン等で）一時停止した後、もう一度
+  // 「この曲を再生」を押した場合は、先頭からではなく一時停止位置から再開する
+  // （externalPlayback.ts参照。ended時は自然終了なので先頭から再生し直す）。
+  const canResumeExternal = shouldResumeExternalPlayback({
+    lastExternalFileId,
+    fileId,
+    audioPaused: audioPlayer.paused,
+    audioEnded: audioPlayer.ended,
+  });
   await handlePlaybackAction(async () => {
     setStatus("Service Worker経由で再生を開始しています...");
-    return startExternalPlayback(fileId, currentPlayback);
+    return canResumeExternal
+      ? startExternalPlaybackAt(fileId, currentPlayback, audioPlayer.currentTime)
+      : startExternalPlayback(fileId, currentPlayback);
   });
 }
 
 async function startExternalPlayback(fileId: string, currentPlayback: PlaybackController): Promise<boolean> {
+  lastExternalPlaybackPositionForE2E = 0;
   await awaitServiceWorkerReady();
   // Register first: HTMLMediaElement.play() can remain pending (or reject) while
   // the first stream request already receives a Drive 401.
@@ -927,10 +1021,12 @@ async function startExternalPlayback(fileId: string, currentPlayback: PlaybackCo
   // playback controller. A locally-expired token must leave the old queue song
   // eligible to advance when it ends.
   queue?.notifyExternalPlaybackStarted();
+  lastExternalFileId = fileId;
   return true;
 }
 
 async function startExternalPlaybackAt(fileId: string, currentPlayback: PlaybackController, position: number): Promise<boolean> {
+  lastExternalPlaybackPositionForE2E = position;
   await awaitServiceWorkerReady();
   let continuation!: PlaybackContinuation;
   continuation = playbackContinuations.register({
@@ -943,10 +1039,15 @@ async function startExternalPlaybackAt(fileId: string, currentPlayback: Playback
   await playPromise;
   if (!playbackContinuations.isCurrent(continuation) || continuation.generation !== currentPlayback.currentGeneration()) return false;
   queue?.notifyExternalPlaybackStarted();
+  lastExternalFileId = fileId;
   return true;
 }
 
 async function handleQueuePlayback(action: () => Promise<boolean> | undefined): Promise<void> {
+  // キュー由来の再生を試みるということは、成功すればaudio.srcが単曲試聴とは無関係な曲へ
+  // 差し替わる（失敗時に据え置いても実害は無い：単曲試聴の「resume」機会を1回逃すだけで、
+  // 次回「この曲を再生」が先頭から再生し直すフォールバックへ倒れるだけのため安全側）。
+  lastExternalFileId = null;
   await handlePlaybackAction(async () => {
     await awaitServiceWorkerReady();
     const started = await action();
@@ -1858,6 +1959,7 @@ function init(): void {
       return;
     }
     const audioPlayer = el<HTMLAudioElement>("audio-player");
+    wireSeekBar(audioPlayer);
     playback = new PlaybackController(
       audioPlayer,
       () => auth.getAccessToken(),
@@ -1970,6 +2072,7 @@ if (import.meta.env.VITE_E2E === "true") {
         serviceWorkerReady: () => Promise<void>;
         loadPlaylists: (spreadsheetId: string) => Promise<boolean>;
         getPlaylistsCommitCount: () => number;
+        getLastExternalPlaybackPosition: () => number | null;
       };
     }
   ).__e2e = {
@@ -1977,5 +2080,10 @@ if (import.meta.env.VITE_E2E === "true") {
     // overlapping loadPlaylists()呼び出しの対象スプレッドシートガードを直接検証するためのフック。
     loadPlaylists: (spreadsheetId: string) => { reservePlaylistsLoadTarget(spreadsheetId); return loadPlaylists(spreadsheetId); },
     getPlaylistsCommitCount: () => playlistsCommitCountForE2E,
+    // 単曲試聴の再開（shouldResumeExternalPlayback()）が実際に正しいpositionでstartExternal
+    // PlaybackAt()を呼んだことを直接検証するためのフック（E2Eモックの<audio>はcurrentTimeの
+    // リセットタイミングが実ブラウザと一致するとは限らないため、DOM上のcurrentTime読み取りでは
+    // 検証できない）。
+    getLastExternalPlaybackPosition: () => lastExternalPlaybackPositionForE2E,
   };
 }

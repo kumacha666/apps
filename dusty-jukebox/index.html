@@ -37,7 +37,7 @@
       padding-bottom: calc(var(--now-playing-bar-height, 220px) + 16px);
       gap: 12px;
     }
-    /* 再生中の操作（シークバー・音量含む<audio controls>と現在再生中の曲名）・肝心なときに
+    /* 再生中の操作（シークバー・現在再生中の曲名）・肝心なときに
        見落としやすいステータス/エラーメッセージ（#status）を、再生リストの操作中でも
        スクロールで見失わないよう画面下に固定する（2026-09-09、ユーザー指摘：単曲試聴欄の
        直下にあると再生リスト操作時に見えなくなる。#statusも同様に画面最下部にあり、
@@ -63,7 +63,16 @@
          #playback-auth-noticeいずれもまとめて保護する。 */
       overflow-wrap: anywhere;
     }
-    .now-playing-bar audio { width: 100%; }
+    /* 開発体制#42③（2026-09-09）：ネイティブ<audio controls>（シークバー・再生/一時停止
+       アイコン・音量スライダー等、ブラウザ標準の見た目）と、アプリ独自の黄色ボタン群との
+       UI/UXの差が大きいというユーザー指摘を受け、controls属性を外し独自シークバー
+       （#seek-slider等、下記.seek-bar）へ一本化した。<audio>要素自体は再生には
+       引き続き必要（PlaybackController/PlaybackQueue/MediaSessionが参照する）ため
+       DOMには残すが、視覚的には非表示にする。 */
+    .now-playing-bar audio { display: none; }
+    .seek-bar { display: flex; align-items: center; gap: 8px; width: 100%; }
+    .seek-bar input[type="range"] { flex: 1; accent-color: #d9a441; }
+    .seek-time { font-size: 12px; color: #cfc9bb; min-width: 2.5em; text-align: center; }
     .now-playing-bar .status { text-align: left; }
     h1 { font-size: 24px; color: #d9a441; margin-bottom: 8px; }
     p { color: #9a9488; font-size: 14px; }
