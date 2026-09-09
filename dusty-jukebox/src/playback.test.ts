@@ -493,4 +493,99 @@ describe("PlaybackController", () => {
     expect(audio.paused).toBe(false);
     expect(audio.src).toContain("B");
   });
+
+  test("pause(true)指定時は現在再生中の音声をフェードアウトしてから実際に一時停止し、フェード開始前のvolumeへ戻す（開発体制#45、2026-09-09、ユーザー要望：手動スキップ時のフェードアウト設定を一時停止にも適用してほしい）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.6;
+
+    const pausePromise = playback.pause(true);
+    // フェードの途中では、まだ実際には一時停止されておらず、volumeだけが下がっている。
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(audio.paused).toBe(false);
+    expect(audio.volume).toBeGreaterThan(0);
+    expect(audio.volume).toBeLessThan(0.6);
+
+    await vi.runAllTimersAsync();
+    await pausePromise;
+
+    expect(audio.paused).toBe(true);
+    expect(audio.volume).toBe(0.6);
+  });
+
+  test("pause(true)を、既に一時停止中の音声に対して呼んでもフェードを待たずすぐに完了し、volumeに触れない", async () => {
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.pause(); // ネイティブ一時停止で既に止まっている想定
+    audio.volume = 0.4;
+
+    await playback.pause(true);
+
+    expect(audio.paused).toBe(true);
+    expect(audio.volume).toBe(0.4);
+  });
+
+  test("pause()を指定しない（fadeOut=false）場合は従来通りフェード無しで即座に一時停止する", async () => {
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.9;
+    await playback.pause();
+
+    expect(audio.paused).toBe(true);
+    expect(audio.volume).toBe(0.9); // フェードしていないのでvolumeには触れない
+  });
+
+  test("pause(true)のフェード中に新しいplay()が開始されると、一時停止側のフェードは中断されaudioの状態には一切触れない（新しい再生を誤って止めない）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.6;
+    const pausePromise = playback.pause(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(audio.paused).toBe(false);
+    const volumeMidFade = audio.volume;
+    expect(volumeMidFade).toBeLessThan(0.6);
+
+    // フェード中に新しい再生が開始される（例：別の曲へ切り替え）。
+    await playback.play("B");
+    expect(audio.paused).toBe(false);
+    expect(audio.src).toContain("B");
+
+    await vi.runAllTimersAsync();
+    await pausePromise;
+
+    // 追い越された一時停止側のフェードは、新しい再生を止めていない。
+    expect(audio.paused).toBe(false);
+    expect(audio.src).toContain("B");
+  });
+
+  test("フェード付きの手動スキップ（play()側のfadeOut）の最中にpause(true)が呼ばれると、play()側はPlaybackPausedErrorとして中断し、pause()側は実際の一時停止まで進む", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    const srcDuringA = audio.src;
+    audio.volume = 0.8;
+    const playError = playback.play("B", 0, { fadeOut: true }).catch((err: unknown) => err);
+    await vi.advanceTimersByTimeAsync(500);
+
+    const pausePromise = playback.pause(true);
+    await vi.runAllTimersAsync();
+    await pausePromise;
+
+    const error = await playError;
+    expect(error).toBeInstanceOf(PlaybackPausedError);
+    expect(audio.src).toBe(srcDuringA); // 曲Bへは切り替わらない
+    expect(audio.paused).toBe(true); // 一時停止側のフェードが実際に一時停止まで完了している
+  });
 });

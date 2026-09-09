@@ -232,12 +232,31 @@ export class PlaybackController {
     this.generationReasons.set(this.generation, "cancel");
   }
 
-  pause(): void {
+  // fadeOut指定時（手動スキップ時と同じ「手動スキップ時にフェードアウトする」設定を
+  // 一時停止にも適用してほしいというユーザー要望、2026-09-09）は、実際に一時停止する前に
+  // 現在再生中の音声をフェードアウトする。generationはplay()と同様、フェード開始前
+  // （実際にはこのメソッドの先頭）で直ちに進める：これにより、フェード中のplay()
+  // （手動スキップのフェード等）が既存のisSuperseded()判定・generationReasons経由で
+  // この一時停止に追い越されたことを検知でき（"フェード中にアプリ内の「一時停止」ボタンで
+  // 中断された場合"のテストと同じ経路）、フェード完了後に誤って次の曲を再生してしまう
+  // ことを防げる。
+  async pause(fadeOut = false): Promise<void> {
     this.generation += 1;
-    this.generationReasons.set(this.generation, "pause");
+    const pauseGeneration = this.generation;
+    this.generationReasons.set(pauseGeneration, "pause");
     this.currentFileId = null;
     this.streamGeneration = null;
     this.rejectedGeneration = null;
+
+    if (fadeOut && !this.audio.paused) {
+      const preFadeVolume = this.audio.volume;
+      const isCancelled = () => this.generation !== pauseGeneration;
+      await fadeOutVolume(this.audio, FADE_OUT_DURATION_MS, { isCancelled });
+      // フェード中に新しい操作（play()等）に追い越された場合、audioの状態は既にその
+      // 新しい操作が管理しているため、ここでは一切触れない（play()と同じ設計）。
+      if (isCancelled()) return;
+      this.audio.volume = preFadeVolume;
+    }
     this.audio.pause();
   }
 }

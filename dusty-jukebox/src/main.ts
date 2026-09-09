@@ -237,7 +237,7 @@ function render(): void {
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
         <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="pause-btn" type="button" disabled>一時停止</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button></div>
-        <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ時にフェードアウトする</label>
+        <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトする</label>
         <div>
           <label>並び替え
             <select id="sort-field" disabled>
@@ -297,11 +297,11 @@ function observeNowPlayingBarHeight(): void {
 }
 
 function numberOrUndefined(value: string): number | undefined { const n = Number(value); return value.trim() === "" || !Number.isFinite(n) ? undefined : n; }
-// 手動スキップ（次へ/前へ/曲名クリック/Bluetooth・OSメディアキー）時のフェードアウト設定
-// （開発体制#42④の一部）。チェックボックスの現在値をそのまま読む（永続化はしない、
-// 他のUIトグルと同じくセッション内限定）。曲の自然終了時（advanceOnEnded()経由）には
-// 適用しない——将来のクロスフェード機能（曲間で2曲が重なる本格版、別PR）がこの経路を
-// 専用に扱うため。
+// 手動スキップ（次へ/前へ/曲名クリック/Bluetooth・OSメディアキー）・一時停止（開発体制#45、
+// 2026-09-09にユーザー要望で追加）時のフェードアウト設定（開発体制#42④の一部）。
+// チェックボックスの現在値をそのまま読む（永続化はしない、他のUIトグルと同じくセッション
+// 内限定）。曲の自然終了時（advanceOnEnded()経由）には適用しない——将来のクロスフェード
+// 機能（曲間で2曲が重なる本格版、別PR）がこの経路を専用に扱うため。
 function fadeOutEnabled(): boolean {
   return el<HTMLInputElement>("fade-out-toggle").checked;
 }
@@ -687,7 +687,7 @@ async function handleLoadPlaylistIntoQueue(playlistId: string): Promise<void> {
     // queue.setList()は音声要素を止めないため、プレイリストの全曲が現在の索引から消えていた
     // 場合、UIは「0曲・キュー操作は無効」を表示する一方で、直前のキューの曲が鳴り続けてしまう
     // （2026-09-03 Codexレビュー指摘：P2）。再生中のものを明示的に一時停止する。
-    playback?.pause();
+    void playback?.pause();
   }
 }
 
@@ -1876,7 +1876,7 @@ function init(): void {
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
     el<HTMLButtonElement>("retry-extraction-btn").addEventListener("click", () => void handleRetryExtraction());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
-    el<HTMLButtonElement>("pause-btn").addEventListener("click", () => playback?.pause());
+    el<HTMLButtonElement>("pause-btn").addEventListener("click", () => void playback?.pause(fadeOutEnabled()));
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
     el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
     el<HTMLButtonElement>("create-queue-btn").addEventListener("click", createQueueFromFilters);
