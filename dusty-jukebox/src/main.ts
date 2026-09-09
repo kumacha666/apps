@@ -236,7 +236,7 @@ function render(): void {
         <datalist id="filter-release-type-options"></datalist>
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
-        <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="pause-btn" type="button" disabled>一時停止</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button></div>
+        <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="pause-btn" type="button" disabled>一時停止</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button> <button id="clear-queue-btn" type="button" disabled>再生リストをクリア</button></div>
         <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトする</label>
         <div>
           <label>並び替え
@@ -312,6 +312,7 @@ function setQueueNavEnabled(enabled: boolean): void {
   el<HTMLButtonElement>("next-btn").disabled = !enabled;
   el<HTMLButtonElement>("previous-btn").disabled = !enabled;
   el<HTMLButtonElement>("shuffle-btn").disabled = !enabled;
+  el<HTMLButtonElement>("clear-queue-btn").disabled = !enabled;
   el<HTMLSelectElement>("sort-field").disabled = !enabled;
   el<HTMLSelectElement>("sort-direction").disabled = !enabled;
   el<HTMLSelectElement>("sort-secondary-field").disabled = !enabled;
@@ -325,6 +326,18 @@ function setQueueNavEnabled(enabled: boolean): void {
 // 再生リスト作成時）・shuffle()/unshuffle()完了後の両方から呼ぶ。
 function updateUnshuffleEnabled(): void {
   el<HTMLButtonElement>("unshuffle-btn").disabled = !(queue?.hasShuffleHistory() ?? false);
+}
+// 再生リストを空にして初期状態へ戻す（2026-09-09、ユーザー要望：作った再生リストをリロード
+// せずリセットしたい）。setList([])は再生中の曲・除外設定・シャッフル履歴もまとめてリセット
+// する（queue.tsのsetList()参照）。再生中の曲があれば、キューを空にした後にaudio要素だけが
+// 鳴り続けないよう明示的に一時停止する（読み込んだプレイリストの全曲が索引から消えていた
+// 場合の既存の停止処理と同じ理由。フェードは掛けず即座に止める）。
+function handleClearQueue(): void {
+  void playback?.pause();
+  queue?.setList([]);
+  renderQueue();
+  setQueueNavEnabled(false);
+  setStatus("再生リストをクリアしました。");
 }
 function renderQueue(): void {
   const list = el<HTMLUListElement>("catalog-list"); list.innerHTML = "";
@@ -1909,6 +1922,7 @@ function init(): void {
     // シャッフルと同じ理由（並び順を変えるだけで再生を開始する操作ではない）でhandleQueuePlayback()は
     // 経由しない。完了を待ってから表示を更新する。
     el<HTMLButtonElement>("unshuffle-btn").addEventListener("click", () => { if (queue) void queue.unshuffle().then(() => { renderQueue(); updateUnshuffleEnabled(); }); });
+    el<HTMLButtonElement>("clear-queue-btn").addEventListener("click", () => handleClearQueue());
     // 並び替えもシャッフルと同じ理由（並び順を変えるだけで再生を開始する操作ではない）で
     // handleQueuePlayback()は経由しない。手動並び替えはシャッフル履歴を無効化するため
     // （queue.sortBy()参照）、完了後にupdateUnshuffleEnabled()も呼ぶ。
