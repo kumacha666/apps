@@ -102,6 +102,26 @@ export class PlaybackController {
   // ここに元の値を保持し、後続のpause(true)呼び出しはこの値をそのまま引き継ぐ。
   private pendingPauseFadeVolume: number | null = null;
 
+  // 進行中の一時停止フェードがあれば、audio.volumeをフェード開始前の値へ即座に戻して
+  // pendingPauseFadeVolumeをクリアする（2026-09-09、ChatGPTレビュー指摘：P2続き）。
+  // generationReasonsの"pause"は`pause(true)`と`pause(false)`を区別できないため、
+  // 「一時停止フェードを追い越した側が'pause'理由で終わるかどうか」で判定する当初の設計では、
+  // pause(true)フェード中にpause(false)（一時停止フェード設定OFF時の一時停止・
+  // handleLoadPlaylistIntoQueue()等）や、フェード付きplay()（play(..., {fadeOut:true})）に
+  // 追い越された場合、下がったvolumeが復元されないまま取り残されていた（後者はさらに、
+  // 追い越したplay()自身が復元前の下がったvolumeを自分のpreFadeVolumeとして取得してしまい、
+  // 最終的な曲もその下がった値のままになる二次被害があった）。
+  // play()/pause()/cancelPendingTransition()という、generationを進める＝進行中の一時停止
+  // フェードを追い越しうる全ての操作の先頭でこれを呼ぶことで、後続の操作がaudio.volumeを
+  // 読み書きする前に必ず正しいベースラインへ戻す（「後続がpause(true)かどうか」を判定する
+  // 必要が無くなるため、判定ロジック自体を単純化できる）。
+  private reclaimPendingPauseFadeVolume(): void {
+    if (this.pendingPauseFadeVolume !== null) {
+      this.audio.volume = this.pendingPauseFadeVolume;
+      this.pendingPauseFadeVolume = null;
+    }
+  }
+
   constructor(
     private readonly audio: AudioElementLike,
     private readonly getValidAccessToken: GetValidAccessToken,
@@ -121,6 +141,7 @@ export class PlaybackController {
   }
 
   async play(fileId: string, position = 0, options: PlayOptions = {}): Promise<void> {
+    this.reclaimPendingPauseFadeVolume();
     this.generation += 1;
     const playGeneration = this.generation;
     const isSuperseded = () => this.generation !== playGeneration;
@@ -234,6 +255,7 @@ export class PlaybackController {
   // generationを一切進めないため）。pause()と異なりaudio.pause()やcurrentFileIdのクリアは
   // 行わない（setList()の直後に新しいplayAt()が続く場合、無関係にaudioを止めてしまわないため）。
   cancelPendingTransition(): void {
+    this.reclaimPendingPauseFadeVolume();
     this.generation += 1;
     this.generationReasons.set(this.generation, "cancel");
   }
@@ -247,6 +269,15 @@ export class PlaybackController {
   // 中断された場合"のテストと同じ経路）、フェード完了後に誤って次の曲を再生してしまう
   // ことを防げる。
   async pause(fadeOut = false): Promise<void> {
+    // 進行中の一時停止フェードがあれば、まずフェード開始前の値へ戻してから自分の処理を
+    // 始める（2026-09-09、ChatGPTレビュー指摘：P2続き。generationReasonsの"pause"は
+    // pause(true)とpause(false)を区別できないため、「後続が'pause'理由で終わるかどうか」で
+    // volumeを戻すか判定していた当初の設計では、pause(true)フェード中にpause(false)や
+    // フェード付きplay()に追い越された場合、下がったvolumeが復元されないまま取り残されて
+    // いた。generationを進める全操作（play()/pause()/cancelPendingTransition()）の先頭で
+    // reclaimPendingPauseFadeVolume()を呼ぶことで、後続の操作がaudio.volumeを読み書きする
+    // 前に必ず正しいベースラインへ戻し、「後続の種類」を判定する必要自体を無くしている）。
+    this.reclaimPendingPauseFadeVolume();
     this.generation += 1;
     const pauseGeneration = this.generation;
     this.generationReasons.set(pauseGeneration, "pause");
@@ -255,29 +286,14 @@ export class PlaybackController {
     this.rejectedGeneration = null;
 
     if (fadeOut && !this.audio.paused) {
-      // 進行中の一時停止フェードがあれば、その元のvolume（フェード開始前の値）をそのまま
-      // 引き継ぐ。無ければ現在のvolumeを新たに記録する（2026-09-09、ChatGPTレビュー指摘：
-      // P2。一時停止ボタンをフェード中に連打すると、2回目以降が「フェードで既に下がった
-      // 値」を新しい基準にしてしまい、最終的に本来の音量へ戻らなくなる回帰があった）。
-      const preFadeVolume = this.pendingPauseFadeVolume ?? this.audio.volume;
+      const preFadeVolume = this.audio.volume;
       this.pendingPauseFadeVolume = preFadeVolume;
       const isCancelled = () => this.generation !== pauseGeneration;
       await fadeOutVolume(this.audio, FADE_OUT_DURATION_MS, { isCancelled });
-      if (isCancelled()) {
-        // 新しい一時停止フェード（連打）に追い越された場合は、そちらが同じ元のvolumeを
-        // pendingPauseFadeVolume経由で引き継いで滑らかにフェードを継続するため、ここでは
-        // 一切触れない（触れるとフェード中に音量が上がってしまう）。それ以外（fadeOutを
-        // 指定しない通常のplay()・cancelPendingTransition()等）に追い越された場合は、
-        // 下がったままのvolumeを新しい再生へ引き継がせないようフェード開始前の値へ戻す
-        // （2026-09-09、ChatGPTレビュー指摘：P2続き。以前はここで一切volumeに触れなかった
-        // ため、fadeOutを指定しない通常のplay()〈単曲試聴・曲の自然終了時のnext()等〉に
-        // 追い越された場合、下がったままのvolumeが新しい再生へ引き継がれていた）。
-        if (this.generationReasons.get(pauseGeneration + 1) !== "pause") {
-          this.audio.volume = preFadeVolume;
-          this.pendingPauseFadeVolume = null;
-        }
-        return;
-      }
+      // フェード中に新しい操作（play()/pause()/cancelPendingTransition()のいずれか）に
+      // 追い越された場合、その操作が自分自身の先頭でreclaimPendingPauseFadeVolume()を
+      // 呼び既にvolumeを復元・pendingPauseFadeVolumeをクリア済みのため、ここでは一切触れない。
+      if (isCancelled()) return;
       this.audio.volume = preFadeVolume;
       this.pendingPauseFadeVolume = null;
     }
