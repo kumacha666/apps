@@ -259,8 +259,12 @@ describe("PlaybackController", () => {
     // 最新の再生（C）が正しく開始され、追い越された古いフェードの残りステップによる
     // volume書き換えでは上書きされていない（isCancelledで即座に中断するため、Cが
     // 開始した時点のvolume以降は変化しない）。
+    // C自身のplay()呼び出しの先頭でreclaimPendingFadeVolume()が呼ばれ、Bのフェード開始前の
+    // volume（1）へ既に戻っている（2026-09-09、ChatGPTレビュー指摘：P2を踏まえた再設計で、
+    // 以前は「追い越した側は一切volumeに触れない」設計だったため、volumeMidFadeのまま
+    // 取り残されていた既知の制限だったが、reclaim方式への統一で解消された）。
     expect(audio.src).toBe(streamUrl("C", playback.currentStreamGeneration() ?? undefined));
-    expect(audio.volume).toBe(volumeMidFade);
+    expect(audio.volume).toBe(1);
   });
 
   test("フェード中にネイティブ操作で明示的に一時停止された場合、フェード完了後も次の曲を勝手に再生しない（2026-09-08、Codexレビュー指摘：P1）", async () => {
@@ -355,9 +359,10 @@ describe("PlaybackController", () => {
     const error = await firstError;
     expect(error).toBeInstanceOf(PlaybackInterruptedError);
     expect(error).not.toBeInstanceOf(PlaybackPausedError);
-    // 追い越した側（C）が既に設定したvolumeを、古いフェードの中断処理が上書きしない
-    // （volumeMidFadeのままのはず＝Cのvolume制御に一切触れていないことの確認）。
-    expect(audio.volume).toBe(volumeMidFade);
+    // C自身のplay()呼び出しの先頭でreclaimPendingFadeVolume()が呼ばれ、Bのフェード開始前の
+    // volume（0.8）へ既に戻っている（2026-09-09、ChatGPTレビュー指摘：P2を踏まえた再設計。
+    // volumeMidFadeのまま取り残されていた既知の制限は解消された）。
+    expect(audio.volume).toBe(0.8);
   });
   test("cancelPendingTransition()（PlaybackQueue.setList()経由）でフェード中に中断された場合も、フェード開始前のvolumeへ戻す（2026-09-08、Codexレビュー指摘：P1。setList()単独の経路〈直後にplayAt()しない場合を含む〉では他に誰もvolumeを復元しないため、復元しないと旧曲の音量が下がったまま残り続け、以後の通常再生すべてに影響する）", async () => {
     vi.useFakeTimers();
@@ -492,5 +497,184 @@ describe("PlaybackController", () => {
     // 新しい正当な再生("B")は誤って止められていない。
     expect(audio.paused).toBe(false);
     expect(audio.src).toContain("B");
+  });
+
+  test("pause(true)指定時は現在再生中の音声をフェードアウトしてから実際に一時停止し、フェード開始前のvolumeへ戻す（開発体制#45、2026-09-09、ユーザー要望：手動スキップ時のフェードアウト設定を一時停止にも適用してほしい）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.6;
+
+    const pausePromise = playback.pause(true);
+    // フェードの途中では、まだ実際には一時停止されておらず、volumeだけが下がっている。
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(audio.paused).toBe(false);
+    expect(audio.volume).toBeGreaterThan(0);
+    expect(audio.volume).toBeLessThan(0.6);
+
+    await vi.runAllTimersAsync();
+    await pausePromise;
+
+    expect(audio.paused).toBe(true);
+    expect(audio.volume).toBe(0.6);
+  });
+
+  test("pause(true)を、既に一時停止中の音声に対して呼んでもフェードを待たずすぐに完了し、volumeに触れない", async () => {
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.pause(); // ネイティブ一時停止で既に止まっている想定
+    audio.volume = 0.4;
+
+    await playback.pause(true);
+
+    expect(audio.paused).toBe(true);
+    expect(audio.volume).toBe(0.4);
+  });
+
+  test("pause()を指定しない（fadeOut=false）場合は従来通りフェード無しで即座に一時停止する", async () => {
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.9;
+    await playback.pause();
+
+    expect(audio.paused).toBe(true);
+    expect(audio.volume).toBe(0.9); // フェードしていないのでvolumeには触れない
+  });
+
+  test("pause(true)のフェード中にfadeOutを指定しない新しいplay()が開始されると、一時停止側のフェードは中断され新しい再生を止めない。下がったvolumeもフェード開始前の値へ戻す（2026-09-09、ChatGPTレビュー指摘：P2。以前はここでvolumeに一切触れなかったため、fadeOutを指定しない通常のplay()〈単曲試聴・曲の自然終了時のnext()等〉に追い越された場合、下がったままのvolumeが新しい再生へ引き継がれていた）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.6;
+    const pausePromise = playback.pause(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(audio.paused).toBe(false);
+    const volumeMidFade = audio.volume;
+    expect(volumeMidFade).toBeLessThan(0.6);
+
+    // フェード中にfadeOutを指定しない新しい再生が開始される（例：単曲試聴）。play()自身の
+    // 先頭でreclaimPendingPauseFadeVolume()が呼ばれ、この時点で既にフェード開始前の値へ
+    // 戻っている（Bはvolumeに一切触れない設計だが、追い越された側のvolumeを復元する責務は
+    // play()側が負う）。
+    await playback.play("B");
+    expect(audio.paused).toBe(false);
+    expect(audio.src).toContain("B");
+    expect(audio.volume).toBe(0.6);
+
+    await vi.runAllTimersAsync();
+    await pausePromise;
+
+    // 追い越された一時停止側のフェードは、新しい再生を止めていない。
+    expect(audio.paused).toBe(false);
+    expect(audio.src).toContain("B");
+    // 下がったままのvolumeを新しい再生へ引き継がせず、フェード開始前の値へ戻している。
+    expect(audio.volume).toBe(0.6);
+  });
+
+  test("一時停止ボタンをフェード中に連打（pause(true)を2回連続で呼ぶ）しても、最終的にフェード開始前の元の音量まで一時停止する（2026-09-09、ChatGPTレビュー指摘：P2続き。以前は2回目の呼び出しが「フェードで既に下がった値」を新しい基準にしてしまい、最終的に本来の音量へ戻らなくなる回帰があった）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.6;
+    const firstPause = playback.pause(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    const volumeMidFade = audio.volume;
+    expect(volumeMidFade).toBeLessThan(0.6);
+
+    // フェード中にもう一度一時停止ボタンが押される。
+    const secondPause = playback.pause(true);
+    await vi.runAllTimersAsync();
+    await firstPause;
+    await secondPause;
+
+    // 最終的な一時停止は、連打時点の（既に下がった）音量ではなく、最初のフェード開始前の
+    // 元の音量（0.6）まで下がりきってから一時停止している。
+    expect(audio.paused).toBe(true);
+    expect(audio.volume).toBe(0.6);
+  });
+
+  test("pause(true)のフェード中にpause(false)（フェード設定OFF時の一時停止）が呼ばれても、最終的にフェード開始前の元の音量で一時停止する（2026-09-09、ChatGPTレビュー指摘：P2再々指摘。generationReasonsの\"pause\"はpause(true)とpause(false)を区別できないため、当初の実装は後続がpause(false)の場合も「一時停止フェードの連打」と誤認し、volumeを復元しないまま取り残していた）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.6;
+    const firstPause = playback.pause(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    const volumeMidFade = audio.volume;
+    expect(volumeMidFade).toBeLessThan(0.6);
+
+    // フェード中に、フェード設定がOFFの一時停止（例：handleLoadPlaylistIntoQueue()の
+    // 自動一時停止）が呼ばれる。fadeOut未指定なのでその場ですぐ一時停止する。
+    await playback.pause(false);
+    expect(audio.paused).toBe(true);
+    expect(audio.volume).toBe(0.6);
+
+    // 追い越された古いフェードが後から解決しても、既に一時停止済みの状態を壊さない。
+    await vi.runAllTimersAsync();
+    await firstPause;
+    expect(audio.paused).toBe(true);
+    expect(audio.volume).toBe(0.6);
+  });
+
+  test("pause(true)のフェード中にフェード付きplay()（play(..., { fadeOut: true })）が呼ばれても、新しい曲の最終volumeが一時停止フェード開始前の元の値になる（2026-09-09、ChatGPTレビュー指摘：P2再々指摘。当初の実装は追い越したplay()自身が復元前の下がったvolumeを自分のpreFadeVolumeとして取得してしまい、最終的な新曲の音量もその下がった値のままになっていた）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    audio.volume = 0.6;
+    const firstPause = playback.pause(true).catch(() => {});
+    await vi.advanceTimersByTimeAsync(1000);
+    const volumeMidFade = audio.volume;
+    expect(volumeMidFade).toBeLessThan(0.6);
+
+    // フェード中に、フェード付きの新しい再生（次へ/前へ等の手動スキップ相当）が始まる。
+    const playPromise = playback.play("B", 0, { fadeOut: true });
+    await vi.runAllTimersAsync();
+    await playPromise;
+    await firstPause;
+
+    // Bのフェードは、一時停止フェードで既に下がった値ではなく、元の音量（0.6）を
+    // 基準にフェードし、完了後もその値へ戻っている。
+    expect(audio.src).toContain("B");
+    expect(audio.volume).toBe(0.6);
+  });
+
+  test("フェード付きの手動スキップ（play()側のfadeOut）の最中にpause(true)が呼ばれると、play()側はPlaybackPausedErrorとして中断し、pause()側は実際の一時停止まで進む。最終的な一時停止音量も本来の（フェード開始前の）値になる（2026-09-09、ChatGPTレビュー指摘：P2再々々指摘。play()側のフェードの元volumeを共有せず、pause側だけが独自にpendingPauseFadeVolumeを追跡していた設計では、pause(true)がスキップフェードの途中volumeを自分の基準値として取得してしまい、最終的な一時停止音量が本来の値ではなくなる回帰があった。play()・pause()のフェードで元volumeを共有するpendingFadeOriginalVolumeへの統一で解消）", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    const srcDuringA = audio.src;
+    audio.volume = 0.8;
+    const playError = playback.play("B", 0, { fadeOut: true }).catch((err: unknown) => err);
+    await vi.advanceTimersByTimeAsync(500);
+    const volumeMidFade = audio.volume;
+    expect(volumeMidFade).toBeLessThan(0.8);
+
+    const pausePromise = playback.pause(true);
+    await vi.runAllTimersAsync();
+    await pausePromise;
+
+    const error = await playError;
+    expect(error).toBeInstanceOf(PlaybackPausedError);
+    expect(audio.src).toBe(srcDuringA); // 曲Bへは切り替わらない
+    expect(audio.paused).toBe(true); // 一時停止側のフェードが実際に一時停止まで完了している
+    // pause(true)は、スキップフェードの途中volume（volumeMidFade）ではなく、
+    // 本来のフェード開始前の音量（0.8）を基準にフェードし、その値で一時停止している。
+    expect(audio.volume).toBe(0.8);
   });
 });

@@ -95,6 +95,33 @@ export class PlaybackController {
   // ため、`playGeneration + 1`の理由を引ければ、それが自分を最初に追い越した操作だと確定できる
   // （エントリが無ければ、それは通常のplay()呼び出しだったということ）。
   private generationReasons = new Map<number, "pause" | "cancel">();
+  // 進行中のフェード（play()のfadeOut・pause(true)のどちらも）が記録した「フェード開始前の
+  // volume」（2026-09-09、ChatGPTレビュー指摘：P2×3）。play()側・pause側で別々のローカル
+  // 変数に持たせていた当初の設計では、①一時停止ボタンをフェード中に連打、②pause(true)フェード
+  // 中にpause(false)、③pause(true)フェード中にフェード付きplay()、④（本フィールドを導入する
+  // 決め手になった指摘）フェード付きplay()（手動スキップ）の途中にpause(true)、のいずれも
+  // 「追い越された側」の元のvolumeが失われる・「追い越した側」が復元前の下がったvolumeを
+  // 自分の基準値として取得してしまう、という同根の回帰を繰り返していた。play()・pause()の
+  // どちらのフェードも同じこの1つのフィールドを共有することで、フェードの種類を問わず
+  // 「今まさに進行中のフェードが1つあれば、その元のvolumeはここにある」という単一の
+  // 真実の情報源にした。
+  private pendingFadeOriginalVolume: number | null = null;
+
+  // 進行中のフェードがあれば、audio.volumeをフェード開始前の値へ即座に戻して
+  // pendingFadeOriginalVolumeをクリアする（2026-09-09、ChatGPTレビュー指摘：P2続き）。
+  // generationReasonsの"pause"は`pause(true)`と`pause(false)`を区別できず、また
+  // play()側のフェードの元volumeを一切追跡していなかったため、「追い越した側の理由で
+  // 判定する」設計ではいずれの組み合わせも取りこぼしがあった。play()/pause()/
+  // cancelPendingTransition()という、generationを進める＝進行中のフェードを追い越しうる
+  // 全ての操作の先頭でこれを呼ぶことで、後続の操作がaudio.volumeを読み書きする前に必ず
+  // 正しいベースラインへ戻す（「後続の種類」を判定する必要が無くなるため、判定ロジック
+  // 自体を単純化できる）。
+  private reclaimPendingFadeVolume(): void {
+    if (this.pendingFadeOriginalVolume !== null) {
+      this.audio.volume = this.pendingFadeOriginalVolume;
+      this.pendingFadeOriginalVolume = null;
+    }
+  }
 
   constructor(
     private readonly audio: AudioElementLike,
@@ -115,6 +142,7 @@ export class PlaybackController {
   }
 
   async play(fileId: string, position = 0, options: PlayOptions = {}): Promise<void> {
+    this.reclaimPendingFadeVolume();
     this.generation += 1;
     const playGeneration = this.generation;
     const isSuperseded = () => this.generation !== playGeneration;
@@ -126,6 +154,12 @@ export class PlaybackController {
     let preFadeVolume: number | null = null;
     if (options.fadeOut && !this.audio.paused) {
       preFadeVolume = this.audio.volume;
+      // 進行中のフェードの元volumeとしてpendingFadeOriginalVolumeへ登録する
+      // （2026-09-09、ChatGPTレビュー指摘：P2続き。以前はplay()側のフェードの元volumeを
+      // どこにも共有せず、この後でpause(true)に追い越されると、pause側は復元前の下がった
+      // volumeを自分の基準値として取得してしまい、最終的な一時停止音量が本来の値ではなく
+      // なる回帰があった）。
+      this.pendingFadeOriginalVolume = preFadeVolume;
       // 現在再生中の音声（これから置き換わる方）に対して行う。src差し替え・トークン確認より前に
       // 行うことで、「まだ次の曲が確定するか分からない段階で無音にしてしまう」事態を避ける
       // （次の曲が実際に見つからずplay()自体が呼ばれない場合はフェードも発生しない、moveSong等と
@@ -137,26 +171,19 @@ export class PlaybackController {
       // PlaybackController.pause()を直接呼びgenerationを進めるため、この分岐（ネイティブ
       // pauseとは別経路）を通る。以前はここで正常return（voidの成功扱い）していたため、
       // 呼び出し元のPlaybackQueue.playAndCommit()が誤って次の曲へcommitしてしまっていた。
-      // volumeは既にisCancelled経由でこれ以上更新されない（新しい世代の制御を妨げないため）。
       if (isSuperseded()) {
-        // 2026-09-08、Codexレビュー指摘：P1続き。このgenerationの変化がpause()自身による
-        // ものであれば（＝pause()以降まだ他のplay()が呼ばれていなければ）、ネイティブ一時停止
-        // と同じくフェード開始前のvolumeへ戻し、PlaybackPausedErrorとして区別して投げる
-        // （そうでなければ、別の正当なplay()に追い越されただけなので、そちらのvolume制御を
-        // 妨げないよう一切触れず、区別しないPlaybackInterruptedErrorを投げる）。
+        // 2026-09-09、ChatGPTレビュー指摘：P2続き。以前はここでこの分岐自身がvolumeを
+        // 復元していたが、追い越した側（pause()/cancelPendingTransition()/別のplay()の
+        // いずれも）が自分の処理を始める前に必ずreclaimPendingFadeVolume()を呼び、既に
+        // volumeを復元・pendingFadeOriginalVolumeをクリア済みのため、ここでは一切触れない
+        // （このplay()呼び出し自身のpendingFadeOriginalVolumeは既に追い越した側に消費・
+        // クリアされている）。PlaybackPausedError/PlaybackInterruptedErrorの区別のみ行う：
+        // このgenerationの変化がpause()自身によるものであれば（＝pause()以降まだ他のplay()
+        // が呼ばれていなければ）ネイティブ一時停止と同じくPlaybackPausedErrorとして区別して
+        // 投げる（そうでなければ、別の正当なplay()に追い越されただけなので、区別しない
+        // PlaybackInterruptedErrorを投げる）。
         const supersededByReason = this.generationReasons.get(playGeneration + 1);
-        if (supersededByReason === "pause") {
-          this.audio.volume = preFadeVolume;
-          throw new PlaybackPausedError();
-        }
-        // cancelPendingTransition()（setList()）によるものも同様にvolumeを復元する
-        // （2026-09-08、Codexレビュー指摘：P1続き）。pause()と異なりPlaybackPausedErrorは
-        // 投げない：PlaybackQueue側は既にsetList()自身の呼び出しでキュー側の状態
-        // （generation・activeFadeToken）を直接無効化済みのため、PlaybackPausedError扱いに
-        // よる追加のgeneration進行は不要（意味的にも「一時停止」ではないため区別する）。
-        if (supersededByReason === "cancel") {
-          this.audio.volume = preFadeVolume;
-        }
+        if (supersededByReason === "pause") throw new PlaybackPausedError();
         throw new PlaybackInterruptedError();
       }
       // フェード中にネイティブ操作（<audio controls>・Media Session）で明示的に一時停止された
@@ -169,12 +196,16 @@ export class PlaybackController {
       // UIとキューだけが次の曲を再生中と表示する不整合が生じる）。
       if (this.audio.paused && !this.audio.ended) {
         this.audio.volume = preFadeVolume;
+        this.pendingFadeOriginalVolume = null;
         throw new PlaybackPausedError();
       }
     }
     const token = await this.getValidAccessToken();
     if (!token) {
-      if (preFadeVolume !== null && !isSuperseded()) this.audio.volume = preFadeVolume;
+      if (preFadeVolume !== null && !isSuperseded()) {
+        this.audio.volume = preFadeVolume;
+        this.pendingFadeOriginalVolume = null;
+      }
       throw new PlaybackAuthenticationRequiredError();
     }
     // トークン確認中に停止または別曲の再生が入った場合、古い要求はsrcを変更しない。
@@ -184,7 +215,10 @@ export class PlaybackController {
     // フェードアウトした分だけ、次の曲の開始時にフェード開始前のvolumeへ戻す
     // （フェードアウトはこの1回のスキップだけの演出のため）。フェードしていない場合は
     // volumeへ一切触れず、ユーザーが<audio controls>で設定した値をそのまま維持する。
-    if (preFadeVolume !== null) this.audio.volume = preFadeVolume;
+    if (preFadeVolume !== null) {
+      this.audio.volume = preFadeVolume;
+      this.pendingFadeOriginalVolume = null;
+    }
     this.streamGeneration = playGeneration;
     // Set this after src so a resumed stream seeks instead of being reset by
     // assigning the new media URL. Browsers retain the requested position until
@@ -228,16 +262,48 @@ export class PlaybackController {
   // generationを一切進めないため）。pause()と異なりaudio.pause()やcurrentFileIdのクリアは
   // 行わない（setList()の直後に新しいplayAt()が続く場合、無関係にaudioを止めてしまわないため）。
   cancelPendingTransition(): void {
+    this.reclaimPendingFadeVolume();
     this.generation += 1;
     this.generationReasons.set(this.generation, "cancel");
   }
 
-  pause(): void {
+  // fadeOut指定時（手動スキップ時と同じ「手動スキップ時にフェードアウトする」設定を
+  // 一時停止にも適用してほしいというユーザー要望、2026-09-09）は、実際に一時停止する前に
+  // 現在再生中の音声をフェードアウトする。generationはplay()と同様、フェード開始前
+  // （実際にはこのメソッドの先頭）で直ちに進める：これにより、フェード中のplay()
+  // （手動スキップのフェード等）が既存のisSuperseded()判定・generationReasons経由で
+  // この一時停止に追い越されたことを検知でき（"フェード中にアプリ内の「一時停止」ボタンで
+  // 中断された場合"のテストと同じ経路）、フェード完了後に誤って次の曲を再生してしまう
+  // ことを防げる。
+  async pause(fadeOut = false): Promise<void> {
+    // 進行中の一時停止フェードがあれば、まずフェード開始前の値へ戻してから自分の処理を
+    // 始める（2026-09-09、ChatGPTレビュー指摘：P2続き。generationReasonsの"pause"は
+    // pause(true)とpause(false)を区別できないため、「後続が'pause'理由で終わるかどうか」で
+    // volumeを戻すか判定していた当初の設計では、pause(true)フェード中にpause(false)や
+    // フェード付きplay()に追い越された場合、下がったvolumeが復元されないまま取り残されて
+    // いた。generationを進める全操作（play()/pause()/cancelPendingTransition()）の先頭で
+    // reclaimPendingFadeVolume()を呼ぶことで、後続の操作がaudio.volumeを読み書きする
+    // 前に必ず正しいベースラインへ戻し、「後続の種類」を判定する必要自体を無くしている）。
+    this.reclaimPendingFadeVolume();
     this.generation += 1;
-    this.generationReasons.set(this.generation, "pause");
+    const pauseGeneration = this.generation;
+    this.generationReasons.set(pauseGeneration, "pause");
     this.currentFileId = null;
     this.streamGeneration = null;
     this.rejectedGeneration = null;
+
+    if (fadeOut && !this.audio.paused) {
+      const preFadeVolume = this.audio.volume;
+      this.pendingFadeOriginalVolume = preFadeVolume;
+      const isCancelled = () => this.generation !== pauseGeneration;
+      await fadeOutVolume(this.audio, FADE_OUT_DURATION_MS, { isCancelled });
+      // フェード中に新しい操作（play()/pause()/cancelPendingTransition()のいずれか）に
+      // 追い越された場合、その操作が自分自身の先頭でreclaimPendingFadeVolume()を
+      // 呼び既にvolumeを復元・pendingFadeOriginalVolumeをクリア済みのため、ここでは一切触れない。
+      if (isCancelled()) return;
+      this.audio.volume = preFadeVolume;
+      this.pendingFadeOriginalVolume = null;
+    }
     this.audio.pause();
   }
 }
