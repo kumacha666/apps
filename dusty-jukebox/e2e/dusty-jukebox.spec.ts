@@ -129,6 +129,33 @@ test("除外は再生キューへ反映され、戻して作り直すと復帰�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 });
 
+test("「再生リストをクリア」で再生リストを空にでき、リロードせず初期状態（各操作ボタン無効）に戻せる（2026-09-09、ユーザー要望）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await expect(page.locator("#catalog-list li")).toHaveCount(2);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  await page.getByRole("button", { name: "再生リストをクリア" }).click();
+  await expect(page.locator("#status")).toContainText("再生リストをクリアしました。");
+  await expect(page.locator("#catalog-list li")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "再生リストをクリア" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "次へ" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "前へ" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "シャッフル", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "再生", exact: true })).toBeDisabled();
+});
+
+test("認証更新待ち（「認証を更新して続行」表示中）の状態から「再生リストをクリア」を押すと、保留中の認証継続通知も消える（2026-09-09、ChatGPTレビュー指摘：P2。setList([])だけではキューとは別管理のPlaybackAuthenticationGateの保留操作・通知が残り、クリア済みなのに認証更新ボタンだけが残る矛盾した状態になっていた）", async ({ context, page }) => {
+  await installGoogleMocks(context, { rejectFirstStreamToken: true });
+  await page.goto("/"); await login(page); await openCatalog(page);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeVisible();
+
+  await page.getByRole("button", { name: "再生リストをクリア" }).click();
+  await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeHidden();
+  await expect(page.locator("#catalog-list li")).toHaveCount(0);
+});
+
 test("索引読み込み後、アーティスト/Genre欄の候補一覧（datalist）に実在する値が反映される", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
   await expect(page.locator("#filter-artist-options option")).toHaveText(["Artist"]);
