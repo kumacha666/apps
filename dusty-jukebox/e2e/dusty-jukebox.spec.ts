@@ -658,6 +658,27 @@ test("キュー曲再生中に「この曲を再生」でキュー外の単曲�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 });
 
+test("単曲試聴中に一時停止した後、同じファイルIDでもう一度「この曲を再生」を押すと、先頭からではなく一時停止位置から再開する（開発体制#42③、2026-09-09 ChatGPTレビュー指摘：P2。ネイティブ<audio controls>廃止で、従来ネイティブの再生アイコンが担っていた「停止位置からの再開」が単曲試聴では失われていた）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page);
+  await page.locator("#play-file-id").fill("song-1");
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/song-1(\?|$)/);
+  // 初回は先頭（position 0）から開始していることを確認しておく。
+  expect(await page.evaluate(() => (window as unknown as { __e2e: { getLastExternalPlaybackPosition(): number | null } }).__e2e.getLastExternalPlaybackPosition())).toBe(0);
+
+  // 再生位置を進めた状態を模擬する（E2Eモックの音声は実際にはデコードできないダミーデータの
+  // ため、実ブラウザのように時間経過で自然には進まない。またE2Eモックのsrc差し替えは
+  // currentTimeのリセットタイミングが実ブラウザの挙動と一致するとは限らないため、DOM上の
+  // currentTime読み取りではなく__e2e.getLastExternalPlaybackPosition()で実際に渡された
+  // position引数を直接検証する）。
+  await page.evaluate(() => { (document.querySelector("#audio-player") as HTMLAudioElement).currentTime = 30; });
+  await page.getByRole("button", { name: "一時停止" }).click();
+
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/song-1(\?|$)/);
+  expect(await page.evaluate(() => (window as unknown as { __e2e: { getLastExternalPlaybackPosition(): number | null } }).__e2e.getLastExternalPlaybackPosition())).toBe(30);
+});
+
 test("再生中の曲をチェック解除で除外してから「再生」ボタンを押すと、除外中の曲を再開しようとせず次の未除外曲から再生する（2026-09-06 PR #418 ChatGPTレビュー再々指摘）", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
   await page.getByRole("button", { name: "再生", exact: true }).click();

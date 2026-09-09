@@ -39,6 +39,7 @@ const QUEUE_SORT_FIELD_LABELS: Record<QueueSortField, string> = {
 };
 import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState } from "./mediaSession";
 import { formatSeekTime, isSeekableDuration } from "./seekBar";
+import { shouldResumeExternalPlayback } from "./externalPlayback";
 import { registerStreamAuthResponder } from "./streamAuth";
 import {
   createChangesListFn,
@@ -142,6 +143,18 @@ const auth = new DriveAuth();
 let playback: PlaybackController | null = null;
 let queue: PlaybackQueue | null = null;
 let playbackAuthGate: PlaybackAuthenticationGate | null = null;
+// 単曲試聴（「この曲を再生」、キュー外）で最後に再生を開始したfileId（2026-09-09、ChatGPT
+// レビュー指摘：P2。ネイティブ<audio controls>を廃止したことで、従来ネイティブの再生アイコンが
+// 担っていた「一時停止位置からの再開」が単曲試聴では失われていた——キュー曲は`queue-play-btn`が
+// `queue.canResumeCurrent()`で同じことをするが、キュー外の単曲試聴には対応する仕組みが無かった）。
+// audio.srcがキュー側の再生に取って代わられると、audio.currentTimeがこのfileIdとは無関係な
+// 位置を指すため、キュー由来の再生を試みるたびに必ずnullへ戻す（handleQueuePlayback()参照）。
+let lastExternalFileId: string | null = null;
+// テスト専用：直前の単曲試聴開始要求（startExternalPlayback/startExternalPlaybackAt）に
+// 渡されたposition引数。E2Eモックの<audio>はcurrentTimeのリセットタイミングが実ブラウザの
+// 挙動と一致するとは限らないため、shouldResumeExternalPlayback()の判定結果が実際に正しい
+// 引数でstartExternalPlaybackAt()へ渡ったこと自体を直接検証する（__e2eフック経由）。
+let lastExternalPlaybackPositionForE2E: number | null = null;
 const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
 // catalogSessionへ最後に読み込んだ（有効な）曲一覧の出所スプレッドシートID。プレイリストの
@@ -957,13 +970,26 @@ async function handlePlay(): Promise<void> {
     setStatus("再生するGoogle DriveファイルIDを入力してください", true);
     return;
   }
+  const audioPlayer = el<HTMLAudioElement>("audio-player");
+  // 同じ曲を単曲試聴中に（黄色い「一時停止」ボタン等で）一時停止した後、もう一度
+  // 「この曲を再生」を押した場合は、先頭からではなく一時停止位置から再開する
+  // （externalPlayback.ts参照。ended時は自然終了なので先頭から再生し直す）。
+  const canResumeExternal = shouldResumeExternalPlayback({
+    lastExternalFileId,
+    fileId,
+    audioPaused: audioPlayer.paused,
+    audioEnded: audioPlayer.ended,
+  });
   await handlePlaybackAction(async () => {
     setStatus("Service Worker経由で再生を開始しています...");
-    return startExternalPlayback(fileId, currentPlayback);
+    return canResumeExternal
+      ? startExternalPlaybackAt(fileId, currentPlayback, audioPlayer.currentTime)
+      : startExternalPlayback(fileId, currentPlayback);
   });
 }
 
 async function startExternalPlayback(fileId: string, currentPlayback: PlaybackController): Promise<boolean> {
+  lastExternalPlaybackPositionForE2E = 0;
   await awaitServiceWorkerReady();
   // Register first: HTMLMediaElement.play() can remain pending (or reject) while
   // the first stream request already receives a Drive 401.
@@ -981,10 +1007,12 @@ async function startExternalPlayback(fileId: string, currentPlayback: PlaybackCo
   // playback controller. A locally-expired token must leave the old queue song
   // eligible to advance when it ends.
   queue?.notifyExternalPlaybackStarted();
+  lastExternalFileId = fileId;
   return true;
 }
 
 async function startExternalPlaybackAt(fileId: string, currentPlayback: PlaybackController, position: number): Promise<boolean> {
+  lastExternalPlaybackPositionForE2E = position;
   await awaitServiceWorkerReady();
   let continuation!: PlaybackContinuation;
   continuation = playbackContinuations.register({
@@ -997,10 +1025,15 @@ async function startExternalPlaybackAt(fileId: string, currentPlayback: Playback
   await playPromise;
   if (!playbackContinuations.isCurrent(continuation) || continuation.generation !== currentPlayback.currentGeneration()) return false;
   queue?.notifyExternalPlaybackStarted();
+  lastExternalFileId = fileId;
   return true;
 }
 
 async function handleQueuePlayback(action: () => Promise<boolean> | undefined): Promise<void> {
+  // キュー由来の再生を試みるということは、成功すればaudio.srcが単曲試聴とは無関係な曲へ
+  // 差し替わる（失敗時に据え置いても実害は無い：単曲試聴の「resume」機会を1回逃すだけで、
+  // 次回「この曲を再生」が先頭から再生し直すフォールバックへ倒れるだけのため安全側）。
+  lastExternalFileId = null;
   await handlePlaybackAction(async () => {
     await awaitServiceWorkerReady();
     const started = await action();
@@ -2025,6 +2058,7 @@ if (import.meta.env.VITE_E2E === "true") {
         serviceWorkerReady: () => Promise<void>;
         loadPlaylists: (spreadsheetId: string) => Promise<boolean>;
         getPlaylistsCommitCount: () => number;
+        getLastExternalPlaybackPosition: () => number | null;
       };
     }
   ).__e2e = {
@@ -2032,5 +2066,10 @@ if (import.meta.env.VITE_E2E === "true") {
     // overlapping loadPlaylists()呼び出しの対象スプレッドシートガードを直接検証するためのフック。
     loadPlaylists: (spreadsheetId: string) => { reservePlaylistsLoadTarget(spreadsheetId); return loadPlaylists(spreadsheetId); },
     getPlaylistsCommitCount: () => playlistsCommitCountForE2E,
+    // 単曲試聴の再開（shouldResumeExternalPlayback()）が実際に正しいpositionでstartExternal
+    // PlaybackAt()を呼んだことを直接検証するためのフック（E2Eモックの<audio>はcurrentTimeの
+    // リセットタイミングが実ブラウザと一致するとは限らないため、DOM上のcurrentTime読み取りでは
+    // 検証できない）。
+    getLastExternalPlaybackPosition: () => lastExternalPlaybackPositionForE2E,
   };
 }
