@@ -189,6 +189,25 @@ test("折り返し点の無い長い1単語（フォルダ名・曲名等）が�
   expect(barBox!.x + barBox!.width).toBeLessThanOrEqual(321); // 1px許容（サブピクセル丸め）
 });
 
+test("再生中の曲名（#now-playing）に折り返し点の無い長い1単語が入っても、固定バー自身の外へはみ出さない（2026-09-09、ChatGPTレビュー指摘：P2。再生リスト側のoverflow-wrap対策だけでは、再生リスト外で表示される#now-playing自身は保護されず、画面外へクリップされて読めなくなりうる）", async ({ context, page }) => {
+  await installGoogleMocks(context);
+  await page.goto("/"); await login(page); await openCatalog(page);
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.evaluate(() => {
+    document.getElementById("now-playing")!.textContent = "再生中: " + "A".repeat(300);
+  });
+  const overflowsOwnBox = await page.evaluate(() => {
+    const el = document.getElementById("now-playing")!;
+    return el.scrollWidth > el.clientWidth + 1;
+  });
+  expect(overflowsOwnBox).toBe(false);
+  const overflowsHorizontally = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+  expect(overflowsHorizontally).toBe(false);
+  const barBox = await page.locator(".now-playing-bar").boundingBox();
+  expect(barBox).not.toBeNull();
+  expect(barBox!.x + barBox!.width).toBeLessThanOrEqual(321); // 1px許容（サブピクセル丸め）
+});
+
 test("絞り込み欄同士が連動し、アーティストを選ぶとアルバム欄の候補がそのアーティストのものだけに絞られる（開発体制#43）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");

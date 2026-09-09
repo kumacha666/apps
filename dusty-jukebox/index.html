@@ -54,6 +54,14 @@
       display: flex;
       flex-direction: column;
       gap: 4px;
+      /* #now-playing（再生中の曲名。曲名・アーティスト・アルバム・folderPathがそのまま
+         連結される、`.result-list`の再生リスト行と同じGoogle Drive由来のデータ）にも、
+         区切りに空白を含まない長い1単語が来ると折り返せず画面外へはみ出しうる
+         （2026-09-09、ChatGPTレビュー指摘：P2。`.result-list`側の対策だけでは、
+         再生リスト外でその曲を実際に再生した場合の#now-playing自身は保護されない）。
+         overflow-wrapは継承されるため、バー全体に指定して#now-playing/.status/
+         #playback-auth-noticeいずれもまとめて保護する。 */
+      overflow-wrap: anywhere;
     }
     .now-playing-bar audio { width: 100%; }
     .now-playing-bar .status { text-align: left; }
