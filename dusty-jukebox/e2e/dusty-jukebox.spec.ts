@@ -987,3 +987,37 @@ test("シークバーをドラッグ中に曲が切り替わっても、ドラ�
   // ドラッグ状態が残っていれば0:50のまま固まる。修正後は新曲の位置（77秒）へ追従する。
   await expect(page.locator("#seek-current-time")).toHaveText("1:17");
 });
+
+test("シークバーをドラッグ中に曲が切り替わった後、旧ドラッグ由来のchangeイベントが遅れて発火しても新曲の再生位置を書き換えない（2026-09-09、ChatGPTレビュー再指摘：P2続き）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.disabled = false;
+    slider.max = "180";
+  });
+
+  // 旧曲をドラッグ開始（changeで離さないまま）→曲切り替え（emptied）→新曲が実際に
+  // 再生位置99秒まで進んだ、という状況を模擬する。
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.value = "50";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("emptied"));
+  });
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    audio.currentTime = 99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+
+  // 旧ドラッグ由来のchangeイベントが遅れて発火しても、seekBarDraggingは既にemptiedで
+  // falseへ戻っているため、無関係な値で新曲のcurrentTimeを書き換えてはならない。
+  await page.evaluate(() => {
+    document.querySelector<HTMLInputElement>("#seek-slider")!.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(await page.evaluate(() => (document.querySelector("#audio-player") as HTMLAudioElement).currentTime)).toBe(99);
+});

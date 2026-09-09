@@ -366,6 +366,12 @@ function wireSeekBar(audioPlayer: HTMLAudioElement): void {
     el<HTMLSpanElement>("seek-current-time").textContent = formatSeekTime(Number(slider.value));
   });
   slider.addEventListener("change", () => {
+    // 2026-09-09、ChatGPTレビュー指摘：P2続き。emptiedがseekBarDraggingを解除した後
+    // （曲切り替え）に、旧曲へのドラッグ由来のchangeイベントが遅れて発火することがある。
+    // seekBarDraggingが既にfalseなら、このchangeはもう有効なドラッグを表さない（emptiedで
+    // 打ち切られた）ため、無条件にaudio.currentTimeへ適用すると新曲の再生位置を無関係な
+    // 値で誤って書き換えてしまう。ドラッグが継続中だった場合だけ実際にシークする。
+    if (!seekBarDragging) return;
     audioPlayer.currentTime = Number(slider.value);
     seekBarDragging = false;
   });
