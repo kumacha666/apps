@@ -213,9 +213,12 @@ function render(): void {
         <input id="play-file-id" type="text" placeholder="Google DriveファイルID" />
       </label>
       <button id="play-btn" type="button" disabled>この曲を再生</button>
-      <audio id="audio-player" controls></audio>
-      <p id="now-playing" class="status"></p>
-      <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
+      <div class="now-playing-bar">
+        <audio id="audio-player" controls></audio>
+        <p id="now-playing" class="status"></p>
+        <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
+        <p id="status" class="status"></p>
+      </div>
       <section class="catalog">
         <h2>ライブラリ</h2>
         <button id="load-catalog-btn" type="button" disabled>索引から曲一覧を読み込む</button>
@@ -269,7 +272,6 @@ function render(): void {
         <button id="refresh-playlists-btn" type="button">プレイリスト一覧を更新</button>
         <ul id="playlist-list" class="result-list"></ul>
       </section>
-      <p id="status" class="status"></p>
       <ul id="result-list" class="result-list"></ul>
     `
         : `<p class="status error">VITE_GOOGLE_CLIENT_ID が未設定です。.env に設定してください。</p>`
