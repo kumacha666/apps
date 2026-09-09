@@ -7,6 +7,14 @@
   <link rel="manifest" href="./manifest.json">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    /* .now-playing-barはposition: fixed; left: 0; right: 0;で画面下に固定しているが、
+       モバイルブラウザではページのどこかに横方向のはみ出し（例：長い1単語のフォルダ名等、
+       折り返し点の無いテキスト）があると、レイアウトビューポート自体が画面の物理幅より
+       広がり、fixed要素もそのレイアウトビューポート基準の幅（＝画面より広い）で描画されて
+       しまう（2026-09-09、実機確認時にユーザー指摘：シークバーとステータス表示が画面外へ
+       はみ出して見える）。html/bodyにoverflow-x: hiddenを設定し、原因箇所を個別に潰す前に
+       ページ全体としては横スクロールが発生しない防御的な指定にしておく。 */
+    html, body { overflow-x: hidden; }
     body {
       background: #17151a;
       color: #e8e3d8;
@@ -46,6 +54,14 @@
       display: flex;
       flex-direction: column;
       gap: 4px;
+      /* #now-playing（再生中の曲名。曲名・アーティスト・アルバム・folderPathがそのまま
+         連結される、`.result-list`の再生リスト行と同じGoogle Drive由来のデータ）にも、
+         区切りに空白を含まない長い1単語が来ると折り返せず画面外へはみ出しうる
+         （2026-09-09、ChatGPTレビュー指摘：P2。`.result-list`側の対策だけでは、
+         再生リスト外でその曲を実際に再生した場合の#now-playing自身は保護されない）。
+         overflow-wrapは継承されるため、バー全体に指定して#now-playing/.status/
+         #playback-auth-noticeいずれもまとめて保護する。 */
+      overflow-wrap: anywhere;
     }
     .now-playing-bar audio { width: 100%; }
     .now-playing-bar .status { text-align: left; }
@@ -94,6 +110,11 @@
       text-align: left;
       font-size: 13px;
       color: #cfc9bb;
+      /* 曲名・フォルダパス（Google Drive由来、区切りに空白を含まない長い1単語が
+         混ざりうる）が折り返し点を持たない場合でも、幅を超えてページ全体を
+         横に広げてしまわないよう強制的に折り返す（overflow-wrapは継承されるため
+         子要素のspan/label等にも及ぶ）。 */
+      overflow-wrap: anywhere;
     }
     .catalog { width: 100%; max-width: 42em; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: left; }
     .catalog h2 { align-self: flex-start; color: #d9a441; font-size: 18px; }
