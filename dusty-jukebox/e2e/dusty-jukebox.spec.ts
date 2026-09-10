@@ -2289,3 +2289,161 @@ test("クロスフェードのハンドオフ自身のplay()が保留された�
   await expect.poll(() => page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume)).toBe(1);
   await expect(page.locator("#audio-player-crossfade")).not.toHaveAttribute("src");
 });
+
+// 2026-09-10、`@codex review`4回目の指摘（P1、"Recover when the authenticated resume rejects
+// the previewed file"）の回帰防止。認証を更新して続行を押す前に先読み対象自体をチェックボックスで
+// 除外していた場合、queue.resume()は除外中のfileIdを拒否しfalseを返す。この場合も
+// finishCrossfadeHandoff()を呼ばないと、crossfadingがtrueに固定されたまま、実際には
+// 二度と再試行されない（PlaybackAuthenticationGateが保留操作を外し通知も消すため）にも
+// 関わらず、主audio要素がvolume 0の無音のまま取り残されてしまっていた。
+test("認証継続の対象曲が『認証を更新して続行』を押す前に除外されて失敗しても、crossfadingの後始末（volume復元・第二audio要素の停止）が行われる（2026-09-10、Codexレビュー指摘：P1）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // album-track-2への最初のplay()呼び出し（ハンドオフ自身）だけを保留し、実際のネイティブ
+  // play()自体は呼んで実際のSW経由のRangeリクエストを発生させる。
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    let track2CallCount = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player" && this.src.includes("album-track-2")) {
+          track2CallCount += 1;
+          if (track2CallCount === 1) {
+            originalPlay.call(this).catch(() => {});
+            return new Promise<void>(() => {}); // 二度と解決しない
+          }
+        }
+        return originalPlay.call(this);
+      },
+    });
+  });
+
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await page.clock.runFor(100);
+
+  let rejectedOnce = false;
+  await context.route("**/drive/v3/files/album-track-2*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("alt") === "media" && !rejectedOnce) {
+      rejectedOnce = true;
+      await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: { message: "revoked token" } }) });
+      return;
+    }
+    await route.continue();
+  });
+  await expect.poll(() => page.evaluate(() => document.querySelector("#audio-player")!.getAttribute("src"))).toMatch(/album-track-2/);
+  await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeVisible();
+
+  // 「認証を更新して続行」を押す前に、先読み対象（Scherzo=album-track-2）自体を除外する。
+  const scherzoRow = page.locator("#catalog-list li").filter({ hasText: "Scherzo" });
+  await scherzoRow.getByRole("checkbox").uncheck();
+
+  await page.getByRole("button", { name: "認証を更新して続行" }).click();
+
+  // resume()は除外中のfileIdを拒否しfalseを返す（次の曲へは進まない）が、それでも
+  // crossfadingの後始末（volume復元・第二audio要素の停止）は行われる。
+  await expect.poll(() => page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume)).toBe(1);
+  await expect(page.locator("#audio-player-crossfade")).not.toHaveAttribute("src");
+});
+
+// 2026-09-10、`@codex review`4回目の指摘（P1、"Invalidate the registered stream continuation
+// on cancellation"）の回帰防止。ハンドオフの主audio要素へのストリーム要求が発行された（＝
+// audio.srcが既にコミット済み）が、その401がまだ届いていない間にシーク等でハンドオフが
+// 打ち切られると、cancelPendingTransition()はcurrentFileId/streamGenerationを変えないため、
+// 打ち切り後に遅れて届いた401がそのまま受理され、既にキャンセルしたはずのハンドオフに対して
+// 認証継続UI（「認証を更新して続行」）が表示され、かつ現在有効なトークンが不要に破棄されて
+// しまっていた。
+test("ハンドオフ打ち切り後に遅れて届いた401は、認証継続UIを表示しない（2026-09-10、Codexレビュー指摘：P1）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // album-track-2への最初のplay()呼び出し（ハンドオフ自身）を保留しつつ、実際のネイティブ
+  // play()も呼んで実際のSW経由のRangeリクエストを発生させる。401応答自体は、テスト側が
+  // 明示的に指示するまで保留する（Route自体をこちらで制御する）。
+  let releaseRangeRequest: (() => void) | undefined;
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    let track2CallCount = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player" && this.src.includes("album-track-2")) {
+          track2CallCount += 1;
+          if (track2CallCount === 1) {
+            originalPlay.call(this).catch(() => {});
+            return new Promise<void>(() => {}); // 二度と解決しない
+          }
+        }
+        return originalPlay.call(this);
+      },
+    });
+  });
+
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await page.clock.runFor(100);
+
+  let rangeRequestSeen = false;
+  await context.route("**/drive/v3/files/album-track-2*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("alt") === "media") {
+      rangeRequestSeen = true;
+      await new Promise<void>((resolve) => { releaseRangeRequest = resolve; });
+      await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: { message: "revoked token" } }) });
+      return;
+    }
+    await route.continue();
+  });
+  await expect.poll(() => rangeRequestSeen).toBe(true);
+
+  // 401応答がまだ届いていない間に、独自シークバーでハンドオフを打ち切る。
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.disabled = false;
+    slider.max = "180";
+    slider.value = "10";
+    slider.dispatchEvent(new Event("input"));
+    slider.dispatchEvent(new Event("change"));
+  });
+
+  // ここで初めて401応答を届ける。打ち切り後に遅れて届いた401のため、認証継続UIは
+  // 表示されないはず。
+  releaseRangeRequest?.();
+  await page.waitForTimeout(200);
+  await expect(page.getByRole("button", { name: "認証を更新して続行" })).not.toBeVisible();
+});

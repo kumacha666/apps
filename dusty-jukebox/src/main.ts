@@ -415,6 +415,15 @@ let crossfading = false;
 // だけcrossfadeAudioの再生位置を主audio要素へ同期する（フォールバック等で異なる曲が
 // コミットされた場合、先読み位置を誤って適用すると冒頭をスキップ・曲を丸ごと飛ばしてしまう）。
 let crossfadePreviewedFileId: string | null = null;
+// クロスフェードのハンドオフ自身が登録した認証継続（2026-09-10、Codexレビュー指摘：P1）。
+// cancelCrossfadeIfActive()が、まだこの継続がplaybackContinuations上でアクティブなままなら
+// （＝この後に別の正当なplay()が新しい継続へ置き換えていなければ）明示的に無効化するために使う。
+// シーク・MediaSessionネイティブ一時停止等でハンドオフが打ち切られた後、そのハンドオフの
+// ストリーム要求（既にaudio.srcへコミット済み）に対する遅延401がまだ届いていない場合、
+// playback.cancelPendingTransition()はcurrentFileId/streamGenerationを変えないため、
+// 届いた401がそのまま受理され、既に打ち切ったはずのハンドオフに対して認証継続UIが表示され、
+// かつ現在有効なトークンが不要に破棄されてしまっていた。
+let crossfadeHandoffContinuation: PlaybackContinuation | null = null;
 // 明示的な手動遷移（次へ/前へ/曲名クリック/シャッフル等キュー由来の操作、および「一時停止」
 // ボタン）が進行中の件数（2026-09-10、ChatGPTレビュー指摘：P1、続けてCodexレビュー指摘で
 // booleanからカウンタへ変更）。手動フェードアウト（fadeOutEnabled()時、既定約2秒）を伴う
@@ -463,6 +472,16 @@ function cancelCrossfadeIfActive(): void {
   // 根本原因の一つ）。setList()と同じ仕組みをキューの中身を変えずに呼び、進行中のハンドオフの
   // コミット自体も無効化する。
   queue?.invalidatePendingMove();
+  // 登録済みの認証継続を無効化する（2026-09-10、Codexレビュー指摘：P1）。ハンドオフの
+  // ストリーム要求（既にaudio.srcへコミット済み）に対する遅延401が、この打ち切り後に
+  // 届いた場合、playback.cancelPendingTransition()はcurrentFileId/streamGenerationを
+  // 変えないため、そのままacceptTokenRejection()を通過してしまう。isCurrent()で確認して
+  // からclear()するのは、この継続がまだ置き換えられていない場合のみに限定するため
+  // （既に別の正当なplay()が新しい継続を登録済みの場合、そちらを誤って巻き込まない）。
+  if (crossfadeHandoffContinuation && playbackContinuations.isCurrent(crossfadeHandoffContinuation)) {
+    playbackContinuations.clear();
+  }
+  crossfadeHandoffContinuation = null;
 }
 
 // クロスフェードのハンドオフが実際に成功した時点の共通の後始末（2026-09-10、Codexレビュー
@@ -488,6 +507,7 @@ function finishCrossfadeHandoff(committedFileId: string | null): void {
   audioPlayer.volume = 1;
   crossfading = false;
   crossfadePreviewedFileId = null;
+  crossfadeHandoffContinuation = null;
   crossfadeAudio.pause();
   crossfadeAudio.removeAttribute("src");
   crossfadeAudio.load();
@@ -1385,24 +1405,33 @@ function registerQueuePlaybackContinuation(fileId: string, currentPlayback: Play
   // ハンドオフ自身のgeneration確認を自己無効化してしまう（queue.tsのBeforeQueuePlay/resume()
   // コメント参照。実際には再生に成功しているのに、キュー・UIには一切反映されず認証通知も
   // 出ない不整合になっていた）。
-  playbackContinuations.register({
+  const continuation = playbackContinuations.register({
     fileId,
     generation: currentPlayback.currentGeneration() + 1,
     resume: async (position) => {
       const started = await (queue?.resume(fileId, position, suppressTransitionCancel) ?? false);
-      // クロスフェードのハンドオフ自身のplay()が401後にこの認証継続経由で先に成功した場合、
-      // finishCrossfadeHandoff()を明示的に呼ぶ（2026-09-10、Codexレビュー指摘：P1）。元の
-      // attemptHandoff()自身のawait queue?.advanceToPreviewedFile(...)（ネイティブplay()の
-      // 解決待ち）は、解決が保証されないネイティブplay()に依存しているため、この継続経由の
-      // 成功より後に解決するとは限らない（永久に解決しないことすらある）。呼ばないと、
-      // crossfadingがtrueに固定されたまま、第二audio要素は鳴り続け、実際には再生成功している
-      // 主audio要素がvolume 0の無音のまま取り残されてしまう。finishCrossfadeHandoff()自体は
-      // `if (!crossfading) return;`で二重呼び出しに対して安全（クロスフェード以外のsuppress
-      // TransitionCancel:falseな通常の継続では常にno-op）。
-      if (started && suppressTransitionCancel) finishCrossfadeHandoff(queue?.currentPlayingFileId() ?? null);
+      // クロスフェードのハンドオフ自身のplay()が401後にこの認証継続経由で解決した場合、
+      // 成否に関わらずfinishCrossfadeHandoff()を明示的に呼ぶ（2026-09-10、Codexレビュー
+      // 指摘：P1、続けて再指摘：P1）。元のattemptHandoff()自身のawait queue?.advance
+      // ToPreviewedFile(...)（ネイティブplay()の解決待ち）は、解決が保証されないネイティブ
+      // play()に依存しているため、この継続経由の解決より後に解決するとは限らない（永久に
+      // 解決しないことすらある）。成功時に呼ばないと、crossfadingがtrueに固定されたまま、
+      // 第二audio要素は鳴り続け、実際には再生成功している主audio要素がvolume 0の無音のまま
+      // 取り残されてしまう。失敗時（例：認証を更新して続行を押す前に先読み対象自体を
+      // チェックボックスで除外していた場合、queue.resume()は除外中のfileIdを拒否しfalseを
+      // 返す）も呼ばないと、PlaybackAuthenticationGateはこの操作を保留から外し通知も消すため
+      // 二度と再試行されないにも関わらず、crossfadingがtrueに固定されたまま同じ状態で
+      // 取り残されてしまう。finishCrossfadeHandoff()自体は`if (!crossfading) return;`で
+      // 二重呼び出しに対して安全（クロスフェード以外のsuppressTransitionCancel:falseな
+      // 通常の継続では常にno-op）。
+      if (suppressTransitionCancel) finishCrossfadeHandoff(started ? (queue?.currentPlayingFileId() ?? null) : null);
       return started;
     },
   });
+  // クロスフェードのハンドオフ自身の継続だけを追跡する（2026-09-10、Codexレビュー指摘：P1）。
+  // cancelCrossfadeIfActive()がこの参照を使い、シーク・ネイティブ一時停止等での打ち切り後に
+  // 届く遅延401がこの（既に打ち切られた）継続をそのまま受理してしまわないよう無効化する。
+  if (suppressTransitionCancel) crossfadeHandoffContinuation = continuation;
 }
 
 function setPlaybackAuthNotice(visible: boolean): void {
