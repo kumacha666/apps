@@ -335,6 +335,13 @@ describe("PlaybackQueue", () => {
     expect(queue.currentPlayingFileId()).toBe("a"); // 曲一覧・現在曲は変わらず元のまま
     expect(queue.list().map((s) => s.fileId)).toEqual(["a", "b", "c"]); // 曲一覧も変わらない
   });
+  test("invalidatePendingMove()はgenerationId()を進めない（2026-09-10、Codexレビュー指摘：P2。曲一覧・除外設定を変えない操作のため、handleSavePlaylist()のwhenIdle()待機中の差し替え検出〈generationId()〉が、クロスフェードのハンドオフがシーク/一時停止で無効化されただけの場合まで『再生リストが変更された』と誤検出しないようにする）", () => {
+    const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
+    queue.setList([song("a"), song("b")]);
+    const generation1 = queue.generationId();
+    queue.invalidatePendingMove();
+    expect(queue.generationId()).toBe(generation1); // invalidatePendingMove()では進まない
+  });
   test("moveSongは指定した曲を1つ上/下へ入れ替える（開発体制#42②、上下ボタン）", async () => {
     const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
     queue.setList([song("a"), song("b"), song("c")]);

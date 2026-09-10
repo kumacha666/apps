@@ -570,12 +570,19 @@ async function maybeStartCrossfade(): Promise<void> {
       // 「本物の手動割り込みが起きたか」の判定に再び使えるようにするため（詳細はplayback.ts
       // のPlayOptions.suppressTransitionCancelコメント参照）。
       handoffStarted = Boolean(await queue?.advanceToPreviewedFile(nextFileId, initialHandoffPosition));
-      if (!handoffStarted && manualTransitionCount === 0 && outgoingEnded) {
+      // crossfadeGeneration !== myGenerationの確認を追加（2026-09-10、Codexレビュー指摘：
+      // P1）。手動割り込み（シーク・MediaSessionのネイティブ一時停止等、manualTransitionCount
+      // を増減しない経路）がoutgoingEnded済みの状態でこのハンドオフを打ち切った場合、
+      // cancelCrossfadeIfActive()がqueue.invalidatePendingMove()で無効化した結果として
+      // handoffStartedがfalseになる。この場合はユーザーの割り込みそのものが「もう次の曲へ
+      // 進めない」という意思表示のため、この条件が無いとadvanceOnEnded()が即座に次の曲を
+      // 再生し始め、割り込みを取り消してしまっていた。
+      if (!handoffStarted && crossfadeGeneration === myGeneration && manualTransitionCount === 0 && outgoingEnded) {
         void handleQueuePlayback(() => queue?.advanceOnEnded());
       }
       return handoffStarted;
     } catch (err) {
-      if (!(err instanceof PlaybackAuthenticationRequiredError) && manualTransitionCount === 0 && outgoingEnded) {
+      if (!(err instanceof PlaybackAuthenticationRequiredError) && crossfadeGeneration === myGeneration && manualTransitionCount === 0 && outgoingEnded) {
         void handleQueuePlayback(() => queue?.advanceOnEnded());
       }
       throw err;
@@ -592,7 +599,13 @@ async function maybeStartCrossfade(): Promise<void> {
   if (!handoffStarted) {
     // ハンドオフが失敗した（フォールバックはattemptHandoff()自身が判定・実行済み）、または
     // 認証待ちでまだ完了していない。第二audio要素はまだ鳴っている可能性があるため後始末する。
+    // 主audio要素のvolumeも1へ戻す（2026-09-10、Codexレビュー指摘：P1）。ランプ完了時点で
+    // 既に0まで下げられているため、これを戻さないと、認証待ちの再試行が後から
+    // （PlaybackAuthenticationGate経由で）成功した際、次の曲が実際には無音のまま
+    // 「再生中」と表示されてしまう（次の曲の再生はfadeOutを指定しないため、
+    // PlaybackController.play()側でvolumeが復元されることもない）。
     crossfading = false;
+    audioPlayer.volume = 1;
     crossfadeAudio.pause();
     crossfadeAudio.removeAttribute("src");
     crossfadeAudio.load();

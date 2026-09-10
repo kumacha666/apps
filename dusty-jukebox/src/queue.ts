@@ -20,6 +20,14 @@ export type BeforeQueuePlay = (fileId: string) => void;
 export class PlaybackQueue {
   private songs: Song[] = []; private currentFileId: string | null = null; private excluded = new Set<string>(); private isQueuePlayback = false;
   private generation = 0;
+  // setList()のたびにだけ進む、公開用の「リスト内容」世代（2026-09-10、Codexレビュー指摘：
+  // P2）。this.generationはinvalidatePendingMove()（曲一覧・除外設定を変えない、操作の
+  // staleness判定専用）でも進むため、generationId()がthis.generationをそのまま返すと、
+  // クロスフェードのハンドオフ待機中の保存操作（handleSavePlaylist()）が「曲一覧は
+  // 変わっていないのに、進行中のハンドオフがシーク/一時停止で無効化されただけ」で
+  // 誤って「再生リストが変更された」と判定してしまう。generationId()の用途（setList()での
+  // 差し替え検出）に専念する別カウンタとして分離する。
+  private contentGeneration = 0;
   // シャッフル前の並び順（初回シャッフル時点のスナップショット）。連続してシャッフルしても
   // 上書きしない＝unshuffle()は常に「一度も並べ替えていない元の並び」へ戻る。setList()で
   // リストを作り直すたびにリセットする。
@@ -76,7 +84,7 @@ export class PlaybackQueue {
   // フェード付きplay()自体はキャンセルされない（2026-09-08、Codexレビュー指摘：P1続き）。
   // player.cancelPendingTransition()でcontroller側のgenerationも進め、フェード完了後に
   // 「もう選ばれていない旧リストの曲」が実際に鳴ってしまうのを防ぐ。
-  setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.activeFadeToken = null; this.player.cancelPendingTransition?.(); this.songs = [...songs]; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
+  setList(songs: Song[]): void { this.generation += 1; this.contentGeneration += 1; this.pendingMove = Promise.resolve(false); this.activeFadeToken = null; this.player.cancelPendingTransition?.(); this.songs = [...songs]; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
   // setList()と同じ「進行中の操作をすべて無効化する」仕組みを、曲一覧・現在曲・除外設定は
   // 変えずに使う版（2026-09-10、実機フィードバックによる再設計）。クロスフェードのハンドオフが
   // 手動割り込み（シーク・一時停止等）で無効化された場合、player側（PlaybackController.
@@ -84,6 +92,11 @@ export class PlaybackQueue {
   // `generation !== this.generation`チェックはPlaybackQueue自身のgenerationしか見ないため、
   // これを呼ばないとハンドオフがそのまま「成功」としてcurrentFileId/isQueuePlaybackへ
   // コミットしてしまう（audioは止まっているのにキューだけ次の曲を指す不整合）。
+  // this.contentGenerationは意図的に進めない（2026-09-10、Codexレビュー指摘：P2）。
+  // generationId()はこのcontentGenerationを返し「曲一覧・除外設定が変わっていないか」を
+  // 検出するために使われる（handleSavePlaylist()のwhenIdle()待機中の差し替え検出等）。
+  // この操作は曲一覧・除外設定を一切変えないため、this.generation（内部の操作直列化・
+  // staleness判定専用）だけを進め、公開のcontentGenerationは変えない。
   invalidatePendingMove(): void { this.generation += 1; }
   notifyExternalPlaybackStarted(): void { this.isQueuePlayback = false; }
   // 呼び出しのたびに1つ進む（2026-09-08、Codexレビュー指摘：P2続き）。exclude()はsetList()を
@@ -98,7 +111,7 @@ export class PlaybackQueue {
   // whenIdle()はpendingMove待機中の他の操作（アルバム再生・絞り込み等によるsetList()）までは
   // 防げないため、呼び出し元（handleSavePlaylist()等）が「待っている間に全く別のリストへ
   // 差し替えられていないか」を確認するのに使う。
-  generationId(): number { return this.generation; }
+  generationId(): number { return this.contentGeneration; }
   // exclude()の呼び出し回数（2026-09-08、Codexレビュー指摘：P2続き）。generationId()と
   // 組み合わせて使う：待機中にチェックボックスで一部の曲だけ除外/除外解除された場合、
   // setList()を経由しないためgenerationId()は変わらないが、これは変わる。

@@ -2057,3 +2057,81 @@ test("クロスフェードのハンドオフ待機中に一時停止しても�
   // 一時停止後に保留していたハンドオフが遅れて解決しても、次の曲（Scherzo）の再生には進まない。
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
 });
+
+// 2026-09-10、`@codex review`指摘（P1）の回帰防止。退場側（主audio要素）が既に自然終了済み
+// （ended=true、ランプ完了時点でよくある状態）の状態でシーク・MediaSessionネイティブ
+// 一時停止等（manualTransitionCountを増減しない経路）がハンドオフを打ち切ると、
+// cancelCrossfadeIfActive()のqueue.invalidatePendingMove()によりadvanceToPreviewedFile()が
+// falseを返す。この`!handoffStarted`自体を「ended済みなので自動送りしてよい」と誤認し、
+// crossfadeGenerationの変化（＝本物の割り込みで打ち切られたこと）を見ずに
+// advanceOnEnded()を呼んでしまうと、割り込みで止めたはずの遷移がそのまま次の曲を
+// 開始してしまい、ユーザーの操作を取り消してしまっていた。
+test("退場側が自然終了済みの状態でシークしてハンドオフを打ち切っても、自動送りが割り込みを取り消して次の曲を開始しない（2026-09-10、Codexレビュー指摘：P1）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // album-track-2へのplay()呼び出しのうち最初の1回だけを保留する（ハンドオフ自身の呼び出し）。
+  // 誤って発火するadvanceOnEnded()フォールバックが試みるplay()呼び出しは2回目以降になるため、
+  // そちらは即座に解決させ、実際に「次の曲が始まってしまうか」まで検証できるようにする。
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    let track2CallCount = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player" && this.src.includes("album-track-2")) {
+          track2CallCount += 1;
+          if (track2CallCount === 1) {
+            return new Promise<void>((resolve) => {
+              (window as unknown as { __e2eReleaseHandoffPlay?: () => void }).__e2eReleaseHandoffPlay = resolve;
+            });
+          }
+        }
+        return originalPlay.call(this);
+      },
+    });
+  });
+
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    // 退場側は既に自然終了済み（ランプ完了時点でよくある状態）。
+    Object.defineProperty(audio, "ended", { value: true, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await page.clock.runFor(100);
+  await expect.poll(() => page.evaluate(() => Boolean((window as unknown as { __e2eReleaseHandoffPlay?: () => void }).__e2eReleaseHandoffPlay))).toBe(true);
+
+  // ハンドオフがまだ解決していない時点で、独自シークバーを操作する（manualTransitionCountを
+  // 増減しない割り込み経路）。
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.disabled = false;
+    slider.max = "180";
+    slider.value = "10";
+    slider.dispatchEvent(new Event("input"));
+    slider.dispatchEvent(new Event("change"));
+  });
+
+  // 保留していたハンドオフのplay()を今になって解決させる（無効化されているため成功しない）。
+  await page.evaluate(() => (window as unknown as { __e2eReleaseHandoffPlay?: () => void }).__e2eReleaseHandoffPlay?.());
+
+  // シークによる打ち切り後、自動送り（advanceOnEnded()の誤爆）が次の曲（Scherzo）を
+  // 勝手に開始していないこと。誤爆した場合、2回目のplay()呼び出しは即座に解決するため、
+  // page.clockに頼らず短い実時間待ちで十分検出できる。
+  await page.waitForTimeout(200);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+});
