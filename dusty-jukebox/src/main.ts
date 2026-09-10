@@ -397,6 +397,11 @@ function wireSeekBar(audioPlayer: HTMLAudioElement): void {
     // 正しく繋げる（handleQueuePlayback()自身が呼ぶcancelCrossfadeIfActive()は、既にここで
     // 呼んだ後のため`!crossfading`で早期returnし安全）。
     const outgoingRestore = cancelCrossfadeIfActive();
+    // シークは一時停止ボタンとは別の正当な操作のため、フェード中の一時停止クリック連打が
+    // 引き継ごうとしていた退場曲の復元情報（pendingPauseOutgoingRestore）を無効化する
+    // （2026-09-10、続けてChatGPTレビュー指摘：P1、詳細はpendingPauseOutgoingRestoreの
+    // 定義コメント参照）。
+    pendingPauseOutgoingRestore = null;
     if (outgoingRestore) {
       const target = Number(slider.value);
       void handleQueuePlayback(() => queue?.resumeCurrent(target));
@@ -478,6 +483,15 @@ let crossfadeHandoffContinuation: PlaybackContinuation | null = null;
 // 実行中」（再試行時も同じクロージャが再実行されるため自然にガードが掛かる）・「一時停止ボタンの
 // 各クリックごとの独立したフェード完了待ち」に変更した。0より大きい間はガードが掛かる。
 let manualTransitionCount = 0;
+
+// 2026-09-10、ChatGPTレビュー指摘：P1「committed handoff中のフェード付きPauseを連打すると、
+// 退場曲の復元情報が失われます」。最初の一時停止クリックがcancelCrossfadeIfActive()から
+// 取得したoutgoingRestoreを、フェード中の後続クリック（cancelCrossfadeIfActive()は既に
+// crossfading=falseのためnullを返す）へ引き継ぐための一時的な保持。一時停止ボタン以外の
+// 操作（次へ/前へ/シーク/外部単曲試聴/再生リストクリア/MediaSessionネイティブ一時停止）が
+// 実行された時点で、この保持は無条件に破棄する（それらは別の正当な操作であり、古い復元情報は
+// もはや意味を持たないため）。
+let pendingPauseOutgoingRestore: { fileId: string; position: number } | null = null;
 
 // クロスフェード中に手動ナビゲーション（次へ/前へ/曲名クリック等）が割り込んだ場合、進行中の
 // ランプ・先読み再生を打ち切り、状態を復元する。handleQueuePlayback()の先頭から呼ぶ
@@ -792,6 +806,10 @@ function updateUnshuffleEnabled(): void {
 // 場合の既存の停止処理と同じ理由。フェードは掛けず即座に止める）。
 function handleClearQueue(): void {
   cancelCrossfadeIfActive();
+  // 別の正当な操作のため、フェード中の一時停止クリック連打が引き継ごうとしていた退場曲の
+  // 復元情報を無効化する（2026-09-10、続けてChatGPTレビュー指摘：P1、詳細は
+  // pendingPauseOutgoingRestoreの定義コメント参照）。
+  pendingPauseOutgoingRestore = null;
   void playback?.pause();
   // Drive側の401等でPlaybackAuthenticationGateに再生継続操作が保留され、
   // 「認証を更新して続行」（#playback-auth-notice）が表示されている状態は
@@ -1373,6 +1391,10 @@ async function handlePlay(): Promise<void> {
     audioEnded: audioPlayer.ended,
   });
   cancelCrossfadeIfActive();
+  // 別の正当な操作のため、フェード中の一時停止クリック連打が引き継ごうとしていた退場曲の
+  // 復元情報を無効化する（2026-09-10、続けてChatGPTレビュー指摘：P1、詳細は
+  // pendingPauseOutgoingRestoreの定義コメント参照）。
+  pendingPauseOutgoingRestore = null;
   // handleQueuePlayback()と同じ理由でガードをこのクロージャ自身の中（SW準備待ちより前）に
   // 置く（2026-09-10、ChatGPTレビュー指摘：P1）。外部単曲試聴もキュー由来の操作と同じく
   // 「明示的な手動遷移」だが、cancelCrossfadeIfActive()の1回きりの呼び出しだけでは、この後の
@@ -1443,6 +1465,10 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined): 
   // （cancelCrossfadeIfActive()参照。クロスフェード自身の完了処理はこの関数を経由しないため、
   // ここでの打ち切りが自分自身を巻き込むことはない）。
   cancelCrossfadeIfActive();
+  // 別の正当な操作のため、フェード中の一時停止クリック連打が引き継ごうとしていた退場曲の
+  // 復元情報を無効化する（2026-09-10、続けてChatGPTレビュー指摘：P1、詳細は
+  // pendingPauseOutgoingRestoreの定義コメント参照）。
+  pendingPauseOutgoingRestore = null;
   // ガードの増減をhandlePlaybackAction()へ渡すクロージャ自身の実行中に限定する（2026-09-10、
   // Codexレビュー指摘：P1。manualTransitionCountの定義コメント参照）。handlePlaybackAction()は
   // PlaybackAuthenticationRequiredError発生時、同じ`action`引数（＝このクロージャ自身）を
@@ -2482,6 +2508,10 @@ function init(): void {
         // 一時停止直後にこのネイティブPlayハンドラを押した際、間違った曲（次曲）がそのまま
         // 再開されてしまう（queue/UIは退場側を表示したまま）。
         const outgoingRestore = cancelCrossfadeIfActive();
+        // 別の正当な操作のため、フェード中の一時停止クリック連打が引き継ごうとしていた退場曲の
+        // 復元情報を無効化する（2026-09-10、続けてChatGPTレビュー指摘：P1、詳細は
+        // pendingPauseOutgoingRestoreの定義コメント参照）。
+        pendingPauseOutgoingRestore = null;
         audioPlayer.pause();
         if (outgoingRestore) playback?.loadPaused(outgoingRestore.fileId, outgoingRestore.position);
       },
@@ -2493,7 +2523,16 @@ function init(): void {
     el<HTMLButtonElement>("retry-extraction-btn").addEventListener("click", () => void handleRetryExtraction());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
     el<HTMLButtonElement>("pause-btn").addEventListener("click", () => {
-      const outgoingRestore = cancelCrossfadeIfActive();
+      // 2回目以降のクリック（1回目のフェードがまだ完了していない連打）では、この時点で
+      // 既にcrossfading=false（1回目のクリックが既に打ち切り済み）のためcancelCrossfadeIfActive()
+      // はnullを返す。その場合はpendingPauseOutgoingRestore（1回目が捕捉した値）を引き継ぐ
+      // （2026-09-10、続けてChatGPTレビュー指摘：P1「committed handoff中のフェード付きPauseを
+      // 連打すると、退場曲の復元情報が失われます」）。以前は毎回cancelCrossfadeIfActive()の
+      // 戻り値だけを使っており、2回目以降は常にnullになるため、最終的にどのクリックが完了しても
+      // loadPaused()が呼ばれずaudio.src（次曲のまま）とqueue.currentFileId（退場曲のまま）の
+      // 食い違いが残ってしまっていた。
+      const outgoingRestore = cancelCrossfadeIfActive() ?? pendingPauseOutgoingRestore;
+      pendingPauseOutgoingRestore = outgoingRestore;
       // フェード完了までの待機中（manualTransitionCountの定義コメント参照）は新しい
       // クロスフェードの開始を防ぐ（2026-09-10、ChatGPTレビュー指摘：P1、続けてCodexレビュー
       // 指摘：P1。連打で2回目のクリックが1回目のフェード完了前に発生すると、1回目の
@@ -2513,7 +2552,12 @@ function init(): void {
         // 「次へ」を押す、という順序だと、追い越した「次へ」が新しい正当な再生を始めた
         // 後に、この古いpause()のPromiseが（中断されたにも関わらず）解決し、
         // loadPaused()が退場側の曲で新しい再生を誤って上書きしてしまっていた。
-        .then((completed) => { if (completed && outgoingRestore) playback?.loadPaused(outgoingRestore.fileId, outgoingRestore.position); })
+        .then((completed) => {
+          if (completed && outgoingRestore) {
+            playback?.loadPaused(outgoingRestore.fileId, outgoingRestore.position);
+            pendingPauseOutgoingRestore = null;
+          }
+        })
         .finally(() => { manualTransitionCount -= 1; });
     });
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());

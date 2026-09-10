@@ -2909,3 +2909,83 @@ test("committed handoff中のフェード付き一時停止が「次へ」に追
   // loadPaused(Opening)で上書きされていない。
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-3(\?|$)/);
 });
+
+// 2026-09-10、続けてChatGPTレビュー指摘（P1「committed handoff中のフェード付きPauseを連打すると、
+// 退場曲の復元情報が失われます」）の回帰防止。1回目の一時停止クリックがcancelCrossfadeIfActive()
+// からoutgoingRestore（退場側=Opening）を取得するが、そのフェードが完了する前に2回目の
+// 一時停止クリック（連打）が発生すると、2回目のクリック時点ではcancelCrossfadeIfActive()は
+// 既にnull（1回目のクリックで既にcrossfading=falseになっているため）を返す。以前はこの
+// nullをそのまま使っていたため、2回目のpause()が最終的に完了してもloadPaused()が呼ばれず、
+// audio.src（次曲のまま）とqueue.currentFileId（退場曲のまま）の食い違いが残っていた。
+test("committed handoff中のフェード付き一時停止を連打しても、最終的に退場曲へ正しく復元される（2026-09-10、続けてChatGPTレビュー指摘：P1）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+  await page.getByRole("checkbox", { name: "手動スキップ/一時停止時にフェードアウトする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // album-track-2（ハンドオフ）への最初のplay()呼び出しだけを保留する。
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player" && this.src.includes("album-track-2")) {
+          return new Promise<void>((resolve) => {
+            (window as unknown as { __e2eReleaseHandoffPlay?: () => void }).__e2eReleaseHandoffPlay = resolve;
+          });
+        }
+        return originalPlay.call(this);
+      },
+    });
+  });
+
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await page.clock.runFor(100);
+  await expect.poll(() => page.evaluate(() => Boolean((window as unknown as { __e2eReleaseHandoffPlay?: () => void }).__e2eReleaseHandoffPlay))).toBe(true);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+
+  // committed handoff確認後、duration/currentTimeを曲末尾から離す（2026-09-10、テスト作成時に
+  // 判明した注意点：loadPaused()はaudio.currentTimeへ退場側の位置＝179.99を書き戻すため、
+  // このE2Eモック環境では`.paused`が固定false（実ブラウザと異なり.pause()呼び出しで連動しない）
+  // のまま残り、この書き戻し自体がtimeupdateを発火させるとshouldStartCrossfade()の残り時間条件
+  // を再び満たし、別の正当なクロスフェードが誤って再発火してしまう。crossfadeOutgoingPosition
+  // はcrossfading=true時点で既に確定済みのため、ここでdurationを外しても本テストの検証対象
+  // ＝outgoingRestore.positionには影響しない。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: NaN, configurable: true });
+    audio.currentTime = 10;
+  });
+
+  // committed handoff済みの状態（退場側=album-track-1/Opening）から一時停止を連打する。
+  await page.getByRole("button", { name: "一時停止" }).click(); // 1回目
+  await page.clock.runFor(10); // 1回目のフェードの途中まで進める
+  await page.getByRole("button", { name: "一時停止" }).click(); // 2回目、1回目を追い越す
+
+  // 2回目のフェードが完了しきるまで仮想時刻を進める。
+  await page.clock.runFor(200);
+  // 保留していたハンドオフ自身のplay()も遅れて解決させる（現実の非決定性を再現）。
+  await page.evaluate(() => (window as unknown as { __e2eReleaseHandoffPlay?: () => void }).__e2eReleaseHandoffPlay?.());
+  await page.waitForTimeout(50);
+
+  // audio.srcが退場側（album-track-1/Opening）へ正しく復元され、queueの現在曲表示も
+  // 一致したまま（食い違ったまま残らない）。
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+});
