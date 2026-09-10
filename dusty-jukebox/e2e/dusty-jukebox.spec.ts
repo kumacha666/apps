@@ -1473,6 +1473,33 @@ test("認証継続の再試行中も、手動遷移ガード（manualTransitionC
   expect(await page.evaluate(() => (window as unknown as { __e2e: { isManualTransitionInFlight: () => boolean } }).__e2e.isManualTransitionInFlight())).toBe(false);
 });
 
+test("Service Workerの準備待ちが遅延している間も、手動遷移ガードは最初から掛かっている（2026-09-10、Codexレビュー指摘：P1）", async ({ context, page }) => {
+  // 修正前はmanualTransitionCountのincrementがawaitServiceWorkerReady()より後にあったため、
+  // Service Workerの準備が遅延している間はガードがまだ掛からず、その待機中にtimeupdateが
+  // クロスフェードを開始・完了させてしまうと、準備完了後にこの手動操作の遷移とクロスフェードの
+  // ハンドオフが競合しうる窓が残っていた。
+  const mock = await installGoogleMocks(context, { delayServiceWorkerActivation: true, albumCatalog: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  const isGuardActive = () => page.evaluate(() => (window as unknown as { __e2e: { isManualTransitionInFlight: () => boolean } }).__e2e.isManualTransitionInFlight());
+  expect(await isGuardActive()).toBe(false);
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+
+  // Service Worker制御はまだ来ていない（awaitServiceWorkerReady()が保留中）が、ガードは
+  // この待機に入る前の時点で既に掛かっているはず（修正前は待機中はまだfalseのままだった）。
+  await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller === null)).toBe(true);
+  expect(await isGuardActive()).toBe(true);
+
+  mock.releaseServiceWorker();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  expect(await isGuardActive()).toBe(false);
+});
+
 test("一時停止ボタンを連打（1回目のフェード完了前に2回目）しても、両方が解決するまで手動遷移ガードが維持される（2026-09-10、Codexレビュー指摘：P1）", async ({ context, page }) => {
   // 修正前はmanualTransitionInFlightがbooleanのため、1回目のクリックのpause()フェードが
   // 2回目のクリックにより追い越されて早期returnした時点で、1回目の`finally`がガードを
@@ -1626,6 +1653,97 @@ test("先読み再生中（入場側）の曲がクロスフェード長より�
   // 偽陰性になりうるため、1回だけの直接読み取りで判定する）。ここでのrunFor()は小さくし、
   // 修正が無ければ「単に十分な時間が経って自然にランプが完了しただけ」で偽陽性になることを防ぐ。
   await page.clock.runFor(5);
+  const src = await page.evaluate(() => document.querySelector("#audio-player")!.getAttribute("src"));
+  expect(src).toMatch(/album-track-2(\?|$)/);
+});
+
+test("クロスフェードのハンドオフが認証エラーで再試行に回った後、再試行自体が別の理由で失敗しても自動送りへフォールバックする（2026-09-10、Codexレビュー指摘：P2）", async ({ context, page }) => {
+  // ①ハンドオフの初回試行が認証エラーで「認証を更新して続行」の再試行へ委ねられた後、その
+  // 再試行自体が（認証エラー以外の）別の理由で失敗しても、修正前は初回試行時点で一度きり
+  // 判定していたフォールバックが再評価されず、再生が止まったままになっていた。②主audio要素の
+  // endedは、ハンドオフのPlaybackController.play()がaudio.srcを新しい曲へ差し替えた時点で
+  // ネイティブにfalseへリセットされる（既存のE2Eの多くはendedを固定own propertyで上書きして
+  // いるためこのリセットが再現されず、この回帰を見逃していた）。ここではsrcのsetterに
+  // フックしてこのネイティブなリセット挙動を再現し、ハンドオフ開始前に確定していた
+  // 「退場側は既に自然終了していたか」を正しく使えているかを検証する。
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // 主audio要素のendedを、srcが再設定されるとネイティブにfalseへリセットされる（実ブラウザの
+  // 実際の挙動）ものとして再現する。ランプ開始判定の時点ではended=falseにしておき（ランプ
+  // 自体が省略されず、後段でトークンを失効させる時間を確保するため）、ランプの途中で
+  // 退場側が自然終了したことを模擬する（他のクロスフェードE2Eと同じ手順）。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    let endedValue = false;
+    Object.defineProperty(audio, "ended", { configurable: true, get: () => endedValue });
+    (window as any).__setMainEnded = (value: boolean) => { endedValue = value; };
+    const nativeSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "src")!;
+    Object.defineProperty(audio, "src", {
+      configurable: true,
+      get() { return nativeSrcDescriptor.get!.call(this); },
+      set(value: string) {
+        endedValue = false;
+        nativeSrcDescriptor.set!.call(this, value);
+      },
+    });
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+    // 開始判定の同期部分は既に完了しているため、以降pausedを戻しても今回の判定には
+    // 影響しない（既知の「duration/paused上書きの連鎖」パターン対策、CLAUDE.md参照）。
+    Object.defineProperty(audio, "paused", { value: true, configurable: true });
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+
+  // ランプの途中まで進める。
+  await page.clock.runFor(5);
+  // ここで退場側（主audio要素）自身が自然終了する。
+  await page.evaluate(() => (window as any).__setMainEnded(true));
+  // 残りのランプ完了・ハンドオフ試行まで仮想時刻を進める前に、トークンを実際に失効させる
+  // （GISモックのexpires_in: 3600を1時間超過させる）。ランプ完了後のハンドオフ初回試行が
+  // このトークンでPlaybackAuthenticationRequiredErrorを踏む。
+  await page.clock.fastForward(3_601_000);
+  await expect.poll(() => page.getByRole("button", { name: "認証を更新して続行" }).isVisible()).toBe(true);
+  // このタイミングでは、初回試行はaudio.srcへ到達する前（トークン確認）で失敗しているため、
+  // album-track-2への実際のplay()呼び出しはまだ一度も行われていない。
+  const srcAfterFirstAttempt = await page.evaluate(() => document.querySelector("#audio-player")!.getAttribute("src"));
+  expect(srcAfterFirstAttempt).toMatch(/album-track-1(\?|$)/);
+
+  // 再試行（認証更新後）のplay()呼び出しだけを、認証エラー以外の理由で失敗させる。
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    let track2AttemptCount = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player" && this.src.includes("album-track-2")) {
+          track2AttemptCount += 1;
+          if (track2AttemptCount === 1) return Promise.reject(new Error("再試行時の一時的なストリームエラー"));
+        }
+        return originalPlay.call(this);
+      },
+    });
+  });
+
+  await page.getByRole("button", { name: "認証を更新して続行" }).click();
+
+  // 再試行自体が別の理由で失敗しても、フォールバックが再評価されalbum-track-2へ切り替わる
+  // （src再設定によるended=falseへのネイティブリセットを経ても、ハンドオフ開始前に確定した
+  // 「退場側は自然終了していた」という情報を使って正しく判定できることの確認）。
+  await expect.poll(() => page.evaluate(() => document.querySelector("#status")!.textContent)).toContain("再生中");
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
   const src = await page.evaluate(() => document.querySelector("#audio-player")!.getAttribute("src"));
   expect(src).toMatch(/album-track-2(\?|$)/);
 });

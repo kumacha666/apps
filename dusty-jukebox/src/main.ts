@@ -527,25 +527,40 @@ async function maybeStartCrossfade(): Promise<void> {
   // 主audio要素へのハンドオフ位置が古いまま（＝曲の一部を再度聞くことになる）drift する。
   crossfadeAudio.pause();
   const handoffPosition = crossfadeAudio.currentTime;
+  // 主audio要素のendedは、ハンドオフのPlaybackController.play()がaudio.srcを新しい曲へ
+  // 差し替えた時点でネイティブにfalseへリセットされる（2026-09-10、Codexレビュー指摘：P2）。
+  // 認証エラー以外の失敗（play()自体の拒否等）はこのsrc差し替えの後に起きるため、後段の
+  // フォールバック判定でライブに`audioPlayer.ended`を読み直すと、退場側が実際には自然終了
+  // していたにも関わらずfalseに戻ってしまい判定できない。ハンドオフ開始前の値をここで
+  // 一度だけ確定させ、以後はこの値を使う。
+  const outgoingEnded = audioPlayer.ended;
   // handleQueuePlayback()は先頭でcancelCrossfadeIfActive()を呼ぶため、自分自身の完了処理は
   // それを経由せずhandlePlaybackAction()を直接呼ぶ（awaitServiceWorkerReady()もhandleQueue
   // Playback()と同じ内容をここで行う）。ランプ中にexclude/並べ替え/シャッフル等でキューが
   // 変更されても、既に先読み再生していたnextFileIdへ必ず確定させる（advanceOnEnded()の
   // fresh findNext()ではなくadvanceToPreviewedFile()を使う。2026-09-10、Codexレビュー指摘：P1）。
-  // handlePlaybackAction()自体の戻り値はvoidのため、後段のフォールバック判定に使う実際の
-  // 成否・エラーをこのクロージャの外側で捕捉する（2026-09-10、Codexレビュー指摘：P2）。
-  let handoffStarted = false;
-  let handoffError: unknown = null;
-  await handlePlaybackAction(async () => {
+  // フォールバックの判定・実行はこのクロージャ自身の中で行う（2026-09-10、Codexレビュー
+  // 指摘：P2続き）。認証エラーでhandlePlaybackAction()がplaybackAuthGate経由の再試行へ
+  // 委ねた場合、このクロージャ自身が後で（ユーザーが認証を更新した時点で）再実行されるため、
+  // 外側で一度だけ結果を見る形では、初回とは異なる再試行時の成否に対応できなかった
+  // （初回が認証エラーで即returnした時点で外側の判定が確定してしまい、後から再試行が
+  // 認証エラー以外の理由で失敗しても、そのフォールバックが実行されなかった）。
+  const attemptHandoff = async (): Promise<boolean> => {
     await awaitServiceWorkerReady();
     try {
-      handoffStarted = Boolean(await queue?.advanceToPreviewedFile(nextFileId, handoffPosition));
+      const started = Boolean(await queue?.advanceToPreviewedFile(nextFileId, handoffPosition));
+      if (!started && manualTransitionCount === 0 && outgoingEnded) {
+        void handleQueuePlayback(() => queue?.advanceOnEnded());
+      }
+      return started;
     } catch (err) {
-      handoffError = err;
+      if (!(err instanceof PlaybackAuthenticationRequiredError) && manualTransitionCount === 0 && outgoingEnded) {
+        void handleQueuePlayback(() => queue?.advanceOnEnded());
+      }
       throw err;
     }
-    return handoffStarted;
-  });
+  };
+  await handlePlaybackAction(attemptHandoff);
   // ハンドオフ自身のplayer.play()呼び出し（queue.advanceToPreviewedFile()→playAndCommit()→
   // PlaybackController.play()）は、そのメソッド先頭で無条件にonTransitionStart()（＝
   // cancelCrossfadeIfActive()）を呼ぶため（ラウンド6の修正、クロスフェードの早期キャンセルを
@@ -560,24 +575,13 @@ async function maybeStartCrossfade(): Promise<void> {
   // crossfadeGenerationの比較ではなく、現在進行中の手動操作（manualTransitionCount）が
   // 無いかどうかで行う：手動操作が既に進行中なら、その操作自身が既にキューの遷移を担って
   // いるため、ここで重複してadvanceOnEnded()を呼んではならない。
+  // ハンドオフの成否に関わらず、クロスフェード自身の状態は直ちに後始末する（フォールバックの
+  // 実行判定・再試行対応はattemptHandoff()自身の中で行うため、ここでは待たない）。
   crossfading = false;
   audioPlayer.volume = 1;
   crossfadeAudio.pause();
   crossfadeAudio.removeAttribute("src");
   crossfadeAudio.load();
-  // ハンドオフ自体が失敗した場合、無条件の後始末だけでは主audio要素の自然終了（既に
-  // crossfading中のため抑止済み）に対応する遷移が失われたままになる（2026-09-10、
-  // Codexレビュー指摘：P2）。認証エラー（PlaybackAuthenticationRequiredError）は
-  // handlePlaybackAction()自身が認証継続へ委ねるため対象外とし、それ以外の失敗で
-  // 主audio要素が既に自然終了していた場合のみ、通常の自然終了フォールバックへ進める。
-  if (
-    !handoffStarted &&
-    !(handoffError instanceof PlaybackAuthenticationRequiredError) &&
-    manualTransitionCount === 0 &&
-    audioPlayer.ended
-  ) {
-    void handleQueuePlayback(() => queue?.advanceOnEnded());
-  }
 }
 // 再生/前へ/次へ/シャッフルはいずれも「再生リストに曲がある間だけ使える」操作のため、有効/無効を
 // まとめて切り替える（開発体制#39④UI-4、シャッフル追加時に既存2ボタンと同じ条件のまま揃える）。
@@ -1254,10 +1258,14 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined): 
   // クロージャの内側に増減を置くことで、再試行時も自然に同じガードが再び掛かる（外側の
   // try/finallyでは、最初のhandlePlaybackAction()呼び出しが認証待ちで即座に正常returnした
   // 時点でガードが解除され、実際の再試行の間はガードが掛からなくなってしまっていた）。
+  // increment自体はawaitServiceWorkerReady()より前に行う（2026-09-10、Codexレビュー指摘：
+  // P1続き）。Service Worker準備が遅延している間はガードがまだ掛からず、その待機中に
+  // timeupdateがクロスフェードを開始・完了させてしまい、準備完了後にこの手動操作の遷移と
+  // クロスフェードのハンドオフの両方が競合しうる窓が残っていた。
   await handlePlaybackAction(async () => {
-    await awaitServiceWorkerReady();
     manualTransitionCount += 1;
     try {
+      await awaitServiceWorkerReady();
       const started = await action();
       return Boolean(started);
     } finally {
