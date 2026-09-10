@@ -415,6 +415,24 @@ let crossfading = false;
 // だけcrossfadeAudioの再生位置を主audio要素へ同期する（フォールバック等で異なる曲が
 // コミットされた場合、先読み位置を誤って適用すると冒頭をスキップ・曲を丸ごと飛ばしてしまう）。
 let crossfadePreviewedFileId: string | null = null;
+// クロスフェード開始時点の退場側（主audio要素側）のfileIdと再生位置（2026-09-10、ChatGPT
+// レビュー指摘：P1「Restore the outgoing source when cancelling a committed handoff」）。
+// ハンドオフが`audio.src`を次曲へ既にコミット済み（ただしnative play()の解決待ち中）の
+// タイミングでシーク・一時停止等によりハンドオフが打ち切られると、cancelPendingTransition()は
+// generationを進めるだけでaudio.srcは次曲を指したままになる。この状態で保留中だったハンドオフの
+// play()が後から解決すると、isSuperseded()の巻き戻り処理により次曲のまま一時停止してしまい、
+// ユーザーが再生ボタンを押し直さないと再開できない（実機報告「シーク後に再生ボタンを押す必要が
+// ある」の原因）。cancelCrossfadeIfActive()がこの値を使い、audio.srcが既に次曲へ切り替わって
+// いた場合のみ、退場側の曲をこの位置からqueue.resumeCurrent()で明示的に再開させる（audio.srcが
+// まだ退場側のままなら、ユーザー自身がその場で行った操作＝通常のシーク等を上書きしないよう
+// 何もしない）。
+let crossfadeOutgoingFileId: string | null = null;
+let crossfadeOutgoingPosition = 0;
+// 退場側が既に自然終了済みかどうか（2026-09-10、ChatGPTレビュー指摘：P1、上記コメント参照）。
+// maybeStartCrossfade()のハンドオフ開始直前（audioPlayer.endedの確定タイミング、既存の
+// ローカル変数outgoingEndedと同じ値）で更新する。crossfadeOutgoingFileIdをセットした直後の
+// 既定値はfalse（クロスフェード開始直後、退場側はまだ確実に終了していないため）。
+let crossfadeOutgoingEnded = false;
 // クロスフェードのハンドオフ自身が登録した認証継続（2026-09-10、Codexレビュー指摘：P1）。
 // cancelCrossfadeIfActive()が、まだこの継続がplaybackContinuations上でアクティブなままなら
 // （＝この後に別の正当なplay()が新しい継続へ置き換えていなければ）明示的に無効化するために使う。
@@ -450,7 +468,15 @@ function cancelCrossfadeIfActive(): void {
   crossfadeGeneration += 1;
   crossfading = false;
   crossfadePreviewedFileId = null;
-  el<HTMLAudioElement>("audio-player").volume = 1;
+  const audioPlayer = el<HTMLAudioElement>("audio-player");
+  // ハンドオフが既にaudio.srcを次曲（先読みしていた曲）へコミット済みかどうかを、打ち切りの
+  // 後始末より前に確認しておく（2026-09-10、ChatGPTレビュー指摘：P1「Restore the outgoing
+  // source when cancelling a committed handoff」、下記crossfadeOutgoingFileId使用箇所参照）。
+  const handoffAlreadyCommittedSrc =
+    crossfadeOutgoingFileId !== null &&
+    !crossfadeOutgoingEnded &&
+    !audioPlayer.src.includes(encodeURIComponent(crossfadeOutgoingFileId));
+  audioPlayer.volume = 1;
   const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
   crossfadeAudio.pause();
   crossfadeAudio.removeAttribute("src");
@@ -472,6 +498,21 @@ function cancelCrossfadeIfActive(): void {
   // 根本原因の一つ）。setList()と同じ仕組みをキューの中身を変えずに呼び、進行中のハンドオフの
   // コミット自体も無効化する。
   queue?.invalidatePendingMove();
+  // ハンドオフが既にaudio.srcを次曲へコミット済みだった場合、退場側の曲をクロスフェード
+  // 開始時点の位置から明示的に再開する（2026-09-10、ChatGPTレビュー指摘：P1）。この時点で
+  // queue.currentFileIdは上のinvalidatePendingMove()によりまだ退場側のまま保たれているため、
+  // resumeCurrent()（`move(..., replacePending=true)`）がそのfileIdをそのまま使う。保留中の
+  // ハンドオフ自身のネイティブplay()が後から遅れて解決しても、cancelPendingTransition()で
+  // 進めたgenerationにより「superseded」と判定され、audio.srcが既にこの新しいresumeCurrent()
+  // 呼び出しで上書きされていれば何もしない（playback.tsの既存のsrc一致確認ガード）。
+  // 退場側のfileIdが不明（クロスフェード自体が始まる前）、またはaudio.srcがまだ退場側のまま
+  // （ハンドオフがsrcをまだ書き換えていない＝ユーザーが今しがた行った通常のシーク等が既に
+  // 正しい対象に適用済み）の場合は何もしない（後者で無条件に呼ぶと、ユーザー自身のシークを
+  // 古い位置で上書きしてしまう）。
+  if (handoffAlreadyCommittedSrc && crossfadeOutgoingFileId !== null) {
+    void queue?.resumeCurrent(crossfadeOutgoingPosition);
+  }
+  crossfadeOutgoingFileId = null;
   // 登録済みの認証継続を無効化する（2026-09-10、Codexレビュー指摘：P1）。ハンドオフの
   // ストリーム要求（既にaudio.srcへコミット済み）に対する遅延401が、この打ち切り後に
   // 届いた場合、playback.cancelPendingTransition()はcurrentFileId/streamGenerationを
@@ -519,6 +560,7 @@ function finishCrossfadeHandoff(committedFileId: string | null): void {
   audioPlayer.volume = 1;
   crossfading = false;
   crossfadePreviewedFileId = null;
+  crossfadeOutgoingFileId = null;
   crossfadeHandoffContinuation = null;
   crossfadeAudio.pause();
   crossfadeAudio.removeAttribute("src");
@@ -559,6 +601,10 @@ async function maybeStartCrossfade(): Promise<void> {
 
   crossfading = true;
   crossfadePreviewedFileId = nextFileId;
+  // 退場側（現在の主audio要素）のfileId・位置を、audio.srcへ一切触れる前のこの時点で
+  // 記録する（ChatGPTレビュー指摘：P1、上記crossfadeOutgoingFileId宣言のコメント参照）。
+  crossfadeOutgoingFileId = queue?.currentPlayingFileId() ?? null;
+  crossfadeOutgoingPosition = audioPlayer.currentTime;
   const myGeneration = crossfadeGeneration;
   const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
   crossfadeStreamGeneration -= 1;
@@ -619,6 +665,12 @@ async function maybeStartCrossfade(): Promise<void> {
   // していたにも関わらずfalseに戻ってしまい判定できない。ハンドオフ開始前の値をここで
   // 一度だけ確定させ、以後はこの値を使う。
   const outgoingEnded = audioPlayer.ended;
+  // cancelCrossfadeIfActive()が退場側を復元すべきかどうかの判定にも同じ値を使う（2026-09-10、
+  // ChatGPTレビュー指摘：P1、上記crossfadeOutgoingFileId宣言のコメント参照）。退場側が既に
+  // 自然終了済み（曲の末尾に到達済み）の場合、crossfadeOutgoingPosition（末尾付近の値）から
+  // 復元しても再生できるものが実質無く、直後の`timeupdate`で即座に別のクロスフェードが
+  // 始まってしまうだけのため、復元自体をスキップする。
+  crossfadeOutgoingEnded = outgoingEnded;
   let handoffStarted = false;
   // handleQueuePlayback()は先頭でcancelCrossfadeIfActive()を呼ぶため、自分自身の完了処理は
   // それを経由せずhandlePlaybackAction()を直接呼ぶ（awaitServiceWorkerReady()もhandleQueue

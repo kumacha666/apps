@@ -2613,3 +2613,79 @@ test("Drive 401で認証通知が表示された後にシークでハンドオ�
 
   await expect(page.getByRole("button", { name: "認証を更新して続行" })).not.toBeVisible();
 });
+
+// 2026-09-10、ChatGPT再レビュー指摘（P1、「Restore the outgoing source when cancelling a
+// committed handoff」）の回帰防止。ハンドオフが`audio.src`を次曲へ既にコミット済み（native
+// play()の解決待ち中）の状態でシークすると、cancelPendingTransition()はgenerationを進める
+// だけでaudio.srcは次曲を指したまま残っていた。この状態で保留中だった次曲のplay()が後から
+// 解決すると、isSupersededの巻き戻り処理でそのまま一時停止してしまい、実機報告「シーク後に
+// 再生ボタンを押さないと再生されない」の原因になっていた。退場側のfileId・位置をクロス
+// フェード開始時点で記録しておき、この状況を検出したらqueue.resumeCurrent()で退場側を
+// 明示的に再開させるよう修正。
+test("ハンドオフがaudio.srcを次曲へ既にコミット済みの状態でシークすると、audio.srcが退場側の曲へ戻り再開する（再生ボタンを押す必要がない）（2026-09-10、ChatGPT再レビュー指摘：P1）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // album-track-2への最初のplay()呼び出し（ハンドオフ自身）だけを保留する。この時点で
+  // 既にaudio.srcは次曲（album-track-2）へコミット済みという状態を再現する（PlaybackController
+  // が`audio.src`を同期的に設定してからネイティブplay()をawaitする実装のため）。
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player" && this.src.includes("album-track-2")) {
+          return new Promise<void>((resolve) => {
+            (window as unknown as { __e2eReleaseHandoffPlay?: () => void }).__e2eReleaseHandoffPlay = resolve;
+          });
+        }
+        return originalPlay.call(this);
+      },
+    });
+  });
+
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await page.clock.runFor(100);
+  // ハンドオフのplay()呼び出しが実行され保留状態になった＝audio.srcは既に次曲へコミット済み。
+  await expect.poll(() => page.evaluate(() => Boolean((window as unknown as { __e2eReleaseHandoffPlay?: () => void }).__e2eReleaseHandoffPlay))).toBe(true);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+
+  // この状態でシークし、ハンドオフを打ち切る。
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.disabled = false;
+    slider.max = "180";
+    slider.value = "10";
+    slider.dispatchEvent(new Event("input"));
+    slider.dispatchEvent(new Event("change"));
+  });
+
+  // audio.srcが退場側（album-track-1）へ明示的に戻る（再生ボタンを押さずに再開できる）。
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+
+  // 保留していたハンドオフのplay()を今になって解決させても、既に上書きされた退場側の
+  // srcを巻き戻さない（isSupersededのsrc一致確認ガードにより、既に別の正当なplay()に
+  // 上書きされていれば何もしない）。
+  await page.evaluate(() => (window as unknown as { __e2eReleaseHandoffPlay?: () => void }).__e2eReleaseHandoffPlay?.());
+  await page.waitForTimeout(50);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+});
