@@ -1263,3 +1263,51 @@ test("クロスフェードのランプ中に独自シークバーで曲末尾�
   await page.clock.runFor(100);
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
 });
+
+test("先読み再生の開始（play()）が応答なく固まっても、タイムアウトしてクロスフェード状態が解除され自然終了時の自動送りが機能する（2026-09-10、Codexレビュー指摘：P1）", async ({ context, page }) => {
+  // Driveストリームが拒否も解決もせず単に無応答のままだと、crossfadeAudio.play()が永久に
+  // 解決せずcrossfading=trueのまま固まり、主audio要素側の'ended'抑止（onEndedコールバック）が
+  // キューの自動送りを無期限に止めてしまう不具合があった。
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // 第二audio要素（クロスフェードの先読み再生用）のplay()だけを永久に解決しないようにする。
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player-crossfade") return new Promise<void>(() => {});
+        return originalPlay.call(this);
+      },
+    });
+  });
+
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+
+  // 先読み再生の開始タイムアウト（E2Eでは200ms）を過ぎるまで仮想時刻を進める。
+  await page.clock.runFor(300);
+
+  // タイムアウトによりcrossfadingが解除されているため、主audio要素の自然終了（'ended'）で
+  // 通常の自動送りが機能する（解除されていなければ、この'ended'は無視され続け曲が進まない）。
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("ended"));
+  });
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+});

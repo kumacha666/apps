@@ -8,6 +8,12 @@ export interface PlayerLike {
   // 無効化するために使う（2026-09-08、Codexレビュー指摘：P1、詳細はplayback.tsの実装参照）。
   // 実PlaybackController以外の簡易モック（既存テスト等）を壊さないためoptionalにする。
   cancelPendingTransition?(): void;
+  // advanceToPreviewedFile()が除外の再確認ループを使い果たした（最後にコミット・再生開始
+  // 済みの候補も除外されており、これ以上フォールバック先が無い）場合に、鳴り続けている
+  // 音声を明示的に止めるために使う（2026-09-10、Codexレビュー指摘：P1続き。queue.ts自体には
+  // PlayerLike経由の停止手段しか無いため、cancelPendingTransition()と同じ理由でoptionalに
+  // する）。
+  pause?(): void;
 }
 export type BeforeQueuePlay = (fileId: string) => void;
 
@@ -272,7 +278,15 @@ export class PlaybackQueue {
         const started = await this.playAndCommit(candidate, generation, position, false);
         if (!started) return false;
         if (!this.isExcluded(candidate)) return true;
-        candidate = this.findNext()?.fileId;
+        const next = this.findNext();
+        if (!next) {
+          // 除外済みの候補が既にコミット・再生開始済みのまま、これ以上フォールバック先が
+          // 無い場合（2026-09-10、Codexレビュー指摘：P1続き）。何もしないと、除外したはずの
+          // 曲がキューの管理外で鳴り続けてしまう。明示的に一時停止する。
+          this.player.pause?.();
+          return false;
+        }
+        candidate = next.fileId;
       }
       return false;
     }).then((started) => {

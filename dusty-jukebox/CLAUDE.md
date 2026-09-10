@@ -235,6 +235,10 @@
   - いずれも該当コードを一時的に無効化して実際に失敗することを確認済み（1・4はユニットテスト`queue.test.ts`新規ケース、2は`playback.test.ts`新規ケース〈`vi.useFakeTimers()`でフェード待ち中はonTransitionStartが呼ばれず完了後に呼ばれることを検証〉、3・5は新規E2E）。
 - **続けて2026-09-10、同PRの`@codex review`再々指摘1件（P1）を修正**：`advanceToPreviewedFile()`のplayer.play()待機中に対象曲自体がチェックボックスで除外された場合、`exclude()`はgenerationを進めないため、事前のstillQueued判定・playAndCommit内部のgeneration確認のどちらでも検知できず、除外済みの曲がそのまま再生され続けてしまっていた。commit後に対象の除外状態を再確認し、除外されていればその時点で有効な次の曲（`findNext()`）へ切り替えるよう修正。該当コードを一時的に無効化して実際に失敗することを確認済み（`queue.test.ts`新規ケース）。
 - **続けて2026-09-10、同PRの`@codex review`再々々指摘1件（P1）を修正**：上記の除外再確認が1回のフォールバックだけで終わっていたため、フォールバック先自身（`findNext()`の結果）のplayer.play()待機中に、さらにその曲も除外されるケースには対応できていなかった。単発の再確認をループへ変更し、有効な曲が見つかるかfindNext()が尽きるまで辿り続けるよう修正（startPositionは最初に先読みしていたfileId自身にのみ引き継ぎ、以後のフォールバックには適用しない）。該当コードを一時的に無効化して実際に失敗することを確認済み（`queue.test.ts`新規ケース：2段階のフォールバックを検証）。
+- **続けて2026-09-10、同PRの`@codex review`5回目の指摘2件（いずれもP1）を修正**：
+  1. **先読み再生の開始（`crossfadeAudio.play()`）が応答なく固まると自動送りが永久に止まる**：Driveストリームが拒否も解決もせず単に無応答のままだと、`await crossfadeAudio.play()`が永久に解決せず`crossfading=true`のまま固まり、主audio要素側の`'ended'`抑止（`main.ts`のonEndedコールバック）がキューの自動送りを無期限に止めてしまっていた。Service Worker制御待ちのタイムアウト（開発体制#44）と同じ`withTimeout()`をこの待機にも適用（`CROSSFADE_PREVIEW_START_TIMEOUT_MS`、本番5000ms・`VITE_E2E`時200ms）。タイムアウト時は通常の`play()`失敗と同じフォールバック経路（`audioPlayer.ended`なら通常の自然終了フローへ）に合流する。
+  2. **除外の再確認ループが力尽きた際、最後にコミット・再生開始済みの候補が鳴り続ける**：`advanceToPreviewedFile()`のループが「有効な曲が見つからずfindNext()が尽きた」場合、直前にコミット・再生開始していた（除外済みの）候補の音声はそのまま鳴り続けてしまい、`isQueuePlayback`だけがfalseへ戻る不整合があった（`handleClearQueue()`の「直前の再生を止める」と同じ理由で、`queue.ts`自体には`PlayerLike`経由の停止手段が無い）。`PlayerLike`に省略可能な`pause?(): void`を追加し、フォールバック先が尽きた時点で明示的に呼ぶよう修正。
+  - いずれも該当コードを一時的に無効化して実際に失敗することを確認済み（1は新規E2E〈第二audio要素のみ`play()`を永久保留するモックを注入〉、2は`queue.test.ts`新規ケース）。
 - **実機での動作確認はまだ**（次セッションでの確認事項）。
 
 ## 絞り込み欄同士の連動（開発体制#43、2026-09-08）

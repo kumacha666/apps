@@ -22,6 +22,14 @@ const defaultWait = (ms: number): Promise<void> => new Promise((resolve) => setT
 // E2Eでは実時間で3秒待つとテストが遅くなるため短縮する（他の機能のVITE_E2E分岐と同じ方針）。
 export const CROSSFADE_DURATION_MS = import.meta.env.VITE_E2E === "true" ? 50 : 3000;
 
+// 第二audio要素の先読み再生開始（play()）に与えるタイムアウト（2026-09-10、Codexレビュー
+// 指摘：P1）。Driveストリームが拒否も解決もせず単に無応答のままだと、await crossfadeAudio.play()
+// が永久に解決せずcrossfading=trueのまま固まり、主audio要素側の'ended'抑止（main.tsのonEnded
+// コールバック）がキューの自動送りを無期限に止めてしまう。withTimeout()（Service Worker
+// 制御待ちのタイムアウトと同じ方針）でこの待機に上限を設け、超過時は通常の`play()`失敗と同じ
+// フォールバック経路（audioPlayer.endedなら通常の自然終了フローへ）に合流させる。
+export const CROSSFADE_PREVIEW_START_TIMEOUT_MS = import.meta.env.VITE_E2E === "true" ? 200 : 5000;
+
 // 進行度（0=開始直後、1=完了）に対する退場側/入場側それぞれの音量。単純な線形（合計は常に1）。
 export function crossfadeVolumes(progress: number): { outgoing: number; incoming: number } {
   const p = Math.min(1, Math.max(0, progress));

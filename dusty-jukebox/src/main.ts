@@ -40,7 +40,7 @@ const QUEUE_SORT_FIELD_LABELS: Record<QueueSortField, string> = {
 import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState } from "./mediaSession";
 import { formatSeekTime, isSeekableDuration } from "./seekBar";
 import { shouldResumeExternalPlayback } from "./externalPlayback";
-import { CROSSFADE_DURATION_MS, runCrossfade, shouldStartCrossfade } from "./crossfade";
+import { CROSSFADE_DURATION_MS, CROSSFADE_PREVIEW_START_TIMEOUT_MS, runCrossfade, shouldStartCrossfade } from "./crossfade";
 import { registerStreamAuthResponder } from "./streamAuth";
 import {
   createChangesListFn,
@@ -462,7 +462,7 @@ async function maybeStartCrossfade(): Promise<void> {
   crossfadeAudio.src = streamUrl(nextFileId, crossfadeStreamGeneration);
   crossfadeAudio.volume = 0;
   try {
-    await crossfadeAudio.play();
+    await withTimeout(crossfadeAudio.play(), CROSSFADE_PREVIEW_START_TIMEOUT_MS, "クロスフェードの先読み再生がタイムアウトしました");
   } catch {
     if (crossfadeGeneration === myGeneration) {
       crossfading = false;

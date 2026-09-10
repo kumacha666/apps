@@ -1119,6 +1119,33 @@ describe("PlaybackQueue", () => {
         expect(played).toEqual(["a", "b", "c", "d"]);
         expect(queue.currentPlayingFileId()).toBe("d");
       });
+
+      // 2026-09-10、Codexレビュー指摘：P1再々指摘。最後の候補（フォールバック先が尽きる直前の
+      // 候補）自身がplayer.play()待機中に除外されると、それが既にコミット・再生開始済みの
+      // まま残ってしまう（次の候補が無いため）。queue.ts自体にはPlayerLike経由の停止手段しか
+      // 無いため、注入したpause()が呼ばれることを確認する。
+      test("最後の候補も除外され次の候補が無い場合、鳴り続けないようplayer.pause()を呼ぶ", async () => {
+        const played: string[] = [];
+        let pauseCalls = 0;
+        let resolvePlayB: (() => void) | undefined;
+        const audio = new Audio();
+        const queue = new PlaybackQueue({
+          play: async (id) => {
+            played.push(id);
+            if (id === "b") await new Promise<void>((resolve) => { resolvePlayB = resolve; });
+          },
+          pause: () => { pauseCalls += 1; },
+        }, audio);
+        queue.setList([song("a"), song("b")]);
+        await queue.playAt(0);
+        const promise = queue.advanceToPreviewedFile("b");
+        await vi.waitFor(() => expect(played).toContain("b"));
+        // "b"が唯一の次の候補であり、これも除外される（フォールバック先が無い）。
+        queue.exclude("b", true);
+        resolvePlayB?.();
+        expect(await promise).toBe(false);
+        expect(pauseCalls).toBe(1);
+      });
     });
   });
 });
