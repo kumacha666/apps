@@ -337,7 +337,15 @@ export class PlaybackController {
   // この一時停止に追い越されたことを検知でき（"フェード中にアプリ内の「一時停止」ボタンで
   // 中断された場合"のテストと同じ経路）、フェード完了後に誤って次の曲を再生してしまう
   // ことを防げる。
-  async pause(fadeOut = false): Promise<void> {
+  // 戻り値：実際に一時停止まで完了した場合はtrue、フェード待ち中に別の操作（play()/
+  // pause()/cancelPendingTransition()のいずれか）に追い越されて中断された場合はfalse
+  // （2026-09-10、続けてChatGPTレビュー指摘：P1「フェード付きPauseが別操作に追い越された
+  // 後でも、古い退場曲をloadPaused()してしまいます」）。以前は`isCancelled()`の早期`return`が
+  // 単なるvoidの正常終了だったため、呼び出し元（main.tsのアプリ内「一時停止」ボタン、
+  // 退場側のクロスフェード復元）はこの中断を区別できず、追い越されて既に別の再生が始まった
+  // 後でも`.then()`が実行され、その新しい再生を古い退場側のloadPaused()で上書きしてしまう
+  // 不具合があった。
+  async pause(fadeOut = false): Promise<boolean> {
     // 進行中の一時停止フェードがあれば、まずフェード開始前の値へ戻してから自分の処理を
     // 始める（2026-09-09、ChatGPTレビュー指摘：P2続き。generationReasonsの"pause"は
     // pause(true)とpause(false)を区別できないため、「後続が'pause'理由で終わるかどうか」で
@@ -363,7 +371,7 @@ export class PlaybackController {
       // フェード中に新しい操作（play()/pause()/cancelPendingTransition()のいずれか）に
       // 追い越された場合、その操作が自分自身の先頭でreclaimPendingFadeVolume()を
       // 呼び既にvolumeを復元・pendingFadeOriginalVolumeをクリア済みのため、ここでは一切触れない。
-      if (isCancelled()) return;
+      if (isCancelled()) return false;
       this.audio.volume = preFadeVolume;
       this.pendingFadeOriginalVolume = null;
     }
@@ -371,5 +379,6 @@ export class PlaybackController {
     // 中に新しいクロスフェードが始まってしまう同じ競合をここでも防ぐ。
     this.onTransitionStart();
     this.audio.pause();
+    return true;
   }
 }

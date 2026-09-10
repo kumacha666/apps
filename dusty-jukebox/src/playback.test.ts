@@ -579,6 +579,38 @@ describe("PlaybackController", () => {
     expect(audio.volume).toBe(0.6);
   });
 
+  test("pause(true)のフェード中に別のplay()に追い越されると、pause()自身はfalseで解決する（実際には一時停止していないことを呼び出し元が区別できる）（2026-09-10、ChatGPTレビュー指摘：P1「フェード付きPauseが別操作に追い越された後でも、古い退場曲をloadPaused()してしまいます」）。以前はvoidの正常終了で区別できず、main.tsの呼び出し元（アプリ内「一時停止」ボタン）が、追い越し後に開始された新しい正当な再生を、古い一時停止のPromise解決をきっかけに誤って上書きしていた", async () => {
+    vi.useFakeTimers();
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    const pausePromise = playback.pause(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(audio.paused).toBe(false);
+
+    // フェード中に別の正当なplay()（例：「次へ」）に追い越される。
+    await playback.play("B");
+
+    await vi.runAllTimersAsync();
+    const completed = await pausePromise;
+    expect(completed).toBe(false);
+  });
+
+  test("フェードなしのpause()、およびフェード付きpause()が追い越されずに完了した場合はtrueで解決する", async () => {
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A");
+    expect(await playback.pause()).toBe(true);
+
+    vi.useFakeTimers();
+    await playback.play("B");
+    const pausePromise = playback.pause(true);
+    await vi.runAllTimersAsync();
+    expect(await pausePromise).toBe(true);
+  });
+
   test("一時停止ボタンをフェード中に連打（pause(true)を2回連続で呼ぶ）しても、最終的にフェード開始前の元の音量まで一時停止する（2026-09-09、ChatGPTレビュー指摘：P2続き。以前は2回目の呼び出しが「フェードで既に下がった値」を新しい基準にしてしまい、最終的に本来の音量へ戻らなくなる回帰があった）", async () => {
     vi.useFakeTimers();
     const audio = new FakeAudio();

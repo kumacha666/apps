@@ -2506,7 +2506,14 @@ function init(): void {
         // ChatGPTレビュー指摘：P1）。フェード完了より前に復元すると、audio.srcの差し替え
         // 自体が進行中のフェード対象（次曲側）の再生を音量フェードを飛ばして即座に中断
         // させてしまうため、必ずpause()自体の完了を待ってから行う。
-        .then(() => { if (outgoingRestore) playback?.loadPaused(outgoingRestore.fileId, outgoingRestore.position); })
+        // pause()の戻り値がfalse（フェード待ち中に別の操作に追い越されて中断された）の
+        // 場合はloadPaused()を呼ばない（2026-09-10、続けてChatGPTレビュー指摘：P1
+        // 「フェード付きPauseが別操作に追い越された後でも、古い退場曲をloadPaused()して
+        // しまいます」）。例：committed handoff中にフェード付き一時停止→フェード中に
+        // 「次へ」を押す、という順序だと、追い越した「次へ」が新しい正当な再生を始めた
+        // 後に、この古いpause()のPromiseが（中断されたにも関わらず）解決し、
+        // loadPaused()が退場側の曲で新しい再生を誤って上書きしてしまっていた。
+        .then((completed) => { if (completed && outgoingRestore) playback?.loadPaused(outgoingRestore.fileId, outgoingRestore.position); })
         .finally(() => { manualTransitionCount -= 1; });
     });
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());

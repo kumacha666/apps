@@ -2835,3 +2835,77 @@ test("ハンドオフがaudio.srcを次曲へ既にコミット済みの状態�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
 });
+
+// 2026-09-10、続けてChatGPTレビュー指摘（P1、「フェード付きPauseが別操作に追い越された後でも、
+// 古い退場曲をloadPaused()してしまいます」）の回帰防止。committed handoff中にフェード付き
+// 一時停止を開始し、そのフェードが完了する前に「次へ」で別の正当な再生へ追い越すと、追い越された
+// pause()は中断されたにも関わらず、旧実装ではそのPromiseが解決した時点でloadPaused()が無条件に
+// 呼ばれ、既に「次へ」がコミットした新しい状態（Finale）を古い退場曲（Opening）で上書きして
+// しまっていた。pause()の戻り値をPromise<boolean>へ変更し、完了（true）の場合だけloadPaused()を
+// 呼ぶよう修正した。
+test("committed handoff中のフェード付き一時停止が「次へ」に追い越されても、古い退場曲で上書きされない（2026-09-10、ChatGPT再レビュー指摘：P1）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+  await page.getByRole("checkbox", { name: "手動スキップ/一時停止時にフェードアウトする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // album-track-2（ハンドオフ）への最初のplay()呼び出しだけを保留する。
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player" && this.src.includes("album-track-2")) {
+          return new Promise<void>((resolve) => {
+            (window as unknown as { __e2eReleaseHandoffPlay?: () => void }).__e2eReleaseHandoffPlay = resolve;
+          });
+        }
+        return originalPlay.call(this);
+      },
+    });
+  });
+
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await page.clock.runFor(100);
+  // ハンドオフ（album-track-2への切り替え）がまだ解決していない時点で一時停止する
+  // （この時点でaudio-player.srcは既にalbum-track-2へコミット済み、というcommitted
+  // handoffの窓を再現する。既存の同種テストと同じ手順）。
+  await expect.poll(() => page.evaluate(() => Boolean((window as unknown as { __e2eReleaseHandoffPlay?: () => void }).__e2eReleaseHandoffPlay))).toBe(true);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+
+  // committed handoff済みの状態（退場側=album-track-1/Opening）からフェード付き一時停止を開始する
+  // （outgoingRestoreがOpeningを指す状態で捕捉される）。
+  await page.getByRole("button", { name: "一時停止" }).click();
+  await page.clock.runFor(10); // フェード（E2Eでは50ms）の途中まで進める
+
+  // フェードが完了しきる前に、キュー外の単曲試聴（album-track-3/Finale）で追い越す。
+  await page.locator("#play-file-id").fill("album-track-3");
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+
+  // 保留していたハンドオフ自身のplay()も遅れて解決させる（現実の非決定性を再現）。
+  await page.evaluate(() => (window as unknown as { __e2eReleaseHandoffPlay?: () => void }).__e2eReleaseHandoffPlay?.());
+
+  // 双方のフェード・play()が解決しきるまで仮想時刻を進める。
+  await page.clock.runFor(200);
+  await page.waitForTimeout(50);
+
+  // 追い越した外部試聴がコミットしたFinaleのまま維持され、追い越されたpause()の
+  // loadPaused(Opening)で上書きされていない。
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-3(\?|$)/);
+});
