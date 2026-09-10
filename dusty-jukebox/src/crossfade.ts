@@ -12,8 +12,14 @@ export interface CrossfadeOptions {
   steps?: number;
   wait?: (ms: number) => Promise<void>;
   // ランプの各ステップ直後に呼ばれ、trueなら以後のvolume更新を中断する（手動スキップ等で
-  // クロスフェード自体が不要になった場合。fade.tsのisCancelledと同じ方針）。
+  // クロスフェード自体が不要になった場合。fade.tsのisCancelledと同じ方針）。中断時点の
+  // 中間的なvolumeのまま残す（完了扱いにはしない）。
   isCancelled?: () => boolean;
+  // ランプの各ステップ直後に呼ばれ、trueなら直ちに最終値（outgoing=0, incoming=1）を設定して
+  // 終了する（2026-09-10、Codexレビュー指摘：P2）。次の曲（incoming）自体がクロスフェード長
+  // より短く、ランプ完了前に自然終了した場合に使う：isCancelled（中断・中間値のまま放置）とは
+  // 異なり、こちらは「完了扱い」として最終値まで進めてから戻るべきケースのため区別する。
+  shouldFinishEarly?: () => boolean;
 }
 
 const DEFAULT_STEPS = 30;
@@ -57,6 +63,11 @@ export async function runCrossfade(
   for (let i = 1; i <= steps; i += 1) {
     await wait(stepDuration);
     if (options.isCancelled?.()) return;
+    if (options.shouldFinishEarly?.()) {
+      outgoing.volume = 0;
+      incoming.volume = 1;
+      return;
+    }
     const { outgoing: o, incoming: inc } = crossfadeVolumes(i / steps);
     outgoing.volume = o;
     incoming.volume = inc;

@@ -59,6 +59,26 @@ describe("runCrossfade", () => {
     expect(outgoing2.volume).toBe(0.5);
     expect(incoming2.volume).toBe(0.5);
   });
+
+  // 2026-09-10、Codexレビュー指摘：P2。次の曲（incoming）自体がクロスフェード長より短く、
+  // ランプ完了前に自然終了した場合、isCancelledと違い「完了扱い」として最終値まで進めてから
+  // 終了する必要がある（isCancelledは中間値のまま放置するため、入場側が無音のまま残ってしまう）。
+  it("shouldFinishEarlyがtrueを返すと直ちに完了値へ設定して終了する", async () => {
+    const outgoing = { volume: 1 };
+    const incoming = { volume: 0 };
+    const wait = vi.fn().mockResolvedValue(undefined);
+    let callCount = 0;
+    const finishAfterTwoSteps = () => {
+      callCount += 1;
+      return callCount > 2;
+    };
+    await runCrossfade(outgoing, incoming, 400, { steps: 4, wait, shouldFinishEarly: finishAfterTwoSteps });
+    // isCancelledとは異なり、中間値（0.5）ではなく完了値まで進んでいる。
+    expect(outgoing.volume).toBe(0);
+    expect(incoming.volume).toBe(1);
+    // 3ステップ目でshouldFinishEarlyがtrueになり終了するため、4ステップ目のwaitは呼ばれない。
+    expect(wait).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe("shouldStartCrossfade", () => {

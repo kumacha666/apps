@@ -498,8 +498,20 @@ async function maybeStartCrossfade(): Promise<void> {
   }
   if (crossfadeGeneration !== myGeneration) return;
 
-  await runCrossfade(audioPlayer, crossfadeAudio, CROSSFADE_DURATION_MS, {
+  // 先読み再生の開始（await withTimeout(crossfadeAudio.play(), ...)）に時間がかかり、その間に
+  // 主audio要素側の残り時間（開始時点で3秒以内）が尽きて自然終了してしまっている場合（2026-09-10、
+  // Codexレビュー指摘：P2。この'ended'はcrossfading中のため既に抑止済み）。既に無音の主audio
+  // 要素を相手に3秒かけてゆっくりランプする意味は無く、その間ずっと入場側がvolume 0のまま
+  // 無音になってしまうため、ランプ自体を省略して直ちに完了値へ進める。
+  const rampDurationMs = audioPlayer.ended ? 0 : CROSSFADE_DURATION_MS;
+  await runCrossfade(audioPlayer, crossfadeAudio, rampDurationMs, {
     isCancelled: () => crossfadeGeneration !== myGeneration,
+    // 次の曲（入場側）自体がクロスフェード長より短く、ランプ完了前に自然終了した場合
+    // （2026-09-10、Codexレビュー指摘：P2続き）。何もしないとランプの残りが無音のまま進み、
+    // handoffPositionが入場側自身の末尾（≒次の曲の末尾）になってしまう。ランプを直ちに
+    // 完了値まで進めて終了する（handoffPosition以降は主audio要素が同じ末尾位置から始まる
+    // ため、通常の自然終了フローで速やかに次の曲へ進む＝短い曲を丸ごと再生した扱いになる）。
+    shouldFinishEarly: () => crossfadeAudio.ended,
   });
   if (crossfadeGeneration !== myGeneration) return;
 
