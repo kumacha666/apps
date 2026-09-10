@@ -1028,6 +1028,65 @@ test("クロスフェードのUI（チェックボックス・非表示の第二
   await expect(page.locator("#audio-player-crossfade")).toBeAttached();
 });
 
+// 実機フィードバック（PR #443マージ後）：「フェードが短すぎてまだクロスしてません。また次曲に
+// 切り替わったあと、一瞬曲が途切れてます」。根本原因は、旧実装が「音量ランプ開始しきい値
+// （残りcrossfadeDurationMs）」に達したその場で初めて第二audio要素のplay()（Service Worker
+// 経由のDrive接続確立、実際のネットワークI/Oで数百ms〜数秒かかりうる）を待っており、この
+// 待ち時間の分だけ実際の残り時間が目減りするのにランプ自体は常に固定長で走っていたこと。
+// 「準備（接続確立）」を実際のランプ開始しきい値より十分早いタイミングへ前倒しし、実際に
+// ランプを開始する時点では接続確立の待ちが発生しない設計に再設計した。このテストは、
+// 「準備が完了しても、実際のランプ開始しきい値に達するまでは音量に一切触れない」という
+// 2段階の分離そのものを検証する。
+test("クロスフェードは準備（接続確立）と音量ランプの開始を分離し、準備完了後も実際のしきい値に達するまで音量へ触れない（2026-09-10、実機フィードバックによる再設計）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // 残り時間を「準備しきい値（E2E: 50+200=250ms）以下だが、ランプ開始しきい値（E2E: 50ms）
+  // より長い」窓（150ms）に置く。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.85; // 残り150ms
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+
+  // 準備は完了する（第二audio要素に次曲のstreamURLが設定される）。
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  // しかしランプ開始しきい値にはまだ達していないため、主audio要素のvolumeは1のまま
+  // （音量に一切触れていない）。
+  const volumeStillOne = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
+  expect(volumeStillOne).toBe(1);
+
+  // 残り時間をランプ開始しきい値（50ms）以下へ進める。currentTimeの直接更新だけでは
+  // timeupdateは自動発火しないため、明示的にdispatchする。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    audio.currentTime = 179.99; // 残り10ms
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+
+  // 追加の接続確立待ちが無いため（既に準備済み）、ランプが直ちに始まりvolumeが下がる。
+  await page.clock.runFor(10);
+  const volumeDuringRamp = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
+  expect(volumeDuringRamp).toBeLessThan(1);
+
+  // ランプ完了まで進め、最終的に次の曲へ正しく引き継がれることも確認する。
+  await page.clock.runFor(100);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
+});
+
 test("キュー内自然終了に近づくとクロスフェードが発生し、次の曲へ引き継がれる（開発体制#42④、2026-09-10）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
@@ -1761,9 +1820,12 @@ test("クロスフェードのハンドオフが認証エラーで再試行に�
     Object.defineProperty(audio, "paused", { value: false, configurable: true });
     audio.currentTime = 179.99;
     audio.dispatchEvent(new Event("timeupdate"));
-    // 開始判定の同期部分は既に完了しているため、以降pausedを戻しても今回の判定には
-    // 影響しない（既知の「duration/paused上書きの連鎖」パターン対策、CLAUDE.md参照）。
-    Object.defineProperty(audio, "paused", { value: true, configurable: true });
+    // pausedをtrueへ戻さない（2026-09-10、実機フィードバックによる再設計で判明した注意点）：
+    // 準備→ランプ開始の判定が2段階に分かれ、ランプ開始しきい値（shouldBeginCrossfadeRamp）は
+    // 準備の非同期完了後に評価されるため、この時点で同期的にpausedを戻すと、実際にランプ
+    // 開始を判定する時点で「一時停止中」と誤判定されクロスフェード自体が始まらなくなる
+    // （既存の「duration/paused上書きの連鎖」パターン対策は、旧・単相設計〈開始判定が全て
+    // 同期的に完了する〉を前提にしていたため、この2段階設計には当てはまらない）。
   });
   await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
 
