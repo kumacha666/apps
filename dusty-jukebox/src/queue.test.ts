@@ -1065,6 +1065,31 @@ describe("PlaybackQueue", () => {
         expect(queue.isPlayingFromQueue()).toBe(true);
         expect(queue.currentPlayingFileId()).toBe("x");
       });
+
+      // 2026-09-10、Codexレビュー指摘：P1続き。exclude()はgenerationを進めないため、
+      // player.play()の待機中に対象曲自体が除外されても、上のstillQueued判定・
+      // playAndCommit内部のgeneration確認のどちらも検知できない。
+      test("player.play()の待機中に先読みしていた曲自体が除外されると、除外済みの曲を再生し続けず次の有効な曲へ切り替える", async () => {
+        const played: string[] = [];
+        let resolvePlayB: (() => void) | undefined;
+        const audio = new Audio();
+        const queue = new PlaybackQueue({
+          play: async (id) => {
+            played.push(id);
+            if (id === "b") await new Promise<void>((resolve) => { resolvePlayB = resolve; });
+          },
+        }, audio);
+        queue.setList([song("a"), song("b"), song("c")]);
+        await queue.playAt(0);
+        const promise = queue.advanceToPreviewedFile("b");
+        await vi.waitFor(() => expect(played).toContain("b"));
+        // player.play("b")がまだ解決していない間に、"b"自身が除外される。
+        queue.exclude("b", true);
+        resolvePlayB?.();
+        expect(await promise).toBe(true);
+        expect(played).toEqual(["a", "b", "c"]);
+        expect(queue.currentPlayingFileId()).toBe("c");
+      });
     });
   });
 });

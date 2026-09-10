@@ -259,7 +259,17 @@ export class PlaybackQueue {
       // startPositionを引き継がない（2026-09-10、Codexレビュー指摘：P1）。startPositionは
       // 先読みしていたfileId自身の再生位置であり、別の曲をその秒数から開始すると冒頭を
       // スキップしてしまう。
-      return this.playAndCommit(target, generation, target === fileId ? startPosition : undefined, false);
+      const started = await this.playAndCommit(target, generation, target === fileId ? startPosition : undefined, false);
+      // player.play()の待機中に対象曲自体がチェックボックスで除外された場合（2026-09-10、
+      // Codexレビュー指摘：P1続き）。exclude()はgenerationを進めないため、上のstillQueued
+      // 判定・playAndCommit内部のgeneration確認のどちらでも検知できず、除外済みの曲が
+      // 再生され続けてしまう。commit後に除外状態を再確認し、除外されていればその時点で
+      // 有効な次の曲へ切り替える。
+      if (started && this.isExcluded(target)) {
+        const fallback = this.findNext();
+        return fallback ? this.playAndCommit(fallback.fileId, generation) : false;
+      }
+      return started;
     }).then((started) => {
       if (!started && this.generation === generationAtCall) this.isQueuePlayback = false;
       return started;
