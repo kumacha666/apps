@@ -1361,3 +1361,51 @@ test("先読み再生の開始タイムアウト後にDriveストリームが遅
   await page.clock.runFor(800);
   await expect(page.locator("#audio-player-crossfade")).not.toHaveAttribute("src");
 });
+
+test("手動フェードアウト待機中は、残り時間がクロスフェード閾値に入ってもクロスフェードを開始しない（2026-09-10、ChatGPTレビュー指摘：P1）", async ({ context, page }) => {
+  // 手動フェードアウト（既定約2秒、E2Eでは短縮）を伴う一時停止/次へ/前へは、その待機中も
+  // 旧曲がまだ再生中のままtimeupdateが継続するため、crossfading・audioPaused・
+  // isPlayingFromQueue()だけではクロスフェードの開始を防げず、フェード完了直前の
+  // onTransitionStart()で最終的な二重commitこそ防げるものの、その手前で先読み再生が
+  // 始まってしまう（クロスフェードは「キュー内曲の自然終了時のみ」の設計に反する）不具合が
+  // あった。
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+  await page.getByRole("checkbox", { name: "手動スキップ/一時停止時にフェードアウトする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+  });
+
+  await page.clock.install();
+
+  // 「一時停止」ボタンでフェードアウトを開始する（E2Eでは短縮された時間）。
+  await page.getByRole("button", { name: "一時停止" }).click();
+
+  // フェードが完了しきる前の時点まで仮想時刻を進める。
+  await page.clock.runFor(10);
+
+  // フェード待機中に残り時間がクロスフェード閾値（3秒）へ入っても、クロスフェードは
+  // 開始しない（第二audio要素にsrcが設定されない）。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  // page.clockでランプ用setTimeoutを止めていても、crossfadeAudio.play()自体は
+  // モックされたPromise.resolve()で即座に解決しRangeフェッチ（Service Worker経由の実際の
+  // 非同期I/O）が続いて走るため、locatorのtoHaveAttribute()の自動リトライ待ちの間に
+  // src自体が後から変化しうる（偽陰性の原因になった。1回だけの直接読み取りで判定する）。
+  const crossfadeSrc = await page.evaluate(() => document.querySelector("#audio-player-crossfade")!.getAttribute("src"));
+  expect(crossfadeSrc).toBeNull();
+});

@@ -70,6 +70,7 @@ describe("shouldStartCrossfade", () => {
     currentTime: 178,
     crossfadeDurationMs: 3000,
     audioPaused: false,
+    manualTransitionInFlight: false,
   };
 
   it("残り時間がクロスフェード長以下ならtrue", () => {
@@ -104,5 +105,9 @@ describe("shouldStartCrossfade", () => {
 
   it("主audio要素が一時停止中ならfalse（2026-09-10、Codexレビュー指摘：P1）", () => {
     expect(shouldStartCrossfade({ ...baseParams, audioPaused: true })).toBe(false);
+  });
+
+  it("明示的な手動遷移（フェード待機中を含む）が進行中ならfalse（2026-09-10、ChatGPTレビュー指摘：P1）", () => {
+    expect(shouldStartCrossfade({ ...baseParams, manualTransitionInFlight: true })).toBe(false);
   });
 });

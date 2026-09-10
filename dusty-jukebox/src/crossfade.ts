@@ -76,13 +76,26 @@ export interface ShouldStartCrossfadeParams {
   // 一時停止してから曲末尾3秒以内へシークするだけで先読み再生が始まり、Playを押していない
   // のに音が鳴り出してしまう。
   audioPaused: boolean;
+  // 明示的な手動遷移（次へ/前へ/曲名クリック等キュー由来の操作、一時停止ボタン）が進行中
+  // かどうか（2026-09-10、ChatGPTレビュー指摘：P1）。手動フェードアウト（既定約2秒）を伴う
+  // 操作は、その待機中も旧曲がまだ再生中のままtimeupdateが継続するため、crossfading・
+  // audioPaused・isPlayingFromQueue()だけではクロスフェードの開始を防げず、フェード完了直前の
+  // onTransitionStart()で最終的な二重commitこそ防げるものの、その手前で実際に先読み再生を
+  // 開始してしまっていた（クロスフェードは「キュー内曲の自然終了時のみ」の設計に反する）。
+  manualTransitionInFlight: boolean;
 }
 
 // 現在の再生位置がクロスフェードを開始すべきタイミング（曲の末尾までの残り時間がクロスフェード
 // の長さ以下）かどうか。durationが未確定（NaN/Infinity/0以下、ストリーミング開始直後でメタ
 // データ未確定の間）は開始しない（seekBar.tsのisSeekableDurationと同じ理由）。
 export function shouldStartCrossfade(params: ShouldStartCrossfadeParams): boolean {
-  if (!params.crossfadeEnabled || params.isCrossfading || !params.hasNextSong || params.audioPaused) return false;
+  if (
+    !params.crossfadeEnabled ||
+    params.isCrossfading ||
+    !params.hasNextSong ||
+    params.audioPaused ||
+    params.manualTransitionInFlight
+  ) return false;
   if (!Number.isFinite(params.duration) || params.duration <= 0) return false;
   const remainingMs = (params.duration - params.currentTime) * 1000;
   return remainingMs > 0 && remainingMs <= params.crossfadeDurationMs;

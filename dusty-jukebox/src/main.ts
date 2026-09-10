@@ -410,6 +410,16 @@ function crossfadeEnabled(): boolean {
 // generationパターンと同じ考え方）。
 let crossfadeGeneration = 0;
 let crossfading = false;
+// 明示的な手動遷移（次へ/前へ/曲名クリック/シャッフル等キュー由来の操作、および「一時停止」
+// ボタン）が進行中の間はtrue（2026-09-10、ChatGPTレビュー指摘：P1）。手動フェードアウト
+// （fadeOutEnabled()時、既定約2秒）を伴う操作は、この待機中も旧曲がまだ再生中のまま
+// timeupdateが継続するため、crossfading・audio.paused・isPlayingFromQueue()だけでは
+// クロスフェードの開始を防げず、フェード完了直前にonTransitionStart()で最終的な二重commit
+// こそ防げるものの、その手前でクロスフェードが実際に開始・先読み再生してしまう窓が生じていた
+// （PRの仕様「クロスフェードはキュー内曲の自然終了時のみ、手動スキップとは別」に反する）。
+// handleQueuePlayback()・一時停止ボタンのクリックハンドラの実行中はこれをtrueにし、
+// maybeStartCrossfade()の開始条件に加える。
+let manualTransitionInFlight = false;
 
 // クロスフェード中に手動ナビゲーション（次へ/前へ/曲名クリック等）が割り込んだ場合、進行中の
 // ランプ・先読み再生を打ち切り、状態を復元する。handleQueuePlayback()の先頭から呼ぶ
@@ -444,6 +454,9 @@ async function maybeStartCrossfade(): Promise<void> {
       // isPlayingFromQueue()は一時停止しても変わらないままのため、audio要素自身の
       // paused状態も別途確認する必要がある。
       audioPaused: audioPlayer.paused,
+      // 手動フェードアウト待機中はクロスフェードを始めない（2026-09-10、ChatGPTレビュー
+      // 指摘：P1。manualTransitionInFlightの定義コメント参照）。
+      manualTransitionInFlight,
     }) ||
     !queue?.isPlayingFromQueue()
   ) return;
@@ -1181,11 +1194,18 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined): 
   // （cancelCrossfadeIfActive()参照。クロスフェード自身の完了処理はこの関数を経由しないため、
   // ここでの打ち切りが自分自身を巻き込むことはない）。
   cancelCrossfadeIfActive();
-  await handlePlaybackAction(async () => {
-    await awaitServiceWorkerReady();
-    const started = await action();
-    return Boolean(started);
-  });
+  // この操作が完了するまで（手動フェードアウトの待機を含む）、新しいクロスフェードの開始を
+  // 防ぐ（2026-09-10、ChatGPTレビュー指摘：P1。manualTransitionInFlightの定義コメント参照）。
+  manualTransitionInFlight = true;
+  try {
+    await handlePlaybackAction(async () => {
+      await awaitServiceWorkerReady();
+      const started = await action();
+      return Boolean(started);
+    });
+  } finally {
+    manualTransitionInFlight = false;
+  }
 }
 
 // serviceWorkerReady自体はタイムアウトでラップしない生のpromise（init()参照）：もしここで
@@ -2160,7 +2180,10 @@ function init(): void {
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
     el<HTMLButtonElement>("pause-btn").addEventListener("click", () => {
       cancelCrossfadeIfActive();
-      void playback?.pause(fadeOutEnabled());
+      // フェード完了までの待機中（manualTransitionInFlightの定義コメント参照）は新しい
+      // クロスフェードの開始を防ぐ（2026-09-10、ChatGPTレビュー指摘：P1）。
+      manualTransitionInFlight = true;
+      void playback?.pause(fadeOutEnabled()).finally(() => { manualTransitionInFlight = false; });
     });
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
     el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
