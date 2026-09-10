@@ -480,6 +480,18 @@ function cancelCrossfadeIfActive(): void {
   // （既に別の正当なplay()が新しい継続を登録済みの場合、そちらを誤って巻き込まない）。
   if (crossfadeHandoffContinuation && playbackContinuations.isCurrent(crossfadeHandoffContinuation)) {
     playbackContinuations.clear();
+    // Drive 401がこの打ち切りより前にhandleStreamTokenRejected()へ既に届いていた場合、
+    // playbackAuthGate.pendingOperationにもこの継続のresumeを呼ぶクロージャが保留されて
+    // いる（2026-09-10、ChatGPTレビュー指摘：P1）。上のレジストリのclear()だけでは
+    // このクロージャ自体は無効化されず、「認証を更新して続行」をクリックするとisCurrent()
+    // を経由せず直接continuation.resume()を呼んでしまうため、打ち切ったはずの次の曲が
+    // そのまま始まってしまう。isCurrent()がtrueだった時点で、保留中の操作があるとすれば
+    // それは必ずこの継続（またはこのハンドオフ自身の再試行）に対するものであるため
+    // （レジストリは常に1件のみを保持し、このcontinuationが依然としてそれである以上、
+    // 他の新しい操作がgate側だけを別途上書きしていることは無い）、gate側も合わせて
+    // クリアし、既に表示中の認証通知も消す。
+    playbackAuthGate?.clear();
+    setPlaybackAuthNotice(false);
   }
   crossfadeHandoffContinuation = null;
 }
@@ -1405,7 +1417,8 @@ function registerQueuePlaybackContinuation(fileId: string, currentPlayback: Play
   // ハンドオフ自身のgeneration確認を自己無効化してしまう（queue.tsのBeforeQueuePlay/resume()
   // コメント参照。実際には再生に成功しているのに、キュー・UIには一切反映されず認証通知も
   // 出ない不整合になっていた）。
-  const continuation = playbackContinuations.register({
+  let continuation!: PlaybackContinuation;
+  continuation = playbackContinuations.register({
     fileId,
     generation: currentPlayback.currentGeneration() + 1,
     resume: async (position) => {
@@ -1424,7 +1437,24 @@ function registerQueuePlaybackContinuation(fileId: string, currentPlayback: Play
       // 取り残されてしまう。finishCrossfadeHandoff()自体は`if (!crossfading) return;`で
       // 二重呼び出しに対して安全（クロスフェード以外のsuppressTransitionCancel:falseな
       // 通常の継続では常にno-op）。
-      if (suppressTransitionCancel) finishCrossfadeHandoff(started ? (queue?.currentPlayingFileId() ?? null) : null);
+      if (suppressTransitionCancel) {
+        finishCrossfadeHandoff(started ? (queue?.currentPlayingFileId() ?? null) : null);
+        if (!started) {
+          // queue.resume()が除外等でfalseを返した場合、新しいplay()を一度も呼んでいない
+          // （queue.tsのresume()参照）ため、元のattemptHandoff()自身が呼んだネイティブ
+          // play()（解決が保証されないまま残っている可能性がある）はまだ無効化されずに
+          // 残っている（2026-09-10、ChatGPTレビュー指摘：P1）。無効化しないと、この
+          // 元のplay()が後から遅れて解決した場合、除外されたはずの曲へそのままコミット
+          // してしまい、キューが誤って進む。cancelCrossfadeIfActive()と同じ手段
+          // （PlaybackController側の世代とPlaybackQueue側のpendingMoveの両方）で無効化し、
+          // この継続自体もまだ現在有効なままなら（別の新しいplay()に置き換えられていない
+          // 限り）明示的にclearして、同じ継続へ二重に届いた遅延401が同じ通知を再表示
+          // しないようにする。
+          playback?.cancelPendingTransition();
+          queue?.invalidatePendingMove();
+          if (playbackContinuations.isCurrent(continuation)) playbackContinuations.clear();
+        }
+      }
       return started;
     },
   });
