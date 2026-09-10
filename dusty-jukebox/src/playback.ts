@@ -304,6 +304,31 @@ export class PlaybackController {
     this.generationReasons.set(this.generation, "cancel");
   }
 
+  // クロスフェードのハンドオフが既にaudio.srcを次曲へコミット済みの状態で一時停止された場合、
+  // 退場側の曲へ音を鳴らさずに（native play()を一切呼ばずに）復元する（2026-09-10、ChatGPT
+  // レビュー指摘：P1「Pause後にaudio sourceとqueue currentが食い違ったまま残ります」）。
+  // 呼び出し元（main.tsのpause系ハンドラ）は、この関数の前に既に`pause()`を呼んでいる前提
+  // （currentFileId/streamGenerationは既にnull化済み）。ここでは新しいgenerationを採番して
+  // currentFileId/streamGenerationをこの退場側の曲で確定させ、`audio.src`を差し替えるのみで
+  // `audio.play()`は呼ばない（メディア要素はsrc差し替え時にネイティブに一時停止状態へ戻るため、
+  // 明示的な`audio.pause()`は保険として呼ぶだけで、聞こえる形で再生が始まることはない）。
+  // これにより、①MediaSessionのネイティブPlay（`audioPlayer.play()`直呼び）が退場側の曲を
+  // 正しく再開できるようになり（差し替え前は次曲のsrcのまま残っていたため誤った曲が
+  // 再開されていた）、②アプリのqueue Play（`queue.resume(currentFileId, audioPlayer.
+  // currentTime)`）が使う`audioPlayer.currentTime`も、この関数がここで設定した退場側の
+  // 位置を正しく参照するようになる（差し替え前は次曲側の位置が残っており、退場側を
+  // 誤った位置から再開していた）。
+  loadPaused(fileId: string, position = 0): void {
+    this.generation += 1;
+    const gen = this.generation;
+    this.currentFileId = fileId;
+    this.streamGeneration = gen;
+    this.rejectedGeneration = null;
+    this.audio.src = streamUrl(fileId, gen);
+    if (Number.isFinite(position) && position > 0) this.audio.currentTime = position;
+    this.audio.pause();
+  }
+
   // fadeOut指定時（手動スキップ時と同じ「手動スキップ時にフェードアウトする」設定を
   // 一時停止にも適用してほしいというユーザー要望、2026-09-09）は、実際に一時停止する前に
   // 現在再生中の音声をフェードアウトする。generationはplay()と同様、フェード開始前

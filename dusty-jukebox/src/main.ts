@@ -380,7 +380,7 @@ function wireSeekBar(audioPlayer: HTMLAudioElement): void {
     // isCancelled()判定（世代比較のみ）ではシークを検知できず、ユーザーが曲の末尾から
     // 離れる方向へシークしても先読み再生・ランプが止まらず、3秒後に予期しない曲送りが
     // 起きてしまっていた。
-    // 戻り値がtrueの場合（ハンドオフが既にaudio.srcを次曲へコミット済み）は、退場側の曲へ
+    // 戻り値が非nullの場合（ハンドオフが既にaudio.srcを次曲へコミット済み）は、退場側の曲へ
     // ユーザーが指定した目標位置から明示的に再開する（2026-09-10、続けてChatGPTレビュー
     // 指摘：P1）。素朴に`audioPlayer.currentTime = 目標値`も同時に行うと、queue.resumeCurrent()
     // が後から非同期でPlaybackController.play()内部の`audio.currentTime = position`を実行する
@@ -388,9 +388,18 @@ function wireSeekBar(audioPlayer: HTMLAudioElement): void {
     // よう、この経路では目標値を直接resumeCurrent()へ渡し、単純な`audioPlayer.currentTime`
     // 代入は行わない（両方行うと、真の退場側でない・audio.srcがまだ退場側のままの通常ケースの
     // シークが機能しなくなる）。
-    const needsOutgoingRestore = cancelCrossfadeIfActive();
-    if (needsOutgoingRestore) {
-      void queue?.resumeCurrent(Number(slider.value));
+    // handleQueuePlayback()経由で呼ぶ（2026-09-10、続けてChatGPTレビュー指摘：P1「committed
+    // handoffからのシーク復元が認証継続をバイパスしています」）。以前は`void queue?.
+    // resumeCurrent(...)`を直接呼んでおり、その内部のPlaybackController.play()が
+    // PlaybackAuthenticationRequiredErrorでrejectしてもplaybackAuthGateへdeferされず、
+    // 復元自体が未処理のPromise rejectionとして黙って失敗していた。handleQueuePlayback()は
+    // 内部でhandlePlaybackAction()を経由し、このエラーを捕捉して「認証を更新して続行」通知へ
+    // 正しく繋げる（handleQueuePlayback()自身が呼ぶcancelCrossfadeIfActive()は、既にここで
+    // 呼んだ後のため`!crossfading`で早期returnし安全）。
+    const outgoingRestore = cancelCrossfadeIfActive();
+    if (outgoingRestore) {
+      const target = Number(slider.value);
+      void handleQueuePlayback(() => queue?.resumeCurrent(target));
     } else {
       audioPlayer.currentTime = Number(slider.value);
     }
@@ -439,6 +448,11 @@ let crossfadePreviewedFileId: string | null = null;
 // コメント参照。2026-09-10、続けてChatGPTレビュー指摘：P1により、復元自体はこの関数内で
 // fire-and-forgetせず、呼び出し元＝各操作の意図と協調させる設計に変更した）。
 let crossfadeOutgoingFileId: string | null = null;
+// 退場側のクロスフェード開始時点の再生位置（2026-09-10、ChatGPTレビュー指摘：P1「Pause後に
+// audio sourceとqueue currentが食い違ったまま残ります」）。シーク時はユーザー自身のシーク
+// 目標をそのまま使うため不要だが、一時停止時（audio.srcを一切鳴らさずに復元する
+// playback.loadPaused()）はユーザー操作由来の目標値が無いため、この値を使う。
+let crossfadeOutgoingPosition = 0;
 // クロスフェードのハンドオフ自身が登録した認証継続（2026-09-10、Codexレビュー指摘：P1）。
 // cancelCrossfadeIfActive()が、まだこの継続がplaybackContinuations上でアクティブなままなら
 // （＝この後に別の正当なplay()が新しい継続へ置き換えていなければ）明示的に無効化するために使う。
@@ -471,22 +485,24 @@ let manualTransitionCount = 0;
 // 呼ぶため、ここでの打ち切りが自分自身を巻き込むことはない）。
 // クロスフェード中に手動ナビゲーション（次へ/前へ/曲名クリック等）や一時停止・シークが割り込んだ
 // 場合、進行中のランプ・先読み再生を打ち切り、状態を復元する。呼び出し元は原則として戻り値を
-// 破棄してよい（次へ/前へ/一時停止/外部単曲試聴等、これから別の操作を始める・停止したままで
-// よい呼び出し元では、退場側の復元自体が不要または有害なため）。戻り値がtrueの場合のみ、
-// 「ハンドオフが既にaudio.srcを次曲へコミット済みだったため、退場側の曲へ明示的に復元する
-// 必要がある」ことを意味する（2026-09-10、ChatGPTレビュー指摘：P1「Restore the outgoing
-// source when cancelling a committed handoff」）。**この関数自身はその復元（queue.resumeCurrent()
-// の呼び出し）を行わない**：以前の実装はここでfire-and-forgetに`resumeCurrent()`を呼んでいたが、
-// (a) 全ての呼び出し元（シーク・一時停止・次へ等）で無条件に「退場側を再開する」動作は正しくない
-// （一時停止直後にresumeCurrent()のplay()が遅れて実行され、止めたはずの曲が再び鳴り出す回帰を
-// 招いた）、(b) シークの場合も、この関数の非同期resumeCurrent()が呼び出し元の同期的な
-// `audioPlayer.currentTime = 目標値`より後にPlaybackController.play()内部で`audio.currentTime
-// = 退場側の古い位置`を設定してしまい、ユーザーのシーク自体を上書きしてしまう競合があった
-// （続けてChatGPTレビュー指摘：P1）。呼び出し元が「復元が必要」と分かった時点で、自分の意図
-// （シークならユーザー指定の目標位置、一時停止なら何もしない）に応じて明示的に処理すべきため、
-// 判定結果だけを返す設計に変更した。
-function cancelCrossfadeIfActive(): boolean {
-  if (!crossfading) return false;
+// 破棄してよい（次へ/前へ/外部単曲試聴等、これから別の操作を始める呼び出し元では、退場側の
+// 復元自体が不要なため）。戻り値が非nullの場合のみ、「ハンドオフが既にaudio.srcを次曲へ
+// コミット済みだったため、退場側の曲（返されたfileId・クロスフェード開始時点のposition）へ
+// 明示的に復元する必要がある」ことを意味する（2026-09-10、ChatGPTレビュー指摘：P1「Restore
+// the outgoing source when cancelling a committed handoff」）。**この関数自身はその復元
+// （queue.resumeCurrent()の呼び出し等）を行わない**：以前の実装はここでfire-and-forgetに
+// `resumeCurrent()`を呼んでいたが、(a) 全ての呼び出し元（シーク・一時停止・次へ等）で無条件に
+// 「退場側を再開する」動作は正しくない（一時停止直後にresumeCurrent()のplay()が遅れて実行され、
+// 止めたはずの曲が再び鳴り出す回帰を招いた）、(b) シークの場合も、この関数の非同期
+// resumeCurrent()が呼び出し元の同期的な`audioPlayer.currentTime = 目標値`より後に
+// PlaybackController.play()内部で`audio.currentTime = 退場側の古い位置`を設定してしまい、
+// ユーザーのシーク自体を上書きしてしまう競合があった（続けてChatGPTレビュー指摘：P1）。
+// 呼び出し元が「復元が必要」と分かった時点で、自分の意図に応じて明示的に処理すべきため、
+// 判定結果だけを返す設計に変更した：シークはユーザー指定の目標位置で`queue.resumeCurrent()`
+// （認証継続経路に乗せるため`handleQueuePlayback()`経由、下記wireSeekBar()参照）、一時停止は
+// 音を鳴らさない`playback.loadPaused()`（下記参照）を使う。
+function cancelCrossfadeIfActive(): { fileId: string; position: number } | null {
+  if (!crossfading) return null;
   crossfadeGeneration += 1;
   crossfading = false;
   crossfadePreviewedFileId = null;
@@ -521,7 +537,9 @@ function cancelCrossfadeIfActive(): boolean {
   // 復元が必要かどうかだけをここで確定させる（実際の復元は呼び出し元に委ねる、上記関数
   // コメント参照）。queue.currentFileIdは上のinvalidatePendingMove()によりまだ退場側のまま
   // 保たれているため、呼び出し元がqueue.resumeCurrent()を呼べばそのfileIdをそのまま使う。
-  const needsOutgoingRestore = handoffAlreadyCommittedSrc;
+  const outgoingRestore = handoffAlreadyCommittedSrc && crossfadeOutgoingFileId !== null
+    ? { fileId: crossfadeOutgoingFileId, position: crossfadeOutgoingPosition }
+    : null;
   crossfadeOutgoingFileId = null;
   // 登録済みの認証継続を無効化する（2026-09-10、Codexレビュー指摘：P1）。ハンドオフの
   // ストリーム要求（既にaudio.srcへコミット済み）に対する遅延401が、この打ち切り後に
@@ -545,7 +563,7 @@ function cancelCrossfadeIfActive(): boolean {
     setPlaybackAuthNotice(false);
   }
   crossfadeHandoffContinuation = null;
-  return needsOutgoingRestore;
+  return outgoingRestore;
 }
 
 // クロスフェードのハンドオフが実際に成功した時点の共通の後始末（2026-09-10、Codexレビュー
@@ -612,9 +630,11 @@ async function maybeStartCrossfade(): Promise<void> {
 
   crossfading = true;
   crossfadePreviewedFileId = nextFileId;
-  // 退場側（現在の主audio要素）のfileIdを、audio.srcへ一切触れる前のこの時点で記録する
-  // （ChatGPTレビュー指摘：P1、上記crossfadeOutgoingFileId宣言のコメント参照）。
+  // 退場側（現在の主audio要素）のfileId・位置を、audio.srcへ一切触れる前のこの時点で記録する
+  // （ChatGPTレビュー指摘：P1、上記crossfadeOutgoingFileId/crossfadeOutgoingPosition宣言の
+  // コメント参照）。
   crossfadeOutgoingFileId = queue?.currentPlayingFileId() ?? null;
+  crossfadeOutgoingPosition = audioPlayer.currentTime;
   const myGeneration = crossfadeGeneration;
   const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
   crossfadeStreamGeneration -= 1;
@@ -2455,7 +2475,16 @@ function init(): void {
       // Transitionの先頭で発火）は通らない。クロスフェード中にBluetooth/OSのメディアキーで
       // 一時停止すると、主audio要素だけが止まり第二audio要素は鳴り続け、その後のハンドオフが
       // 一時停止を勝手に取り消してしまう不具合があった（2026-09-10、Codexレビュー指摘：P1）。
-      pause: () => { cancelCrossfadeIfActive(); audioPlayer.pause(); },
+      pause: () => {
+        // ハンドオフが既にaudio.srcを次曲へコミット済みだった場合、audioPlayer.pause()の
+        // 後に退場側の曲へ音を鳴らさず復元する（2026-09-10、続けてChatGPTレビュー指摘：
+        // P1「Pause後にaudio sourceとqueue currentが食い違ったまま残ります」）。復元しないと、
+        // 一時停止直後にこのネイティブPlayハンドラを押した際、間違った曲（次曲）がそのまま
+        // 再開されてしまう（queue/UIは退場側を表示したまま）。
+        const outgoingRestore = cancelCrossfadeIfActive();
+        audioPlayer.pause();
+        if (outgoingRestore) playback?.loadPaused(outgoingRestore.fileId, outgoingRestore.position);
+      },
       previoustrack: () => void handleQueuePlayback(() => queue?.previous(fadeOutEnabled())),
       nexttrack: () => void handleQueuePlayback(() => queue?.next(fadeOutEnabled())),
     });
@@ -2464,14 +2493,21 @@ function init(): void {
     el<HTMLButtonElement>("retry-extraction-btn").addEventListener("click", () => void handleRetryExtraction());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
     el<HTMLButtonElement>("pause-btn").addEventListener("click", () => {
-      cancelCrossfadeIfActive();
+      const outgoingRestore = cancelCrossfadeIfActive();
       // フェード完了までの待機中（manualTransitionCountの定義コメント参照）は新しい
       // クロスフェードの開始を防ぐ（2026-09-10、ChatGPTレビュー指摘：P1、続けてCodexレビュー
       // 指摘：P1。連打で2回目のクリックが1回目のフェード完了前に発生すると、1回目の
       // `finally`が2回目のフェードがまだ進行中でもガードを解除してしまうため、booleanでは
       // なくカウンタで各クリックごとの完了待ちを独立させる）。
       manualTransitionCount += 1;
-      void playback?.pause(fadeOutEnabled()).finally(() => { manualTransitionCount -= 1; });
+      void playback?.pause(fadeOutEnabled())
+        // フェード完了（実際に一時停止した）後に、ハンドオフが既にaudio.srcを次曲へ
+        // コミット済みだった場合、退場側の曲へ音を鳴らさず復元する（2026-09-10、続けて
+        // ChatGPTレビュー指摘：P1）。フェード完了より前に復元すると、audio.srcの差し替え
+        // 自体が進行中のフェード対象（次曲側）の再生を音量フェードを飛ばして即座に中断
+        // させてしまうため、必ずpause()自体の完了を待ってから行う。
+        .then(() => { if (outgoingRestore) playback?.loadPaused(outgoingRestore.fileId, outgoingRestore.position); })
+        .finally(() => { manualTransitionCount -= 1; });
     });
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
     el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
