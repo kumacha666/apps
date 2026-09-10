@@ -29,6 +29,21 @@ export interface PlayOptions {
   // next()呼び出し（advanceOnEnded()経由）では渡さない：将来のクロスフェード機能が
   // この経路を専用に扱うため、フェードアウトと役割を分ける。
   fadeOut?: boolean;
+  // クロスフェードのハンドオフ専用（2026-09-10、実機フィードバックによる再設計）。trueの
+  // 場合、このplay()呼び出し自身はonTransitionStart()（main.ts側のcancelCrossfadeIfActive()）
+  // を呼ばない。理由：クロスフェードのハンドオフ（先読み再生していた曲への正式な引き継ぎ）は
+  // このメソッドを呼んでキュー側の次曲へコミットするが、この呼び出し自体が無条件に
+  // onTransitionStart()を呼ぶ設計のままだと、ハンドオフの最中に「自分自身」でクロスフェードの
+  // 状態（main.tsのcrossfadeGeneration）を進めてしまい（自己キャンセル）、本当の手動割り込み
+  // （一時停止・シーク・次へ等）が起きたかどうかをcrossfadeGenerationの変化で区別できなく
+  // なっていた。結果、ハンドオフ後のクリーンアップ・フォールバック判定コードが事実上常に
+  // 「割り込まれた」扱いになり機能しない、または逆に本物の割り込みを見逃す、という不具合が
+  // あった（実機フィードバック：シークバー操作が効かない、一時停止を押しても次の曲の再生に
+  // 進んでしまう）。このオプションでハンドオフ自身の呼び出しだけonTransitionStart()を
+  // スキップすることで、crossfadeGenerationの変化を「本物の割り込みが起きたか」のsignalとして
+  // 正しく使えるようにする（generation自体は通常通り進める：フェード付きplay()等、他の
+  // 既存の割り込み判定はこれまで通り機能させる必要があるため）。
+  suppressTransitionCancel?: boolean;
 }
 
 export type PlaybackErrorHandler = (error: unknown) => void;
@@ -154,7 +169,7 @@ export class PlaybackController {
 
   async play(fileId: string, position = 0, options: PlayOptions = {}): Promise<void> {
     this.reclaimPendingFadeVolume();
-    this.onTransitionStart();
+    if (!options.suppressTransitionCancel) this.onTransitionStart();
     this.generation += 1;
     const playGeneration = this.generation;
     const isSuperseded = () => this.generation !== playGeneration;
@@ -227,8 +242,10 @@ export class PlaybackController {
     // 通常2秒）待ち中に旧曲がクロスフェードの残り時間（3秒）閾値へ入ると、先頭で一度きりの
     // 呼び出しでは間に合わず新しいクロスフェードが始まってしまい、この後のsrcコミットと
     // 音量の取り合いになる。fadeOutを指定しない通常再生でもトークン確認（getValidAccessToken）
-    // の待ちが長引く可能性があるため、fadeOut有無に関わらず常にここで呼ぶ。
-    this.onTransitionStart();
+    // の待ちが長引く可能性があるため、fadeOut有無に関わらず常にここで呼ぶ
+    // （suppressTransitionCancel指定時はここもスキップする：クロスフェードのハンドオフ自身の
+    // 呼び出しであり、自己キャンセルさせないため）。
+    if (!options.suppressTransitionCancel) this.onTransitionStart();
     this.currentFileId = fileId;
     this.audio.src = streamUrl(fileId, playGeneration);
     // フェードアウトした分だけ、次の曲の開始時にフェード開始前のvolumeへ戻す
@@ -287,6 +304,31 @@ export class PlaybackController {
     this.generationReasons.set(this.generation, "cancel");
   }
 
+  // クロスフェードのハンドオフが既にaudio.srcを次曲へコミット済みの状態で一時停止された場合、
+  // 退場側の曲へ音を鳴らさずに（native play()を一切呼ばずに）復元する（2026-09-10、ChatGPT
+  // レビュー指摘：P1「Pause後にaudio sourceとqueue currentが食い違ったまま残ります」）。
+  // 呼び出し元（main.tsのpause系ハンドラ）は、この関数の前に既に`pause()`を呼んでいる前提
+  // （currentFileId/streamGenerationは既にnull化済み）。ここでは新しいgenerationを採番して
+  // currentFileId/streamGenerationをこの退場側の曲で確定させ、`audio.src`を差し替えるのみで
+  // `audio.play()`は呼ばない（メディア要素はsrc差し替え時にネイティブに一時停止状態へ戻るため、
+  // 明示的な`audio.pause()`は保険として呼ぶだけで、聞こえる形で再生が始まることはない）。
+  // これにより、①MediaSessionのネイティブPlay（`audioPlayer.play()`直呼び）が退場側の曲を
+  // 正しく再開できるようになり（差し替え前は次曲のsrcのまま残っていたため誤った曲が
+  // 再開されていた）、②アプリのqueue Play（`queue.resume(currentFileId, audioPlayer.
+  // currentTime)`）が使う`audioPlayer.currentTime`も、この関数がここで設定した退場側の
+  // 位置を正しく参照するようになる（差し替え前は次曲側の位置が残っており、退場側を
+  // 誤った位置から再開していた）。
+  loadPaused(fileId: string, position = 0): void {
+    this.generation += 1;
+    const gen = this.generation;
+    this.currentFileId = fileId;
+    this.streamGeneration = gen;
+    this.rejectedGeneration = null;
+    this.audio.src = streamUrl(fileId, gen);
+    if (Number.isFinite(position) && position > 0) this.audio.currentTime = position;
+    this.audio.pause();
+  }
+
   // fadeOut指定時（手動スキップ時と同じ「手動スキップ時にフェードアウトする」設定を
   // 一時停止にも適用してほしいというユーザー要望、2026-09-09）は、実際に一時停止する前に
   // 現在再生中の音声をフェードアウトする。generationはplay()と同様、フェード開始前
@@ -295,7 +337,15 @@ export class PlaybackController {
   // この一時停止に追い越されたことを検知でき（"フェード中にアプリ内の「一時停止」ボタンで
   // 中断された場合"のテストと同じ経路）、フェード完了後に誤って次の曲を再生してしまう
   // ことを防げる。
-  async pause(fadeOut = false): Promise<void> {
+  // 戻り値：実際に一時停止まで完了した場合はtrue、フェード待ち中に別の操作（play()/
+  // pause()/cancelPendingTransition()のいずれか）に追い越されて中断された場合はfalse
+  // （2026-09-10、続けてChatGPTレビュー指摘：P1「フェード付きPauseが別操作に追い越された
+  // 後でも、古い退場曲をloadPaused()してしまいます」）。以前は`isCancelled()`の早期`return`が
+  // 単なるvoidの正常終了だったため、呼び出し元（main.tsのアプリ内「一時停止」ボタン、
+  // 退場側のクロスフェード復元）はこの中断を区別できず、追い越されて既に別の再生が始まった
+  // 後でも`.then()`が実行され、その新しい再生を古い退場側のloadPaused()で上書きしてしまう
+  // 不具合があった。
+  async pause(fadeOut = false): Promise<boolean> {
     // 進行中の一時停止フェードがあれば、まずフェード開始前の値へ戻してから自分の処理を
     // 始める（2026-09-09、ChatGPTレビュー指摘：P2続き。generationReasonsの"pause"は
     // pause(true)とpause(false)を区別できないため、「後続が'pause'理由で終わるかどうか」で
@@ -321,7 +371,7 @@ export class PlaybackController {
       // フェード中に新しい操作（play()/pause()/cancelPendingTransition()のいずれか）に
       // 追い越された場合、その操作が自分自身の先頭でreclaimPendingFadeVolume()を
       // 呼び既にvolumeを復元・pendingFadeOriginalVolumeをクリア済みのため、ここでは一切触れない。
-      if (isCancelled()) return;
+      if (isCancelled()) return false;
       this.audio.volume = preFadeVolume;
       this.pendingFadeOriginalVolume = null;
     }
@@ -329,5 +379,6 @@ export class PlaybackController {
     // 中に新しいクロスフェードが始まってしまう同じ競合をここでも防ぐ。
     this.onTransitionStart();
     this.audio.pause();
+    return true;
   }
 }
