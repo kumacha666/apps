@@ -69,6 +69,7 @@ describe("shouldStartCrossfade", () => {
     duration: 180,
     currentTime: 178,
     crossfadeDurationMs: 3000,
+    audioPaused: false,
   };
 
   it("残り時間がクロスフェード長以下ならtrue", () => {
@@ -99,5 +100,9 @@ describe("shouldStartCrossfade", () => {
 
   it("既に曲の末尾を過ぎている（残り時間が0以下）場合はfalse", () => {
     expect(shouldStartCrossfade({ ...baseParams, currentTime: 181 })).toBe(false);
+  });
+
+  it("主audio要素が一時停止中ならfalse（2026-09-10、Codexレビュー指摘：P1）", () => {
+    expect(shouldStartCrossfade({ ...baseParams, audioPaused: true })).toBe(false);
   });
 });

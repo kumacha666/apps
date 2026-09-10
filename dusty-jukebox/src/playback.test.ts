@@ -677,4 +677,46 @@ describe("PlaybackController", () => {
     // 本来のフェード開始前の音量（0.8）を基準にフェードし、その値で一時停止している。
     expect(audio.volume).toBe(0.8);
   });
+
+  // 2026-09-10、Codexレビュー指摘：P1（開発体制#42④、クロスフェードPR）。クロスフェードの
+  // キャンセルを、非同期の待機経路がどれだけ長引いても確実に行うため、実際に新しい遷移が
+  // コミットされる瞬間（play()/pause()/cancelPendingTransition()それぞれの先頭）で
+  // onTransitionStartを必ず呼ぶことを検証する。
+  describe("onTransitionStart", () => {
+    test("play()の先頭で呼ばれる", async () => {
+      const audio = new FakeAudio();
+      const calls: string[] = [];
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, () => calls.push("start"));
+      await playback.play("A");
+      expect(calls).toEqual(["start"]);
+    });
+
+    test("pause()の先頭で呼ばれる", async () => {
+      const audio = new FakeAudio();
+      const calls: string[] = [];
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, () => calls.push("start"));
+      await playback.play("A");
+      calls.length = 0;
+      await playback.pause();
+      expect(calls).toEqual(["start"]);
+    });
+
+    test("cancelPendingTransition()の先頭で呼ばれる", () => {
+      const audio = new FakeAudio();
+      const calls: string[] = [];
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, () => calls.push("start"));
+      playback.cancelPendingTransition();
+      expect(calls).toEqual(["start"]);
+    });
+
+    test("複数回のplay()呼び出しごとに毎回呼ばれる（1回だけの早期キャンセルでは、pendingMove待機中に始まった新しいクロスフェードを取りこぼす）", async () => {
+      const audio = new FakeAudio();
+      const calls: string[] = [];
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, () => calls.push("start"));
+      await playback.play("A");
+      await playback.play("B");
+      await playback.play("C");
+      expect(calls).toEqual(["start", "start", "start"]);
+    });
+  });
 });

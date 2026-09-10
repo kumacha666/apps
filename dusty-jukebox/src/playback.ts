@@ -126,7 +126,18 @@ export class PlaybackController {
   constructor(
     private readonly audio: AudioElementLike,
     private readonly getValidAccessToken: GetValidAccessToken,
-    private readonly onPlaybackError: PlaybackErrorHandler = () => {}
+    private readonly onPlaybackError: PlaybackErrorHandler = () => {},
+    // クロスフェード（main.ts）の進行中ランプを、実際に新しい遷移がコミットされる瞬間
+    // （play()/pause()/cancelPendingTransition()それぞれの先頭、generationを進める直前）に
+    // 必ず打ち切る（2026-09-10、Codexレビュー指摘：P1）。main.ts側でhandleQueuePlayback()の
+    // 先頭で一度だけcancelCrossfadeIfActive()を呼ぶだけでは、その後の操作がPlaybackQueueの
+    // pendingMoveチェーンで長時間待たされている間に新しいクロスフェードが始まってしまい、
+    // 手動操作が実際にplay()へ到達した時点では既に別のクロスフェードが進行中、という
+    // 取りこぼしがあった。reclaimPendingFadeVolume()と同じ「generationを進める全操作の
+    // 先頭で必ず呼ぶ」という既存の設計パターンに乗せることで、非同期の待機経路の長さに
+    // 関わらず、実際に遷移がコミットされる瞬間には必ずクロスフェードが打ち切られていることを
+    // 保証する。
+    private readonly onTransitionStart: () => void = () => {}
   ) {
     audio.addEventListener("error", () => {
       if (this.rejectedGeneration === this.generation) {
@@ -143,6 +154,7 @@ export class PlaybackController {
 
   async play(fileId: string, position = 0, options: PlayOptions = {}): Promise<void> {
     this.reclaimPendingFadeVolume();
+    this.onTransitionStart();
     this.generation += 1;
     const playGeneration = this.generation;
     const isSuperseded = () => this.generation !== playGeneration;
@@ -263,6 +275,7 @@ export class PlaybackController {
   // 行わない（setList()の直後に新しいplayAt()が続く場合、無関係にaudioを止めてしまわないため）。
   cancelPendingTransition(): void {
     this.reclaimPendingFadeVolume();
+    this.onTransitionStart();
     this.generation += 1;
     this.generationReasons.set(this.generation, "cancel");
   }
@@ -285,6 +298,7 @@ export class PlaybackController {
     // reclaimPendingFadeVolume()を呼ぶことで、後続の操作がaudio.volumeを読み書きする
     // 前に必ず正しいベースラインへ戻し、「後続の種類」を判定する必要自体を無くしている）。
     this.reclaimPendingFadeVolume();
+    this.onTransitionStart();
     this.generation += 1;
     const pauseGeneration = this.generation;
     this.generationReasons.set(pauseGeneration, "pause");

@@ -959,6 +959,62 @@ describe("PlaybackQueue", () => {
       await queue.next();
       expect(positions).toEqual([undefined, undefined]);
     });
+
+    // 2026-09-10、Codexレビュー指摘：P1。findNext()による再探索ではなく、先読み再生していた
+    // 曲へ必ず確定させることを検証する。
+    describe("advanceToPreviewedFile", () => {
+      test("先読みしていた曲へ確定し、startPositionをplayer.play()へ渡す", async () => {
+        const positions: (number | undefined)[] = [];
+        const audio = new Audio();
+        const queue = new PlaybackQueue(
+          { play: async (_id, position) => { positions.push(position); } },
+          audio
+        );
+        queue.setList([song("a"), song("b"), song("c")]);
+        await queue.playAt(0);
+        await queue.advanceToPreviewedFile("b", 12);
+        expect(queue.currentPlayingFileId()).toBe("b");
+        expect(positions).toEqual([undefined, 12]);
+      });
+
+      test("ランプ中に並べ替えられても、findNext()の再探索結果ではなく先読みしていた曲へ確定する", async () => {
+        const played: string[] = [];
+        const audio = new Audio();
+        const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+        queue.setList([song("a"), song("b"), song("c")]);
+        await queue.playAt(0);
+        // クロスフェードが"b"を先読みし始めた後、キューが並べ替えられ"c"がfindNext()の
+        // 結果になる状況を模擬する。
+        queue.moveSong("c", "up");
+        await queue.whenIdle();
+        expect(queue.peekNextFileId()).toBe("c");
+        await queue.advanceToPreviewedFile("b");
+        expect(played).toEqual(["a", "b"]);
+        expect(queue.currentPlayingFileId()).toBe("b");
+      });
+
+      test("先読みしていた曲が除外されていた場合はfindNext()の結果へフォールバックする", async () => {
+        const played: string[] = [];
+        const audio = new Audio();
+        const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+        queue.setList([song("a"), song("b"), song("c")]);
+        await queue.playAt(0);
+        queue.exclude("b", true);
+        await queue.advanceToPreviewedFile("b");
+        expect(played).toEqual(["a", "c"]);
+        expect(queue.currentPlayingFileId()).toBe("c");
+      });
+
+      test("次の曲が無ければfalseを返しisPlayingFromQueueがfalseへ遷移する", async () => {
+        const audio = new Audio();
+        const queue = new PlaybackQueue({ play: async () => {} }, audio);
+        queue.setList([song("a")]);
+        await queue.playAt(0);
+        const started = await queue.advanceToPreviewedFile("missing");
+        expect(started).toBe(false);
+        expect(queue.isPlayingFromQueue()).toBe(false);
+      });
+    });
   });
 });
 

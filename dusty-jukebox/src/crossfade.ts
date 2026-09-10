@@ -62,13 +62,19 @@ export interface ShouldStartCrossfadeParams {
   duration: number;
   currentTime: number;
   crossfadeDurationMs: number;
+  // 主audio要素が一時停止中かどうか（2026-09-10、Codexレビュー指摘：P1）。一時停止中は
+  // isPlayingFromQueue()がtrueのまま残るため（アプリの一時停止ボタン・Media Sessionの
+  // 一時停止のいずれも、キュー由来の再生であることそのものは変えない）、この判定が無いと、
+  // 一時停止してから曲末尾3秒以内へシークするだけで先読み再生が始まり、Playを押していない
+  // のに音が鳴り出してしまう。
+  audioPaused: boolean;
 }
 
 // 現在の再生位置がクロスフェードを開始すべきタイミング（曲の末尾までの残り時間がクロスフェード
 // の長さ以下）かどうか。durationが未確定（NaN/Infinity/0以下、ストリーミング開始直後でメタ
 // データ未確定の間）は開始しない（seekBar.tsのisSeekableDurationと同じ理由）。
 export function shouldStartCrossfade(params: ShouldStartCrossfadeParams): boolean {
-  if (!params.crossfadeEnabled || params.isCrossfading || !params.hasNextSong) return false;
+  if (!params.crossfadeEnabled || params.isCrossfading || !params.hasNextSong || params.audioPaused) return false;
   if (!Number.isFinite(params.duration) || params.duration <= 0) return false;
   const remainingMs = (params.duration - params.currentTime) * 1000;
   return remainingMs > 0 && remainingMs <= params.crossfadeDurationMs;

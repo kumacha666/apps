@@ -1049,10 +1049,14 @@ test("キュー内自然終了に近づくとクロスフェードが発生し�
 
   // E2Eモックの音声は実際にはデコードできないダミーデータのため、durationは自然には
   // 確定しない（既存のシークバー/Media Session E2Eの制限と同じ理由）。曲の末尾に近づいた
-  // 状態をテスト側から直接作り、timeupdateでクロスフェード判定をトリガーする。
+  // 状態をテスト側から直接作り、timeupdateでクロスフェード判定をトリガーする。pausedも
+  // 同じ理由でモックされたplay()は実際にはネイティブ再生を開始しないため常にtrueのまま
+  // 残ってしまい（2026-09-10、Codexレビュー指摘：P1の`audioPaused`ガード追加により判明）、
+  // 上書きしないとクロスフェード自体が開始条件を満たさない。
   await page.evaluate(() => {
     const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
     Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
     audio.currentTime = 179.99;
     audio.dispatchEvent(new Event("timeupdate"));
   });
@@ -1090,6 +1094,7 @@ test("手動で「次へ」を押すとクロスフェードが中断され、�
   await page.evaluate(() => {
     const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
     Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
     audio.currentTime = 179.99;
     audio.dispatchEvent(new Event("timeupdate"));
   });
@@ -1116,4 +1121,57 @@ test("手動で「次へ」を押すとクロスフェードが中断され、�
   // されたトークン（crossfadeGeneration）のため、以後の再生状態を巻き戻さないことも確認する。
   await page.clock.runFor(100);
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+});
+
+test("クロスフェードのランプ中に主audio要素が自然終了（ended）しても、ランプを追い越して再度先頭から再生し直さない（2026-09-10、Codexレビュー指摘：P1）", async ({ context, page }) => {
+  // クロスフェードは残り時間がクロスフェード長（E2Eでは50ms）以下になった時点で開始する一方、
+  // ランプ自体は常に固定長走るため、開始タイミング次第で主audio要素の実際の'ended'はランプ
+  // 完了より先に発火しうる。この'ended'を無視せず通常通りadvanceOnEnded()してしまうと、
+  // クロスフェードのランプ・先読み再生とは別に次の曲が0秒目から即座に開始され、直後に
+  // クロスフェード側のハンドオフがそれを追い越して曲を最初からやり直してしまう（音量も
+  // 一時的にvolume=1へ強制的に戻る）。
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+
+  // ランプが完了する前に、主audio要素の自然終了（'ended'）を模擬発火する。
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("ended"));
+  });
+
+  // 'ended'に反応して即座に次の曲（album-track-2）へ切り替わっていないこと（ランプがまだ
+  // 完了していないため、クロスフェード自身のハンドオフが先に進んでいてはならない）。
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  // ハンドオフ後、duration/paused上書きを元に戻す（テスト用の"末尾間近"状態を解除しないと、
+  // 割り込み後に切り替わる次の曲でも同じ条件が成立し、新しいクロスフェードが連鎖してしまう。
+  // 上記の成功パステストと同じ理由）。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: NaN, configurable: true });
+    audio.currentTime = 0;
+  });
+
+  // ランプ完了まで仮想時刻を進めると、クロスフェード自身のハンドオフによって（'ended'による
+  // 二重の遷移ではなく）1回だけ次の曲へ引き継がれる。
+  await page.clock.runFor(100);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
 });

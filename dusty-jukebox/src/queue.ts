@@ -237,6 +237,24 @@ export class PlaybackQueue {
       return started;
     });
   }
+  // クロスフェード向け：ランプ中に先読み再生していた曲を、途中でキューが変更されても必ず
+  // その曲へ確定させる（2026-09-10、Codexレビュー指摘：P1）。next()/advanceOnEnded()は
+  // 実行時点の最新の並びでfindNext()を再探索するため、ランプ中にexclude/並べ替え/シャッフル
+  // 等でキューが変わっていると、既に先読み再生していた曲と異なる曲へコミットしてしまい、
+  // 一部の曲が丸ごとスキップされたり別の曲へ不自然に切り替わったりする不具合があった。
+  // 先読みしていた曲が既にリストから消えている・除外された場合のみ、通常のfindNext()へ
+  // フォールバックする（advanceOnEnded()と同じく、次の曲が無ければisQueuePlaybackをfalseへ
+  // 遷移させる）。
+  advanceToPreviewedFile(fileId: string, startPosition?: number): Promise<boolean> {
+    return this.move(async (generation) => {
+      const stillQueued = this.list().some((song) => song.fileId === fileId);
+      const target = stillQueued ? fileId : this.findNext()?.fileId;
+      return target ? this.playAndCommit(target, generation, startPosition, false) : false;
+    }).then((started) => {
+      if (!started) this.isQueuePlayback = false;
+      return started;
+    });
+  }
   // fadeOut：next()と同じ（開発体制#42④）。
   previous(fadeOut = false): Promise<boolean> { return this.move(async (generation) => { if (this.currentFileId === null) return false; const currentIndex = this.songs.findIndex((song) => song.fileId === this.currentFileId); for (let index = currentIndex - 1; index >= 0; index -= 1) { const song = this.songs[index]; if (!this.isExcluded(song.fileId)) return this.playAndCommit(song.fileId, generation, undefined, fadeOut); } return false; }); }
   resumeCurrent(position: number): Promise<boolean> { return this.move(async (generation) => this.currentFileId ? this.playAndCommit(this.currentFileId, generation, position) : false, true); }
