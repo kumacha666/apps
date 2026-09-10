@@ -1500,6 +1500,66 @@ test("Service Workerの準備待ちが遅延している間も、手動遷移ガ
   expect(await isGuardActive()).toBe(false);
 });
 
+test("外部単曲試聴（この曲を再生）の実行中も、手動遷移ガードが掛かりキュー側のクロスフェードを止める（2026-09-10、ChatGPT再レビュー指摘：P1）", async ({ context, page }) => {
+  // handlePlay()（キュー外の単曲試聴）はcancelCrossfadeIfActive()を1回呼ぶだけで、
+  // handleQueuePlayback()と異なりmanualTransitionCountを一切増減していなかった。外部再生の
+  // 試行中（Service Worker準備待ち・実際のplay()解決待ちのいずれも）は、まだ
+  // queue.notifyExternalPlaybackStarted()が呼ばれていないため、キュー側は
+  // isPlayingFromQueue()がtrueのまま・audioPlayerのpausedもfalseのまま残る。この間にキュー曲が
+  // 末尾3秒圏内に入ると、外部再生が「選ばれていない」キューの次曲へのクロスフェードを開始・
+  // 完了させてしまいうる（PR仕様「外部単曲試聴はクロスフェード対象外」に反する）。
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  // 外部単曲試聴（別のfileId）の主audio要素へのplay()呼び出しだけを保留し、その待機中の
+  // 状態を検証できるようにする。
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player" && this.src.includes("external-track")) {
+          return new Promise<void>((resolve) => {
+            (window as unknown as { __e2eReleaseExternalPlay?: () => void }).__e2eReleaseExternalPlay = resolve;
+          });
+        }
+        return originalPlay.call(this);
+      },
+    });
+  });
+
+  await page.locator("#play-file-id").fill("external-track");
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+
+  const isGuardActive = () => page.evaluate(() => (window as unknown as { __e2e: { isManualTransitionInFlight: () => boolean } }).__e2e.isManualTransitionInFlight());
+  await expect.poll(() => page.evaluate(() => Boolean((window as unknown as { __e2eReleaseExternalPlay?: () => void }).__e2eReleaseExternalPlay))).toBe(true);
+  expect(await isGuardActive()).toBe(true);
+
+  // 外部再生の試行中、キュー側の主audio要素（同じDOM要素）が末尾3秒圏内に入っても、
+  // ガードによりクロスフェードは開始されない。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  const crossfadeSrc = await page.evaluate(() => document.querySelector("#audio-player-crossfade")!.getAttribute("src"));
+  expect(crossfadeSrc).toBeNull();
+
+  await page.evaluate(() => (window as unknown as { __e2eReleaseExternalPlay: () => void }).__e2eReleaseExternalPlay());
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /external-track(\?|$)/);
+  expect(await isGuardActive()).toBe(false);
+});
+
 test("一時停止ボタンを連打（1回目のフェード完了前に2回目）しても、両方が解決するまで手動遷移ガードが維持される（2026-09-10、Codexレビュー指摘：P1）", async ({ context, page }) => {
   // 修正前はmanualTransitionInFlightがbooleanのため、1回目のクリックのpause()フェードが
   // 2回目のクリックにより追い越されて早期returnした時点で、1回目の`finally`がガードを

@@ -1193,11 +1193,23 @@ async function handlePlay(): Promise<void> {
     audioEnded: audioPlayer.ended,
   });
   cancelCrossfadeIfActive();
+  // handleQueuePlayback()と同じ理由でガードをこのクロージャ自身の中（SW準備待ちより前）に
+  // 置く（2026-09-10、ChatGPTレビュー指摘：P1）。外部単曲試聴もキュー由来の操作と同じく
+  // 「明示的な手動遷移」だが、cancelCrossfadeIfActive()の1回きりの呼び出しだけでは、この後の
+  // Service Worker準備待ちが遅延している間にキュー側の曲が末尾3秒圏内へ入った場合、外部再生が
+  // まだ`queue.notifyExternalPlaybackStarted()`を呼んでおらず（`isPlayingFromQueue()`が
+  // true・audio.pausedがfalseのまま）、その待機中にクロスフェードが開始・完了してしまう窓が
+  // 残っていた（PR仕様「外部単曲試聴はクロスフェード対象外」に反する）。
   await handlePlaybackAction(async () => {
-    setStatus("Service Worker経由で再生を開始しています...");
-    return canResumeExternal
-      ? startExternalPlaybackAt(fileId, currentPlayback, audioPlayer.currentTime)
-      : startExternalPlayback(fileId, currentPlayback);
+    manualTransitionCount += 1;
+    try {
+      setStatus("Service Worker経由で再生を開始しています...");
+      return canResumeExternal
+        ? await startExternalPlaybackAt(fileId, currentPlayback, audioPlayer.currentTime)
+        : await startExternalPlayback(fileId, currentPlayback);
+    } finally {
+      manualTransitionCount -= 1;
+    }
   });
 }
 
