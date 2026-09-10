@@ -8,7 +8,7 @@
 // （runFullScan、フォルダ全体の再帰走査＋バッチ処理・中断再開）を行う。完了後
 // （hasCompletedInitialScan=true）はrunDifferentialSync（changes.list消費）に切り替わる。
 import { AuthError, DriveAuth } from "./auth";
-import { PlaybackAuthenticationRequiredError, PlaybackController } from "./playback";
+import { PlaybackAuthenticationRequiredError, PlaybackController, streamUrl } from "./playback";
 import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStatus";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
@@ -40,6 +40,7 @@ const QUEUE_SORT_FIELD_LABELS: Record<QueueSortField, string> = {
 import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState } from "./mediaSession";
 import { formatSeekTime, isSeekableDuration } from "./seekBar";
 import { shouldResumeExternalPlayback } from "./externalPlayback";
+import { CROSSFADE_DURATION_MS, CROSSFADE_PREVIEW_START_TIMEOUT_MS, runCrossfade, shouldStartCrossfade } from "./crossfade";
 import { registerStreamAuthResponder } from "./streamAuth";
 import {
   createChangesListFn,
@@ -229,6 +230,7 @@ function render(): void {
       <button id="play-btn" type="button" disabled>この曲を再生</button>
       <div class="now-playing-bar">
         <audio id="audio-player"></audio>
+        <audio id="audio-player-crossfade"></audio>
         <div class="seek-bar">
           <span id="seek-current-time" class="seek-time">0:00</span>
           <input id="seek-slider" type="range" min="0" max="0" step="0.1" value="0" disabled />
@@ -257,6 +259,7 @@ function render(): void {
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
         <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="pause-btn" type="button" disabled>一時停止</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button> <button id="clear-queue-btn" type="button" disabled>再生リストをクリア</button></div>
         <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトする</label>
+        <label><input id="crossfade-toggle" type="checkbox" /> 曲間をクロスフェードする</label>
         <div>
           <label>並び替え
             <select id="sort-field" disabled>
@@ -372,6 +375,12 @@ function wireSeekBar(audioPlayer: HTMLAudioElement): void {
     // 打ち切られた）ため、無条件にaudio.currentTimeへ適用すると新曲の再生位置を無関係な
     // 値で誤って書き換えてしまう。ドラッグが継続中だった場合だけ実際にシークする。
     if (!seekBarDragging) return;
+    // 進行中のクロスフェードがあれば打ち切る（2026-09-10、Codexレビュー指摘：P1）。
+    // シークバーの操作はcrossfadeGenerationを変えないため、クロスフェード自身の
+    // isCancelled()判定（世代比較のみ）ではシークを検知できず、ユーザーが曲の末尾から
+    // 離れる方向へシークしても先読み再生・ランプが止まらず、3秒後に予期しない曲送りが
+    // 起きてしまっていた。
+    cancelCrossfadeIfActive();
     audioPlayer.currentTime = Number(slider.value);
     seekBarDragging = false;
   });
@@ -385,6 +394,194 @@ function numberOrUndefined(value: string): number | undefined { const n = Number
 // 機能（曲間で2曲が重なる本格版、別PR）がこの経路を専用に扱うため。
 function fadeOutEnabled(): boolean {
   return el<HTMLInputElement>("fade-out-toggle").checked;
+}
+
+// 曲間のクロスフェード（開発体制#42④続き、2026-09-10）。手動スキップ時のフェードアウトとは
+// 独立したチェックボックス（既定OFF）で、キュー内の曲の自然終了時のみ適用する（手動スキップ・
+// 単曲試聴・保存プレイリスト読み込み直後の先頭曲等は対象外、ユーザーとの相談で確認済み）。
+function crossfadeEnabled(): boolean {
+  return el<HTMLInputElement>("crossfade-toggle").checked;
+}
+
+// 進行中のクロスフェードの世代。cancelCrossfadeIfActive()が進めることで、進行中のrunCrossfade()
+// のisCancelled()判定・完了後の後始末処理が「自分が開始したクロスフェードが依然として有効か」を
+// 確認できるようにする（手動スキップ等でユーザーが割り込んだ場合に、後から解決するクロス
+// フェードの後始末が新しい操作の状態を巻き込んで壊さないようにするため。playback.tsの
+// generationパターンと同じ考え方）。
+let crossfadeGeneration = 0;
+let crossfading = false;
+// 明示的な手動遷移（次へ/前へ/曲名クリック/シャッフル等キュー由来の操作、および「一時停止」
+// ボタン）が進行中の件数（2026-09-10、ChatGPTレビュー指摘：P1、続けてCodexレビュー指摘で
+// booleanからカウンタへ変更）。手動フェードアウト（fadeOutEnabled()時、既定約2秒）を伴う
+// 操作は、この待機中も旧曲がまだ再生中のままtimeupdateが継続するため、crossfading・
+// audio.paused・isPlayingFromQueue()だけではクロスフェードの開始を防げず、フェード完了直前に
+// onTransitionStart()で最終的な二重commitこそ防げるものの、その手前でクロスフェードが実際に
+// 開始・先読み再生してしまう窓が生じていた（PRの仕様「クロスフェードはキュー内曲の自然終了時
+// のみ、手動スキップとは別」に反する）。booleanだった当初の実装は、①handleQueuePlayback()が
+// 認証継続の再試行（handlePlaybackAction()内部のplaybackAuthGate.defer()）を経由する場合に
+// このガードが再試行の間は掛からない、②一時停止ボタンを連打（1回目のフェード完了前に2回目の
+// クリック）すると1回目の`finally`が2回目のフェードがまだ進行中でもガードを解除してしまう、
+// という2つの見落としがあった（いずれも2026-09-10、Codexレビュー指摘：P1）。カウンタ方式へ
+// 変更し、増減の対象を「handleQueuePlayback()がhandlePlaybackAction()へ渡すクロージャ自身の
+// 実行中」（再試行時も同じクロージャが再実行されるため自然にガードが掛かる）・「一時停止ボタンの
+// 各クリックごとの独立したフェード完了待ち」に変更した。0より大きい間はガードが掛かる。
+let manualTransitionCount = 0;
+
+// クロスフェード中に手動ナビゲーション（次へ/前へ/曲名クリック等）が割り込んだ場合、進行中の
+// ランプ・先読み再生を打ち切り、状態を復元する。handleQueuePlayback()の先頭から呼ぶ
+// （クロスフェード自身の完了処理はhandleQueuePlayback()を経由せず直接handlePlaybackAction()を
+// 呼ぶため、ここでの打ち切りが自分自身を巻き込むことはない）。
+function cancelCrossfadeIfActive(): void {
+  if (!crossfading) return;
+  crossfadeGeneration += 1;
+  crossfading = false;
+  el<HTMLAudioElement>("audio-player").volume = 1;
+  const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
+  crossfadeAudio.pause();
+  crossfadeAudio.removeAttribute("src");
+  crossfadeAudio.load();
+}
+
+let crossfadeStreamGeneration = 0;
+
+// キュー内の曲が自然終了に近づいたら、次の曲を先読み再生しながら2曲を重ねて鳴らす
+// （wireSeekBar()と同じくaudioPlayerのtimeupdateから駆動する）。
+async function maybeStartCrossfade(): Promise<void> {
+  const audioPlayer = el<HTMLAudioElement>("audio-player");
+  if (
+    !shouldStartCrossfade({
+      crossfadeEnabled: crossfadeEnabled(),
+      isCrossfading: crossfading,
+      hasNextSong: Boolean(queue?.peekNextFileId()),
+      duration: audioPlayer.duration,
+      currentTime: audioPlayer.currentTime,
+      crossfadeDurationMs: CROSSFADE_DURATION_MS,
+      // 一時停止中はクロスフェードを始めない（2026-09-10、Codexレビュー指摘：P1）。
+      // isPlayingFromQueue()は一時停止しても変わらないままのため、audio要素自身の
+      // paused状態も別途確認する必要がある。
+      audioPaused: audioPlayer.paused,
+      // 手動フェードアウト待機中はクロスフェードを始めない（2026-09-10、ChatGPTレビュー
+      // 指摘：P1。manualTransitionCountの定義コメント参照）。
+      manualTransitionInFlight: manualTransitionCount > 0,
+    }) ||
+    !queue?.isPlayingFromQueue()
+  ) return;
+  const nextFileId = queue.peekNextFileId();
+  if (!nextFileId || !playback) return;
+  // 現在有効なトークンが無ければクロスフェードを諦め、通常の自然終了フロー（'ended'→
+  // advanceOnEnded()）に委ねる（認証継続フロー自体はこの先読み再生には組み込まない、
+  // v1の既知の制限としてCLAUDE.mdに記録する）。
+  const token = auth.getAccessToken();
+  if (!token) return;
+
+  crossfading = true;
+  const myGeneration = crossfadeGeneration;
+  const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
+  crossfadeStreamGeneration -= 1;
+  crossfadeAudio.src = streamUrl(nextFileId, crossfadeStreamGeneration);
+  crossfadeAudio.volume = 0;
+  try {
+    await withTimeout(crossfadeAudio.play(), CROSSFADE_PREVIEW_START_TIMEOUT_MS, "クロスフェードの先読み再生がタイムアウトしました");
+  } catch {
+    if (crossfadeGeneration === myGeneration) {
+      crossfading = false;
+      // withTimeout()はタイムアウト時に元のcrossfadeAudio.play()自体を中断できない
+      // （2026-09-10、Codexレビュー指摘：P2）。Driveストリームがタイムアウト後に遅れて
+      // 復旧しplay()が実際に解決すると、crossfadingが既にfalseに戻っているため
+      // cancelCrossfadeIfActive()も早期returnし、この第二audio要素がsrcを保持したまま
+      // 無音で再生され続け、以後Drive呼び出し・デコーダーが不要に動き続けてしまう。
+      // 明示的に一時停止・src除去して後始末する。
+      crossfadeAudio.pause();
+      crossfadeAudio.removeAttribute("src");
+      crossfadeAudio.load();
+      // 先読み再生の開始自体に失敗した場合、その間に主audio要素側の'ended'を抑止していた
+      // 分の遷移が失われている可能性がある（2026-09-10、Codexレビュー指摘：P1。onEnded側は
+      // crossfading中を無条件で無視するため）。既に曲が終了していれば通常の自然終了フローへ
+      // フォールバックする。
+      if (audioPlayer.ended) void handleQueuePlayback(() => queue?.advanceOnEnded());
+    }
+    return;
+  }
+  if (crossfadeGeneration !== myGeneration) return;
+
+  // 先読み再生の開始（await withTimeout(crossfadeAudio.play(), ...)）に時間がかかり、その間に
+  // 主audio要素側の残り時間（開始時点で3秒以内）が尽きて自然終了してしまっている場合（2026-09-10、
+  // Codexレビュー指摘：P2。この'ended'はcrossfading中のため既に抑止済み）。既に無音の主audio
+  // 要素を相手に3秒かけてゆっくりランプする意味は無く、その間ずっと入場側がvolume 0のまま
+  // 無音になってしまうため、ランプ自体を省略して直ちに完了値へ進める。
+  const rampDurationMs = audioPlayer.ended ? 0 : CROSSFADE_DURATION_MS;
+  await runCrossfade(audioPlayer, crossfadeAudio, rampDurationMs, {
+    isCancelled: () => crossfadeGeneration !== myGeneration,
+    // 次の曲（入場側）自体がクロスフェード長より短く、ランプ完了前に自然終了した場合
+    // （2026-09-10、Codexレビュー指摘：P2続き）。何もしないとランプの残りが無音のまま進み、
+    // handoffPositionが入場側自身の末尾（≒次の曲の末尾）になってしまう。ランプを直ちに
+    // 完了値まで進めて終了する（handoffPosition以降は主audio要素が同じ末尾位置から始まる
+    // ため、通常の自然終了フローで速やかに次の曲へ進む＝短い曲を丸ごと再生した扱いになる）。
+    shouldFinishEarly: () => crossfadeAudio.ended,
+  });
+  if (crossfadeGeneration !== myGeneration) return;
+
+  // ランプ完了後、第二audio要素を即座に一時停止して再生位置を固定する（2026-09-10、
+  // Codexレビュー指摘：P1）。一時停止せずcurrentTimeだけを読むと、この後のSW準備待ち・
+  // 主audio要素側の実際のストリーム開始が遅れた分だけ第二要素がさらに再生を続けてしまい、
+  // 主audio要素へのハンドオフ位置が古いまま（＝曲の一部を再度聞くことになる）drift する。
+  crossfadeAudio.pause();
+  const handoffPosition = crossfadeAudio.currentTime;
+  // 主audio要素のendedは、ハンドオフのPlaybackController.play()がaudio.srcを新しい曲へ
+  // 差し替えた時点でネイティブにfalseへリセットされる（2026-09-10、Codexレビュー指摘：P2）。
+  // 認証エラー以外の失敗（play()自体の拒否等）はこのsrc差し替えの後に起きるため、後段の
+  // フォールバック判定でライブに`audioPlayer.ended`を読み直すと、退場側が実際には自然終了
+  // していたにも関わらずfalseに戻ってしまい判定できない。ハンドオフ開始前の値をここで
+  // 一度だけ確定させ、以後はこの値を使う。
+  const outgoingEnded = audioPlayer.ended;
+  // handleQueuePlayback()は先頭でcancelCrossfadeIfActive()を呼ぶため、自分自身の完了処理は
+  // それを経由せずhandlePlaybackAction()を直接呼ぶ（awaitServiceWorkerReady()もhandleQueue
+  // Playback()と同じ内容をここで行う）。ランプ中にexclude/並べ替え/シャッフル等でキューが
+  // 変更されても、既に先読み再生していたnextFileIdへ必ず確定させる（advanceOnEnded()の
+  // fresh findNext()ではなくadvanceToPreviewedFile()を使う。2026-09-10、Codexレビュー指摘：P1）。
+  // フォールバックの判定・実行はこのクロージャ自身の中で行う（2026-09-10、Codexレビュー
+  // 指摘：P2続き）。認証エラーでhandlePlaybackAction()がplaybackAuthGate経由の再試行へ
+  // 委ねた場合、このクロージャ自身が後で（ユーザーが認証を更新した時点で）再実行されるため、
+  // 外側で一度だけ結果を見る形では、初回とは異なる再試行時の成否に対応できなかった
+  // （初回が認証エラーで即returnした時点で外側の判定が確定してしまい、後から再試行が
+  // 認証エラー以外の理由で失敗しても、そのフォールバックが実行されなかった）。
+  const attemptHandoff = async (): Promise<boolean> => {
+    await awaitServiceWorkerReady();
+    try {
+      const started = Boolean(await queue?.advanceToPreviewedFile(nextFileId, handoffPosition));
+      if (!started && manualTransitionCount === 0 && outgoingEnded) {
+        void handleQueuePlayback(() => queue?.advanceOnEnded());
+      }
+      return started;
+    } catch (err) {
+      if (!(err instanceof PlaybackAuthenticationRequiredError) && manualTransitionCount === 0 && outgoingEnded) {
+        void handleQueuePlayback(() => queue?.advanceOnEnded());
+      }
+      throw err;
+    }
+  };
+  await handlePlaybackAction(attemptHandoff);
+  // ハンドオフ自身のplayer.play()呼び出し（queue.advanceToPreviewedFile()→playAndCommit()→
+  // PlaybackController.play()）は、そのメソッド先頭で無条件にonTransitionStart()（＝
+  // cancelCrossfadeIfActive()）を呼ぶため（ラウンド6の修正、クロスフェードの早期キャンセルを
+  // 非同期の待機経路の長さに関わらず保証する設計）、この時点でcrossfadeGenerationは既に
+  // 自分自身の呼び出しによって進んでしまっている（2026-09-10、Codexレビュー指摘：P2続き。
+  // `crossfadeGeneration === myGeneration`は事実上常にfalseになり、このガードに依存していた
+  // 旧実装のクリーンアップ・フォールバック判定コードはどちらも到達不能だった。cancelCrossfade
+  // IfActive()自身がcrossfading・audioPlayer.volume・crossfadeAudioの後始末を既に行っている
+  // ため、通常のケースでは追加の後始末は不要——ただし`advanceToPreviewedFile()`がplayer.play()
+  // へ一度も到達しなかった稀なケース（例：キューが空でフォールバック先も無い場合）に備え、
+  // 冪等な後始末として明示的にも行っておく）。フォールバックを実行するかどうかの判定は
+  // crossfadeGenerationの比較ではなく、現在進行中の手動操作（manualTransitionCount）が
+  // 無いかどうかで行う：手動操作が既に進行中なら、その操作自身が既にキューの遷移を担って
+  // いるため、ここで重複してadvanceOnEnded()を呼んではならない。
+  // ハンドオフの成否に関わらず、クロスフェード自身の状態は直ちに後始末する（フォールバックの
+  // 実行判定・再試行対応はattemptHandoff()自身の中で行うため、ここでは待たない）。
+  crossfading = false;
+  audioPlayer.volume = 1;
+  crossfadeAudio.pause();
+  crossfadeAudio.removeAttribute("src");
+  crossfadeAudio.load();
 }
 // 再生/前へ/次へ/シャッフルはいずれも「再生リストに曲がある間だけ使える」操作のため、有効/無効を
 // まとめて切り替える（開発体制#39④UI-4、シャッフル追加時に既存2ボタンと同じ条件のまま揃える）。
@@ -414,6 +611,7 @@ function updateUnshuffleEnabled(): void {
 // 鳴り続けないよう明示的に一時停止する（読み込んだプレイリストの全曲が索引から消えていた
 // 場合の既存の停止処理と同じ理由。フェードは掛けず即座に止める）。
 function handleClearQueue(): void {
+  cancelCrossfadeIfActive();
   void playback?.pause();
   // Drive側の401等でPlaybackAuthenticationGateに再生継続操作が保留され、
   // 「認証を更新して続行」（#playback-auth-notice）が表示されている状態は
@@ -994,11 +1192,24 @@ async function handlePlay(): Promise<void> {
     audioPaused: audioPlayer.paused,
     audioEnded: audioPlayer.ended,
   });
+  cancelCrossfadeIfActive();
+  // handleQueuePlayback()と同じ理由でガードをこのクロージャ自身の中（SW準備待ちより前）に
+  // 置く（2026-09-10、ChatGPTレビュー指摘：P1）。外部単曲試聴もキュー由来の操作と同じく
+  // 「明示的な手動遷移」だが、cancelCrossfadeIfActive()の1回きりの呼び出しだけでは、この後の
+  // Service Worker準備待ちが遅延している間にキュー側の曲が末尾3秒圏内へ入った場合、外部再生が
+  // まだ`queue.notifyExternalPlaybackStarted()`を呼んでおらず（`isPlayingFromQueue()`が
+  // true・audio.pausedがfalseのまま）、その待機中にクロスフェードが開始・完了してしまう窓が
+  // 残っていた（PR仕様「外部単曲試聴はクロスフェード対象外」に反する）。
   await handlePlaybackAction(async () => {
-    setStatus("Service Worker経由で再生を開始しています...");
-    return canResumeExternal
-      ? startExternalPlaybackAt(fileId, currentPlayback, audioPlayer.currentTime)
-      : startExternalPlayback(fileId, currentPlayback);
+    manualTransitionCount += 1;
+    try {
+      setStatus("Service Worker経由で再生を開始しています...");
+      return canResumeExternal
+        ? await startExternalPlaybackAt(fileId, currentPlayback, audioPlayer.currentTime)
+        : await startExternalPlayback(fileId, currentPlayback);
+    } finally {
+      manualTransitionCount -= 1;
+    }
   });
 }
 
@@ -1048,10 +1259,30 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined): 
   // 差し替わる（失敗時に据え置いても実害は無い：単曲試聴の「resume」機会を1回逃すだけで、
   // 次回「この曲を再生」が先頭から再生し直すフォールバックへ倒れるだけのため安全側）。
   lastExternalFileId = null;
+  // 進行中のクロスフェードがあれば、この明示的なナビゲーション操作を優先して打ち切る
+  // （cancelCrossfadeIfActive()参照。クロスフェード自身の完了処理はこの関数を経由しないため、
+  // ここでの打ち切りが自分自身を巻き込むことはない）。
+  cancelCrossfadeIfActive();
+  // ガードの増減をhandlePlaybackAction()へ渡すクロージャ自身の実行中に限定する（2026-09-10、
+  // Codexレビュー指摘：P1。manualTransitionCountの定義コメント参照）。handlePlaybackAction()は
+  // PlaybackAuthenticationRequiredError発生時、同じ`action`引数（＝このクロージャ自身）を
+  // playbackAuthGate.defer(() => handlePlaybackAction(action))で後から再実行するため、この
+  // クロージャの内側に増減を置くことで、再試行時も自然に同じガードが再び掛かる（外側の
+  // try/finallyでは、最初のhandlePlaybackAction()呼び出しが認証待ちで即座に正常returnした
+  // 時点でガードが解除され、実際の再試行の間はガードが掛からなくなってしまっていた）。
+  // increment自体はawaitServiceWorkerReady()より前に行う（2026-09-10、Codexレビュー指摘：
+  // P1続き）。Service Worker準備が遅延している間はガードがまだ掛からず、その待機中に
+  // timeupdateがクロスフェードを開始・完了させてしまい、準備完了後にこの手動操作の遷移と
+  // クロスフェードのハンドオフの両方が競合しうる窓が残っていた。
   await handlePlaybackAction(async () => {
-    await awaitServiceWorkerReady();
-    const started = await action();
-    return Boolean(started);
+    manualTransitionCount += 1;
+    try {
+      await awaitServiceWorkerReady();
+      const started = await action();
+      return Boolean(started);
+    } finally {
+      manualTransitionCount -= 1;
+    }
   });
 }
 
@@ -1093,6 +1324,12 @@ function handleNativePlaybackStatus(audio: HTMLAudioElement, eventType: Playback
     hasEnded: audio.ended,
   });
   if (status !== null) setStatus(status);
+  // クロスフェードのランプ中に主audio要素が自然終了（'ended'、同時に'pause'も発火する）しても、
+  // 実際には第二audio要素経由で音声が鳴り続けているため、Media Sessionのplaybackstateを
+  // "paused"にしてはならない（2026-09-10、Codexレビュー指摘：P1）。ここでpaused扱いにすると、
+  // OS/ヘッドセット側の表示がPlayに切り替わり、それを押すと既に終了済みの主audio要素へ
+  // 再生要求（registerActionHandlersのplayハンドラ）が飛んでしまう。
+  if (eventType === "pause" && crossfading) return;
   // Bluetoothデバイス・OSのロック画面等に再生/一時停止アイコンの状態を反映する。
   updatePlaybackState(navigator.mediaSession, eventType === "playing" ? "playing" : "paused");
 }
@@ -1960,6 +2197,7 @@ function init(): void {
     }
     const audioPlayer = el<HTMLAudioElement>("audio-player");
     wireSeekBar(audioPlayer);
+    audioPlayer.addEventListener("timeupdate", () => void maybeStartCrossfade());
     playback = new PlaybackController(
       audioPlayer,
       () => auth.getAccessToken(),
@@ -1970,7 +2208,11 @@ function init(): void {
         if (!(error instanceof PlaybackAuthenticationRequiredError)) {
           setStatus(error instanceof Error ? error.message : "再生に失敗しました", true);
         }
-      }
+      },
+      // クロスフェード：実際に新しい遷移がコミットされる瞬間（play()/pause()/
+      // cancelPendingTransition()それぞれの先頭）で必ず打ち切る（2026-09-10、
+      // Codexレビュー指摘：P1。詳細はplayback.tsのonTransitionStartコメント参照）。
+      () => cancelCrossfadeIfActive()
     );
     playbackAuthGate = new PlaybackAuthenticationGate(async () => {
       await auth.requestAccessToken({ prompt: "consent" });
@@ -1979,7 +2221,18 @@ function init(): void {
       playback,
       audioPlayer,
       (error) => setStatus(error instanceof Error ? error.message : String(error), true),
-      () => void handleQueuePlayback(() => queue?.advanceOnEnded()),
+      () => {
+        // クロスフェードが進行中の間は、この自然終了（'ended'）は既にクロスフェード自身が
+        // 引き継いでいる遷移の一部のため無視する（2026-09-10、Codexレビュー指摘：P1）。
+        // クロスフェードのランプは常に固定長（CROSSFADE_DURATION_MS）走るため、開始タイミング
+        // 次第で主audio要素の実際の'ended'はランプ完了より先に発火しうる。ここで無条件に
+        // advanceOnEnded()すると、クロスフェードのランプ・先読み再生とは別に次の曲が0秒目から
+        // 即座に開始され、直後にクロスフェード側のハンドオフがそれを追い越して曲を最初から
+        // やり直してしまう（音量も一時的にvolume=1へ強制的に戻る）。先読み再生の開始自体が
+        // 失敗した場合のフォールバックはmaybeStartCrossfade()側で別途処理する。
+        if (crossfading) return;
+        void handleQueuePlayback(() => queue?.advanceOnEnded());
+      },
       (fileId) => registerQueuePlaybackContinuation(fileId, playback!)
     );
     audioPlayer.addEventListener("playing", () => handleNativePlaybackStatus(audioPlayer, "playing"));
@@ -1990,7 +2243,12 @@ function init(): void {
     // Bluetoothの一時停止ボタンを押すたびに二度と同じボタンで再開できなくなってしまう）。
     registerActionHandlers(navigator.mediaSession, {
       play: () => { void audioPlayer.play(); },
-      pause: () => audioPlayer.pause(),
+      // audioPlayer.pause()はPlaybackController.pause()を経由しないネイティブ直接呼び出し
+      // のため、PlaybackController側のonTransitionStartフック（play/pause/cancelPending
+      // Transitionの先頭で発火）は通らない。クロスフェード中にBluetooth/OSのメディアキーで
+      // 一時停止すると、主audio要素だけが止まり第二audio要素は鳴り続け、その後のハンドオフが
+      // 一時停止を勝手に取り消してしまう不具合があった（2026-09-10、Codexレビュー指摘：P1）。
+      pause: () => { cancelCrossfadeIfActive(); audioPlayer.pause(); },
       previoustrack: () => void handleQueuePlayback(() => queue?.previous(fadeOutEnabled())),
       nexttrack: () => void handleQueuePlayback(() => queue?.next(fadeOutEnabled())),
     });
@@ -1998,7 +2256,16 @@ function init(): void {
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
     el<HTMLButtonElement>("retry-extraction-btn").addEventListener("click", () => void handleRetryExtraction());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
-    el<HTMLButtonElement>("pause-btn").addEventListener("click", () => void playback?.pause(fadeOutEnabled()));
+    el<HTMLButtonElement>("pause-btn").addEventListener("click", () => {
+      cancelCrossfadeIfActive();
+      // フェード完了までの待機中（manualTransitionCountの定義コメント参照）は新しい
+      // クロスフェードの開始を防ぐ（2026-09-10、ChatGPTレビュー指摘：P1、続けてCodexレビュー
+      // 指摘：P1。連打で2回目のクリックが1回目のフェード完了前に発生すると、1回目の
+      // `finally`が2回目のフェードがまだ進行中でもガードを解除してしまうため、booleanでは
+      // なくカウンタで各クリックごとの完了待ちを独立させる）。
+      manualTransitionCount += 1;
+      void playback?.pause(fadeOutEnabled()).finally(() => { manualTransitionCount -= 1; });
+    });
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
     el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
     el<HTMLButtonElement>("create-queue-btn").addEventListener("click", createQueueFromFilters);
@@ -2073,6 +2340,7 @@ if (import.meta.env.VITE_E2E === "true") {
         loadPlaylists: (spreadsheetId: string) => Promise<boolean>;
         getPlaylistsCommitCount: () => number;
         getLastExternalPlaybackPosition: () => number | null;
+        isManualTransitionInFlight: () => boolean;
       };
     }
   ).__e2e = {
@@ -2085,5 +2353,11 @@ if (import.meta.env.VITE_E2E === "true") {
     // リセットタイミングが実ブラウザと一致するとは限らないため、DOM上のcurrentTime読み取りでは
     // 検証できない）。
     getLastExternalPlaybackPosition: () => lastExternalPlaybackPositionForE2E,
+    // manualTransitionCountのガードが、認証継続の再試行中（handlePlaybackAction()内部の
+    // playbackAuthGate.defer()経由での再実行）・一時停止ボタンの連打中も正しく維持されることを
+    // 直接検証するためのフック（2026-09-10、Codexレビュー指摘：P1×2。crossfade.tsのshould
+    // StartCrossfade()自体は既存のユニットテストでカバー済みのため、main.ts側のガードの
+    // 増減タイミングだけをこのフックで検証する）。
+    isManualTransitionInFlight: () => manualTransitionCount > 0,
   };
 }

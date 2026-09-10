@@ -677,4 +677,73 @@ describe("PlaybackController", () => {
     // 本来のフェード開始前の音量（0.8）を基準にフェードし、その値で一時停止している。
     expect(audio.volume).toBe(0.8);
   });
+
+  // 2026-09-10、Codexレビュー指摘：P1（開発体制#42④、クロスフェードPR）。クロスフェードの
+  // キャンセルを、非同期の待機経路がどれだけ長引いても確実に行うため、実際に新しい遷移が
+  // コミットされる瞬間（play()/pause()/cancelPendingTransition()それぞれの先頭）で
+  // onTransitionStartを必ず呼ぶことを検証する。
+  describe("onTransitionStart", () => {
+    test("play()はsrcを実際にコミットする直前にも呼ぶ（先頭の1回だけでは、トークン確認待ち中に始まった新しいクロスフェードを取りこぼす）", async () => {
+      const audio = new FakeAudio();
+      const calls: string[] = [];
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, () => calls.push("start"));
+      await playback.play("A");
+      expect(calls).toEqual(["start", "start"]);
+    });
+
+    test("pause()は実際に一時停止する直前にも呼ぶ", async () => {
+      const audio = new FakeAudio();
+      const calls: string[] = [];
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, () => calls.push("start"));
+      await playback.play("A");
+      calls.length = 0;
+      await playback.pause();
+      expect(calls).toEqual(["start", "start"]);
+    });
+
+    test("cancelPendingTransition()の先頭で呼ばれる", () => {
+      const audio = new FakeAudio();
+      const calls: string[] = [];
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, () => calls.push("start"));
+      playback.cancelPendingTransition();
+      expect(calls).toEqual(["start"]);
+    });
+
+    test("複数回のplay()呼び出しごとに毎回呼ばれる（1回だけの早期キャンセルでは、pendingMove待機中に始まった新しいクロスフェードを取りこぼす）", async () => {
+      const audio = new FakeAudio();
+      const calls: string[] = [];
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, () => calls.push("start"));
+      await playback.play("A");
+      await playback.play("B");
+      await playback.play("C");
+      expect(calls).toEqual(["start", "start", "start", "start", "start", "start"]);
+    });
+
+    // 2026-09-10、Codexレビュー指摘：P1続き。手動スキップのフェード（FADE_OUT_DURATION_MS、
+    // 約2秒）待ち中に旧曲がクロスフェードの残り時間（3秒）閾値へ入ると、メソッド先頭の
+    // 一度きりの呼び出しでは間に合わず、新しいクロスフェードが始まってしまってから
+    // このplay()がsrcをコミットする、という競合があった。フェード待ちの間にonTransitionStart
+    // が呼ばれておらず（＝先頭の1回のみ）、フェード完了後・実際のsrcコミット直前に
+    // もう一度呼ばれることを検証する。
+    test("fadeOut指定のplay()は、フェード待ちの間は呼ばず、フェード完了後・srcコミット直前に再度呼ぶ", async () => {
+      vi.useFakeTimers();
+      const audio = new FakeAudio();
+      const calls: string[] = [];
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, () => calls.push("start"));
+      await playback.play("A");
+      calls.length = 0;
+      audio.volume = 0.8;
+
+      const playPromise = playback.play("B", 0, { fadeOut: true });
+      // フェード開始直後：先頭の1回のみ呼ばれている。
+      expect(calls).toEqual(["start"]);
+      await vi.advanceTimersByTimeAsync(1000);
+      // フェード（約2秒）の途中：まだ2回目は呼ばれていない。
+      expect(calls).toEqual(["start"]);
+      await vi.runAllTimersAsync();
+      await playPromise;
+      // フェード完了・srcコミット後：2回目が呼ばれている。
+      expect(calls).toEqual(["start", "start"]);
+    });
+  });
 });

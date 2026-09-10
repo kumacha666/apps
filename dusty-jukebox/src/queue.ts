@@ -8,6 +8,12 @@ export interface PlayerLike {
   // 無効化するために使う（2026-09-08、Codexレビュー指摘：P1、詳細はplayback.tsの実装参照）。
   // 実PlaybackController以外の簡易モック（既存テスト等）を壊さないためoptionalにする。
   cancelPendingTransition?(): void;
+  // advanceToPreviewedFile()が除外の再確認ループを使い果たした（最後にコミット・再生開始
+  // 済みの候補も除外されており、これ以上フォールバック先が無い）場合に、鳴り続けている
+  // 音声を明示的に止めるために使う（2026-09-10、Codexレビュー指摘：P1続き。queue.ts自体には
+  // PlayerLike経由の停止手段しか無いため、cancelPendingTransition()と同じ理由でoptionalに
+  // する）。
+  pause?(): void;
 }
 export type BeforeQueuePlay = (fileId: string) => void;
 
@@ -100,6 +106,22 @@ export class PlaybackQueue {
   // ボタンが何も再生できなくなる。除外済みならplayAt(0)側へフォールバックさせる）。
   canResumeCurrent(): boolean {
     return this.isQueuePlayback && this.currentFileId !== null && !this.isExcluded(this.currentFileId);
+  }
+  // クロスフェード（開発体制#42④続き）向け：現在の再生がキュー由来かどうか。外部の単曲試聴
+  // （main.tsの「この曲を再生」）中はクロスフェードを発火させないためのガードに使う
+  // （currentFileId自体はnotifyExternalPlaybackStarted()後も温存され続けるため、これ単独では
+  // 判定できない。canResumeCurrent()と同じ理由）。
+  isPlayingFromQueue(): boolean {
+    return this.isQueuePlayback;
+  }
+  // クロスフェード向け：次に再生される曲のfileId（無ければnull）。next()と同じ探索ロジックだが
+  // 状態を変更しない読み取り専用の先読み。
+  private findNext(): Song | undefined {
+    const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId);
+    return this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId));
+  }
+  peekNextFileId(): string | null {
+    return this.findNext()?.fileId ?? null;
   }
   private async playAndCommit(fileId: string, generation: number, position?: number, fadeOut = false): Promise<boolean> {
     // Register a continuation before the native play promise settles: the
@@ -198,7 +220,15 @@ export class PlaybackQueue {
   // trueを渡す。曲の自然終了（advanceOnEnded()経由）ではfalse（既定値）のまま呼ぶ——将来の
   // クロスフェード機能（曲間で2曲が重なる本格版）がこの経路を専用に扱うため、フェードアウト
   // （単曲の音量を下げてから切り替える簡易版）とは役割を分ける。
-  next(fadeOut = false): Promise<boolean> { return this.move(async (generation) => { const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId); const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId)); return next ? this.playAndCommit(next.fileId, generation, undefined, fadeOut) : false; }); }
+  // startPosition（クロスフェード向け、2026-09-10）：クロスフェードの先読み再生が既に進んでいた
+  // 秒数を渡し、その位置から次の曲を引き継ぐ。省略時（既存の全呼び出し）はplayAndCommit()の
+  // 既定どおり先頭（0）から再生する。
+  next(fadeOut = false, startPosition?: number): Promise<boolean> {
+    return this.move(async (generation) => {
+      const next = this.findNext();
+      return next ? this.playAndCommit(next.fileId, generation, startPosition, fadeOut) : false;
+    });
+  }
   // 曲の自然終了（<audio>のended）専用のnext()。next()自体にこのロジックを組み込まないのは、
   // 末尾で「次へ」ボタンを空振りクリックしただけ（曲はまだ再生中）でも再開不可状態へ遷移して
   // しまうと、その後「一時停止して再生」で現在位置から再開する既存の想定動作を壊すため
@@ -206,9 +236,61 @@ export class PlaybackQueue {
   // isQueuePlaybackがtrueのまま残り、「再生」ボタンが曲末尾の再生位置からresume()してしまい、
   // 実質何も再生されない不具合があった）。次の曲が無い場合のみisQueuePlaybackを明示的に
   // falseへ遷移させ、以後の「再生」ボタンがplayAt(0)で先頭から再生し直せるようにする。
-  advanceOnEnded(): Promise<boolean> {
-    return this.next().then((started) => {
+  // startPosition：クロスフェード向け（next()参照）。省略時は先頭（0）から。
+  advanceOnEnded(startPosition?: number): Promise<boolean> {
+    return this.next(false, startPosition).then((started) => {
       if (!started) this.isQueuePlayback = false;
+      return started;
+    });
+  }
+  // クロスフェード向け：ランプ中に先読み再生していた曲を、途中でキューが変更されても必ず
+  // その曲へ確定させる（2026-09-10、Codexレビュー指摘：P1）。next()/advanceOnEnded()は
+  // 実行時点の最新の並びでfindNext()を再探索するため、ランプ中にexclude/並べ替え/シャッフル
+  // 等でキューが変わっていると、既に先読み再生していた曲と異なる曲へコミットしてしまい、
+  // 一部の曲が丸ごとスキップされたり別の曲へ不自然に切り替わったりする不具合があった。
+  // 先読みしていた曲が既にリストから消えている・除外された場合のみ、通常のfindNext()へ
+  // フォールバックする（advanceOnEnded()と同じく、次の曲が無ければisQueuePlaybackをfalseへ
+  // 遷移させる）。
+  advanceToPreviewedFile(fileId: string, startPosition?: number): Promise<boolean> {
+    // このハンドオフ要求が発行された時点のキュー世代（2026-09-10、Codexレビュー指摘：P1）。
+    // player.play()の解決待ち中にユーザーが別のキュー（setList()）を選び直した場合、この古い
+    // ハンドオフが後から（generation不一致によるfalseで）解決しても、新しいキューの
+    // isQueuePlaybackを誤ってfalseへ戻してはならない。
+    const generationAtCall = this.generation;
+    return this.move(async (generation) => {
+      const stillQueued = this.list().some((song) => song.fileId === fileId);
+      let candidate = stillQueued ? fileId : this.findNext()?.fileId;
+      // startPositionは先読みしていたfileId自身の再生位置であり、フォールバック先
+      // （先読みしていた曲が消えている・除外された場合のfindNext()の結果）には引き継がない
+      // （2026-09-10、Codexレビュー指摘：P1。別の曲をその秒数から開始すると冒頭をスキップ
+      // してしまう）。一度でもfileId以外へフォールバックしたら、以後は使わない。
+      let appliedStartPosition = false;
+      // player.play()の待機中に対象曲自体がチェックボックスで除外された場合（2026-09-10、
+      // Codexレビュー指摘：P1続き）。exclude()はgenerationを進めないため、事前のstillQueued
+      // 判定・playAndCommit内部のgeneration確認のどちらでも検知できず、除外済みの曲が
+      // そのまま再生され続けてしまう。commit後に対象の除外状態を再確認し、除外されていれば
+      // その時点で有効な次の曲へ切り替える処理を、フォールバック先が重ねて除外された場合にも
+      // 対応できるようループにする（Codexレビュー再指摘：フォールバック先自身の待機中に
+      // さらに除外されるケース）。
+      while (candidate) {
+        const position = candidate === fileId && !appliedStartPosition ? startPosition : undefined;
+        if (candidate === fileId) appliedStartPosition = true;
+        const started = await this.playAndCommit(candidate, generation, position, false);
+        if (!started) return false;
+        if (!this.isExcluded(candidate)) return true;
+        const next = this.findNext();
+        if (!next) {
+          // 除外済みの候補が既にコミット・再生開始済みのまま、これ以上フォールバック先が
+          // 無い場合（2026-09-10、Codexレビュー指摘：P1続き）。何もしないと、除外したはずの
+          // 曲がキューの管理外で鳴り続けてしまう。明示的に一時停止する。
+          this.player.pause?.();
+          return false;
+        }
+        candidate = next.fileId;
+      }
+      return false;
+    }).then((started) => {
+      if (!started && this.generation === generationAtCall) this.isQueuePlayback = false;
       return started;
     });
   }
