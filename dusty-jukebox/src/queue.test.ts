@@ -342,6 +342,45 @@ describe("PlaybackQueue", () => {
     queue.invalidatePendingMove();
     expect(queue.generationId()).toBe(generation1); // invalidatePendingMove()では進まない
   });
+  test("invalidatePendingMove()は無効化された古いplayer.play()の解決を待たず、以後の操作をブロックしない（2026-09-10、Codexレビュー指摘：P1続き。ネイティブplay()の解決は保証されないため、pendingMoveを差し替えないと以後のすべての操作・whenIdle()が永久にブロックされうる）", async () => {
+    let releaseStalePlay: (() => void) | undefined;
+    let callCount = 0;
+    const player = {
+      play: () => {
+        callCount += 1;
+        if (callCount === 1) return Promise.resolve(); // playAt(0)は即座に解決させる
+        if (callCount === 2) return new Promise<void>((resolve) => { releaseStalePlay = resolve; }); // このplay()は解放しない
+        return Promise.resolve(); // 3回目以降（次の操作）は即座に解決させる
+      },
+    };
+    const audio = new Audio();
+    const queue = new PlaybackQueue(player, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    await queue.playAt(0);
+    const stalePlayAtPromise = queue.playAt(1); // player.play()の解決待ちで保留中
+    await vi.waitFor(() => expect(releaseStalePlay).toBeDefined());
+    queue.invalidatePendingMove();
+    // 新しい操作（playAt(2)）がpendingMove差し替えのおかげで即座に完了する（古いplay()の
+    // 解決を待たされない。古いplay()はまだ一度も解放していない）。whenIdle()も同様に
+    // 古いplay()を待たされずすぐ解決する。
+    expect(await queue.playAt(2)).toBe(true);
+    await queue.whenIdle();
+    expect(queue.currentPlayingFileId()).toBe("c");
+    // 無効化された古い操作自体は、後から解放されても（実際のネイティブplay()は解決タイミングが
+    // 保証されないため、いつか遅れて解決することがある）generation不一致でfalseへ収束する
+    // だけで、既に確定した新しい状態を巻き戻さない。
+    releaseStalePlay?.();
+    expect(await stalePlayAtPromise).toBe(false);
+    expect(queue.currentPlayingFileId()).toBe("c");
+  });
+  test("resume()はsuppressTransitionCancelを引き継いでplayer.play()へ渡す（2026-09-10、Codexレビュー指摘：P1続き。クロスフェードのハンドオフ〈advanceToPreviewedFile()経由〉が401で認証継続に回った際、resume()自身のplayer.play()がonTransitionStart()を発火してしまうと、cancelCrossfadeIfActive()経由の自己無効化により、実際には再生成功しているのにキュー側がコミットできない不整合が生じる）", async () => {
+    const play = vi.fn(async () => {});
+    const audio = new Audio();
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a"), song("b")]);
+    await queue.resume("a", 12.5, true);
+    expect(play).toHaveBeenCalledWith("a", 12.5, { fadeOut: undefined, suppressTransitionCancel: true });
+  });
   test("moveSongは指定した曲を1つ上/下へ入れ替える（開発体制#42②、上下ボタン）", async () => {
     const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
     queue.setList([song("a"), song("b"), song("c")]);
@@ -702,7 +741,7 @@ describe("PlaybackQueue", () => {
     queue.setList([song("a")]);
 
     const move = queue.next();
-    await vi.waitFor(() => expect(beforePlay).toHaveBeenCalledWith("a"));
+    await vi.waitFor(() => expect(beforePlay).toHaveBeenCalledWith("a", false));
     expect(queue.currentPlayingFileId()).toBeNull();
     registry.recordTokenRequest("first-request", "a", 1, "rejected-token");
     expect(registry.acceptTokenRejection("first-request", "a", "rejected-token")).not.toBeNull();

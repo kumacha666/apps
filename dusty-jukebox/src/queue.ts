@@ -15,7 +15,18 @@ export interface PlayerLike {
   // する）。
   pause?(): void;
 }
-export type BeforeQueuePlay = (fileId: string) => void;
+// suppressTransitionCancel（2026-09-10、Codexレビュー指摘：P1）：登録する認証継続の
+// resume()自身も、元の呼び出しと同じsuppressTransitionCancelを引き継ぐ必要があるかを
+// 呼び出し元へ伝える。クロスフェードのハンドオフ（advanceToPreviewedFile()経由）は
+// suppressTransitionCancel:trueでplayer.play()を呼ぶが、Drive 401後の再試行
+// （queue.resume()、main.tsのregisterQueuePlaybackContinuation()参照）はこれを
+// 引き継がずに呼んでいたため、再試行自身のplayer.play()がonTransitionStart()経由で
+// cancelCrossfadeIfActive()→invalidatePendingMove()を呼び、まだcrossfadingがtrueのままの
+// 状態（＝再試行が401を検知した時点で、元のハンドオフ自身のplayer.play()がまだ解決して
+// いない）だと、この自己無効化により実際には再生が成功しているのにplayAndCommit()の
+// generation確認に失敗し、キュー・UIが次の曲へコミットされないまま認証通知も出ない
+// （音は鳴っているのに何も表示されない）不整合が生じていた。
+export type BeforeQueuePlay = (fileId: string, suppressTransitionCancel: boolean) => void;
 
 export class PlaybackQueue {
   private songs: Song[] = []; private currentFileId: string | null = null; private excluded = new Set<string>(); private isQueuePlayback = false;
@@ -97,7 +108,15 @@ export class PlaybackQueue {
   // 検出するために使われる（handleSavePlaylist()のwhenIdle()待機中の差し替え検出等）。
   // この操作は曲一覧・除外設定を一切変えないため、this.generation（内部の操作直列化・
   // staleness判定専用）だけを進め、公開のcontentGenerationは変えない。
-  invalidatePendingMove(): void { this.generation += 1; }
+  // this.pendingMoveもsetList()と同様に即座に差し替える（2026-09-10、Codexレビュー指摘：
+  // P1続き）。generationのインクリメントだけでは、無効化された操作自身の（native play()の
+  // 解決を待つ）PromiseがpendingMoveへ設置されたまま残り続ける。ネイティブのplay()
+  // Promiseは解決が保証されない（既存のコメント・既知の制限を参照）ため、これを差し替えないと
+  // 以後のすべてのナビゲーション操作（move()経由）やplaylists保存のwhenIdle()が、この
+  // 無効化済みで二度とコミットされない古い操作へ永久に待たされ、キューが実質使用不能になる
+  // おそれがあった。無効化された古いPromise自体は引き続きバックグラウンドで解決し（generation
+  // 不一致によりfalseへ収束するだけで実害は無い）、新しい操作はこの新しいpendingMoveへ連結する。
+  invalidatePendingMove(): void { this.generation += 1; this.pendingMove = Promise.resolve(false); }
   notifyExternalPlaybackStarted(): void { this.isQueuePlayback = false; }
   // 呼び出しのたびに1つ進む（2026-09-08、Codexレビュー指摘：P2続き）。exclude()はsetList()を
   // 経由せず即座にexcludedを書き換えるため、generationId()では検出できない「除外/除外解除だけの
@@ -147,7 +166,7 @@ export class PlaybackQueue {
   private async playAndCommit(fileId: string, generation: number, position?: number, fadeOut = false, suppressTransitionCancel = false): Promise<boolean> {
     // Register a continuation before the native play promise settles: the
     // initial stream request can receive a 401 while that promise is pending.
-    this.onBeforePlay(fileId);
+    this.onBeforePlay(fileId, suppressTransitionCancel);
     // このフェード操作自身のトークンを発行する（2026-09-08、Codexレビュー指摘：P1）。
     let myFadeToken: number | null = null;
     if (fadeOut) {
@@ -404,10 +423,16 @@ export class PlaybackQueue {
       return true;
     });
   }
-  resume(fileId: string, position: number): Promise<boolean> {
+  // suppressTransitionCancel（2026-09-10、Codexレビュー指摘：P1）：認証継続の呼び出し元
+  // （main.tsのregisterQueuePlaybackContinuation()）が、無効化した元の呼び出し自身が
+  // suppressTransitionCancel:trueだった場合（クロスフェードのハンドオフ）はこれを引き継ぐ。
+  // 引き継がないと、この再試行自身のplayer.play()がonTransitionStart()経由で
+  // cancelCrossfadeIfActive()を呼び返し、まだ解決していない元のハンドオフ自身のgeneration
+  // チェックを自己無効化してしまう（BeforeQueuePlayのコメント参照）。
+  resume(fileId: string, position: number, suppressTransitionCancel = false): Promise<boolean> {
     return this.move(async (generation) =>
       this.songs.some((song) => song.fileId === fileId) && !this.isExcluded(fileId)
-        ? this.playAndCommit(fileId, generation, position)
+        ? this.playAndCommit(fileId, generation, position, false, suppressTransitionCancel)
         : false,
       true
     );

@@ -1343,14 +1343,21 @@ function awaitServiceWorkerReady(): Promise<void> {
   );
 }
 
-function registerQueuePlaybackContinuation(fileId: string, currentPlayback: PlaybackController): void {
+function registerQueuePlaybackContinuation(fileId: string, currentPlayback: PlaybackController, suppressTransitionCancel: boolean): void {
   // PlaybackQueue invokes this immediately before PlaybackController.play().
   // Do not wait for the queue to commit currentFileId: a Drive 401 can arrive
   // while native play() is still pending.
+  // suppressTransitionCancelを引き継ぐ（2026-09-10、Codexレビュー指摘：P1）。クロスフェードの
+  // ハンドオフ（advanceToPreviewedFile()経由）はsuppressTransitionCancel:trueでplayer.play()を
+  // 呼ぶが、この401継続のresume()自身がそれを引き継がないと、resume()自身のplayer.play()が
+  // onTransitionStart()経由でcancelCrossfadeIfActive()を呼び返し、まだ解決していない元の
+  // ハンドオフ自身のgeneration確認を自己無効化してしまう（queue.tsのBeforeQueuePlay/resume()
+  // コメント参照。実際には再生に成功しているのに、キュー・UIには一切反映されず認証通知も
+  // 出ない不整合になっていた）。
   playbackContinuations.register({
     fileId,
     generation: currentPlayback.currentGeneration() + 1,
-    resume: async (position) => queue?.resume(fileId, position) ?? false,
+    resume: async (position) => queue?.resume(fileId, position, suppressTransitionCancel) ?? false,
   });
 }
 
@@ -2274,7 +2281,7 @@ function init(): void {
         if (crossfading) return;
         void handleQueuePlayback(() => queue?.advanceOnEnded());
       },
-      (fileId) => registerQueuePlaybackContinuation(fileId, playback!)
+      (fileId, suppressTransitionCancel) => registerQueuePlaybackContinuation(fileId, playback!, suppressTransitionCancel)
     );
     audioPlayer.addEventListener("playing", () => handleNativePlaybackStatus(audioPlayer, "playing"));
     audioPlayer.addEventListener("pause", () => handleNativePlaybackStatus(audioPlayer, "pause"));
