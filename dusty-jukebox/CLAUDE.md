@@ -239,6 +239,7 @@
   1. **先読み再生の開始（`crossfadeAudio.play()`）が応答なく固まると自動送りが永久に止まる**：Driveストリームが拒否も解決もせず単に無応答のままだと、`await crossfadeAudio.play()`が永久に解決せず`crossfading=true`のまま固まり、主audio要素側の`'ended'`抑止（`main.ts`のonEndedコールバック）がキューの自動送りを無期限に止めてしまっていた。Service Worker制御待ちのタイムアウト（開発体制#44）と同じ`withTimeout()`をこの待機にも適用（`CROSSFADE_PREVIEW_START_TIMEOUT_MS`、本番5000ms・`VITE_E2E`時200ms）。タイムアウト時は通常の`play()`失敗と同じフォールバック経路（`audioPlayer.ended`なら通常の自然終了フローへ）に合流する。
   2. **除外の再確認ループが力尽きた際、最後にコミット・再生開始済みの候補が鳴り続ける**：`advanceToPreviewedFile()`のループが「有効な曲が見つからずfindNext()が尽きた」場合、直前にコミット・再生開始していた（除外済みの）候補の音声はそのまま鳴り続けてしまい、`isQueuePlayback`だけがfalseへ戻る不整合があった（`handleClearQueue()`の「直前の再生を止める」と同じ理由で、`queue.ts`自体には`PlayerLike`経由の停止手段が無い）。`PlayerLike`に省略可能な`pause?(): void`を追加し、フォールバック先が尽きた時点で明示的に呼ぶよう修正。
   - いずれも該当コードを一時的に無効化して実際に失敗することを確認済み（1は新規E2E〈第二audio要素のみ`play()`を永久保留するモックを注入〉、2は`queue.test.ts`新規ケース）。
+- **続けて2026-09-10、同PRの`@codex review`6回目の指摘1件（P2）を修正**：`withTimeout()`はタイムアウト時に元の`crossfadeAudio.play()`自体を中断できないため、タイムアウト後にDriveストリームが遅れて復旧しplay()が実際に解決すると、`crossfading`が既にfalseに戻っているため`cancelCrossfadeIfActive()`も早期returnし、第二audio要素がsrcを保持したまま無音で再生され続け、以後Drive呼び出し・デコーダーが不要に動き続けてしまっていた。タイムアウトのcatch節で明示的に一時停止・src除去して後始末するよう修正。該当コードを一時的に無効化して実際に失敗することを確認済み（新規E2E：タイムアウトより遅く〈1000ms〉play()が解決するケースを再現）。
 - **実機での動作確認はまだ**（次セッションでの確認事項）。
 
 ## 絞り込み欄同士の連動（開発体制#43、2026-09-08）

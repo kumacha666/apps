@@ -1311,3 +1311,53 @@ test("先読み再生の開始（play()）が応答なく固まっても、タ�
   });
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
 });
+
+test("先読み再生の開始タイムアウト後にDriveストリームが遅れて復旧しても、第二audio要素が無音のまま鳴り続けない（2026-09-10、Codexレビュー指摘：P2）", async ({ context, page }) => {
+  // withTimeout()はタイムアウト時に元のplay()自体を中断できないため、タイムアウト後に
+  // 遅れてplay()が実際に解決すると、後始末（pause+src除去）をしていなければ第二audio要素が
+  // srcを保持したまま無音で再生され続け、以後Drive呼び出し・デコーダーが不要に動き続けてしまう。
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // 第二audio要素のplay()だけを、タイムアウト（200ms）より遅い1000ms後に解決するようにする
+  // （「永久に保留」ではなく「タイムアウト後に遅れて復旧」を再現する）。
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player-crossfade") {
+          return new Promise<void>((resolve) => { setTimeout(resolve, 1000); });
+        }
+        return originalPlay.call(this);
+      },
+    });
+  });
+
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+
+  // タイムアウト（200ms）を過ぎた時点で、第二audio要素は既に後始末（src除去）されている。
+  await page.clock.runFor(300);
+  await expect(page.locator("#audio-player-crossfade")).not.toHaveAttribute("src");
+
+  // 元のplay()が遅れて解決する時刻（1000ms）まで仮想時刻を進めても、srcが再び付いたり
+  // 例外が起きたりしない（無音再生が続かないことの確認）。
+  await page.clock.runFor(800);
+  await expect(page.locator("#audio-player-crossfade")).not.toHaveAttribute("src");
+});

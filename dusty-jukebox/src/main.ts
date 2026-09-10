@@ -466,6 +466,15 @@ async function maybeStartCrossfade(): Promise<void> {
   } catch {
     if (crossfadeGeneration === myGeneration) {
       crossfading = false;
+      // withTimeout()はタイムアウト時に元のcrossfadeAudio.play()自体を中断できない
+      // （2026-09-10、Codexレビュー指摘：P2）。Driveストリームがタイムアウト後に遅れて
+      // 復旧しplay()が実際に解決すると、crossfadingが既にfalseに戻っているため
+      // cancelCrossfadeIfActive()も早期returnし、この第二audio要素がsrcを保持したまま
+      // 無音で再生され続け、以後Drive呼び出し・デコーダーが不要に動き続けてしまう。
+      // 明示的に一時停止・src除去して後始末する。
+      crossfadeAudio.pause();
+      crossfadeAudio.removeAttribute("src");
+      crossfadeAudio.load();
       // 先読み再生の開始自体に失敗した場合、その間に主audio要素側の'ended'を抑止していた
       // 分の遷移が失われている可能性がある（2026-09-10、Codexレビュー指摘：P1。onEnded側は
       // crossfading中を無条件で無視するため）。既に曲が終了していれば通常の自然終了フローへ
