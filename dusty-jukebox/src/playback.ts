@@ -222,6 +222,13 @@ export class PlaybackController {
     }
     // トークン確認中に停止または別曲の再生が入った場合、古い要求はsrcを変更しない。
     if (isSuperseded()) return;
+    // onTransitionStart()をメソッド先頭だけでなく、実際にsrcをコミットする直前にも再度呼ぶ
+    // （2026-09-10、Codexレビュー指摘：P1）。手動スキップのフェード（FADE_OUT_DURATION_MS、
+    // 通常2秒）待ち中に旧曲がクロスフェードの残り時間（3秒）閾値へ入ると、先頭で一度きりの
+    // 呼び出しでは間に合わず新しいクロスフェードが始まってしまい、この後のsrcコミットと
+    // 音量の取り合いになる。fadeOutを指定しない通常再生でもトークン確認（getValidAccessToken）
+    // の待ちが長引く可能性があるため、fadeOut有無に関わらず常にここで呼ぶ。
+    this.onTransitionStart();
     this.currentFileId = fileId;
     this.audio.src = streamUrl(fileId, playGeneration);
     // フェードアウトした分だけ、次の曲の開始時にフェード開始前のvolumeへ戻す
@@ -318,6 +325,9 @@ export class PlaybackController {
       this.audio.volume = preFadeVolume;
       this.pendingFadeOriginalVolume = null;
     }
+    // play()と同じ理由（2026-09-10、Codexレビュー指摘：P1）：一時停止フェード（既定2秒）待ち
+    // 中に新しいクロスフェードが始まってしまう同じ競合をここでも防ぐ。
+    this.onTransitionStart();
     this.audio.pause();
   }
 }

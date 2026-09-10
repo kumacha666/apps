@@ -375,6 +375,12 @@ function wireSeekBar(audioPlayer: HTMLAudioElement): void {
     // 打ち切られた）ため、無条件にaudio.currentTimeへ適用すると新曲の再生位置を無関係な
     // 値で誤って書き換えてしまう。ドラッグが継続中だった場合だけ実際にシークする。
     if (!seekBarDragging) return;
+    // 進行中のクロスフェードがあれば打ち切る（2026-09-10、Codexレビュー指摘：P1）。
+    // シークバーの操作はcrossfadeGenerationを変えないため、クロスフェード自身の
+    // isCancelled()判定（世代比較のみ）ではシークを検知できず、ユーザーが曲の末尾から
+    // 離れる方向へシークしても先読み再生・ランプが止まらず、3秒後に予期しない曲送りが
+    // 起きてしまっていた。
+    cancelCrossfadeIfActive();
     audioPlayer.currentTime = Number(slider.value);
     seekBarDragging = false;
   });
@@ -1211,6 +1217,12 @@ function handleNativePlaybackStatus(audio: HTMLAudioElement, eventType: Playback
     hasEnded: audio.ended,
   });
   if (status !== null) setStatus(status);
+  // クロスフェードのランプ中に主audio要素が自然終了（'ended'、同時に'pause'も発火する）しても、
+  // 実際には第二audio要素経由で音声が鳴り続けているため、Media Sessionのplaybackstateを
+  // "paused"にしてはならない（2026-09-10、Codexレビュー指摘：P1）。ここでpaused扱いにすると、
+  // OS/ヘッドセット側の表示がPlayに切り替わり、それを押すと既に終了済みの主audio要素へ
+  // 再生要求（registerActionHandlersのplayハンドラ）が飛んでしまう。
+  if (eventType === "pause" && crossfading) return;
   // Bluetoothデバイス・OSのロック画面等に再生/一時停止アイコンの状態を反映する。
   updatePlaybackState(navigator.mediaSession, eventType === "playing" ? "playing" : "paused");
 }

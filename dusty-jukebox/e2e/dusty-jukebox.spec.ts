@@ -1175,3 +1175,91 @@ test("クロスフェードのランプ中に主audio要素が自然終了（end
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
 });
+
+test("クロスフェードのランプ中に主audio要素が一時停止/自然終了しても、Media Sessionのplaybackstateを一時停止にしない（2026-09-10、Codexレビュー指摘：P1）", async ({ context, page }) => {
+  // クロスフェード中は実際には第二audio要素経由で音声が鳴り続けているため、主audio要素の
+  // 自然終了（同時に発火する'pause'含む）でMedia Sessionのplaybackstateを"paused"にすると、
+  // OS/ヘッドセット側の表示がPlayに切り替わり、それを押すと既に終了済みの主audio要素へ
+  // 再生要求が飛んでしまう不具合があった。
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  // 再生中状態を作る（ネイティブ'playing'イベントを模擬発火）。
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("playing"));
+  });
+  await expect.poll(() => page.evaluate(() => navigator.mediaSession.playbackState)).toBe("playing");
+
+  await page.clock.install();
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+
+  // 実ブラウザは自然終了時に'pause'→'ended'の順で発火する（曲の自然終了専用のテストと同じ
+  // 前提）。ランプがまだ完了していない状態で両方を模擬発火する。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    audio.dispatchEvent(new Event("pause"));
+    audio.dispatchEvent(new Event("ended"));
+  });
+
+  // playbackstateは"paused"へ変わっていないこと（実際には音が鳴り続けているため）。
+  expect(await page.evaluate(() => navigator.mediaSession.playbackState)).toBe("playing");
+});
+
+test("クロスフェードのランプ中に独自シークバーで曲末尾から離れる方向へシークすると、クロスフェードが打ち切られる（2026-09-10、Codexレビュー指摘：P1）", async ({ context, page }) => {
+  // シークバーの操作はcrossfadeGenerationを変えないため、クロスフェード自身のisCancelled()
+  // 判定（世代比較のみ）ではシークを検知できず、曲末尾から離れる方向へシークしても
+  // ランプが止まらず、3秒後に予期しない曲送りが起きてしまう不具合があった。
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+
+  // シークバーを曲の先頭付近（末尾から離れる方向）へドラッグして離す。
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.disabled = false;
+    slider.max = "180";
+    slider.value = "10";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    slider.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
+  // 中断されたクロスフェードの第二audio要素はリセットされる。
+  await expect(page.locator("#audio-player-crossfade")).not.toHaveAttribute("src");
+
+  // ランプが本来完了するはずだった時刻を過ぎても、曲は切り替わらない（ユーザーのシークが
+  // 保持される）。
+  await page.clock.runFor(100);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+});

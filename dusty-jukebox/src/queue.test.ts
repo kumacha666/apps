@@ -1005,6 +1005,24 @@ describe("PlaybackQueue", () => {
         expect(queue.currentPlayingFileId()).toBe("c");
       });
 
+      // 2026-09-10、Codexレビュー指摘：P1続き。先読みしていた曲("b")が除外され、フォール
+      // バック先("c")へ切り替わる場合、"b"自身の再生位置(startPosition)を"c"へ引き継いでは
+      // ならない（別の曲の冒頭をスキップしてしまう）。
+      test("除外によるフォールバック時、先読みしていた曲のstartPositionをフォールバック先へ引き継がない", async () => {
+        const positions: (number | undefined)[] = [];
+        const audio = new Audio();
+        const queue = new PlaybackQueue(
+          { play: async (_id, position) => { positions.push(position); } },
+          audio
+        );
+        queue.setList([song("a"), song("b"), song("c")]);
+        await queue.playAt(0);
+        queue.exclude("b", true);
+        await queue.advanceToPreviewedFile("b", 42);
+        expect(positions).toEqual([undefined, undefined]);
+        expect(queue.currentPlayingFileId()).toBe("c");
+      });
+
       test("次の曲が無ければfalseを返しisPlayingFromQueueがfalseへ遷移する", async () => {
         const audio = new Audio();
         const queue = new PlaybackQueue({ play: async () => {} }, audio);
@@ -1013,6 +1031,39 @@ describe("PlaybackQueue", () => {
         const started = await queue.advanceToPreviewedFile("missing");
         expect(started).toBe(false);
         expect(queue.isPlayingFromQueue()).toBe(false);
+      });
+
+      // 2026-09-10、Codexレビュー指摘：P1続き。ハンドオフがplayer.play()の解決待ち中に、
+      // ユーザーが別のキュー（setList()）を選び直した場合、この古いハンドオフが後から
+      // （世代不一致によるfalseで）解決しても、新しいキューのisQueuePlaybackを誤って
+      // falseへ戻してはならない（そうでないと、以後の自然終了'ended'が無視され続け
+      // キューが二度と自動で進まなくなる）。
+      test("待機中に別のキューへ切り替わった場合、古いハンドオフの遅延解決が新しいキューの状態を巻き戻さない", async () => {
+        const played: string[] = [];
+        let resolveOldPlay: (() => void) | undefined;
+        const audio = new Audio();
+        const queue = new PlaybackQueue({
+          play: async (id) => {
+            played.push(id);
+            if (id === "b") await new Promise<void>((resolve) => { resolveOldPlay = resolve; });
+          },
+        }, audio);
+        queue.setList([song("a"), song("b")]);
+        await queue.playAt(0);
+        const stalePromise = queue.advanceToPreviewedFile("b");
+        await vi.waitFor(() => expect(played).toContain("b"));
+
+        // 待機中に別のキューへ切り替え、先頭曲を再生する。
+        queue.setList([song("x"), song("y")]);
+        await queue.playAt(0);
+        expect(queue.isPlayingFromQueue()).toBe(true);
+
+        // 古いハンドオフを解決させる（世代不一致でfalseになるはず）。
+        resolveOldPlay?.();
+        expect(await stalePromise).toBe(false);
+        // 新しいキューの状態が巻き戻されていないことを確認する。
+        expect(queue.isPlayingFromQueue()).toBe(true);
+        expect(queue.currentPlayingFileId()).toBe("x");
       });
     });
   });

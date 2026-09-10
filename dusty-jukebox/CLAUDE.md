@@ -226,6 +226,13 @@
   6. **クロスフェードの早期キャンセルが非同期の待機経路の長さに追いつかない**：`handleQueuePlayback()`先頭の1回だけの`cancelCrossfadeIfActive()`呼び出しは、その後の操作が`PlaybackQueue`の`pendingMove`チェーンで長時間待たされている間に新しいクロスフェードが始まってしまうと取りこぼす（手動操作が実際に`play()`へ到達した時点では既に別のクロスフェードが進行中、という競合）。`PlaybackController`に`onTransitionStart`フックを追加し、`play()`/`pause()`/`cancelPendingTransition()`それぞれの先頭（`reclaimPendingFadeVolume()`と同じ「generationを進める全操作の先頭」パターン）で必ず`cancelCrossfadeIfActive()`を呼ぶよう変更。これにより、非同期の待機経路がどれだけ長引いても、実際に遷移がコミットされる瞬間には必ずクロスフェードが打ち切られていることを構造的に保証する（main.ts側の早期呼び出しは、UXの早期反応のためそのまま残す）。
   - いずれも該当コードを一時的に無効化して実際に失敗することを確認済み（1は新規E2E、5・6はユニットテスト`queue.test.ts`/`playback.test.ts`新規ケース、3は`crossfade.test.ts`新規ケース）。
   - **E2Eモックの補足**：`.paused`はモックされた`HTMLMediaElement.prototype.play()`が実際のネイティブ再生を開始しないため常に`true`のまま残る（`duration`と同じ既存の制約）。`audioPaused`ガード追加によりこれが判明し、クロスフェードを開始させるE2Eテストは`duration`と同様に`paused`も`Object.defineProperty`で上書きするよう修正した。
+- **続けて2026-09-10、同PRの`@codex review`再指摘5件（いずれもP1）を修正**：
+  1. **フォールバック先へ先読み位置を引き継いでしまう**：`advanceToPreviewedFile()`が、先読みしていた曲が除外等で無効になり`findNext()`の別の曲へフォールバックする場合でも、`startPosition`（先読みしていた曲自身の再生位置）をそのまま渡していたため、フォールバック先の曲が数秒目から始まり冒頭をスキップしてしまっていた。フォールバック時（`target !== fileId`）は`startPosition`を渡さない（`undefined`＝先頭から）よう修正。
+  2. **手動フェードスキップの待機中に始まった新しいクロスフェードとの競合**：`PlaybackController.onTransitionStart`はメソッド先頭でのみ呼ばれており、フェード付き手動スキップの`fadeOutVolume()`待ち（既定2秒）中に旧曲がクロスフェードの残り時間（3秒）閾値へ入ると、新しいクロスフェードが始まってしまい、その後のsrcコミットと音量を取り合う競合があった。`play()`が実際に`audio.src`をコミットする直前・`pause()`が実際に`audio.pause()`する直前にも`onTransitionStart()`を再度呼ぶよう修正（fadeOut有無に関わらず、トークン確認待ちの間も同じ競合がありうるため常に呼ぶ）。
+  3. **クロスフェードのランプ中の自然終了でMedia Sessionのplaybackstateが誤って一時停止になる**：主audio要素の自然終了（'ended'、同時に'pause'も発火）を無視してキュー進行を抑止していても（1のPR #442初回ラウンドで対応済み）、Media Sessionのplaybackstate更新（`handleNativePlaybackStatus`）は無条件に"paused"へ変えていたため、実際には第二audio要素経由で音が鳴り続けているのにOS/ヘッドセット側の表示がPlayへ切り替わり、それを押すと既に終了済みの主audio要素へ再生要求が飛んでしまっていた。`crossfading`真の間の'pause'イベントではMedia Session側の更新をスキップするよう修正。
+  4. **待機中に新しいキューへ切り替わった場合、古いハンドオフの遅延解決が新しいキューの状態を巻き戻す**：`advanceToPreviewedFile()`の`player.play()`待機中にユーザーが別のキュー（`setList()`）を選び直すと、古いハンドオフが後から（世代不一致による`false`で）解決した際、無条件に`isQueuePlayback = false`へ戻していたため、新しいキューの以後の自然終了（'ended'）が無視され続け自動送りが止まってしまっていた。ハンドオフ発行時点のキュー世代を記録し、それが依然として現在の世代と一致する場合のみ`isQueuePlayback`を更新するよう修正。
+  5. **独自シークバーでのシークがランプ中のクロスフェードを止められない**：`runCrossfade()`の`isCancelled`は`crossfadeGeneration`の変化のみを見るが、シークバー操作はこれを変えないため、曲末尾から離れる方向へシークしてもランプが止まらず、3秒後に予期しない曲送りが起きてしまっていた。シークバーの`change`ハンドラ（実際にシークをコミットする箇所）で`cancelCrossfadeIfActive()`を呼ぶよう修正。
+  - いずれも該当コードを一時的に無効化して実際に失敗することを確認済み（1・4はユニットテスト`queue.test.ts`新規ケース、2は`playback.test.ts`新規ケース〈`vi.useFakeTimers()`でフェード待ち中はonTransitionStartが呼ばれず完了後に呼ばれることを検証〉、3・5は新規E2E）。
 - **実機での動作確認はまだ**（次セッションでの確認事項）。
 
 ## 絞り込み欄同士の連動（開発体制#43、2026-09-08）

@@ -246,12 +246,22 @@ export class PlaybackQueue {
   // フォールバックする（advanceOnEnded()と同じく、次の曲が無ければisQueuePlaybackをfalseへ
   // 遷移させる）。
   advanceToPreviewedFile(fileId: string, startPosition?: number): Promise<boolean> {
+    // このハンドオフ要求が発行された時点のキュー世代（2026-09-10、Codexレビュー指摘：P1）。
+    // player.play()の解決待ち中にユーザーが別のキュー（setList()）を選び直した場合、この古い
+    // ハンドオフが後から（generation不一致によるfalseで）解決しても、新しいキューの
+    // isQueuePlaybackを誤ってfalseへ戻してはならない。
+    const generationAtCall = this.generation;
     return this.move(async (generation) => {
       const stillQueued = this.list().some((song) => song.fileId === fileId);
       const target = stillQueued ? fileId : this.findNext()?.fileId;
-      return target ? this.playAndCommit(target, generation, startPosition, false) : false;
+      if (!target) return false;
+      // フォールバック先（先読みしていた曲が消えている・除外された場合のfindNext()の結果）は
+      // startPositionを引き継がない（2026-09-10、Codexレビュー指摘：P1）。startPositionは
+      // 先読みしていたfileId自身の再生位置であり、別の曲をその秒数から開始すると冒頭を
+      // スキップしてしまう。
+      return this.playAndCommit(target, generation, target === fileId ? startPosition : undefined, false);
     }).then((started) => {
-      if (!started) this.isQueuePlayback = false;
+      if (!started && this.generation === generationAtCall) this.isQueuePlayback = false;
       return started;
     });
   }
