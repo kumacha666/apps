@@ -2989,3 +2989,85 @@ test("committed handoff中のフェード付き一時停止を連打しても、
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
 });
+
+// 2026-09-10、続けてCodexレビュー指摘（P1「Retain rollback state until navigation commits」）の
+// 回帰防止。committed handoff中のフェード付き一時停止（1回目）→ その完了前に「次へ」→
+// 「次へ」自身の完了前にもう一度一時停止（2回目）、という順序では、「次へ」はqueue.currentFileId
+// がまだ退場曲（album-track-1）のままのため同じ先読み先（album-track-2）へ移動しようとするが、
+// 2回目の一時停止に追い越されコミットしないまま終わる。この「次へ」がコミットせずに終わった
+// 場合でも、1回目の一時停止が捕捉した退場曲の復元情報（pendingPauseOutgoingRestore）は
+// 失われず、最終的に完了した2回目の一時停止がそれを使ってaudio.srcを正しく退場曲へ復元できる
+// ことを検証する。
+test("committed handoff中の一時停止→次へ→一時停止という順序でも、「次へ」がコミットせずに終われば退場曲へ正しく復元される（2026-09-10、続けてCodexレビュー指摘：P1）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+  await page.getByRole("checkbox", { name: "手動スキップ/一時停止時にフェードアウトする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // album-track-2への全てのplay()呼び出しを恒久的に保留する（ハンドオフ自身の呼び出しも
+  // 「次へ」による2回目の呼び出しも、どちらも実際には解決しない想定でよい：このテストが
+  // 検証したいのは「途中でコミットせず終わった操作が復元情報を失わせないこと」であり、
+  // いずれの呼び出しも最終的に成功しない前提で構わない）。
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player" && this.src.includes("album-track-2")) {
+          return new Promise<void>(() => {}); // 恒久的に未解決
+        }
+        return originalPlay.call(this);
+      },
+    });
+  });
+
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await page.clock.runFor(100);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+
+  // committed handoff確認後、duration/currentTimeを曲末尾から離す（既存の連打テストと同じ理由：
+  // loadPaused()のcurrentTime書き戻しによる別クロスフェードの誤発火を防ぐ）。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: NaN, configurable: true });
+    audio.currentTime = 10;
+  });
+
+  // 1回目の一時停止（退場曲=album-track-1/Openingの復元情報を捕捉）。
+  await page.getByRole("button", { name: "一時停止" }).click();
+  await page.clock.runFor(10); // フェードの途中まで進める
+
+  // フェード完了前に「次へ」（queue.currentFileIdはまだOpeningのため、album-track-2への
+  // 移動を試みるが、album-track-2のplay()は恒久的に未解決のため完了しない）。
+  await page.getByRole("button", { name: "次へ" }).click();
+  await page.clock.runFor(10); // 「次へ」自身のフェードの途中まで進める（1回目を追い越す）
+
+  // 「次へ」自身も完了する前に2回目の一時停止（1回目が捕捉した復元情報を引き継ぐはず）。
+  await page.getByRole("button", { name: "一時停止" }).click();
+
+  // 2回目のフェードが完了しきるまで仮想時刻を進める。
+  await page.clock.runFor(200);
+  await page.waitForTimeout(50);
+
+  // audio.srcが退場側（album-track-1/Opening）へ正しく復元され、queueの現在曲表示も
+  // 一致したまま（「次へ」が復元情報を消してしまい、2回目の一時停止が復元先を失う
+  // 回帰を防ぐ）。
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+});

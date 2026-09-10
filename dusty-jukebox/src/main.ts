@@ -1391,10 +1391,15 @@ async function handlePlay(): Promise<void> {
     audioEnded: audioPlayer.ended,
   });
   cancelCrossfadeIfActive();
-  // 別の正当な操作のため、フェード中の一時停止クリック連打が引き継ごうとしていた退場曲の
-  // 復元情報を無効化する（2026-09-10、続けてChatGPTレビュー指摘：P1、詳細は
-  // pendingPauseOutgoingRestoreの定義コメント参照）。
-  pendingPauseOutgoingRestore = null;
+  // フェード中の一時停止クリック連打が引き継ごうとしていた退場曲の復元情報
+  // （pendingPauseOutgoingRestore）は、ここでは無効化しない（2026-09-10、続けてCodex
+  // レビュー指摘：P1「Retain rollback state until navigation commits」）。この外部単曲試聴が
+  // 実際に成功する保証は無く、フェード中の一時停止に追い越されて何もコミットしないまま
+  // 終わることもある（例：committed handoff中→フェード付き一時停止→この曲を再生→
+  // フェード完了前にもう一度一時停止、の順序）。その場合、退場曲の復元情報を先に破棄して
+  // しまうと、最終的に完了した一時停止が復元先を失いaudio.srcとqueue.currentFileIdの
+  // 不整合が残る。無効化は「実際に再生を開始できた場合だけ」handlePlaybackAction()の
+  // 成功分岐（唯一の実再生開始の合流点）で行う。
   // handleQueuePlayback()と同じ理由でガードをこのクロージャ自身の中（SW準備待ちより前）に
   // 置く（2026-09-10、ChatGPTレビュー指摘：P1）。外部単曲試聴もキュー由来の操作と同じく
   // 「明示的な手動遷移」だが、cancelCrossfadeIfActive()の1回きりの呼び出しだけでは、この後の
@@ -1465,10 +1470,16 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined): 
   // （cancelCrossfadeIfActive()参照。クロスフェード自身の完了処理はこの関数を経由しないため、
   // ここでの打ち切りが自分自身を巻き込むことはない）。
   cancelCrossfadeIfActive();
-  // 別の正当な操作のため、フェード中の一時停止クリック連打が引き継ごうとしていた退場曲の
-  // 復元情報を無効化する（2026-09-10、続けてChatGPTレビュー指摘：P1、詳細は
-  // pendingPauseOutgoingRestoreの定義コメント参照）。
-  pendingPauseOutgoingRestore = null;
+  // フェード中の一時停止クリック連打が引き継ごうとしていた退場曲の復元情報
+  // （pendingPauseOutgoingRestore）は、ここでは無効化しない（2026-09-10、続けてCodex
+  // レビュー指摘：P1「Retain rollback state until navigation commits」）。この操作
+  // （次へ/前へ/曲名クリック等）が実際にコミットする保証は無く、フェード中の一時停止に
+  // 追い越されて何もコミットしないまま終わることもある（例：committed handoff中→
+  // フェード付き一時停止→次へ→フェード完了前にもう一度一時停止、の順序。「次へ」が
+  // 一時停止に追い越されコミットしないまま終わると、先に無効化していた場合、最終的に
+  // 完了した一時停止が復元先を失いaudio.srcとqueue.currentFileIdの不整合が残る）。
+  // 無効化は「実際にコミットできた場合だけ」handlePlaybackAction()の成功分岐（唯一の
+  // 実コミットの合流点）で行う。
   // ガードの増減をhandlePlaybackAction()へ渡すクロージャ自身の実行中に限定する（2026-09-10、
   // Codexレビュー指摘：P1。manualTransitionCountの定義コメント参照）。handlePlaybackAction()は
   // PlaybackAuthenticationRequiredError発生時、同じ`action`引数（＝このクロージャ自身）を
@@ -1596,6 +1607,13 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
       playbackAuthGate?.clear();
       setPlaybackAuthNotice(false);
       setStatus("再生中");
+      // フェード中の一時停止クリック連打が引き継ごうとしていた退場曲の復元情報
+      // （pendingPauseOutgoingRestore）は、実際にコミットできたこの唯一の合流点でのみ
+      // 無効化する（2026-09-10、続けてCodexレビュー指摘：P1「Retain rollback state until
+      // navigation commits」。handleQueuePlayback()/handlePlay()自身の呼び出し直後では
+      // まだ「試みただけ」で、この後フェード中の一時停止に追い越されコミットしないまま
+      // 終わることもあるため、そこで無効化すると最終的に完了した一時停止が復元先を失う）。
+      pendingPauseOutgoingRestore = null;
       // キュー表示（再生中のハイライト・「再生中」ラベル）の更新は、この関数が実際の
       // 再生開始経路の唯一の合流点であるここで行う。handleQueuePlayback()（クリック・次へ/前へ・
       // 曲の自然終了）だけでなく、handleStreamTokenRejected()の認証継続再開
