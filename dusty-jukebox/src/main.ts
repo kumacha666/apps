@@ -411,15 +411,21 @@ function crossfadeEnabled(): boolean {
 let crossfadeGeneration = 0;
 let crossfading = false;
 // 明示的な手動遷移（次へ/前へ/曲名クリック/シャッフル等キュー由来の操作、および「一時停止」
-// ボタン）が進行中の間はtrue（2026-09-10、ChatGPTレビュー指摘：P1）。手動フェードアウト
-// （fadeOutEnabled()時、既定約2秒）を伴う操作は、この待機中も旧曲がまだ再生中のまま
-// timeupdateが継続するため、crossfading・audio.paused・isPlayingFromQueue()だけでは
-// クロスフェードの開始を防げず、フェード完了直前にonTransitionStart()で最終的な二重commit
-// こそ防げるものの、その手前でクロスフェードが実際に開始・先読み再生してしまう窓が生じていた
-// （PRの仕様「クロスフェードはキュー内曲の自然終了時のみ、手動スキップとは別」に反する）。
-// handleQueuePlayback()・一時停止ボタンのクリックハンドラの実行中はこれをtrueにし、
-// maybeStartCrossfade()の開始条件に加える。
-let manualTransitionInFlight = false;
+// ボタン）が進行中の件数（2026-09-10、ChatGPTレビュー指摘：P1、続けてCodexレビュー指摘で
+// booleanからカウンタへ変更）。手動フェードアウト（fadeOutEnabled()時、既定約2秒）を伴う
+// 操作は、この待機中も旧曲がまだ再生中のままtimeupdateが継続するため、crossfading・
+// audio.paused・isPlayingFromQueue()だけではクロスフェードの開始を防げず、フェード完了直前に
+// onTransitionStart()で最終的な二重commitこそ防げるものの、その手前でクロスフェードが実際に
+// 開始・先読み再生してしまう窓が生じていた（PRの仕様「クロスフェードはキュー内曲の自然終了時
+// のみ、手動スキップとは別」に反する）。booleanだった当初の実装は、①handleQueuePlayback()が
+// 認証継続の再試行（handlePlaybackAction()内部のplaybackAuthGate.defer()）を経由する場合に
+// このガードが再試行の間は掛からない、②一時停止ボタンを連打（1回目のフェード完了前に2回目の
+// クリック）すると1回目の`finally`が2回目のフェードがまだ進行中でもガードを解除してしまう、
+// という2つの見落としがあった（いずれも2026-09-10、Codexレビュー指摘：P1）。カウンタ方式へ
+// 変更し、増減の対象を「handleQueuePlayback()がhandlePlaybackAction()へ渡すクロージャ自身の
+// 実行中」（再試行時も同じクロージャが再実行されるため自然にガードが掛かる）・「一時停止ボタンの
+// 各クリックごとの独立したフェード完了待ち」に変更した。0より大きい間はガードが掛かる。
+let manualTransitionCount = 0;
 
 // クロスフェード中に手動ナビゲーション（次へ/前へ/曲名クリック等）が割り込んだ場合、進行中の
 // ランプ・先読み再生を打ち切り、状態を復元する。handleQueuePlayback()の先頭から呼ぶ
@@ -455,8 +461,8 @@ async function maybeStartCrossfade(): Promise<void> {
       // paused状態も別途確認する必要がある。
       audioPaused: audioPlayer.paused,
       // 手動フェードアウト待機中はクロスフェードを始めない（2026-09-10、ChatGPTレビュー
-      // 指摘：P1。manualTransitionInFlightの定義コメント参照）。
-      manualTransitionInFlight,
+      // 指摘：P1。manualTransitionCountの定義コメント参照）。
+      manualTransitionInFlight: manualTransitionCount > 0,
     }) ||
     !queue?.isPlayingFromQueue()
   ) return;
@@ -526,16 +532,51 @@ async function maybeStartCrossfade(): Promise<void> {
   // Playback()と同じ内容をここで行う）。ランプ中にexclude/並べ替え/シャッフル等でキューが
   // 変更されても、既に先読み再生していたnextFileIdへ必ず確定させる（advanceOnEnded()の
   // fresh findNext()ではなくadvanceToPreviewedFile()を使う。2026-09-10、Codexレビュー指摘：P1）。
+  // handlePlaybackAction()自体の戻り値はvoidのため、後段のフォールバック判定に使う実際の
+  // 成否・エラーをこのクロージャの外側で捕捉する（2026-09-10、Codexレビュー指摘：P2）。
+  let handoffStarted = false;
+  let handoffError: unknown = null;
   await handlePlaybackAction(async () => {
     await awaitServiceWorkerReady();
-    return Boolean(await queue?.advanceToPreviewedFile(nextFileId, handoffPosition));
+    try {
+      handoffStarted = Boolean(await queue?.advanceToPreviewedFile(nextFileId, handoffPosition));
+    } catch (err) {
+      handoffError = err;
+      throw err;
+    }
+    return handoffStarted;
   });
-  if (crossfadeGeneration === myGeneration) {
-    crossfading = false;
-    audioPlayer.volume = 1;
-    crossfadeAudio.pause();
-    crossfadeAudio.removeAttribute("src");
-    crossfadeAudio.load();
+  // ハンドオフ自身のplayer.play()呼び出し（queue.advanceToPreviewedFile()→playAndCommit()→
+  // PlaybackController.play()）は、そのメソッド先頭で無条件にonTransitionStart()（＝
+  // cancelCrossfadeIfActive()）を呼ぶため（ラウンド6の修正、クロスフェードの早期キャンセルを
+  // 非同期の待機経路の長さに関わらず保証する設計）、この時点でcrossfadeGenerationは既に
+  // 自分自身の呼び出しによって進んでしまっている（2026-09-10、Codexレビュー指摘：P2続き。
+  // `crossfadeGeneration === myGeneration`は事実上常にfalseになり、このガードに依存していた
+  // 旧実装のクリーンアップ・フォールバック判定コードはどちらも到達不能だった。cancelCrossfade
+  // IfActive()自身がcrossfading・audioPlayer.volume・crossfadeAudioの後始末を既に行っている
+  // ため、通常のケースでは追加の後始末は不要——ただし`advanceToPreviewedFile()`がplayer.play()
+  // へ一度も到達しなかった稀なケース（例：キューが空でフォールバック先も無い場合）に備え、
+  // 冪等な後始末として明示的にも行っておく）。フォールバックを実行するかどうかの判定は
+  // crossfadeGenerationの比較ではなく、現在進行中の手動操作（manualTransitionCount）が
+  // 無いかどうかで行う：手動操作が既に進行中なら、その操作自身が既にキューの遷移を担って
+  // いるため、ここで重複してadvanceOnEnded()を呼んではならない。
+  crossfading = false;
+  audioPlayer.volume = 1;
+  crossfadeAudio.pause();
+  crossfadeAudio.removeAttribute("src");
+  crossfadeAudio.load();
+  // ハンドオフ自体が失敗した場合、無条件の後始末だけでは主audio要素の自然終了（既に
+  // crossfading中のため抑止済み）に対応する遷移が失われたままになる（2026-09-10、
+  // Codexレビュー指摘：P2）。認証エラー（PlaybackAuthenticationRequiredError）は
+  // handlePlaybackAction()自身が認証継続へ委ねるため対象外とし、それ以外の失敗で
+  // 主audio要素が既に自然終了していた場合のみ、通常の自然終了フォールバックへ進める。
+  if (
+    !handoffStarted &&
+    !(handoffError instanceof PlaybackAuthenticationRequiredError) &&
+    manualTransitionCount === 0 &&
+    audioPlayer.ended
+  ) {
+    void handleQueuePlayback(() => queue?.advanceOnEnded());
   }
 }
 // 再生/前へ/次へ/シャッフルはいずれも「再生リストに曲がある間だけ使える」操作のため、有効/無効を
@@ -1206,18 +1247,23 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined): 
   // （cancelCrossfadeIfActive()参照。クロスフェード自身の完了処理はこの関数を経由しないため、
   // ここでの打ち切りが自分自身を巻き込むことはない）。
   cancelCrossfadeIfActive();
-  // この操作が完了するまで（手動フェードアウトの待機を含む）、新しいクロスフェードの開始を
-  // 防ぐ（2026-09-10、ChatGPTレビュー指摘：P1。manualTransitionInFlightの定義コメント参照）。
-  manualTransitionInFlight = true;
-  try {
-    await handlePlaybackAction(async () => {
-      await awaitServiceWorkerReady();
+  // ガードの増減をhandlePlaybackAction()へ渡すクロージャ自身の実行中に限定する（2026-09-10、
+  // Codexレビュー指摘：P1。manualTransitionCountの定義コメント参照）。handlePlaybackAction()は
+  // PlaybackAuthenticationRequiredError発生時、同じ`action`引数（＝このクロージャ自身）を
+  // playbackAuthGate.defer(() => handlePlaybackAction(action))で後から再実行するため、この
+  // クロージャの内側に増減を置くことで、再試行時も自然に同じガードが再び掛かる（外側の
+  // try/finallyでは、最初のhandlePlaybackAction()呼び出しが認証待ちで即座に正常returnした
+  // 時点でガードが解除され、実際の再試行の間はガードが掛からなくなってしまっていた）。
+  await handlePlaybackAction(async () => {
+    await awaitServiceWorkerReady();
+    manualTransitionCount += 1;
+    try {
       const started = await action();
       return Boolean(started);
-    });
-  } finally {
-    manualTransitionInFlight = false;
-  }
+    } finally {
+      manualTransitionCount -= 1;
+    }
+  });
 }
 
 // serviceWorkerReady自体はタイムアウトでラップしない生のpromise（init()参照）：もしここで
@@ -2192,10 +2238,13 @@ function init(): void {
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
     el<HTMLButtonElement>("pause-btn").addEventListener("click", () => {
       cancelCrossfadeIfActive();
-      // フェード完了までの待機中（manualTransitionInFlightの定義コメント参照）は新しい
-      // クロスフェードの開始を防ぐ（2026-09-10、ChatGPTレビュー指摘：P1）。
-      manualTransitionInFlight = true;
-      void playback?.pause(fadeOutEnabled()).finally(() => { manualTransitionInFlight = false; });
+      // フェード完了までの待機中（manualTransitionCountの定義コメント参照）は新しい
+      // クロスフェードの開始を防ぐ（2026-09-10、ChatGPTレビュー指摘：P1、続けてCodexレビュー
+      // 指摘：P1。連打で2回目のクリックが1回目のフェード完了前に発生すると、1回目の
+      // `finally`が2回目のフェードがまだ進行中でもガードを解除してしまうため、booleanでは
+      // なくカウンタで各クリックごとの完了待ちを独立させる）。
+      manualTransitionCount += 1;
+      void playback?.pause(fadeOutEnabled()).finally(() => { manualTransitionCount -= 1; });
     });
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
     el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
@@ -2271,6 +2320,7 @@ if (import.meta.env.VITE_E2E === "true") {
         loadPlaylists: (spreadsheetId: string) => Promise<boolean>;
         getPlaylistsCommitCount: () => number;
         getLastExternalPlaybackPosition: () => number | null;
+        isManualTransitionInFlight: () => boolean;
       };
     }
   ).__e2e = {
@@ -2283,5 +2333,11 @@ if (import.meta.env.VITE_E2E === "true") {
     // リセットタイミングが実ブラウザと一致するとは限らないため、DOM上のcurrentTime読み取りでは
     // 検証できない）。
     getLastExternalPlaybackPosition: () => lastExternalPlaybackPositionForE2E,
+    // manualTransitionCountのガードが、認証継続の再試行中（handlePlaybackAction()内部の
+    // playbackAuthGate.defer()経由での再実行）・一時停止ボタンの連打中も正しく維持されることを
+    // 直接検証するためのフック（2026-09-10、Codexレビュー指摘：P1×2。crossfade.tsのshould
+    // StartCrossfade()自体は既存のユニットテストでカバー済みのため、main.ts側のガードの
+    // 増減タイミングだけをこのフックで検証する）。
+    isManualTransitionInFlight: () => manualTransitionCount > 0,
   };
 }
