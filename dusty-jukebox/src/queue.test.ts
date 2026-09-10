@@ -313,6 +313,28 @@ describe("PlaybackQueue", () => {
     expect(queue.exclusionVersion()).not.toBe(version1);
     expect(queue.generationId()).toBe(generation1); // exclude()はgenerationIdを進めない
   });
+  test("invalidatePendingMove()は曲一覧・現在曲・除外設定を変えずに進行中の操作だけを無効化する（2026-09-10、実機フィードバックによる再設計。クロスフェードのハンドオフが手動割り込みで無効化された際、player側の無効化だけではPlaybackQueue自身のgenerationが変わらずコミットしてしまう不整合の対策）", async () => {
+    let releasePlay: (() => void) | undefined;
+    let callCount = 0;
+    const player = {
+      play: () => {
+        callCount += 1;
+        if (callCount === 1) return Promise.resolve(); // playAt(0)は即座に解決させる
+        return new Promise<void>((resolve) => { releasePlay = resolve; });
+      },
+    };
+    const audio = new Audio();
+    const queue = new PlaybackQueue(player, audio);
+    queue.setList([song("a"), song("b"), song("c")]);
+    await queue.playAt(0);
+    const playAtPromise = queue.playAt(1); // player.play()の解決待ちで保留中
+    await vi.waitFor(() => expect(releasePlay).toBeDefined());
+    queue.invalidatePendingMove();
+    releasePlay?.();
+    expect(await playAtPromise).toBe(false); // 無効化されたためコミットされない
+    expect(queue.currentPlayingFileId()).toBe("a"); // 曲一覧・現在曲は変わらず元のまま
+    expect(queue.list().map((s) => s.fileId)).toEqual(["a", "b", "c"]); // 曲一覧も変わらない
+  });
   test("moveSongは指定した曲を1つ上/下へ入れ替える（開発体制#42②、上下ボタン）", async () => {
     const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
     queue.setList([song("a"), song("b"), song("c")]);

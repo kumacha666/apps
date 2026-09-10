@@ -745,5 +745,32 @@ describe("PlaybackController", () => {
       // フェード完了・srcコミット後：2回目が呼ばれている。
       expect(calls).toEqual(["start", "start"]);
     });
+
+    // 2026-09-10、実機フィードバックによる再設計。クロスフェードのハンドオフ自身の
+    // play()呼び出しがonTransitionStart()を呼んでしまうと、main.ts側のクロスフェード状態
+    // （crossfadeGeneration）が自分自身の呼び出しで進んでしまい（自己キャンセル）、本当の
+    // 手動割り込み（一時停止・シーク等）と区別できなくなる不具合があった。
+    // suppressTransitionCancelを指定した場合はonTransitionStart()を一切呼ばないことを検証する。
+    test("suppressTransitionCancel指定時はonTransitionStart()を（先頭・srcコミット直前のどちらも）呼ばない", async () => {
+      const audio = new FakeAudio();
+      const calls: string[] = [];
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, () => calls.push("start"));
+      await playback.play("A", 0, { suppressTransitionCancel: true });
+      expect(calls).toEqual([]);
+    });
+
+    // suppressTransitionCancelはあくまでonTransitionStart()のコールバック呼び出しだけを
+    // 抑止するもので、generationの進行自体（isSuperseded()による通常の追い越し判定）は
+    // 従来通り機能する必要がある（main.ts側はcancelCrossfadeIfActive()から明示的に
+    // cancelPendingTransition()を呼ぶことで、この呼び出し自体を無効化できる設計のため）。
+    test("suppressTransitionCancel指定時もgenerationは通常通り進み、後続のcancelPendingTransition()で追い越される", async () => {
+      const audio = new FakeAudio();
+      const playback = new PlaybackController(audio, () => "valid-token");
+      const playPromise = playback.play("A", 0, { suppressTransitionCancel: true });
+      playback.cancelPendingTransition();
+      await playPromise;
+      // srcコミット直前のisSuperseded()判定に失敗するため、audio.srcは設定されないまま。
+      expect(audio.src).toBe("");
+    });
   });
 });

@@ -440,6 +440,23 @@ function cancelCrossfadeIfActive(): void {
   crossfadeAudio.pause();
   crossfadeAudio.removeAttribute("src");
   crossfadeAudio.load();
+  // 進行中のハンドオフ（queue.advanceToPreviewedFile()経由のPlaybackController.play()呼び出し）
+  // 自体を無効化する（2026-09-10、実機フィードバックによる再設計）。ハンドオフのplay()呼び出しは
+  // suppressTransitionCancelにより、もはやこの関数を自動では呼ばない（自己キャンセルの回避）ため、
+  // 逆にここから明示的にcancelPendingTransition()を呼び、進行中のハンドオフを（audioを止めずに）
+  // 無効化する必要がある。呼ばないと、シーク・MediaSessionのネイティブ一時停止等
+  // PlaybackController自身のplay()/pause()を経由しない操作の後にハンドオフが遅れて解決し、
+  // audio.srcを差し替えてしまう（実機フィードバック：シークが効かない、一時停止を押しても
+  // 次の曲の再生に進んでしまう、の根本原因）。cancelPendingTransition()自身もonTransitionStart()
+  // 経由でこの関数を呼び返すが、既にcrossfading=falseにした後のため再入時は早期returnする。
+  playback?.cancelPendingTransition();
+  // player側の無効化だけでは、queue.ts側のplayAndCommit()が見る「generation !== this.
+  // generation」判定（PlaybackQueue自身のgeneration）は変わらないため、audioは実際には
+  // 止まっているのにキューだけ「次の曲へコミット成功」扱いになってしまう不整合が残る
+  // （2026-09-10、実機フィードバック：一時停止を押しても次の曲の再生に進んでしまう不具合の
+  // 根本原因の一つ）。setList()と同じ仕組みをキューの中身を変えずに呼び、進行中のハンドオフの
+  // コミット自体も無効化する。
+  queue?.invalidatePendingMove();
 }
 
 let crossfadeStreamGeneration = 0;
@@ -521,12 +538,13 @@ async function maybeStartCrossfade(): Promise<void> {
   });
   if (crossfadeGeneration !== myGeneration) return;
 
-  // ランプ完了後、第二audio要素を即座に一時停止して再生位置を固定する（2026-09-10、
-  // Codexレビュー指摘：P1）。一時停止せずcurrentTimeだけを読むと、この後のSW準備待ち・
-  // 主audio要素側の実際のストリーム開始が遅れた分だけ第二要素がさらに再生を続けてしまい、
-  // 主audio要素へのハンドオフ位置が古いまま（＝曲の一部を再度聞くことになる）drift する。
-  crossfadeAudio.pause();
-  const handoffPosition = crossfadeAudio.currentTime;
+  // ランプ完了後も第二audio要素（先読み再生）を一時停止せず鳴らし続ける（2026-09-10、実機
+  // フィードバックによる再設計）。旧実装はここで即座に一時停止し、そこから主audio要素の
+  // ストリーム接続（Service Worker準備待ち・実際のDrive通信）を開始していたため、接続に
+  // かかる実時間ぶん無音区間が生じ（「一瞬途切れる」）、かつ接続が遅いと実際の音の重なりが
+  // 短くなっていた（「曲が重ならない」）。主audio要素の準備が整うまで先読み再生を音源として
+  // 鳴らし続け、準備できた時点で初めて位置を合わせて一気に入れ替える。
+  const initialHandoffPosition = crossfadeAudio.currentTime;
   // 主audio要素のendedは、ハンドオフのPlaybackController.play()がaudio.srcを新しい曲へ
   // 差し替えた時点でネイティブにfalseへリセットされる（2026-09-10、Codexレビュー指摘：P2）。
   // 認証エラー以外の失敗（play()自体の拒否等）はこのsrc差し替えの後に起きるため、後段の
@@ -534,6 +552,7 @@ async function maybeStartCrossfade(): Promise<void> {
   // していたにも関わらずfalseに戻ってしまい判定できない。ハンドオフ開始前の値をここで
   // 一度だけ確定させ、以後はこの値を使う。
   const outgoingEnded = audioPlayer.ended;
+  let handoffStarted = false;
   // handleQueuePlayback()は先頭でcancelCrossfadeIfActive()を呼ぶため、自分自身の完了処理は
   // それを経由せずhandlePlaybackAction()を直接呼ぶ（awaitServiceWorkerReady()もhandleQueue
   // Playback()と同じ内容をここで行う）。ランプ中にexclude/並べ替え/シャッフル等でキューが
@@ -542,17 +561,19 @@ async function maybeStartCrossfade(): Promise<void> {
   // フォールバックの判定・実行はこのクロージャ自身の中で行う（2026-09-10、Codexレビュー
   // 指摘：P2続き）。認証エラーでhandlePlaybackAction()がplaybackAuthGate経由の再試行へ
   // 委ねた場合、このクロージャ自身が後で（ユーザーが認証を更新した時点で）再実行されるため、
-  // 外側で一度だけ結果を見る形では、初回とは異なる再試行時の成否に対応できなかった
-  // （初回が認証エラーで即returnした時点で外側の判定が確定してしまい、後から再試行が
-  // 認証エラー以外の理由で失敗しても、そのフォールバックが実行されなかった）。
+  // 外側で一度だけ結果を見る形では、初回とは異なる再試行時の成否に対応できない。
   const attemptHandoff = async (): Promise<boolean> => {
     await awaitServiceWorkerReady();
     try {
-      const started = Boolean(await queue?.advanceToPreviewedFile(nextFileId, handoffPosition));
-      if (!started && manualTransitionCount === 0 && outgoingEnded) {
+      // suppressTransitionCancel: このplay()呼び出し自身にクロスフェードを自己キャンセル
+      // させない（2026-09-10、実機フィードバックによる再設計）。crossfadeGenerationの変化を
+      // 「本物の手動割り込みが起きたか」の判定に再び使えるようにするため（詳細はplayback.ts
+      // のPlayOptions.suppressTransitionCancelコメント参照）。
+      handoffStarted = Boolean(await queue?.advanceToPreviewedFile(nextFileId, initialHandoffPosition));
+      if (!handoffStarted && manualTransitionCount === 0 && outgoingEnded) {
         void handleQueuePlayback(() => queue?.advanceOnEnded());
       }
-      return started;
+      return handoffStarted;
     } catch (err) {
       if (!(err instanceof PlaybackAuthenticationRequiredError) && manualTransitionCount === 0 && outgoingEnded) {
         void handleQueuePlayback(() => queue?.advanceOnEnded());
@@ -561,24 +582,31 @@ async function maybeStartCrossfade(): Promise<void> {
     }
   };
   await handlePlaybackAction(attemptHandoff);
-  // ハンドオフ自身のplayer.play()呼び出し（queue.advanceToPreviewedFile()→playAndCommit()→
-  // PlaybackController.play()）は、そのメソッド先頭で無条件にonTransitionStart()（＝
-  // cancelCrossfadeIfActive()）を呼ぶため（ラウンド6の修正、クロスフェードの早期キャンセルを
-  // 非同期の待機経路の長さに関わらず保証する設計）、この時点でcrossfadeGenerationは既に
-  // 自分自身の呼び出しによって進んでしまっている（2026-09-10、Codexレビュー指摘：P2続き。
-  // `crossfadeGeneration === myGeneration`は事実上常にfalseになり、このガードに依存していた
-  // 旧実装のクリーンアップ・フォールバック判定コードはどちらも到達不能だった。cancelCrossfade
-  // IfActive()自身がcrossfading・audioPlayer.volume・crossfadeAudioの後始末を既に行っている
-  // ため、通常のケースでは追加の後始末は不要——ただし`advanceToPreviewedFile()`がplayer.play()
-  // へ一度も到達しなかった稀なケース（例：キューが空でフォールバック先も無い場合）に備え、
-  // 冪等な後始末として明示的にも行っておく）。フォールバックを実行するかどうかの判定は
-  // crossfadeGenerationの比較ではなく、現在進行中の手動操作（manualTransitionCount）が
-  // 無いかどうかで行う：手動操作が既に進行中なら、その操作自身が既にキューの遷移を担って
-  // いるため、ここで重複してadvanceOnEnded()を呼んではならない。
-  // ハンドオフの成否に関わらず、クロスフェード自身の状態は直ちに後始末する（フォールバックの
-  // 実行判定・再試行対応はattemptHandoff()自身の中で行うため、ここでは待たない）。
-  crossfading = false;
+
+  if (crossfadeGeneration !== myGeneration) {
+    // 手動割り込み（次へ/前へ/一時停止/シーク等）が既にこのクロスフェードを打ち切っている。
+    // cancelCrossfadeIfActive()側で第二audio要素の後始末・進行中ハンドオフの無効化
+    // （cancelPendingTransition()）まで済んでいるため、ここでは何もしない。
+    return;
+  }
+  if (!handoffStarted) {
+    // ハンドオフが失敗した（フォールバックはattemptHandoff()自身が判定・実行済み）、または
+    // 認証待ちでまだ完了していない。第二audio要素はまだ鳴っている可能性があるため後始末する。
+    crossfading = false;
+    crossfadeAudio.pause();
+    crossfadeAudio.removeAttribute("src");
+    crossfadeAudio.load();
+    return;
+  }
+
+  // ハンドオフ成功：主audio要素は既にplay()を解決し（volumeはランプ完了時点の0のまま無音で）
+  // 再生を始めている。第二audio要素はこの間も鳴り続けていたため、実際に切り替える直前の
+  // 位置へ主audio要素を合わせてから、無音のうちに音源を入れ替える（この最終合わせによる
+  // 短い再シークは残るが、接続確立そのものを待つ無音区間よりはるかに短い）。
+  const finalPosition = crossfadeAudio.currentTime;
+  if (Number.isFinite(finalPosition)) audioPlayer.currentTime = finalPosition;
   audioPlayer.volume = 1;
+  crossfading = false;
   crossfadeAudio.pause();
   crossfadeAudio.removeAttribute("src");
   crossfadeAudio.load();

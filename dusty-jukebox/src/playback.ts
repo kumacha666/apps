@@ -29,6 +29,21 @@ export interface PlayOptions {
   // next()呼び出し（advanceOnEnded()経由）では渡さない：将来のクロスフェード機能が
   // この経路を専用に扱うため、フェードアウトと役割を分ける。
   fadeOut?: boolean;
+  // クロスフェードのハンドオフ専用（2026-09-10、実機フィードバックによる再設計）。trueの
+  // 場合、このplay()呼び出し自身はonTransitionStart()（main.ts側のcancelCrossfadeIfActive()）
+  // を呼ばない。理由：クロスフェードのハンドオフ（先読み再生していた曲への正式な引き継ぎ）は
+  // このメソッドを呼んでキュー側の次曲へコミットするが、この呼び出し自体が無条件に
+  // onTransitionStart()を呼ぶ設計のままだと、ハンドオフの最中に「自分自身」でクロスフェードの
+  // 状態（main.tsのcrossfadeGeneration）を進めてしまい（自己キャンセル）、本当の手動割り込み
+  // （一時停止・シーク・次へ等）が起きたかどうかをcrossfadeGenerationの変化で区別できなく
+  // なっていた。結果、ハンドオフ後のクリーンアップ・フォールバック判定コードが事実上常に
+  // 「割り込まれた」扱いになり機能しない、または逆に本物の割り込みを見逃す、という不具合が
+  // あった（実機フィードバック：シークバー操作が効かない、一時停止を押しても次の曲の再生に
+  // 進んでしまう）。このオプションでハンドオフ自身の呼び出しだけonTransitionStart()を
+  // スキップすることで、crossfadeGenerationの変化を「本物の割り込みが起きたか」のsignalとして
+  // 正しく使えるようにする（generation自体は通常通り進める：フェード付きplay()等、他の
+  // 既存の割り込み判定はこれまで通り機能させる必要があるため）。
+  suppressTransitionCancel?: boolean;
 }
 
 export type PlaybackErrorHandler = (error: unknown) => void;
@@ -154,7 +169,7 @@ export class PlaybackController {
 
   async play(fileId: string, position = 0, options: PlayOptions = {}): Promise<void> {
     this.reclaimPendingFadeVolume();
-    this.onTransitionStart();
+    if (!options.suppressTransitionCancel) this.onTransitionStart();
     this.generation += 1;
     const playGeneration = this.generation;
     const isSuperseded = () => this.generation !== playGeneration;
@@ -227,8 +242,10 @@ export class PlaybackController {
     // 通常2秒）待ち中に旧曲がクロスフェードの残り時間（3秒）閾値へ入ると、先頭で一度きりの
     // 呼び出しでは間に合わず新しいクロスフェードが始まってしまい、この後のsrcコミットと
     // 音量の取り合いになる。fadeOutを指定しない通常再生でもトークン確認（getValidAccessToken）
-    // の待ちが長引く可能性があるため、fadeOut有無に関わらず常にここで呼ぶ。
-    this.onTransitionStart();
+    // の待ちが長引く可能性があるため、fadeOut有無に関わらず常にここで呼ぶ
+    // （suppressTransitionCancel指定時はここもスキップする：クロスフェードのハンドオフ自身の
+    // 呼び出しであり、自己キャンセルさせないため）。
+    if (!options.suppressTransitionCancel) this.onTransitionStart();
     this.currentFileId = fileId;
     this.audio.src = streamUrl(fileId, playGeneration);
     // フェードアウトした分だけ、次の曲の開始時にフェード開始前のvolumeへ戻す

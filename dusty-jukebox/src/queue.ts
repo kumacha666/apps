@@ -3,7 +3,7 @@ import { sortSongsForQueue, type QueueSortDirection, type QueueSortField } from 
 import { PlaybackInterruptedError, PlaybackPausedError } from "./playback";
 export interface AudioEndedLike { addEventListener(type: "ended", listener: () => void): void; }
 export interface PlayerLike {
-  play(fileId: string, position?: number, options?: { fadeOut?: boolean }): Promise<void>;
+  play(fileId: string, position?: number, options?: { fadeOut?: boolean; suppressTransitionCancel?: boolean }): Promise<void>;
   // setList()（別アルバム・プレイリスト選択）でPlaybackController側の進行中フェードも
   // 無効化するために使う（2026-09-08、Codexレビュー指摘：P1、詳細はplayback.tsの実装参照）。
   // 実PlaybackController以外の簡易モック（既存テスト等）を壊さないためoptionalにする。
@@ -77,6 +77,14 @@ export class PlaybackQueue {
   // player.cancelPendingTransition()でcontroller側のgenerationも進め、フェード完了後に
   // 「もう選ばれていない旧リストの曲」が実際に鳴ってしまうのを防ぐ。
   setList(songs: Song[]): void { this.generation += 1; this.pendingMove = Promise.resolve(false); this.activeFadeToken = null; this.player.cancelPendingTransition?.(); this.songs = [...songs]; this.currentFileId = null; this.excluded = new Set(); this.isQueuePlayback = false; this.originalOrder = null; }
+  // setList()と同じ「進行中の操作をすべて無効化する」仕組みを、曲一覧・現在曲・除外設定は
+  // 変えずに使う版（2026-09-10、実機フィードバックによる再設計）。クロスフェードのハンドオフが
+  // 手動割り込み（シーク・一時停止等）で無効化された場合、player側（PlaybackController.
+  // cancelPendingTransition()）はaudio要素の実際の再生を止められても、playAndCommit()の
+  // `generation !== this.generation`チェックはPlaybackQueue自身のgenerationしか見ないため、
+  // これを呼ばないとハンドオフがそのまま「成功」としてcurrentFileId/isQueuePlaybackへ
+  // コミットしてしまう（audioは止まっているのにキューだけ次の曲を指す不整合）。
+  invalidatePendingMove(): void { this.generation += 1; }
   notifyExternalPlaybackStarted(): void { this.isQueuePlayback = false; }
   // 呼び出しのたびに1つ進む（2026-09-08、Codexレビュー指摘：P2続き）。exclude()はsetList()を
   // 経由せず即座にexcludedを書き換えるため、generationId()では検出できない「除外/除外解除だけの
@@ -123,7 +131,7 @@ export class PlaybackQueue {
   peekNextFileId(): string | null {
     return this.findNext()?.fileId ?? null;
   }
-  private async playAndCommit(fileId: string, generation: number, position?: number, fadeOut = false): Promise<boolean> {
+  private async playAndCommit(fileId: string, generation: number, position?: number, fadeOut = false, suppressTransitionCancel = false): Promise<boolean> {
     // Register a continuation before the native play promise settles: the
     // initial stream request can receive a 401 while that promise is pending.
     this.onBeforePlay(fileId);
@@ -135,7 +143,11 @@ export class PlaybackQueue {
       this.activeFadeToken = myFadeToken;
     }
     try {
-      await this.player.play(fileId, position, fadeOut ? { fadeOut: true } : undefined);
+      await this.player.play(
+        fileId,
+        position,
+        fadeOut || suppressTransitionCancel ? { fadeOut: fadeOut || undefined, suppressTransitionCancel: suppressTransitionCancel || undefined } : undefined
+      );
     } catch (err) {
       // フェード中にユーザーが明示的に一時停止した場合（2026-09-08、Codexレビュー指摘：P1）。
       // player.play()は次の曲へ実際には切り替わっていないため、これを再生成功として
@@ -275,7 +287,11 @@ export class PlaybackQueue {
       while (candidate) {
         const position = candidate === fileId && !appliedStartPosition ? startPosition : undefined;
         if (candidate === fileId) appliedStartPosition = true;
-        const started = await this.playAndCommit(candidate, generation, position, false);
+        // suppressTransitionCancel: このメソッドはクロスフェードのハンドオフ専用のため、
+        // 自身のplayer.play()呼び出しでクロスフェード自体を自己キャンセルさせない
+        // （2026-09-10、実機フィードバックによる再設計。詳細はplayback.tsのPlayOptions.
+        // suppressTransitionCancelコメント参照）。
+        const started = await this.playAndCommit(candidate, generation, position, false, true);
         if (!started) return false;
         if (!this.isExcluded(candidate)) return true;
         const next = this.findNext();
