@@ -101,6 +101,22 @@ export class PlaybackQueue {
   canResumeCurrent(): boolean {
     return this.isQueuePlayback && this.currentFileId !== null && !this.isExcluded(this.currentFileId);
   }
+  // クロスフェード（開発体制#42④続き）向け：現在の再生がキュー由来かどうか。外部の単曲試聴
+  // （main.tsの「この曲を再生」）中はクロスフェードを発火させないためのガードに使う
+  // （currentFileId自体はnotifyExternalPlaybackStarted()後も温存され続けるため、これ単独では
+  // 判定できない。canResumeCurrent()と同じ理由）。
+  isPlayingFromQueue(): boolean {
+    return this.isQueuePlayback;
+  }
+  // クロスフェード向け：次に再生される曲のfileId（無ければnull）。next()と同じ探索ロジックだが
+  // 状態を変更しない読み取り専用の先読み。
+  private findNext(): Song | undefined {
+    const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId);
+    return this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId));
+  }
+  peekNextFileId(): string | null {
+    return this.findNext()?.fileId ?? null;
+  }
   private async playAndCommit(fileId: string, generation: number, position?: number, fadeOut = false): Promise<boolean> {
     // Register a continuation before the native play promise settles: the
     // initial stream request can receive a 401 while that promise is pending.
@@ -198,7 +214,15 @@ export class PlaybackQueue {
   // trueを渡す。曲の自然終了（advanceOnEnded()経由）ではfalse（既定値）のまま呼ぶ——将来の
   // クロスフェード機能（曲間で2曲が重なる本格版）がこの経路を専用に扱うため、フェードアウト
   // （単曲の音量を下げてから切り替える簡易版）とは役割を分ける。
-  next(fadeOut = false): Promise<boolean> { return this.move(async (generation) => { const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId); const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId)); return next ? this.playAndCommit(next.fileId, generation, undefined, fadeOut) : false; }); }
+  // startPosition（クロスフェード向け、2026-09-10）：クロスフェードの先読み再生が既に進んでいた
+  // 秒数を渡し、その位置から次の曲を引き継ぐ。省略時（既存の全呼び出し）はplayAndCommit()の
+  // 既定どおり先頭（0）から再生する。
+  next(fadeOut = false, startPosition?: number): Promise<boolean> {
+    return this.move(async (generation) => {
+      const next = this.findNext();
+      return next ? this.playAndCommit(next.fileId, generation, startPosition, fadeOut) : false;
+    });
+  }
   // 曲の自然終了（<audio>のended）専用のnext()。next()自体にこのロジックを組み込まないのは、
   // 末尾で「次へ」ボタンを空振りクリックしただけ（曲はまだ再生中）でも再開不可状態へ遷移して
   // しまうと、その後「一時停止して再生」で現在位置から再開する既存の想定動作を壊すため
@@ -206,8 +230,9 @@ export class PlaybackQueue {
   // isQueuePlaybackがtrueのまま残り、「再生」ボタンが曲末尾の再生位置からresume()してしまい、
   // 実質何も再生されない不具合があった）。次の曲が無い場合のみisQueuePlaybackを明示的に
   // falseへ遷移させ、以後の「再生」ボタンがplayAt(0)で先頭から再生し直せるようにする。
-  advanceOnEnded(): Promise<boolean> {
-    return this.next().then((started) => {
+  // startPosition：クロスフェード向け（next()参照）。省略時は先頭（0）から。
+  advanceOnEnded(startPosition?: number): Promise<boolean> {
+    return this.next(false, startPosition).then((started) => {
       if (!started) this.isQueuePlayback = false;
       return started;
     });

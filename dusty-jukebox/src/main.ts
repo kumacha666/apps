@@ -8,7 +8,7 @@
 // （runFullScan、フォルダ全体の再帰走査＋バッチ処理・中断再開）を行う。完了後
 // （hasCompletedInitialScan=true）はrunDifferentialSync（changes.list消費）に切り替わる。
 import { AuthError, DriveAuth } from "./auth";
-import { PlaybackAuthenticationRequiredError, PlaybackController } from "./playback";
+import { PlaybackAuthenticationRequiredError, PlaybackController, streamUrl } from "./playback";
 import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStatus";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
@@ -40,6 +40,7 @@ const QUEUE_SORT_FIELD_LABELS: Record<QueueSortField, string> = {
 import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState } from "./mediaSession";
 import { formatSeekTime, isSeekableDuration } from "./seekBar";
 import { shouldResumeExternalPlayback } from "./externalPlayback";
+import { CROSSFADE_DURATION_MS, runCrossfade, shouldStartCrossfade } from "./crossfade";
 import { registerStreamAuthResponder } from "./streamAuth";
 import {
   createChangesListFn,
@@ -229,6 +230,7 @@ function render(): void {
       <button id="play-btn" type="button" disabled>この曲を再生</button>
       <div class="now-playing-bar">
         <audio id="audio-player"></audio>
+        <audio id="audio-player-crossfade"></audio>
         <div class="seek-bar">
           <span id="seek-current-time" class="seek-time">0:00</span>
           <input id="seek-slider" type="range" min="0" max="0" step="0.1" value="0" disabled />
@@ -257,6 +259,7 @@ function render(): void {
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
         <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="pause-btn" type="button" disabled>一時停止</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button> <button id="clear-queue-btn" type="button" disabled>再生リストをクリア</button></div>
         <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトする</label>
+        <label><input id="crossfade-toggle" type="checkbox" /> 曲間をクロスフェードする</label>
         <div>
           <label>並び替え
             <select id="sort-field" disabled>
@@ -386,6 +389,97 @@ function numberOrUndefined(value: string): number | undefined { const n = Number
 function fadeOutEnabled(): boolean {
   return el<HTMLInputElement>("fade-out-toggle").checked;
 }
+
+// 曲間のクロスフェード（開発体制#42④続き、2026-09-10）。手動スキップ時のフェードアウトとは
+// 独立したチェックボックス（既定OFF）で、キュー内の曲の自然終了時のみ適用する（手動スキップ・
+// 単曲試聴・保存プレイリスト読み込み直後の先頭曲等は対象外、ユーザーとの相談で確認済み）。
+function crossfadeEnabled(): boolean {
+  return el<HTMLInputElement>("crossfade-toggle").checked;
+}
+
+// 進行中のクロスフェードの世代。cancelCrossfadeIfActive()が進めることで、進行中のrunCrossfade()
+// のisCancelled()判定・完了後の後始末処理が「自分が開始したクロスフェードが依然として有効か」を
+// 確認できるようにする（手動スキップ等でユーザーが割り込んだ場合に、後から解決するクロス
+// フェードの後始末が新しい操作の状態を巻き込んで壊さないようにするため。playback.tsの
+// generationパターンと同じ考え方）。
+let crossfadeGeneration = 0;
+let crossfading = false;
+
+// クロスフェード中に手動ナビゲーション（次へ/前へ/曲名クリック等）が割り込んだ場合、進行中の
+// ランプ・先読み再生を打ち切り、状態を復元する。handleQueuePlayback()の先頭から呼ぶ
+// （クロスフェード自身の完了処理はhandleQueuePlayback()を経由せず直接handlePlaybackAction()を
+// 呼ぶため、ここでの打ち切りが自分自身を巻き込むことはない）。
+function cancelCrossfadeIfActive(): void {
+  if (!crossfading) return;
+  crossfadeGeneration += 1;
+  crossfading = false;
+  el<HTMLAudioElement>("audio-player").volume = 1;
+  const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
+  crossfadeAudio.pause();
+  crossfadeAudio.removeAttribute("src");
+  crossfadeAudio.load();
+}
+
+let crossfadeStreamGeneration = 0;
+
+// キュー内の曲が自然終了に近づいたら、次の曲を先読み再生しながら2曲を重ねて鳴らす
+// （wireSeekBar()と同じくaudioPlayerのtimeupdateから駆動する）。
+async function maybeStartCrossfade(): Promise<void> {
+  const audioPlayer = el<HTMLAudioElement>("audio-player");
+  if (
+    !shouldStartCrossfade({
+      crossfadeEnabled: crossfadeEnabled(),
+      isCrossfading: crossfading,
+      hasNextSong: Boolean(queue?.peekNextFileId()),
+      duration: audioPlayer.duration,
+      currentTime: audioPlayer.currentTime,
+      crossfadeDurationMs: CROSSFADE_DURATION_MS,
+    }) ||
+    !queue?.isPlayingFromQueue()
+  ) return;
+  const nextFileId = queue.peekNextFileId();
+  if (!nextFileId || !playback) return;
+  // 現在有効なトークンが無ければクロスフェードを諦め、通常の自然終了フロー（'ended'→
+  // advanceOnEnded()）に委ねる（認証継続フロー自体はこの先読み再生には組み込まない、
+  // v1の既知の制限としてCLAUDE.mdに記録する）。
+  const token = auth.getAccessToken();
+  if (!token) return;
+
+  crossfading = true;
+  const myGeneration = crossfadeGeneration;
+  const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
+  crossfadeStreamGeneration -= 1;
+  crossfadeAudio.src = streamUrl(nextFileId, crossfadeStreamGeneration);
+  crossfadeAudio.volume = 0;
+  try {
+    await crossfadeAudio.play();
+  } catch {
+    if (crossfadeGeneration === myGeneration) crossfading = false;
+    return;
+  }
+  if (crossfadeGeneration !== myGeneration) return;
+
+  await runCrossfade(audioPlayer, crossfadeAudio, CROSSFADE_DURATION_MS, {
+    isCancelled: () => crossfadeGeneration !== myGeneration,
+  });
+  if (crossfadeGeneration !== myGeneration) return;
+
+  const handoffPosition = crossfadeAudio.currentTime;
+  // handleQueuePlayback()は先頭でcancelCrossfadeIfActive()を呼ぶため、自分自身の完了処理は
+  // それを経由せずhandlePlaybackAction()を直接呼ぶ（awaitServiceWorkerReady()もhandleQueue
+  // Playback()と同じ内容をここで行う）。
+  await handlePlaybackAction(async () => {
+    await awaitServiceWorkerReady();
+    return Boolean(await queue?.advanceOnEnded(handoffPosition));
+  });
+  if (crossfadeGeneration === myGeneration) {
+    crossfading = false;
+    audioPlayer.volume = 1;
+    crossfadeAudio.pause();
+    crossfadeAudio.removeAttribute("src");
+    crossfadeAudio.load();
+  }
+}
 // 再生/前へ/次へ/シャッフルはいずれも「再生リストに曲がある間だけ使える」操作のため、有効/無効を
 // まとめて切り替える（開発体制#39④UI-4、シャッフル追加時に既存2ボタンと同じ条件のまま揃える）。
 function setQueueNavEnabled(enabled: boolean): void {
@@ -414,6 +508,7 @@ function updateUnshuffleEnabled(): void {
 // 鳴り続けないよう明示的に一時停止する（読み込んだプレイリストの全曲が索引から消えていた
 // 場合の既存の停止処理と同じ理由。フェードは掛けず即座に止める）。
 function handleClearQueue(): void {
+  cancelCrossfadeIfActive();
   void playback?.pause();
   // Drive側の401等でPlaybackAuthenticationGateに再生継続操作が保留され、
   // 「認証を更新して続行」（#playback-auth-notice）が表示されている状態は
@@ -994,6 +1089,7 @@ async function handlePlay(): Promise<void> {
     audioPaused: audioPlayer.paused,
     audioEnded: audioPlayer.ended,
   });
+  cancelCrossfadeIfActive();
   await handlePlaybackAction(async () => {
     setStatus("Service Worker経由で再生を開始しています...");
     return canResumeExternal
@@ -1048,6 +1144,10 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined): 
   // 差し替わる（失敗時に据え置いても実害は無い：単曲試聴の「resume」機会を1回逃すだけで、
   // 次回「この曲を再生」が先頭から再生し直すフォールバックへ倒れるだけのため安全側）。
   lastExternalFileId = null;
+  // 進行中のクロスフェードがあれば、この明示的なナビゲーション操作を優先して打ち切る
+  // （cancelCrossfadeIfActive()参照。クロスフェード自身の完了処理はこの関数を経由しないため、
+  // ここでの打ち切りが自分自身を巻き込むことはない）。
+  cancelCrossfadeIfActive();
   await handlePlaybackAction(async () => {
     await awaitServiceWorkerReady();
     const started = await action();
@@ -1960,6 +2060,7 @@ function init(): void {
     }
     const audioPlayer = el<HTMLAudioElement>("audio-player");
     wireSeekBar(audioPlayer);
+    audioPlayer.addEventListener("timeupdate", () => void maybeStartCrossfade());
     playback = new PlaybackController(
       audioPlayer,
       () => auth.getAccessToken(),
@@ -1998,7 +2099,10 @@ function init(): void {
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
     el<HTMLButtonElement>("retry-extraction-btn").addEventListener("click", () => void handleRetryExtraction());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
-    el<HTMLButtonElement>("pause-btn").addEventListener("click", () => void playback?.pause(fadeOutEnabled()));
+    el<HTMLButtonElement>("pause-btn").addEventListener("click", () => {
+      cancelCrossfadeIfActive();
+      void playback?.pause(fadeOutEnabled());
+    });
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
     el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
     el<HTMLButtonElement>("create-queue-btn").addEventListener("click", createQueueFromFilters);

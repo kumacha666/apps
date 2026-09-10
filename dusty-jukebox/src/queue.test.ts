@@ -878,6 +878,88 @@ describe("PlaybackQueue", () => {
     expect(played).toEqual(["a", "b", "b"]);
     expect(queue.currentPlayingFileId()).toBe("b");
   });
+
+  describe("クロスフェード向けの追加API（peekNextFileId/isPlayingFromQueue/startPosition）", () => {
+    test("peekNextFileIdは状態を変えずに次の曲のfileIdを返す", async () => {
+      const audio = new Audio();
+      const queue = new PlaybackQueue({ play: async () => {} }, audio);
+      queue.setList([song("a"), song("b"), song("c")]);
+      await queue.playAt(0);
+      expect(queue.peekNextFileId()).toBe("b");
+      // 状態を変えていないので、実際にnext()すると同じ曲へ進む。
+      await queue.next();
+      expect(queue.currentPlayingFileId()).toBe("b");
+    });
+
+    test("peekNextFileIdは除外中の曲を飛ばす", async () => {
+      const audio = new Audio();
+      const queue = new PlaybackQueue({ play: async () => {} }, audio);
+      queue.setList([song("a"), song("b"), song("c")]);
+      queue.exclude("b", true);
+      await queue.playAt(0);
+      expect(queue.peekNextFileId()).toBe("c");
+    });
+
+    test("次の曲が無ければpeekNextFileIdはnullを返す", async () => {
+      const audio = new Audio();
+      const queue = new PlaybackQueue({ play: async () => {} }, audio);
+      queue.setList([song("a")]);
+      await queue.playAt(0);
+      expect(queue.peekNextFileId()).toBeNull();
+    });
+
+    test("isPlayingFromQueueはキュー再生中はtrue、外部試聴通知後はfalse", async () => {
+      const audio = new Audio();
+      const queue = new PlaybackQueue({ play: async () => {} }, audio);
+      queue.setList([song("a"), song("b")]);
+      expect(queue.isPlayingFromQueue()).toBe(false);
+      await queue.playAt(0);
+      expect(queue.isPlayingFromQueue()).toBe(true);
+      queue.notifyExternalPlaybackStarted();
+      expect(queue.isPlayingFromQueue()).toBe(false);
+    });
+
+    test("next()にstartPositionを渡すとplayer.play()へそのまま渡される（クロスフェードの引き継ぎ位置）", async () => {
+      const positions: (number | undefined)[] = [];
+      const audio = new Audio();
+      const queue = new PlaybackQueue(
+        { play: async (_id, position) => { positions.push(position); } },
+        audio
+      );
+      queue.setList([song("a"), song("b")]);
+      await queue.playAt(0);
+      await queue.next(false, 42);
+      expect(positions).toEqual([undefined, 42]);
+      expect(queue.currentPlayingFileId()).toBe("b");
+    });
+
+    test("advanceOnEnded()にstartPositionを渡すとnext()経由でplayer.play()へ引き継がれる", async () => {
+      const positions: (number | undefined)[] = [];
+      const audio = new Audio();
+      const queue = new PlaybackQueue(
+        { play: async (_id, position) => { positions.push(position); } },
+        audio
+      );
+      queue.setList([song("a"), song("b")]);
+      await queue.playAt(0);
+      await queue.advanceOnEnded(17);
+      expect(positions).toEqual([undefined, 17]);
+      expect(queue.currentPlayingFileId()).toBe("b");
+    });
+
+    test("startPositionを省略した従来通りの呼び出しは先頭（undefined、既定0）のまま", async () => {
+      const positions: (number | undefined)[] = [];
+      const audio = new Audio();
+      const queue = new PlaybackQueue(
+        { play: async (_id, position) => { positions.push(position); } },
+        audio
+      );
+      queue.setList([song("a"), song("b")]);
+      await queue.playAt(0);
+      await queue.next();
+      expect(positions).toEqual([undefined, undefined]);
+    });
+  });
 });
 
 describe("queueRowViews", () => {
