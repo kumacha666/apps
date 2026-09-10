@@ -253,23 +253,28 @@ export class PlaybackQueue {
     const generationAtCall = this.generation;
     return this.move(async (generation) => {
       const stillQueued = this.list().some((song) => song.fileId === fileId);
-      const target = stillQueued ? fileId : this.findNext()?.fileId;
-      if (!target) return false;
-      // フォールバック先（先読みしていた曲が消えている・除外された場合のfindNext()の結果）は
-      // startPositionを引き継がない（2026-09-10、Codexレビュー指摘：P1）。startPositionは
-      // 先読みしていたfileId自身の再生位置であり、別の曲をその秒数から開始すると冒頭を
-      // スキップしてしまう。
-      const started = await this.playAndCommit(target, generation, target === fileId ? startPosition : undefined, false);
+      let candidate = stillQueued ? fileId : this.findNext()?.fileId;
+      // startPositionは先読みしていたfileId自身の再生位置であり、フォールバック先
+      // （先読みしていた曲が消えている・除外された場合のfindNext()の結果）には引き継がない
+      // （2026-09-10、Codexレビュー指摘：P1。別の曲をその秒数から開始すると冒頭をスキップ
+      // してしまう）。一度でもfileId以外へフォールバックしたら、以後は使わない。
+      let appliedStartPosition = false;
       // player.play()の待機中に対象曲自体がチェックボックスで除外された場合（2026-09-10、
-      // Codexレビュー指摘：P1続き）。exclude()はgenerationを進めないため、上のstillQueued
+      // Codexレビュー指摘：P1続き）。exclude()はgenerationを進めないため、事前のstillQueued
       // 判定・playAndCommit内部のgeneration確認のどちらでも検知できず、除外済みの曲が
-      // 再生され続けてしまう。commit後に除外状態を再確認し、除外されていればその時点で
-      // 有効な次の曲へ切り替える。
-      if (started && this.isExcluded(target)) {
-        const fallback = this.findNext();
-        return fallback ? this.playAndCommit(fallback.fileId, generation) : false;
+      // そのまま再生され続けてしまう。commit後に対象の除外状態を再確認し、除外されていれば
+      // その時点で有効な次の曲へ切り替える処理を、フォールバック先が重ねて除外された場合にも
+      // 対応できるようループにする（Codexレビュー再指摘：フォールバック先自身の待機中に
+      // さらに除外されるケース）。
+      while (candidate) {
+        const position = candidate === fileId && !appliedStartPosition ? startPosition : undefined;
+        if (candidate === fileId) appliedStartPosition = true;
+        const started = await this.playAndCommit(candidate, generation, position, false);
+        if (!started) return false;
+        if (!this.isExcluded(candidate)) return true;
+        candidate = this.findNext()?.fileId;
       }
-      return started;
+      return false;
     }).then((started) => {
       if (!started && this.generation === generationAtCall) this.isQueuePlayback = false;
       return started;

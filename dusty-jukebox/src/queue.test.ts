@@ -1090,6 +1090,35 @@ describe("PlaybackQueue", () => {
         expect(played).toEqual(["a", "b", "c"]);
         expect(queue.currentPlayingFileId()).toBe("c");
       });
+
+      // 2026-09-10、Codexレビュー指摘：P1再指摘。フォールバック先("c")自身のplayer.play()待機中に
+      // さらに除外された場合も、1回のフォールバックで止まらず有効な曲まで辿り着く必要がある。
+      test("フォールバック先自身の待機中にさらに除外されても、有効な曲が見つかるまで辿り続ける", async () => {
+        const played: string[] = [];
+        let resolvePlayB: (() => void) | undefined;
+        let resolvePlayC: (() => void) | undefined;
+        const audio = new Audio();
+        const queue = new PlaybackQueue({
+          play: async (id) => {
+            played.push(id);
+            if (id === "b") await new Promise<void>((resolve) => { resolvePlayB = resolve; });
+            if (id === "c") await new Promise<void>((resolve) => { resolvePlayC = resolve; });
+          },
+        }, audio);
+        queue.setList([song("a"), song("b"), song("c"), song("d")]);
+        await queue.playAt(0);
+        const promise = queue.advanceToPreviewedFile("b");
+        await vi.waitFor(() => expect(played).toContain("b"));
+        queue.exclude("b", true);
+        resolvePlayB?.();
+        await vi.waitFor(() => expect(played).toContain("c"));
+        // "c"へのフォールバック中（player.play("c")未解決）に、"c"自身も除外される。
+        queue.exclude("c", true);
+        resolvePlayC?.();
+        expect(await promise).toBe(true);
+        expect(played).toEqual(["a", "b", "c", "d"]);
+        expect(queue.currentPlayingFileId()).toBe("d");
+      });
     });
   });
 });
