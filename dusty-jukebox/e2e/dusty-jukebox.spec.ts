@@ -1139,8 +1139,8 @@ test("クロスフェードは準備（接続確立）と音量ランプの開�
   expect(volumeDuringRamp).toBeLessThan(1);
 
   // 耐久性のため、ハンドオフ完了前にduration上書きを元に戻す（2026-09-11、
-  // isPositionBuffered()導入により、ハンドオフの最終位置合わせ〈finishCrossfadeHandoff()の
-  // 再シーク〉がバッファ未確認のこのE2Eモック環境では常にスキップされるようになったため、
+  // bufferedCatchUpPosition()導入により、ハンドオフの最終位置合わせ〈finishCrossfadeHandoff()の
+  // 再シーク〉がバッファ未設定のこのE2Eモック環境では常にスキップされるようになったため、
   // 主audio要素のcurrentTimeがsrc切り替え後もテスト側が設定した古い値〈179.99〉のまま残って
   // しまう場合がある〈実ブラウザではsrc代入自体がcurrentTimeを0へリセットするが、この
   // モック環境ではそう振る舞わないことがある、既存の複数のクロスフェードE2Eと同じ注意点〉。
@@ -2275,26 +2275,27 @@ test("クロスフェードのハンドオフ最終位置合わせは、まだ�
     document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!.currentTime = 42;
   });
   // 主audio要素のbufferedには42秒を含まない（＝まだバッファされていない）ことにする。
+  // currentTimeも、この時点でのハンドオフ先（初期位置＝ほぼ0秒）を明示的に模擬する
+  // （このE2Eモック環境ではsrc代入がcurrentTimeを実ブラウザのように0へリセットしないことが
+  // あるため、既存の複数のクロスフェードE2Eと同じ「耐久性のため」の対策）。
   await page.evaluate(() => {
-    Object.defineProperty(document.querySelector<HTMLAudioElement>("#audio-player")!, "buffered", {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "buffered", {
       configurable: true,
       value: { length: 1, start: () => 0, end: () => 1 },
     });
+    audio.currentTime = 0;
   });
-  const currentTimeBeforeRelease = await page.evaluate(
-    () => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime
-  );
-
   // 保留していたplay()を解放してハンドオフを完了させる。
   await page.evaluate(() => (window as unknown as { __e2eReleaseHandoffPlay3?: () => void }).__e2eReleaseHandoffPlay3?.());
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
 
-  // バッファ範囲外だったため、42秒への再シークはスキップされ、currentTimeは保留解放前から
-  // 変わっていない（＝音飛びを起こす新規Range要求を伴う再シークをしていない）。
+  // バッファ範囲は[0, 1]（42秒を含まない）ため、42秒への再シークは行われず、その範囲の終端
+  // （1秒）までしか進まない（バッファ範囲外への新しいRange要求を伴うシークをしていない）。
   const currentTimeAfterHandoff = await page.evaluate(
     () => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime
   );
-  expect(currentTimeAfterHandoff).toBe(currentTimeBeforeRelease);
+  expect(currentTimeAfterHandoff).toBe(1);
   expect(currentTimeAfterHandoff).not.toBe(42);
 });
 

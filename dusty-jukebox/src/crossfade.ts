@@ -208,20 +208,42 @@ export function shouldBeginCrossfadeRamp(params: ShouldBeginCrossfadeRampParams)
 // を伴い、ちょうどUI切り替えの瞬間に音飛びを起こしていた（HTTPストリーミングの一般的な
 // 性質——バッファ範囲内へのシークは無音のまま即座、範囲外へのシークは新規フェッチが要る）。
 //
-// バッファ済み（＝シークしても新規フェッチが発生しない）場合だけ再シークを行い、そうでなければ
-// 再シーク自体をスキップして`initialHandoffPosition`からの再生をそのまま続ける（＝準備待ち・
-// 接続確立にかかった時間ぶんの位置ずれ〈通常コンマ数秒程度〉は許容し、音飛びの方を確実に
-// 避ける）方針にする。HTMLAudioElement.bufferedはこのインターフェースと同じ形（length/start/
-// end）のTimeRangesのため、呼び出し元は追加の変換なしにそのまま渡せる。
+// HTMLAudioElement.bufferedはこのインターフェースと同じ形（length/start/end）のTimeRangesの
+// ため、呼び出し元は追加の変換なしにそのまま渡せる。
 export interface BufferedRangesLike {
   length: number;
   start(index: number): number;
   end(index: number): number;
 }
 
-export function isPositionBuffered(buffered: BufferedRangesLike, position: number, toleranceSec = 0.25): boolean {
+// 当初「バッファ済みなら再シーク、そうでなければ再シーク自体をスキップ」という設計にしたが、
+// ChatGPTレビュー指摘（2026-09-11）で2つの問題が判明した：①スキップすると、準備待ち・
+// 接続確立にかかった時間ぶん（数百ms〜1秒程度）だけ、ユーザーが先読み側で既に聞いた箇所を
+// 主audio要素が再度最初から再生してしまう（「一瞬の音飛び」が「フレーズの聞き直し」に
+// 置き換わるだけで、本質的な改善になっていない）。②「バッファ済みか」の判定に±0.25秒の
+// 許容誤差を外側へ加えていたため、実際にはバッファされていない位置（例：終端から0.2秒外）を
+// 「バッファ済み」と誤判定し、そこへシークすると結局新しいRange要求＝音飛びが起きうる
+// （許容誤差を設けた本来の目的＝浮動小数点誤差の吸収と矛盾する形で範囲を広げてしまっていた）。
+//
+// 再設計：スキップか実行かの二択ではなく、「今いる位置（audioPlayer.currentTime）が属する
+// バッファ済み範囲の中で、目標位置（finalPosition）を超えない最大の位置」まで進める
+// （`Math.min(desiredPosition, その範囲のend)`）。これにより、①新しいRange要求を伴う
+// シークは構造的に一切発生しない（範囲の外へは出ない）、②可能な限り目標位置へ追いつく
+// （実際には接続直後の最初のチャンクがある程度の長さを持つため、目標位置まで丸ごと
+// バッファ済みであることが多く、その場合は完全に追いつく）、の両方を同時に満たせる。
+// 現在位置がどのバッファ済み範囲にも属さない（想定外の状態）、または目標位置が現在位置より
+// 前（既に追いついている）場合はnullを返し、呼び出し元は再シーク自体を行わない。
+export function bufferedCatchUpPosition(
+  buffered: BufferedRangesLike,
+  currentPosition: number,
+  desiredPosition: number
+): number | null {
   for (let i = 0; i < buffered.length; i += 1) {
-    if (position >= buffered.start(i) - toleranceSec && position <= buffered.end(i) + toleranceSec) return true;
+    const start = buffered.start(i);
+    const end = buffered.end(i);
+    if (currentPosition < start || currentPosition > end) continue;
+    const target = Math.min(desiredPosition, end);
+    return target > currentPosition ? target : null;
   }
-  return false;
+  return null;
 }

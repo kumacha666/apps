@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CROSSFADE_DURATION_OPTIONS_SEC,
   DEFAULT_CROSSFADE_DURATION_SEC,
+  bufferedCatchUpPosition,
   crossfadeDurationMsForSeconds,
   crossfadeVolumes,
   isCrossfadeDurationSec,
-  isPositionBuffered,
   runCrossfade,
   shouldBeginCrossfadeRamp,
   shouldStartCrossfadePreparation,
@@ -253,8 +253,12 @@ describe("shouldBeginCrossfadeRamp", () => {
 
 // 2026-09-11、実機フィードバック「クロスフェードで曲が切り替わった瞬間に一瞬音飛みする」。
 // finishCrossfadeHandoff()のハンドオフ最終位置合わせが、まだバッファされていない位置への
-// 再シーク（＝新しいRange要求を伴いうる）を無条件に行っていたことが原因。
-describe("isPositionBuffered", () => {
+// 再シーク（＝新しいRange要求を伴いうる）を無条件に行っていたことが原因。当初「バッファ済み
+// なら再シーク、そうでなければ諦める」という設計にしたが、ChatGPTレビュー指摘（同日）で
+// ①スキップすると位置ずれがフレーズの聞き直しになってしまう、②バッファ判定の許容誤差が
+// 外側へ広がっており未バッファな位置を誤ってバッファ済みと判定しうる、の2点が判明し、
+// 「バッファ済み範囲内で目標位置へできるだけ追いつく」方式へ再設計した。
+describe("bufferedCatchUpPosition", () => {
   function ranges(pairs: [number, number][]) {
     return {
       length: pairs.length,
@@ -263,36 +267,35 @@ describe("isPositionBuffered", () => {
     };
   }
 
-  it("バッファ範囲内の位置はtrue", () => {
-    expect(isPositionBuffered(ranges([[0, 10]]), 5)).toBe(true);
+  it("目標位置が現在の範囲内に収まる場合、目標位置そのものへ進む", () => {
+    expect(bufferedCatchUpPosition(ranges([[0, 10]]), 2, 8)).toBe(8);
   });
 
-  it("バッファ範囲外の位置はfalse", () => {
-    expect(isPositionBuffered(ranges([[0, 10]]), 15)).toBe(false);
+  it("目標位置がバッファ範囲の終端を超える場合、終端までしか進まない（新しいフェッチを伴うシークをしない）", () => {
+    expect(bufferedCatchUpPosition(ranges([[0, 10]]), 2, 15)).toBe(10);
   });
 
-  it("複数のバッファ範囲のうち、いずれかに含まれていればtrue", () => {
+  it("現在位置がどのバッファ範囲にも属さない場合はnull（再シーク自体を行わない）", () => {
     const buffered = ranges([
       [0, 5],
       [20, 30],
     ]);
-    expect(isPositionBuffered(buffered, 25)).toBe(true);
-    expect(isPositionBuffered(buffered, 10)).toBe(false);
+    expect(bufferedCatchUpPosition(buffered, 10, 25)).toBeNull();
   });
 
-  it("バッファ範囲が無い（length: 0）場合は常にfalse", () => {
-    expect(isPositionBuffered(ranges([]), 0)).toBe(false);
+  it("目標位置が現在位置以下（既に追いついている）場合はnull", () => {
+    expect(bufferedCatchUpPosition(ranges([[0, 10]]), 8, 5)).toBeNull();
   });
 
-  it("境界付近は許容誤差（既定0.25秒）内ならtrue", () => {
-    const buffered = ranges([[0, 10]]);
-    expect(isPositionBuffered(buffered, 10.2)).toBe(true);
-    expect(isPositionBuffered(buffered, 10.3)).toBe(false);
+  it("複数のバッファ範囲のうち、現在位置が属する範囲だけを対象にする", () => {
+    const buffered = ranges([
+      [0, 5],
+      [20, 30],
+    ]);
+    expect(bufferedCatchUpPosition(buffered, 22, 40)).toBe(30);
   });
 
-  it("許容誤差を明示的に指定できる", () => {
-    const buffered = ranges([[0, 10]]);
-    expect(isPositionBuffered(buffered, 10.05, 0)).toBe(false);
-    expect(isPositionBuffered(buffered, 10, 0)).toBe(true);
+  it("バッファ範囲が無い（length: 0）場合は常にnull", () => {
+    expect(bufferedCatchUpPosition(ranges([]), 0, 5)).toBeNull();
   });
 });

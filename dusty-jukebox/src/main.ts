@@ -45,9 +45,9 @@ import {
   CROSSFADE_PREPARE_LEAD_MS,
   CROSSFADE_PREVIEW_START_TIMEOUT_MS,
   DEFAULT_CROSSFADE_DURATION_SEC,
+  bufferedCatchUpPosition,
   crossfadeDurationMsForSeconds,
   isCrossfadeDurationSec,
-  isPositionBuffered,
   runCrossfade,
   shouldBeginCrossfadeRamp,
   shouldStartCrossfadePreparation,
@@ -651,13 +651,12 @@ function finishCrossfadeHandoff(committedFileId: string | null): void {
   const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
   if (committedFileId !== null && committedFileId === crossfadePreviewedFileId) {
     const finalPosition = crossfadeAudio.currentTime;
-    // まだバッファ済みでない位置への再シークは、シークバー/ステータスが切り替わる
-    // ちょうどこの瞬間に新しいRange要求を伴い、実機で音飛びとして聞こえていた
-    // （2026-09-11、実機フィードバック）。バッファ済み（＝無音のまま即座にシークできる）
-    // 場合だけ位置を合わせ、そうでなければ再シーク自体を諦めて`initialHandoffPosition`
-    // からの再生をそのまま続ける（接続確立にかかった時間ぶんの位置ずれは許容する）。
-    if (Number.isFinite(finalPosition) && isPositionBuffered(audioPlayer.buffered, finalPosition)) {
-      audioPlayer.currentTime = finalPosition;
+    // 新しいRange要求を伴う（＝音飛びする）再シークは一切行わず、既にバッファ済みの範囲内で
+    // 目標位置（finalPosition）へできるだけ追いつく（2026-09-11、ChatGPTレビュー指摘を受けて
+    // 再設計。crossfade.tsのbufferedCatchUpPosition定義コメント参照）。
+    if (Number.isFinite(finalPosition)) {
+      const target = bufferedCatchUpPosition(audioPlayer.buffered, audioPlayer.currentTime, finalPosition);
+      if (target !== null) audioPlayer.currentTime = target;
     }
   }
   audioPlayer.volume = 1;
