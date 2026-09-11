@@ -151,6 +151,7 @@ describe("shouldBeginCrossfadeRamp", () => {
     audioPaused: false,
     audioEnded: false,
     manualTransitionInFlight: false,
+    previewReady: true,
   };
 
   it("残り時間がクロスフェード長以下ならtrue", () => {
@@ -196,5 +197,18 @@ describe("shouldBeginCrossfadeRamp", () => {
     expect(shouldBeginCrossfadeRamp({ ...baseParams, duration: NaN })).toBe(false);
     expect(shouldBeginCrossfadeRamp({ ...baseParams, duration: Infinity })).toBe(false);
     expect(shouldBeginCrossfadeRamp({ ...baseParams, duration: 0 })).toBe(false);
+  });
+
+  // 2026-09-10、ChatGPTレビュー指摘：P1（Finding 2）。第二audio要素の先読み再生がまだ実際に
+  // 開始していない（play()未解決）間は、通常の残り時間トリガーはもちろん、退場側の自然終了
+  // バイパスであってもランプを始めてはならない（未確立のままハンドオフする不具合の再現を防ぐ）。
+  it("先読み再生がまだ準備完了していなければfalse（残り時間が閾値以内でも）", () => {
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, previewReady: false })).toBe(false);
+  });
+
+  it("先読み再生がまだ準備完了していなければfalse（退場側が既に自然終了していても）", () => {
+    expect(
+      shouldBeginCrossfadeRamp({ ...baseParams, previewReady: false, audioEnded: true, audioPaused: true, currentTime: 180 })
+    ).toBe(false);
   });
 });

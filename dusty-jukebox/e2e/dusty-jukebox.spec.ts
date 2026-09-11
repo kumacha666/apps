@@ -1087,6 +1087,134 @@ test("クロスフェードは準備（接続確立）と音量ランプの開�
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
 });
 
+// 2026-09-10、ChatGPTレビュー指摘（PR #444、HEAD c4cb692）：P1「Finding 1」。準備開始から
+// ランプ開始までの間、先読み再生（第二audio要素）は無音のまま鳴り続けるため、実際にランプを
+// 開始する時点では既に数秒分再生位置が進んでいる（本番ではCROSSFADE_PREPARE_LEAD_MS分、
+// 最大約5秒）。この位置のままランプを始めると、次の曲の冒頭が丸ごとスキップされてしまう。
+test("クロスフェードのランプ開始時、先読み再生（第二audio要素）の再生位置は冒頭へ巻き戻る（2026-09-10、ChatGPTレビュー指摘：P1「Finding 1」）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // 準備しきい値以下・ランプしきい値より長い窓（150ms）に入れ、準備（接続確立）だけを
+  // 完了させる。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.85; // 残り150ms
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+
+  // E2Eモックの<audio>は実際にはネイティブ再生しないため先読み再生の位置は自然には進まない。
+  // 準備完了後・ランプ開始前に実際に進んだ状態をテスト側から直接模擬する。
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!.currentTime = 5;
+  });
+
+  // 残り時間をランプ開始しきい値（50ms）以下へ進める。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    audio.currentTime = 179.99; // 残り10ms
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+
+  // ランプ開始（beginCrossfadeRamp()の先頭）は同期的に位置を巻き戻すため、この時点で既に
+  // 冒頭（0）に戻っているはず。
+  const previewPositionAtRampStart = await page.evaluate(
+    () => document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!.currentTime
+  );
+  expect(previewPositionAtRampStart).toBe(0);
+});
+
+// 2026-09-10、ChatGPTレビュー指摘（PR #444、HEAD c4cb692）：P1「Finding 2」。crossfadePreparing
+// はplay()呼び出し直前（まだ何も鳴っていない可能性がある）から立つため、これだけでは
+// 「先読み再生が実際に開始済みか」を保証できない。この保証が無いと、通常の残り時間トリガー
+// （audioEndedバイパスではない方）が、まだ実際には再生していない（無音のままの）先読みへ
+// 向けて音量ランプを始めてしまい、ランプの間ずっと入場側が本当に無音のまま進む——このPR
+// 自体が解消しようとした「接続未確立のままハンドオフする」不具合を再現してしまう。
+test("先読み再生がまだ実際に開始していない（play()未解決）間は、残り時間がランプしきい値に達しても音量ランプを始めない（2026-09-10、ChatGPTレビュー指摘：P1「Finding 2」）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // 第二audio要素（先読み再生）自身のplay()呼び出しだけを保留する（＝crossfadePreviewReady
+  // は決して true にならない）。
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player-crossfade") {
+          return new Promise<void>((resolve) => {
+            (window as unknown as { __e2eReleasePreviewPlay?: () => void }).__e2eReleasePreviewPlay = resolve;
+          });
+        }
+        return originalPlay.call(this);
+      },
+    });
+  });
+
+  // 準備しきい値以下の窓へ入れ、先読み再生の開始（play()）を試みさせる（保留されるため
+  // 解決しない）。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.85; // 残り150ms（準備しきい値以下）
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect.poll(() =>
+    page.evaluate(() => Boolean((window as unknown as { __e2eReleasePreviewPlay?: () => void }).__e2eReleasePreviewPlay))
+  ).toBe(true);
+
+  // 先読みのplay()がまだ解決していない間に、残り時間をランプ開始しきい値（50ms）以下へ進める。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    audio.currentTime = 179.99; // 残り10ms
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await page.clock.runFor(20);
+
+  // page.clockはこの直接I/O待ち（保留中のplay()）を進めないため、locatorの自動リトライに
+  // 頼らず1回だけ直接読み取る（CLAUDE.mdの既知の注意点参照）。先読みが未確立のため音量
+  // ランプは始まっておらず、主audio要素のvolumeは1のまま（無音区間を作っていない）。
+  const volumeWhilePreviewUnready = await page.evaluate(
+    () => document.querySelector<HTMLAudioElement>("#audio-player")!.volume
+  );
+  expect(volumeWhilePreviewUnready).toBe(1);
+
+  // 先読みのplay()を解放すると、直ちにランプが始まり実際に次の曲へ引き継がれる
+  // （crossfadePreviewReadyがtrueになった時点で、maybeStartCrossfade()の次のtimeupdateが
+  // 拾えるようになる）。
+  await page.evaluate(() => (window as unknown as { __e2eReleasePreviewPlay?: () => void }).__e2eReleasePreviewPlay?.());
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await page.clock.runFor(100);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+});
+
 test("キュー内自然終了に近づくとクロスフェードが発生し、次の曲へ引き継がれる（開発体制#42④、2026-09-10）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
@@ -1661,11 +1789,18 @@ test("一時停止ボタンを連打（1回目のフェード完了前に2回目
   expect(await isGuardActive()).toBe(false);
 });
 
-test("先読み再生の開始待ち中に主audio要素が自然終了しても、ランプを省略して直ちにハンドオフする（2026-09-10、Codexレビュー指摘：P2）", async ({ context, page }) => {
+// 2026-09-10、ChatGPTレビュー指摘（PR #444、HEAD c4cb692）：P1「Finding 2」を受けて、この
+// テストが検証する挙動自体を変更した。旧実装は「先読み再生（crossfadeAudio.play()）がまだ
+// 開始していなくても、退場側が自然終了していればランプを省略して直ちにハンドオフする」方針
+// だったが、これは「先読みが未確立のままハンドオフする」不具合そのもの（play()未解決の
+// crossfadeAudioへ実際にハンドオフ・位置同期しようとする）だったと判明した。現在は
+// shouldBeginCrossfadeRampにpreviewReadyガードを追加し、先読みが実際に開始済み
+// （play()解決済み）でない限り、audioEndedバイパスであってもランプ・ハンドオフを一切
+// 試みず、通常の自動送り（クロスフェード無し）へフォールバックするよう修正した。
+test("先読み再生の開始待ち中に主audio要素が自然終了しても、未確立のままハンドオフせず通常の自動送りへフォールバックする（2026-09-10、ChatGPTレビュー指摘：P1「Finding 2」による方針変更）", async ({ context, page }) => {
   // Driveストリームの応答が遅く、先読み再生の開始（crossfadeAudio.play()）に時間がかかると、
   // その間に主audio要素の残り時間（開始時点で3秒以内）が尽きて自然終了してしまうことがある
-  // （この'ended'はcrossfading中のため既に抑止済み）。修正前は、既に無音の主audio要素を相手に
-  // 3秒かけてゆっくりランプしてしまい、その間ずっと入場側が無音のままだった。
+  // （この'ended'はcrossfading中のため既に抑止済み）。
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
@@ -1706,21 +1841,37 @@ test("先読み再生の開始待ち中に主audio要素が自然終了しても
   // 先読み再生の開始待ち中に主audio要素が自然終了する（'ended'、同時に'pause'も発火）。
   // dispatchEvent()自体はネイティブの.endedプロパティを変えないため、実ブラウザの自然終了と
   // 同じ状態を模擬するために明示的に上書きする（main.ts側の修正はaudioPlayer.endedの実際の
-  // 値を見て判定するため）。
+  // 値を見て判定するため）。'ended'ディスパッチと同じ同期的なタイミングで、durationの固定値
+  // （180）も解除しておく（他のクロスフェードE2Eと同じ理由：フォールバックで次の曲
+  //〈album-track-2〉へ切り替わった後、万一この固定値が残ったまま実ブラウザ由来のstray
+  // timeupdateが発火すると、同じ「残り時間が閾値以内」条件を新しい曲に対しても満たしてしまい、
+  // このテストの本題とは無関係な別のクロスフェードが連鎖してしまう）。
   await page.evaluate(() => {
     const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
     Object.defineProperty(audio, "ended", { value: true, configurable: true });
     audio.dispatchEvent(new Event("pause"));
     audio.dispatchEvent(new Event("ended"));
+    Object.defineProperty(audio, "duration", { value: NaN, configurable: true });
   });
 
-  // play()が解決する時点（100ms）まで進める。ランプ省略（rampDurationMs=0）が効いていれば、
-  // 追加でクロスフェード長（50ms）分待たなくても、この時点で既にハンドオフが完了している。
+  // フォールバック（通常のadvanceOnEnded()経由）は先読みのplay()解決を待たず即座に完了する。
   // page.clock使用時はtoHaveAttribute()の自動リトライが偽陰性になりうるため（上記「手動
   // フェードアウト待機中は...」テストの注記参照）、1回だけの直接読み取りで判定する。
+  const srcAfterFallback = await page.evaluate(() => document.querySelector("#audio-player")!.getAttribute("src"));
+  expect(srcAfterFallback).toMatch(/album-track-2(\?|$)/);
+  // 未確立だった先読み（第二audio要素）はcancelCrossfadeIfActive()経由で後始末され、
+  // srcを保持したまま残らない（クロスフェードは一切成立していないため）。
+  const crossfadeSrcAfterFallback = await page.evaluate(() =>
+    document.querySelector("#audio-player-crossfade")!.hasAttribute("src")
+  );
+  expect(crossfadeSrcAfterFallback).toBe(false);
+
+  // 耐久性のため、100ms経過後（先読みのplay()が遅れて解決するタイミング）に副作用が無いことも
+  // 確認しておく（既にキャンセル済みのため、generation不一致によりcrossfadePreviewReadyには
+  // 反映されず、何も起きないはず）。
   await page.clock.runFor(100);
-  const src = await page.evaluate(() => document.querySelector("#audio-player")!.getAttribute("src"));
-  expect(src).toMatch(/album-track-2(\?|$)/);
+  const srcAfterDelayedResolve = await page.evaluate(() => document.querySelector("#audio-player")!.getAttribute("src"));
+  expect(srcAfterDelayedResolve).toMatch(/album-track-2(\?|$)/);
 });
 
 test("先読み再生中（入場側）の曲がクロスフェード長より短く先に自然終了しても、ランプを完了扱いにして進める（2026-09-10、Codexレビュー指摘：P2）", async ({ context, page }) => {

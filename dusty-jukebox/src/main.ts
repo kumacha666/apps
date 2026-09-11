@@ -448,6 +448,14 @@ let crossfading = false;
 // crossfadingとの関係：crossfadePreparing→（準備完了後、実際のランプ開始しきい値に達したら）
 // crossfading、の順に一方通行で遷移する。同時にtrueになることは無い。
 let crossfadePreparing = false;
+// 第二audio要素の先読み再生が実際に開始済み（play()が解決済み）かどうか（2026-09-10、
+// ChatGPTレビュー指摘：P1「先読み再生の開始待ち中に主audio要素が自然終了しても、まだ実際に
+// 再生を開始していない第二audio要素へランプを始めてしまう」）。crossfadePreparing=trueは
+// play()呼び出しの直前（まだ何も鳴っていない可能性がある）から立つため、これだけでは
+// 「実際にランプしてよい状態」を保証できない。shouldBeginCrossfadeRamp()のaudioEndedバイパス
+// （退場側が準備中に先に自然終了した場合の即時ハンドオフ）が、まだ接続確立中の（無音の
+// ままかもしれない）第二audio要素へ向けてランプを始めてしまうことを防ぐガードとして使う。
+let crossfadePreviewReady = false;
 // 進行中のクロスフェードが本来先読みしていたfileId（2026-09-10、Codexレビュー指摘：P1）。
 // finishCrossfadeHandoff()が、実際にキューがコミットしたfileIdとこれを比較し、一致する場合
 // だけcrossfadeAudioの再生位置を主audio要素へ同期する（フォールバック等で異なる曲が
@@ -536,6 +544,7 @@ function cancelCrossfadeIfActive(): { fileId: string; position: number } | null 
   const wasCrossfading = crossfading;
   crossfading = false;
   crossfadePreparing = false;
+  crossfadePreviewReady = false;
   crossfadePreviewedFileId = null;
   const audioPlayer = el<HTMLAudioElement>("audio-player");
   // ハンドオフが既にaudio.srcを次曲（先読みしていた曲）へコミット済みかどうかを、打ち切りの
@@ -673,6 +682,7 @@ async function startCrossfadePreparation(): Promise<void> {
   if (!token) return;
 
   crossfadePreparing = true;
+  crossfadePreviewReady = false;
   crossfadePreviewedFileId = nextFileId;
   const myGeneration = crossfadeGeneration;
   const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
@@ -681,6 +691,11 @@ async function startCrossfadePreparation(): Promise<void> {
   crossfadeAudio.volume = 0;
   try {
     await withTimeout(crossfadeAudio.play(), CROSSFADE_PREVIEW_START_TIMEOUT_MS, "クロスフェードの先読み再生がタイムアウトしました");
+    // play()が実際に解決した時点でのみ「準備完了」とする（2026-09-10、ChatGPTレビュー指摘：
+    // P1）。crossfadeGenerationが変化していない場合のみ反映する（待機中にcancelCrossfade
+    // IfActive()で既に打ち切られていた場合、後から解決したこの結果を古い準備として反映
+    // しない）。
+    if (crossfadeGeneration === myGeneration) crossfadePreviewReady = true;
   } catch {
     // crossfadePreparingも合わせて確認する（2026-09-10、実機フィードバックによる再設計時に
     // 追加）。退場側が準備中に自然終了した場合、onEnded側がtryBeginCrossfadeRamp()経由で
@@ -733,8 +748,14 @@ async function tryBeginCrossfadeRamp(): Promise<boolean> {
       audioPaused: audioPlayer.paused,
       audioEnded: audioPlayer.ended,
       // 手動フェードアウト待機中はランプを始めない（2026-09-10、ChatGPTレビュー指摘：P1。
-      // manualTransitionCountの定義コメント参照）。
+      // manualTransitionInFlightの定義コメント参照）。
       manualTransitionInFlight: manualTransitionCount > 0,
+      // 第二audio要素の先読み再生がまだ実際に開始していない（play()未解決）場合はランプを
+      // 始めない（2026-09-10、ChatGPTレビュー指摘：P1）。この判定が無いと、退場側が準備中に
+      // 先に自然終了した場合のaudioEndedバイパスが、まだ再生を開始していない（無音の
+      // ままかもしれない）第二audio要素へ向けてランプを始めてしまう——このPRが解消しようとした
+      // 「先読みが未確立のままハンドオフする」不具合を、audioEndedバイパス経由で再現してしまう。
+      previewReady: crossfadePreviewReady,
     }) ||
     !queue?.isPlayingFromQueue()
   ) return false;
@@ -764,6 +785,12 @@ async function beginCrossfadeRamp(): Promise<void> {
   // 第二audio要素は既にstartCrossfadePreparation()で接続確立・再生開始済みのため、ここでは
   // 追加の待機（接続確立）は発生しない——旧実装で「フェードが短すぎる／クロスしない」の
   // 原因だった、ランプ開始直前のネットワーク待ちが構造的に無くなっている。
+  // ただし準備開始からランプ開始までの間、crossfadeAudioは無音のまま鳴り続けているため、
+  // この時点のcurrentTimeは既に数秒進んでいる（本番ではCROSSFADE_PREPARE_LEAD_MS分、最大
+  // 約5秒。2026-09-10、ChatGPTレビュー指摘：P1「Finding 1」）。クロスフェードは次の曲を
+  // 「冒頭から」重ねて鳴らす設計のため、ランプ開始前に先頭へ巻き戻す（接続確立自体は既に
+  // 完了済みのため、この巻き戻り自体で新たなネットワーク待ちは生じない想定）。
+  if (crossfadeAudio.currentTime !== 0) crossfadeAudio.currentTime = 0;
   // 退場側が既に自然終了している場合（準備に crossfadeDurationMs + CROSSFADE_PREPARE_LEAD_MS
   // を超える時間がかかった稀なケース）のみ、ランプ自体を省略して直ちに完了値へ進める。
   const rampDurationMs = audioPlayer.ended ? 0 : CROSSFADE_DURATION_MS;

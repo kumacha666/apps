@@ -155,6 +155,14 @@ export interface ShouldBeginCrossfadeRampParams extends CrossfadeGateParams {
   // trueになる）に関わらず直ちにランプを開始すべきなので、audioPausedチェックより先に
   // 判定する。
   audioEnded: boolean;
+  // 第二audio要素の先読み再生が実際に開始済み（play()が解決済み）かどうか（2026-09-10、
+  // ChatGPTレビュー指摘：P1）。isPreparing自体はplay()呼び出し直前（まだ何も鳴っていない
+  // 可能性がある）から立つため、これだけでは「実際にランプしてよい状態」を保証できない。
+  // これが無いと、退場側が準備中に先に自然終了した場合のaudioEndedバイパスが、まだ再生を
+  // 開始していない（無音のままかもしれない）第二audio要素へ向けてランプを始めてしまい、
+  // 「先読みが未確立のままハンドオフする」という、このPRが本来解消しようとした不具合を
+  // audioEndedバイパス経由で再現してしまう。
+  previewReady: boolean;
 }
 
 // 準備済み（第二audio要素が既に再生開始済み）の状態から、実際に音量ランプを開始すべき
@@ -165,7 +173,8 @@ export function shouldBeginCrossfadeRamp(params: ShouldBeginCrossfadeRampParams)
     !params.isPreparing ||
     params.isCrossfading ||
     !params.hasNextSong ||
-    params.manualTransitionInFlight
+    params.manualTransitionInFlight ||
+    !params.previewReady
   ) return false;
   if (params.audioEnded) return true;
   if (params.audioPaused) return false;
