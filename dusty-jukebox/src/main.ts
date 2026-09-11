@@ -47,6 +47,7 @@ import {
   DEFAULT_CROSSFADE_DURATION_SEC,
   crossfadeDurationMsForSeconds,
   isCrossfadeDurationSec,
+  isPositionBuffered,
   runCrossfade,
   shouldBeginCrossfadeRamp,
   shouldStartCrossfadePreparation,
@@ -650,7 +651,14 @@ function finishCrossfadeHandoff(committedFileId: string | null): void {
   const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
   if (committedFileId !== null && committedFileId === crossfadePreviewedFileId) {
     const finalPosition = crossfadeAudio.currentTime;
-    if (Number.isFinite(finalPosition)) audioPlayer.currentTime = finalPosition;
+    // まだバッファ済みでない位置への再シークは、シークバー/ステータスが切り替わる
+    // ちょうどこの瞬間に新しいRange要求を伴い、実機で音飛びとして聞こえていた
+    // （2026-09-11、実機フィードバック）。バッファ済み（＝無音のまま即座にシークできる）
+    // 場合だけ位置を合わせ、そうでなければ再シーク自体を諦めて`initialHandoffPosition`
+    // からの再生をそのまま続ける（接続確立にかかった時間ぶんの位置ずれは許容する）。
+    if (Number.isFinite(finalPosition) && isPositionBuffered(audioPlayer.buffered, finalPosition)) {
+      audioPlayer.currentTime = finalPosition;
+    }
   }
   audioPlayer.volume = 1;
   crossfading = false;

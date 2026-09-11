@@ -199,3 +199,29 @@ export function shouldBeginCrossfadeRamp(params: ShouldBeginCrossfadeRampParams)
   const remainingMs = remainingMsUntilEnd(params.duration, params.currentTime);
   return remainingMs !== null && remainingMs <= params.crossfadeDurationMs;
 }
+
+// 実機フィードバック（2026-09-11）：「クロスフェードで曲が切り替わって、シークバーと
+// ステータスが次曲に変わった瞬間に一瞬音飛みします」。原因は`finishCrossfadeHandoff()`
+// （main.ts）が、主audio要素の再生開始（`initialHandoffPosition`から）後に、先読み側
+// （crossfadeAudio、鳴り続けたぶんだけさらに進んでいる）の位置へ**もう一度**再シークして
+// いたこと。この2回目の再シークが、既に受信済みのバッファ範囲を超えていると新しいRange要求
+// を伴い、ちょうどUI切り替えの瞬間に音飛びを起こしていた（HTTPストリーミングの一般的な
+// 性質——バッファ範囲内へのシークは無音のまま即座、範囲外へのシークは新規フェッチが要る）。
+//
+// バッファ済み（＝シークしても新規フェッチが発生しない）場合だけ再シークを行い、そうでなければ
+// 再シーク自体をスキップして`initialHandoffPosition`からの再生をそのまま続ける（＝準備待ち・
+// 接続確立にかかった時間ぶんの位置ずれ〈通常コンマ数秒程度〉は許容し、音飛びの方を確実に
+// 避ける）方針にする。HTMLAudioElement.bufferedはこのインターフェースと同じ形（length/start/
+// end）のTimeRangesのため、呼び出し元は追加の変換なしにそのまま渡せる。
+export interface BufferedRangesLike {
+  length: number;
+  start(index: number): number;
+  end(index: number): number;
+}
+
+export function isPositionBuffered(buffered: BufferedRangesLike, position: number, toleranceSec = 0.25): boolean {
+  for (let i = 0; i < buffered.length; i += 1) {
+    if (position >= buffered.start(i) - toleranceSec && position <= buffered.end(i) + toleranceSec) return true;
+  }
+  return false;
+}

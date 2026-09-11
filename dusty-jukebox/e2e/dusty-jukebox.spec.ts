@@ -1138,6 +1138,18 @@ test("クロスフェードは準備（接続確立）と音量ランプの開�
   const volumeDuringRamp = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
   expect(volumeDuringRamp).toBeLessThan(1);
 
+  // 耐久性のため、ハンドオフ完了前にduration上書きを元に戻す（2026-09-11、
+  // isPositionBuffered()導入により、ハンドオフの最終位置合わせ〈finishCrossfadeHandoff()の
+  // 再シーク〉がバッファ未確認のこのE2Eモック環境では常にスキップされるようになったため、
+  // 主audio要素のcurrentTimeがsrc切り替え後もテスト側が設定した古い値〈179.99〉のまま残って
+  // しまう場合がある〈実ブラウザではsrc代入自体がcurrentTimeを0へリセットするが、この
+  // モック環境ではそう振る舞わないことがある、既存の複数のクロスフェードE2Eと同じ注意点〉。
+  // 残しておくと、ハンドオフ後に万一timeupdateが再発火した際、同じ「残り時間が閾値以内」
+  // 条件を次の曲に対しても満たしてしまい、無関係な別のクロスフェードが連鎖してしまう。
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime = 0;
+  });
+
   // ランプ完了まで進め、最終的に次の曲へ正しく引き継がれることも確認する。
   await page.clock.runFor(100);
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
@@ -2207,6 +2219,83 @@ test("クロスフェードのハンドオフ待機中も、第二audio要素は
   await page.evaluate(() => (window as unknown as { __e2eReleaseHandoffPlay?: () => void }).__e2eReleaseHandoffPlay?.());
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
   await expect(page.locator("#audio-player-crossfade")).not.toHaveAttribute("src");
+});
+
+// 2026-09-11、実機フィードバック「クロスフェードで曲が切り替わって、シークバーとステータスが
+// 次曲に変わった瞬間に一瞬音飛みします」。原因はfinishCrossfadeHandoff()の最終位置合わせ
+// （主audio要素を先読み側の到達位置へ再シークする処理）が、まだバッファされていない位置への
+// 再シークを無条件に行っていたこと（新しいRange要求を伴いうる＝音飛びの正体）。
+// isPositionBuffered()導入により、バッファ済みの位置だけへ再シークするよう修正した。
+test("クロスフェードのハンドオフ最終位置合わせは、まだバッファされていない位置への再シークをスキップする（実機フィードバック：切り替え時の音飛び、2026-09-11）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // 主audio要素（album-track-2）のplay()呼び出しだけを保留し、その待機中に先読み側
+  // （crossfadeAudio）がさらに進む状況を再現する。
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player" && this.src.includes("album-track-2")) {
+          return new Promise<void>((resolve) => {
+            (window as unknown as { __e2eReleaseHandoffPlay3?: () => void }).__e2eReleaseHandoffPlay3 = resolve;
+          });
+        }
+        return originalPlay.call(this);
+      },
+    });
+  });
+
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await page.clock.runFor(100);
+  await expect.poll(() =>
+    page.evaluate(() => Boolean((window as unknown as { __e2eReleaseHandoffPlay3?: () => void }).__e2eReleaseHandoffPlay3))
+  ).toBe(true);
+
+  // 先読み側が、待機中にさらに進んだことにする（はっきり区別できる値）。
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!.currentTime = 42;
+  });
+  // 主audio要素のbufferedには42秒を含まない（＝まだバッファされていない）ことにする。
+  await page.evaluate(() => {
+    Object.defineProperty(document.querySelector<HTMLAudioElement>("#audio-player")!, "buffered", {
+      configurable: true,
+      value: { length: 1, start: () => 0, end: () => 1 },
+    });
+  });
+  const currentTimeBeforeRelease = await page.evaluate(
+    () => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime
+  );
+
+  // 保留していたplay()を解放してハンドオフを完了させる。
+  await page.evaluate(() => (window as unknown as { __e2eReleaseHandoffPlay3?: () => void }).__e2eReleaseHandoffPlay3?.());
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
+
+  // バッファ範囲外だったため、42秒への再シークはスキップされ、currentTimeは保留解放前から
+  // 変わっていない（＝音飛びを起こす新規Range要求を伴う再シークをしていない）。
+  const currentTimeAfterHandoff = await page.evaluate(
+    () => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime
+  );
+  expect(currentTimeAfterHandoff).toBe(currentTimeBeforeRelease);
+  expect(currentTimeAfterHandoff).not.toBe(42);
 });
 
 // 2026-09-10、実機フィードバックによるハンドオフ再設計の回帰防止（bug #10：クロスフェードが

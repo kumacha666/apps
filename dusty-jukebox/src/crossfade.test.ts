@@ -5,6 +5,7 @@ import {
   crossfadeDurationMsForSeconds,
   crossfadeVolumes,
   isCrossfadeDurationSec,
+  isPositionBuffered,
   runCrossfade,
   shouldBeginCrossfadeRamp,
   shouldStartCrossfadePreparation,
@@ -247,5 +248,51 @@ describe("shouldBeginCrossfadeRamp", () => {
     expect(
       shouldBeginCrossfadeRamp({ ...baseParams, previewReady: false, audioEnded: true, audioPaused: true, currentTime: 180 })
     ).toBe(false);
+  });
+});
+
+// 2026-09-11、実機フィードバック「クロスフェードで曲が切り替わった瞬間に一瞬音飛みする」。
+// finishCrossfadeHandoff()のハンドオフ最終位置合わせが、まだバッファされていない位置への
+// 再シーク（＝新しいRange要求を伴いうる）を無条件に行っていたことが原因。
+describe("isPositionBuffered", () => {
+  function ranges(pairs: [number, number][]) {
+    return {
+      length: pairs.length,
+      start: (i: number) => pairs[i][0],
+      end: (i: number) => pairs[i][1],
+    };
+  }
+
+  it("バッファ範囲内の位置はtrue", () => {
+    expect(isPositionBuffered(ranges([[0, 10]]), 5)).toBe(true);
+  });
+
+  it("バッファ範囲外の位置はfalse", () => {
+    expect(isPositionBuffered(ranges([[0, 10]]), 15)).toBe(false);
+  });
+
+  it("複数のバッファ範囲のうち、いずれかに含まれていればtrue", () => {
+    const buffered = ranges([
+      [0, 5],
+      [20, 30],
+    ]);
+    expect(isPositionBuffered(buffered, 25)).toBe(true);
+    expect(isPositionBuffered(buffered, 10)).toBe(false);
+  });
+
+  it("バッファ範囲が無い（length: 0）場合は常にfalse", () => {
+    expect(isPositionBuffered(ranges([]), 0)).toBe(false);
+  });
+
+  it("境界付近は許容誤差（既定0.25秒）内ならtrue", () => {
+    const buffered = ranges([[0, 10]]);
+    expect(isPositionBuffered(buffered, 10.2)).toBe(true);
+    expect(isPositionBuffered(buffered, 10.3)).toBe(false);
+  });
+
+  it("許容誤差を明示的に指定できる", () => {
+    const buffered = ranges([[0, 10]]);
+    expect(isPositionBuffered(buffered, 10.05, 0)).toBe(false);
+    expect(isPositionBuffered(buffered, 10, 0)).toBe(true);
   });
 });
