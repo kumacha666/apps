@@ -329,6 +329,14 @@
     - 新規E2E2件（`e2e/dusty-jukebox.spec.ts`、Finding 1・Finding 2それぞれ）を追加。Finding 1のテストは、準備完了後にテスト側から`crossfadeAudio.currentTime`を進めて模擬し、ランプ開始しきい値へ入れた直後に読み取ると`0`に巻き戻っていることを検証（修正前は実際に`5`のまま失敗することを確認済み）。Finding 2のテストは、`crossfadeAudio`のplay()だけを保留したまま残り時間をランプしきい値以下へ進め、主audio要素のvolumeが`1`のまま（ランプが始まっていない）ことを検証（修正前は実際にvolumeが下がり始め失敗することを確認済み）。いずれも該当コードを一時的に無効化して実際に失敗することを確認済み。
     - 641 unit + 88 E2E、全green。`npm run deploy`実行済み（`app.js` 280.26kB、SW v0.1.107→v0.1.108）。
     - **実機での動作確認はまだ**（次セッションでの確認事項。上記2件のPR #444向け修正を含め、①「フェードが短すぎる」②「一瞬途切れる」の両方が実際に解消されたかどうかは実機でなければ確認できない）。
+  - **2026-09-11、PR #444マージ済み**。続けて実機フィードバック（ユーザーからの提案、他者の意見の伝聞）「クロスフェードON/OFFの隣に秒数設定を置いて、3/5/7/10秒から選べる程度がちょうどよさそう」を受け、クロスフェード長を固定値から秒数選択式へ変更した：
+    - `src/crossfade.ts`に`CROSSFADE_DURATION_OPTIONS_SEC`（`[3, 5, 7, 10] as const`）・`CrossfadeDurationSec`型・`DEFAULT_CROSSFADE_DURATION_SEC`（3）・`isCrossfadeDurationSec()`（型ガード、選択肢外の値へのフォールバック判定用）・`crossfadeDurationMsForSeconds(seconds)`（秒→ms換算。既定値〈3秒〉が既存の固定値〈本番3000ms・E2E 50ms〉と一致するよう、E2Eでは選択秒数に比例させる：`(seconds / 3) * CROSSFADE_DURATION_MS`）を追加。既存の`QUEUE_SORT_FIELDS`（queueSort.ts）と同じ「as const配列＋Recordラベル／型ガード」パターンを踏襲。
+    - UI：チェックボックスの右に`<select id="crossfade-duration-sec">`（3/5/7/10秒、既定3秒）を追加。`main.ts`の`crossfadeDurationMs()`が現在値を読み取り、選択肢外（DOM改変等）なら既定値へフォールバックする。
+    - **選択値は「準備開始時点」で1回だけスナップショットする**（新設モジュール変数`crossfadeDurationMsActive`、`crossfadePreviewedFileId`等と同じ設計）：`shouldStartCrossfadePreparation()`の`prepareThresholdMs`計算（`crossfadeDurationMs() + CROSSFADE_PREPARE_LEAD_MS`）だけは準備開始前のためライブな現在値を使うが、`startCrossfadePreparation()`が実際に準備を始める瞬間に`crossfadeDurationMsActive`へ確定させ、以降（先読み再生の待機中・`shouldBeginCrossfadeRamp()`のランプ判定・`beginCrossfadeRamp()`のランプ本体）は一貫してこの値を使う。準備中〜ランプ中にユーザーが秒数を変更しても、実行中のクロスフェード自体の長さは変わらない（次回のクロスフェードから新しい秒数が反映される）。
+    - ユニットテスト：`crossfade.test.ts`に`crossfadeDurationMsForSeconds`（このテスト実行環境はVITE_E2E未設定＝本番相当のため秒×1000で換算されること、既定値が既存の3000msと一致すること）・`isCrossfadeDurationSec`（選択肢の内外判定、NaN等）を追加。
+    - E2E新規1件（`e2e/dusty-jukebox.spec.ts`「クロスフェード長の秒数選択（3/5/7/10秒）が実際のランプ開始しきい値に反映される」）：5秒を選択し、既定の3秒（E2Eでは50ms）のランプしきい値は過ぎているが選択した5秒（約83.3ms）のしきい値にはまだ届いている残り時間（65ms）で、実際にランプが始まる（＝選択値が使われている）ことを検証。`crossfadeDurationMsActive`の代入を既定値固定へ一時的に無効化すると、この時点でランプが始まらず実際に失敗することを確認済み。既存の88件（既定値3秒のまま操作するテスト）はいずれも無変更で通過することを確認済み（既定値のE2E換算値が変わらない設計のため）。
+    - 645 unit + 89 E2E、全green。`npm run deploy`実行済み（`app.js` 280.65kB、SW v0.1.108→v0.1.109）。
+    - **実機での動作確認はまだ**（次セッションでの確認事項）。
 
 ## 絞り込み欄同士の連動（開発体制#43、2026-09-08）
 

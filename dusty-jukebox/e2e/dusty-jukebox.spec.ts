@@ -1028,6 +1028,63 @@ test("クロスフェードのUI（チェックボックス・非表示の第二
   await expect(page.locator("#audio-player-crossfade")).toBeAttached();
 });
 
+// 2026-09-11、ユーザー提案（クロスフェードON/OFFの隣に3/5/7/10秒から選べる設定を置く）。
+// 既定値（3秒）は既存のE2E固定値（50ms）と一致するよう設計したため、この選択肢自体は既存の
+// 多数のクロスフェードE2Eに影響しない。ここでは既定値より長い5秒を選んだ場合に、既定値
+// （3秒＝E2Eでは50ms）のしきい値では届かない残り時間でもランプが実際に開始されることを
+// 検証する（選択値が本当に使われていることの直接的な証拠）。
+test("クロスフェード長の秒数選択（3/5/7/10秒）が実際のランプ開始しきい値に反映される（2026-09-11）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+  // 既定の3秒（E2Eでは50ms）から5秒（E2Eでは50ms×5/3≒83.3ms）へ変更する。
+  await page.locator("#crossfade-duration-sec").selectOption("5");
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  await page.clock.install();
+
+  // 準備しきい値（5秒選択：83.3+200=約283.3ms）以下・ランプ開始しきい値（約83.3ms）より
+  // 長い窓（残り150ms）に置き、準備（接続確立）だけを完了させる（既存の「準備とランプの
+  // 分離」テストと同じ2段階の手順）。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.85; // 残り150ms
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  const volumeBeforeEitherThreshold = await page.evaluate(
+    () => document.querySelector<HTMLAudioElement>("#audio-player")!.volume
+  );
+  expect(volumeBeforeEitherThreshold).toBe(1);
+
+  // 残り時間を「既定の3秒（50ms）のランプしきい値は過ぎているが、選択した5秒（約83.3ms）の
+  // ランプしきい値にはまだ届いている」窓（残り65ms）へ進める。選択値が正しく使われていれば、
+  // 既定値のままでは始まらないはずのこの時点でランプが実際に始まる。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    audio.currentTime = 179.935; // 残り65ms
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await page.clock.runFor(10);
+  const volumeDuringRamp = await page.evaluate(
+    () => document.querySelector<HTMLAudioElement>("#audio-player")!.volume
+  );
+  expect(volumeDuringRamp).toBeLessThan(1);
+
+  // 5秒選択のランプ全体（約83.3ms）を進め、最終的に次の曲へ正しく引き継がれることも確認する。
+  await page.clock.runFor(100);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
+});
+
 // 実機フィードバック（PR #443マージ後）：「フェードが短すぎてまだクロスしてません。また次曲に
 // 切り替わったあと、一瞬曲が途切れてます」。根本原因は、旧実装が「音量ランプ開始しきい値
 // （残りcrossfadeDurationMs）」に達したその場で初めて第二audio要素のplay()（Service Worker
