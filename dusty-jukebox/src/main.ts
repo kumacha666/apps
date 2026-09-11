@@ -45,6 +45,7 @@ import {
   CROSSFADE_PREPARE_LEAD_MS,
   CROSSFADE_PREVIEW_START_TIMEOUT_MS,
   DEFAULT_CROSSFADE_DURATION_SEC,
+  bufferedCatchUpPosition,
   crossfadeDurationMsForSeconds,
   isCrossfadeDurationSec,
   runCrossfade,
@@ -650,7 +651,13 @@ function finishCrossfadeHandoff(committedFileId: string | null): void {
   const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
   if (committedFileId !== null && committedFileId === crossfadePreviewedFileId) {
     const finalPosition = crossfadeAudio.currentTime;
-    if (Number.isFinite(finalPosition)) audioPlayer.currentTime = finalPosition;
+    // 新しいRange要求を伴う（＝音飛びする）再シークは一切行わず、既にバッファ済みの範囲内で
+    // 目標位置（finalPosition）へできるだけ追いつく（2026-09-11、ChatGPTレビュー指摘を受けて
+    // 再設計。crossfade.tsのbufferedCatchUpPosition定義コメント参照）。
+    if (Number.isFinite(finalPosition)) {
+      const target = bufferedCatchUpPosition(audioPlayer.buffered, audioPlayer.currentTime, finalPosition);
+      if (target !== null) audioPlayer.currentTime = target;
+    }
   }
   audioPlayer.volume = 1;
   crossfading = false;
