@@ -25,8 +25,26 @@ export interface CrossfadeOptions {
 const DEFAULT_STEPS = 30;
 const defaultWait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-// E2Eでは実時間で3秒待つとテストが遅くなるため短縮する（他の機能のVITE_E2E分岐と同じ方針）。
+// クロスフェード長は秒単位でユーザーが選べる（2026-09-11、ユーザーからの提案：ON/OFFの隣に
+// 秒数設定を置き、3/5/7/10秒から選べるとちょうどよい）。QUEUE_SORT_FIELDS（queueSort.ts）と
+// 同じ「as const配列＋Record<...,label>」パターンで網羅性を保証する。
+export const CROSSFADE_DURATION_OPTIONS_SEC = [3, 5, 7, 10] as const;
+export type CrossfadeDurationSec = (typeof CROSSFADE_DURATION_OPTIONS_SEC)[number];
+export const DEFAULT_CROSSFADE_DURATION_SEC: CrossfadeDurationSec = 3;
+
+export function isCrossfadeDurationSec(value: number): value is CrossfadeDurationSec {
+  return (CROSSFADE_DURATION_OPTIONS_SEC as readonly number[]).includes(value);
+}
+
+// E2Eでは実時間で長く待つとテストが遅くなるため短縮する（他の機能のVITE_E2E分岐と同じ方針）。
+// 既定（3秒）がこれまでの固定値（50ms）と一致するよう、選択秒数に比例させる。
 export const CROSSFADE_DURATION_MS = import.meta.env.VITE_E2E === "true" ? 50 : 3000;
+
+export function crossfadeDurationMsForSeconds(seconds: number): number {
+  return import.meta.env.VITE_E2E === "true"
+    ? (seconds / DEFAULT_CROSSFADE_DURATION_SEC) * CROSSFADE_DURATION_MS
+    : seconds * 1000;
+}
 
 // 第二audio要素の接続確立（先読み再生の開始）を、実際の音量ランプ開始しきい値より前倒しで
 // 始めるための追加リード時間（2026-09-10、実機フィードバックによる再設計）。CROSSFADE_

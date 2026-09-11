@@ -1,5 +1,42 @@
 import { describe, expect, it, vi } from "vitest";
-import { crossfadeVolumes, runCrossfade, shouldBeginCrossfadeRamp, shouldStartCrossfadePreparation } from "./crossfade";
+import {
+  CROSSFADE_DURATION_OPTIONS_SEC,
+  DEFAULT_CROSSFADE_DURATION_SEC,
+  crossfadeDurationMsForSeconds,
+  crossfadeVolumes,
+  isCrossfadeDurationSec,
+  runCrossfade,
+  shouldBeginCrossfadeRamp,
+  shouldStartCrossfadePreparation,
+} from "./crossfade";
+
+// 2026-09-11、ユーザー提案（クロスフェードON/OFFの隣に3/5/7/10秒から選べる設定を置く）による
+// クロスフェード長の秒数選択式化。
+describe("crossfadeDurationMsForSeconds", () => {
+  it("秒数をms換算する（このテスト実行環境はVITE_E2E未設定＝本番相当のため、秒×1000）", () => {
+    for (const sec of CROSSFADE_DURATION_OPTIONS_SEC) {
+      expect(crossfadeDurationMsForSeconds(sec)).toBe(sec * 1000);
+    }
+  });
+
+  it("既定値（3秒）は既存の固定値と一致する", () => {
+    expect(crossfadeDurationMsForSeconds(DEFAULT_CROSSFADE_DURATION_SEC)).toBe(3000);
+  });
+});
+
+describe("isCrossfadeDurationSec", () => {
+  it("選択肢に含まれる値はtrue", () => {
+    for (const sec of CROSSFADE_DURATION_OPTIONS_SEC) {
+      expect(isCrossfadeDurationSec(sec)).toBe(true);
+    }
+  });
+
+  it("選択肢に含まれない値（DOM改変等の想定外の状態）はfalse", () => {
+    expect(isCrossfadeDurationSec(4)).toBe(false);
+    expect(isCrossfadeDurationSec(0)).toBe(false);
+    expect(isCrossfadeDurationSec(NaN)).toBe(false);
+  });
+});
 
 describe("crossfadeVolumes", () => {
   it("進行度に応じて退場側/入場側の音量を線形に計算する", () => {

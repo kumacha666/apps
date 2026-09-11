@@ -41,9 +41,12 @@ import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState }
 import { formatSeekTime, isSeekableDuration } from "./seekBar";
 import { shouldResumeExternalPlayback } from "./externalPlayback";
 import {
-  CROSSFADE_DURATION_MS,
+  CROSSFADE_DURATION_OPTIONS_SEC,
   CROSSFADE_PREPARE_LEAD_MS,
   CROSSFADE_PREVIEW_START_TIMEOUT_MS,
+  DEFAULT_CROSSFADE_DURATION_SEC,
+  crossfadeDurationMsForSeconds,
+  isCrossfadeDurationSec,
   runCrossfade,
   shouldBeginCrossfadeRamp,
   shouldStartCrossfadePreparation,
@@ -267,6 +270,13 @@ function render(): void {
         <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="pause-btn" type="button" disabled>一時停止</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button> <button id="clear-queue-btn" type="button" disabled>再生リストをクリア</button></div>
         <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトする</label>
         <label><input id="crossfade-toggle" type="checkbox" /> 曲間をクロスフェードする</label>
+        <label>長さ
+          <select id="crossfade-duration-sec">
+            ${CROSSFADE_DURATION_OPTIONS_SEC.map(
+              (sec) => `<option value="${sec}"${sec === DEFAULT_CROSSFADE_DURATION_SEC ? " selected" : ""}>${sec}秒</option>`
+            ).join("")}
+          </select>
+        </label>
         <div>
           <label>並び替え
             <select id="sort-field" disabled>
@@ -436,6 +446,15 @@ function crossfadeEnabled(): boolean {
   return el<HTMLInputElement>("crossfade-toggle").checked;
 }
 
+// クロスフェード長（秒、ユーザー選択）をms換算で返す（2026-09-11、ユーザー提案：ON/OFFの隣に
+// 3/5/7/10秒から選べる設定を置く）。値がCROSSFADE_DURATION_OPTIONS_SECの範囲外（DOM改変等の
+// 想定外の状態）の場合は既定値へフォールバックする。
+function crossfadeDurationMs(): number {
+  const raw = Number(el<HTMLSelectElement>("crossfade-duration-sec").value);
+  const sec = isCrossfadeDurationSec(raw) ? raw : DEFAULT_CROSSFADE_DURATION_SEC;
+  return crossfadeDurationMsForSeconds(sec);
+}
+
 // 進行中のクロスフェードの世代。cancelCrossfadeIfActive()が進めることで、進行中のrunCrossfade()
 // のisCancelled()判定・完了後の後始末処理が「自分が開始したクロスフェードが依然として有効か」を
 // 確認できるようにする（手動スキップ等でユーザーが割り込んだ場合に、後から解決するクロス
@@ -456,6 +475,12 @@ let crossfadePreparing = false;
 // （退場側が準備中に先に自然終了した場合の即時ハンドオフ）が、まだ接続確立中の（無音の
 // ままかもしれない）第二audio要素へ向けてランプを始めてしまうことを防ぐガードとして使う。
 let crossfadePreviewReady = false;
+// このクロスフェード実行で使う長さ（ms、2026-09-11、クロスフェード長を秒数選択式にした際に
+// 追加）。準備開始時点のcrossfadeDurationMs()の値をここへ1回だけ確定させ、以降（先読み再生の
+// 待機中・ランプ本体）はこの値を使い続ける（crossfadePreviewedFileId等と同じ「開始時点で
+// スナップショットを取る」設計：準備中〜ランプ中にユーザーが秒数セレクトを変更しても、実行中の
+// クロスフェード自体の長さは変えない）。
+let crossfadeDurationMsActive = crossfadeDurationMsForSeconds(DEFAULT_CROSSFADE_DURATION_SEC);
 // 進行中のクロスフェードが本来先読みしていたfileId（2026-09-10、Codexレビュー指摘：P1）。
 // finishCrossfadeHandoff()が、実際にキューがコミットしたfileIdとこれを比較し、一致する場合
 // だけcrossfadeAudioの再生位置を主audio要素へ同期する（フォールバック等で異なる曲が
@@ -656,7 +681,7 @@ async function maybeStartCrossfade(): Promise<void> {
         hasNextSong: Boolean(queue?.peekNextFileId()),
         duration: audioPlayer.duration,
         currentTime: audioPlayer.currentTime,
-        prepareThresholdMs: CROSSFADE_DURATION_MS + CROSSFADE_PREPARE_LEAD_MS,
+        prepareThresholdMs: crossfadeDurationMs() + CROSSFADE_PREPARE_LEAD_MS,
         audioPaused: audioPlayer.paused,
         manualTransitionInFlight: manualTransitionCount > 0,
       }) ||
@@ -683,6 +708,9 @@ async function startCrossfadePreparation(): Promise<void> {
 
   crossfadePreparing = true;
   crossfadePreviewReady = false;
+  // このクロスフェード実行の長さを準備開始時点で確定させる（上記crossfadeDurationMsActive
+  // 定義コメント参照）。
+  crossfadeDurationMsActive = crossfadeDurationMs();
   crossfadePreviewedFileId = nextFileId;
   const myGeneration = crossfadeGeneration;
   const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
@@ -742,7 +770,7 @@ async function tryBeginCrossfadeRamp(): Promise<boolean> {
       hasNextSong: Boolean(queue?.peekNextFileId()),
       duration: audioPlayer.duration,
       currentTime: audioPlayer.currentTime,
-      crossfadeDurationMs: CROSSFADE_DURATION_MS,
+      crossfadeDurationMs: crossfadeDurationMsActive,
       // 一時停止中はランプを始めない（2026-09-10、Codexレビュー指摘：P1）。isPlayingFromQueue()
       // は一時停止しても変わらないままのため、audio要素自身のpaused状態も別途確認する必要がある。
       audioPaused: audioPlayer.paused,
@@ -793,7 +821,7 @@ async function beginCrossfadeRamp(): Promise<void> {
   if (crossfadeAudio.currentTime !== 0) crossfadeAudio.currentTime = 0;
   // 退場側が既に自然終了している場合（準備に crossfadeDurationMs + CROSSFADE_PREPARE_LEAD_MS
   // を超える時間がかかった稀なケース）のみ、ランプ自体を省略して直ちに完了値へ進める。
-  const rampDurationMs = audioPlayer.ended ? 0 : CROSSFADE_DURATION_MS;
+  const rampDurationMs = audioPlayer.ended ? 0 : crossfadeDurationMsActive;
   await runCrossfade(audioPlayer, crossfadeAudio, rampDurationMs, {
     isCancelled: () => crossfadeGeneration !== myGeneration,
     // 次の曲（入場側）自体がクロスフェード長より短く、ランプ完了前に自然終了した場合
