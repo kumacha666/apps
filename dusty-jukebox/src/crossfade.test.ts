@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { crossfadeVolumes, runCrossfade, shouldStartCrossfade } from "./crossfade";
+import { crossfadeVolumes, runCrossfade, shouldBeginCrossfadeRamp, shouldStartCrossfadePreparation } from "./crossfade";
 
 describe("crossfadeVolumes", () => {
   it("進行度に応じて退場側/入場側の音量を線形に計算する", () => {
@@ -81,53 +81,134 @@ describe("runCrossfade", () => {
   });
 });
 
-describe("shouldStartCrossfade", () => {
+// 2026-09-10、実機フィードバック（マージ後）による再設計：「開始判定」を「準備（第二audio
+// 要素の接続確立）を始めるべきか」と「実際に音量ランプを開始してよいか」の2段階に分離した。
+describe("shouldStartCrossfadePreparation", () => {
   const baseParams = {
     crossfadeEnabled: true,
+    isPreparing: false,
+    isCrossfading: false,
+    hasNextSong: true,
+    duration: 180,
+    currentTime: 172,
+    prepareThresholdMs: 8000,
+    audioPaused: false,
+    manualTransitionInFlight: false,
+  };
+
+  it("残り時間が準備しきい値以下ならtrue", () => {
+    expect(shouldStartCrossfadePreparation(baseParams)).toBe(true);
+  });
+
+  it("残り時間が準備しきい値より長ければfalse", () => {
+    expect(shouldStartCrossfadePreparation({ ...baseParams, currentTime: 100 })).toBe(false);
+  });
+
+  it("クロスフェードが無効ならfalse", () => {
+    expect(shouldStartCrossfadePreparation({ ...baseParams, crossfadeEnabled: false })).toBe(false);
+  });
+
+  it("既に準備中ならfalse（多重起動防止）", () => {
+    expect(shouldStartCrossfadePreparation({ ...baseParams, isPreparing: true })).toBe(false);
+  });
+
+  it("既にランプ中ならfalse（多重起動防止）", () => {
+    expect(shouldStartCrossfadePreparation({ ...baseParams, isCrossfading: true })).toBe(false);
+  });
+
+  it("次の曲が無ければfalse", () => {
+    expect(shouldStartCrossfadePreparation({ ...baseParams, hasNextSong: false })).toBe(false);
+  });
+
+  it("durationがNaN/Infinity/0以下（メタデータ未確定）ならfalse", () => {
+    expect(shouldStartCrossfadePreparation({ ...baseParams, duration: NaN })).toBe(false);
+    expect(shouldStartCrossfadePreparation({ ...baseParams, duration: Infinity })).toBe(false);
+    expect(shouldStartCrossfadePreparation({ ...baseParams, duration: 0 })).toBe(false);
+  });
+
+  it("既に曲の末尾を過ぎている（残り時間が0以下）場合はfalse", () => {
+    expect(shouldStartCrossfadePreparation({ ...baseParams, currentTime: 181 })).toBe(false);
+  });
+
+  it("主audio要素が一時停止中ならfalse", () => {
+    expect(shouldStartCrossfadePreparation({ ...baseParams, audioPaused: true })).toBe(false);
+  });
+
+  it("明示的な手動遷移（フェード待機中を含む）が進行中ならfalse", () => {
+    expect(shouldStartCrossfadePreparation({ ...baseParams, manualTransitionInFlight: true })).toBe(false);
+  });
+});
+
+describe("shouldBeginCrossfadeRamp", () => {
+  const baseParams = {
+    crossfadeEnabled: true,
+    isPreparing: true,
     isCrossfading: false,
     hasNextSong: true,
     duration: 180,
     currentTime: 178,
     crossfadeDurationMs: 3000,
     audioPaused: false,
+    audioEnded: false,
     manualTransitionInFlight: false,
+    previewReady: true,
   };
 
   it("残り時間がクロスフェード長以下ならtrue", () => {
-    expect(shouldStartCrossfade(baseParams)).toBe(true);
+    expect(shouldBeginCrossfadeRamp(baseParams)).toBe(true);
   });
 
-  it("残り時間がクロスフェード長より長ければfalse", () => {
-    expect(shouldStartCrossfade({ ...baseParams, currentTime: 100 })).toBe(false);
+  it("残り時間がクロスフェード長より長ければfalse（準備は完了済みだがまだランプは始めない）", () => {
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, currentTime: 100 })).toBe(false);
+  });
+
+  it("まだ準備中でなければfalse", () => {
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, isPreparing: false })).toBe(false);
   });
 
   it("クロスフェードが無効ならfalse", () => {
-    expect(shouldStartCrossfade({ ...baseParams, crossfadeEnabled: false })).toBe(false);
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, crossfadeEnabled: false })).toBe(false);
   });
 
-  it("既にクロスフェード中ならfalse（多重起動防止）", () => {
-    expect(shouldStartCrossfade({ ...baseParams, isCrossfading: true })).toBe(false);
+  it("既にランプ中ならfalse（多重起動防止）", () => {
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, isCrossfading: true })).toBe(false);
   });
 
   it("次の曲が無ければfalse", () => {
-    expect(shouldStartCrossfade({ ...baseParams, hasNextSong: false })).toBe(false);
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, hasNextSong: false })).toBe(false);
   });
 
-  it("durationがNaN/Infinity/0以下（メタデータ未確定）ならfalse", () => {
-    expect(shouldStartCrossfade({ ...baseParams, duration: NaN })).toBe(false);
-    expect(shouldStartCrossfade({ ...baseParams, duration: Infinity })).toBe(false);
-    expect(shouldStartCrossfade({ ...baseParams, duration: 0 })).toBe(false);
+  it("明示的な手動遷移が進行中ならfalse", () => {
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, manualTransitionInFlight: true })).toBe(false);
   });
 
-  it("既に曲の末尾を過ぎている（残り時間が0以下）場合はfalse", () => {
-    expect(shouldStartCrossfade({ ...baseParams, currentTime: 181 })).toBe(false);
+  // 2026-09-10、実機フィードバックによる再設計時に追加：接続確立が長引き、準備中のうちに
+  // 退場側が先に自然終了してしまった場合、audioPausedはended時ネイティブにtrueになるが、
+  // それに関わらず直ちにランプを開始すべき（そうしないと準備済みのまま永久に取り残される）。
+  it("退場側が既に自然終了していれば、一時停止中の判定より優先してtrue", () => {
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, audioEnded: true, audioPaused: true, currentTime: 180 })).toBe(true);
   });
 
-  it("主audio要素が一時停止中ならfalse（2026-09-10、Codexレビュー指摘：P1）", () => {
-    expect(shouldStartCrossfade({ ...baseParams, audioPaused: true })).toBe(false);
+  it("自然終了していない場合、主audio要素が一時停止中ならfalse", () => {
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, audioPaused: true })).toBe(false);
   });
 
-  it("明示的な手動遷移（フェード待機中を含む）が進行中ならfalse（2026-09-10、ChatGPTレビュー指摘：P1）", () => {
-    expect(shouldStartCrossfade({ ...baseParams, manualTransitionInFlight: true })).toBe(false);
+  it("durationがNaN/Infinity/0以下（メタデータ未確定）で、自然終了もしていなければfalse", () => {
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, duration: NaN })).toBe(false);
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, duration: Infinity })).toBe(false);
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, duration: 0 })).toBe(false);
+  });
+
+  // 2026-09-10、ChatGPTレビュー指摘：P1（Finding 2）。第二audio要素の先読み再生がまだ実際に
+  // 開始していない（play()未解決）間は、通常の残り時間トリガーはもちろん、退場側の自然終了
+  // バイパスであってもランプを始めてはならない（未確立のままハンドオフする不具合の再現を防ぐ）。
+  it("先読み再生がまだ準備完了していなければfalse（残り時間が閾値以内でも）", () => {
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, previewReady: false })).toBe(false);
+  });
+
+  it("先読み再生がまだ準備完了していなければfalse（退場側が既に自然終了していても）", () => {
+    expect(
+      shouldBeginCrossfadeRamp({ ...baseParams, previewReady: false, audioEnded: true, audioPaused: true, currentTime: 180 })
+    ).toBe(false);
   });
 });

@@ -28,6 +28,13 @@ const defaultWait = (ms: number): Promise<void> => new Promise((resolve) => setT
 // E2Eでは実時間で3秒待つとテストが遅くなるため短縮する（他の機能のVITE_E2E分岐と同じ方針）。
 export const CROSSFADE_DURATION_MS = import.meta.env.VITE_E2E === "true" ? 50 : 3000;
 
+// 第二audio要素の接続確立（先読み再生の開始）を、実際の音量ランプ開始しきい値より前倒しで
+// 始めるための追加リード時間（2026-09-10、実機フィードバックによる再設計）。CROSSFADE_
+// PREVIEW_START_TIMEOUT_MS（接続確立自体の上限）と同じ値にする：接続確立が最悪その上限まで
+// かかったとしても、ランプ開始しきい値（残りcrossfadeDurationMs）に間に合わせる、または
+// 僅かに間に合わない程度に抑える狙い。
+export const CROSSFADE_PREPARE_LEAD_MS = import.meta.env.VITE_E2E === "true" ? 200 : 5000;
+
 // 第二audio要素の先読み再生開始（play()）に与えるタイムアウト（2026-09-10、Codexレビュー
 // 指摘：P1）。Driveストリームが拒否も解決もせず単に無応答のままだと、await crossfadeAudio.play()
 // が永久に解決せずcrossfading=trueのまま固まり、主audio要素側の'ended'抑止（main.tsのonEnded
@@ -74,18 +81,30 @@ export async function runCrossfade(
   }
 }
 
-export interface ShouldStartCrossfadeParams {
+// 実機フィードバック（2026-09-10マージ後）：「フェードが短すぎてまだクロスしてません」
+// 「次曲に切り替わったあと、一瞬曲が途切れています」。根本原因は、旧設計が「曲の末尾まで
+// crossfadeDurationMs以下」を検知した"その場で"第二audio要素のplay()を待ってからランプを
+// 開始していたこと。Service Worker経由のDrive接続確立（認証・Range要求の往復）は数百ms〜
+// 数秒かかりうる実際のネットワークI/Oで、この待ち時間の分だけ退場側の実際の残り時間が
+// 目減りするにも関わらず、ランプ自体は常に固定のcrossfadeDurationMsで走っていた。接続確立が
+// 長引くと退場側がランプ完了前に（時にはランプ開始前に）自然終了してしまい、「クロスして
+// いるはずの時間のほとんどが無音の退場側を相手にした空ランプ」になる——ひどい場合は
+// `audioPlayer.ended`分岐によりランプ自体が省略され、フェードが全く無い即座の切り替えになる。
+// 「開始判定」と「実際に音量ランプを開始してよい判定」を分離し、前者を十分早いタイミング
+// （crossfadeDurationMs + prepareLeadMs前）で発火させて接続確立をランプ開始前に完了させておく
+// （＝実際にランプを開始する時点では、第二audio要素は既に音を流せる状態になっている）よう
+// 再設計した。
+
+export interface CrossfadeGateParams {
   crossfadeEnabled: boolean;
-  isCrossfading: boolean;
   hasNextSong: boolean;
   duration: number;
   currentTime: number;
-  crossfadeDurationMs: number;
   // 主audio要素が一時停止中かどうか（2026-09-10、Codexレビュー指摘：P1）。一時停止中は
   // isPlayingFromQueue()がtrueのまま残るため（アプリの一時停止ボタン・Media Sessionの
   // 一時停止のいずれも、キュー由来の再生であることそのものは変えない）、この判定が無いと、
-  // 一時停止してから曲末尾3秒以内へシークするだけで先読み再生が始まり、Playを押していない
-  // のに音が鳴り出してしまう。
+  // 一時停止してから曲末尾のしきい値以内へシークするだけで先読み再生が始まり、Playを
+  // 押していないのに音が鳴り出してしまう。
   audioPaused: boolean;
   // 明示的な手動遷移（次へ/前へ/曲名クリック等キュー由来の操作、一時停止ボタン）が進行中
   // かどうか（2026-09-10、ChatGPTレビュー指摘：P1）。手動フェードアウト（既定約2秒）を伴う
@@ -96,18 +115,69 @@ export interface ShouldStartCrossfadeParams {
   manualTransitionInFlight: boolean;
 }
 
-// 現在の再生位置がクロスフェードを開始すべきタイミング（曲の末尾までの残り時間がクロスフェード
-// の長さ以下）かどうか。durationが未確定（NaN/Infinity/0以下、ストリーミング開始直後でメタ
-// データ未確定の間）は開始しない（seekBar.tsのisSeekableDurationと同じ理由）。
-export function shouldStartCrossfade(params: ShouldStartCrossfadeParams): boolean {
+function remainingMsUntilEnd(duration: number, currentTime: number): number | null {
+  if (!Number.isFinite(duration) || duration <= 0) return null;
+  const remainingMs = (duration - currentTime) * 1000;
+  return remainingMs > 0 ? remainingMs : null;
+}
+
+export interface ShouldStartCrossfadePreparationParams extends CrossfadeGateParams {
+  isPreparing: boolean;
+  isCrossfading: boolean;
+  // 実際のランプ開始しきい値（crossfadeDurationMs）より前倒しで、第二audio要素の接続確立
+  // だけを先に始めるためのしきい値（crossfadeDurationMs + 接続確立の見込み時間）。
+  prepareThresholdMs: number;
+}
+
+// 第二audio要素の先読み再生（接続確立）を開始すべきタイミングかどうか。durationが未確定
+// （NaN/Infinity/0以下、ストリーミング開始直後でメタデータ未確定の間）は開始しない
+// （seekBar.tsのisSeekableDurationと同じ理由）。
+export function shouldStartCrossfadePreparation(params: ShouldStartCrossfadePreparationParams): boolean {
   if (
     !params.crossfadeEnabled ||
+    params.isPreparing ||
     params.isCrossfading ||
     !params.hasNextSong ||
     params.audioPaused ||
     params.manualTransitionInFlight
   ) return false;
-  if (!Number.isFinite(params.duration) || params.duration <= 0) return false;
-  const remainingMs = (params.duration - params.currentTime) * 1000;
-  return remainingMs > 0 && remainingMs <= params.crossfadeDurationMs;
+  const remainingMs = remainingMsUntilEnd(params.duration, params.currentTime);
+  return remainingMs !== null && remainingMs <= params.prepareThresholdMs;
+}
+
+export interface ShouldBeginCrossfadeRampParams extends CrossfadeGateParams {
+  isPreparing: boolean;
+  isCrossfading: boolean;
+  crossfadeDurationMs: number;
+  // 退場側（主audio要素）が既に自然終了しているかどうか。接続確立に crossfadeDurationMs +
+  // prepareLeadMs を超える時間がかかった稀なケースで、まだ「準備中」のうちに退場側が
+  // 先に終わってしまうことがある。ended時はaudioPaused（ended時はネイティブにpausedも
+  // trueになる）に関わらず直ちにランプを開始すべきなので、audioPausedチェックより先に
+  // 判定する。
+  audioEnded: boolean;
+  // 第二audio要素の先読み再生が実際に開始済み（play()が解決済み）かどうか（2026-09-10、
+  // ChatGPTレビュー指摘：P1）。isPreparing自体はplay()呼び出し直前（まだ何も鳴っていない
+  // 可能性がある）から立つため、これだけでは「実際にランプしてよい状態」を保証できない。
+  // これが無いと、退場側が準備中に先に自然終了した場合のaudioEndedバイパスが、まだ再生を
+  // 開始していない（無音のままかもしれない）第二audio要素へ向けてランプを始めてしまい、
+  // 「先読みが未確立のままハンドオフする」という、このPRが本来解消しようとした不具合を
+  // audioEndedバイパス経由で再現してしまう。
+  previewReady: boolean;
+}
+
+// 準備済み（第二audio要素が既に再生開始済み）の状態から、実際に音量ランプを開始すべき
+// タイミングかどうか。
+export function shouldBeginCrossfadeRamp(params: ShouldBeginCrossfadeRampParams): boolean {
+  if (
+    !params.crossfadeEnabled ||
+    !params.isPreparing ||
+    params.isCrossfading ||
+    !params.hasNextSong ||
+    params.manualTransitionInFlight ||
+    !params.previewReady
+  ) return false;
+  if (params.audioEnded) return true;
+  if (params.audioPaused) return false;
+  const remainingMs = remainingMsUntilEnd(params.duration, params.currentTime);
+  return remainingMs !== null && remainingMs <= params.crossfadeDurationMs;
 }
