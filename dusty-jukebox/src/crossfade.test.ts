@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CROSSFADE_DURATION_OPTIONS_SEC,
   DEFAULT_CROSSFADE_DURATION_SEC,
-  bufferedCatchUpPosition,
   crossfadeDurationMsForSeconds,
   crossfadeVolumes,
   isCrossfadeDurationSec,
@@ -251,51 +250,10 @@ describe("shouldBeginCrossfadeRamp", () => {
   });
 });
 
-// 2026-09-11、実機フィードバック「クロスフェードで曲が切り替わった瞬間に一瞬音飛みする」。
-// finishCrossfadeHandoff()のハンドオフ最終位置合わせが、まだバッファされていない位置への
-// 再シーク（＝新しいRange要求を伴いうる）を無条件に行っていたことが原因。当初「バッファ済み
-// なら再シーク、そうでなければ諦める」という設計にしたが、ChatGPTレビュー指摘（同日）で
-// ①スキップすると位置ずれがフレーズの聞き直しになってしまう、②バッファ判定の許容誤差が
-// 外側へ広がっており未バッファな位置を誤ってバッファ済みと判定しうる、の2点が判明し、
-// 「バッファ済み範囲内で目標位置へできるだけ追いつく」方式へ再設計した。
-describe("bufferedCatchUpPosition", () => {
-  function ranges(pairs: [number, number][]) {
-    return {
-      length: pairs.length,
-      start: (i: number) => pairs[i][0],
-      end: (i: number) => pairs[i][1],
-    };
-  }
-
-  it("目標位置が現在の範囲内に収まる場合、目標位置そのものへ進む", () => {
-    expect(bufferedCatchUpPosition(ranges([[0, 10]]), 2, 8)).toBe(8);
-  });
-
-  it("目標位置がバッファ範囲の終端を超える場合、終端までしか進まない（新しいフェッチを伴うシークをしない）", () => {
-    expect(bufferedCatchUpPosition(ranges([[0, 10]]), 2, 15)).toBe(10);
-  });
-
-  it("現在位置がどのバッファ範囲にも属さない場合はnull（再シーク自体を行わない）", () => {
-    const buffered = ranges([
-      [0, 5],
-      [20, 30],
-    ]);
-    expect(bufferedCatchUpPosition(buffered, 10, 25)).toBeNull();
-  });
-
-  it("目標位置が現在位置以下（既に追いついている）場合はnull", () => {
-    expect(bufferedCatchUpPosition(ranges([[0, 10]]), 8, 5)).toBeNull();
-  });
-
-  it("複数のバッファ範囲のうち、現在位置が属する範囲だけを対象にする", () => {
-    const buffered = ranges([
-      [0, 5],
-      [20, 30],
-    ]);
-    expect(bufferedCatchUpPosition(buffered, 22, 40)).toBe(30);
-  });
-
-  it("バッファ範囲が無い（length: 0）場合は常にnull", () => {
-    expect(bufferedCatchUpPosition(ranges([]), 0, 5)).toBeNull();
-  });
-});
+// 2026-09-11〜12、実機フィードバック「クロスフェードで曲が切り替わった瞬間に一瞬音飛みする」。
+// finishCrossfadeHandoff()のハンドオフ最終位置合わせ（先読み側の到達位置への再シーク）が
+// 原因と考え、「バッファ済みなら再シーク」→「バッファ済み範囲内で目標位置へできるだけ
+// 追いつく」（bufferedCatchUpPosition）と2段階で絞り込んだが、実機の録画（波形解析）で
+// 再検証したところ、バッファの有無に関わらず同じ瞬間に音飛みが再現した。原因は
+// `currentTime`への書き込みという操作そのものだったため、位置合わせの再シーク自体を撤去し
+// （main.tsのfinishCrossfadeHandoff()参照）、bufferedCatchUpPosition自体も不要になり削除した。

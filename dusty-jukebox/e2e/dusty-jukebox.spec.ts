@@ -1138,14 +1138,13 @@ test("クロスフェードは準備（接続確立）と音量ランプの開�
   const volumeDuringRamp = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
   expect(volumeDuringRamp).toBeLessThan(1);
 
-  // 耐久性のため、ハンドオフ完了前にduration上書きを元に戻す（2026-09-11、
-  // bufferedCatchUpPosition()導入により、ハンドオフの最終位置合わせ〈finishCrossfadeHandoff()の
-  // 再シーク〉がバッファ未設定のこのE2Eモック環境では常にスキップされるようになったため、
-  // 主audio要素のcurrentTimeがsrc切り替え後もテスト側が設定した古い値〈179.99〉のまま残って
-  // しまう場合がある〈実ブラウザではsrc代入自体がcurrentTimeを0へリセットするが、この
-  // モック環境ではそう振る舞わないことがある、既存の複数のクロスフェードE2Eと同じ注意点〉。
-  // 残しておくと、ハンドオフ後に万一timeupdateが再発火した際、同じ「残り時間が閾値以内」
-  // 条件を次の曲に対しても満たしてしまい、無関係な別のクロスフェードが連鎖してしまう。
+  // 耐久性のため、ハンドオフ完了前にduration上書きを元に戻す（2026-09-12、
+  // finishCrossfadeHandoff()が位置合わせの再シーク自体を行わなくなったため、主audio要素の
+  // currentTimeがsrc切り替え後もテスト側が設定した古い値〈179.99〉のまま残ってしまう場合が
+  // ある〈実ブラウザではsrc代入自体がcurrentTimeを0へリセットするが、このモック環境では
+  // そう振る舞わないことがある、既存の複数のクロスフェードE2Eと同じ注意点〉。残しておくと、
+  // ハンドオフ後に万一timeupdateが再発火した際、同じ「残り時間が閾値以内」条件を次の曲に
+  // 対しても満たしてしまい、無関係な別のクロスフェードが連鎖してしまう。
   await page.evaluate(() => {
     document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime = 0;
   });
@@ -2221,12 +2220,16 @@ test("クロスフェードのハンドオフ待機中も、第二audio要素は
   await expect(page.locator("#audio-player-crossfade")).not.toHaveAttribute("src");
 });
 
-// 2026-09-11、実機フィードバック「クロスフェードで曲が切り替わって、シークバーとステータスが
-// 次曲に変わった瞬間に一瞬音飛みします」。原因はfinishCrossfadeHandoff()の最終位置合わせ
-// （主audio要素を先読み側の到達位置へ再シークする処理）が、まだバッファされていない位置への
-// 再シークを無条件に行っていたこと（新しいRange要求を伴いうる＝音飛びの正体）。
-// isPositionBuffered()導入により、バッファ済みの位置だけへ再シークするよう修正した。
-test("クロスフェードのハンドオフ最終位置合わせは、まだバッファされていない位置への再シークをスキップする（実機フィードバック：切り替え時の音飛び、2026-09-11）", async ({ context, page }) => {
+// 2026-09-11〜12、実機フィードバック「クロスフェードで曲が切り替わって、シークバーと
+// ステータスが次曲に変わった瞬間に一瞬音飛びします」。①「バッファ済みの位置だけへ再シーク」
+// （isPositionBuffered）②「バッファ済み範囲内で目標位置へできるだけ追いつく」
+// （bufferedCatchUpPosition）と2段階で絞り込んだが、実機の録画（波形解析）で再検証したところ、
+// バッファの有無に関わらず同じ瞬間に音飛びが再現した。`currentTime`への書き込みという操作
+// そのものが原因と判明したため、finishCrossfadeHandoff()から位置合わせの再シーク自体を撤去
+// した（詳細は`dusty-jukebox/CLAUDE.md`「クロスフェード」節参照）。このテストは、先読み側
+// （crossfadeAudio）が待機中にどれだけ進んでいても、主audio要素のcurrentTimeが一切書き
+// 換えられない（＝ハンドオフ開始時に設定した初期位置からそのまま連続再生される）ことを検証する。
+test("クロスフェードのハンドオフ完了時、主audio要素のcurrentTimeを再シークしない（実機フィードバック：切り替え時の音飛び、2026-09-11〜12）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
@@ -2270,32 +2273,31 @@ test("クロスフェードのハンドオフ最終位置合わせは、まだ�
     page.evaluate(() => Boolean((window as unknown as { __e2eReleaseHandoffPlay3?: () => void }).__e2eReleaseHandoffPlay3))
   ).toBe(true);
 
-  // 先読み側が、待機中にさらに進んだことにする（はっきり区別できる値）。
+  // 先読み側が、待機中にさらに進んだことにする（はっきり区別できる値）。この位置には
+  // 一切追いつこうとしないことを検証したい。
   await page.evaluate(() => {
     document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!.currentTime = 42;
   });
-  // 主audio要素のbufferedには42秒を含まない（＝まだバッファされていない）ことにする。
-  // currentTimeも、この時点でのハンドオフ先（初期位置＝ほぼ0秒）を明示的に模擬する
-  // （このE2Eモック環境ではsrc代入がcurrentTimeを実ブラウザのように0へリセットしないことが
-  // あるため、既存の複数のクロスフェードE2Eと同じ「耐久性のため」の対策）。
+  // 主audio要素の初期ハンドオフ位置を明示的に模擬する（このE2Eモック環境ではsrc代入が
+  // currentTimeを実ブラウザのように0へリセットしないことがあるため、既存の複数のクロス
+  // フェードE2Eと同じ「耐久性のため」の対策）。
   await page.evaluate(() => {
-    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
-    Object.defineProperty(audio, "buffered", {
-      configurable: true,
-      value: { length: 1, start: () => 0, end: () => 1 },
-    });
-    audio.currentTime = 0;
+    document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime = 0;
   });
+  const currentTimeBeforeRelease = await page.evaluate(
+    () => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime
+  );
   // 保留していたplay()を解放してハンドオフを完了させる。
   await page.evaluate(() => (window as unknown as { __e2eReleaseHandoffPlay3?: () => void }).__e2eReleaseHandoffPlay3?.());
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
 
-  // バッファ範囲は[0, 1]（42秒を含まない）ため、42秒への再シークは行われず、その範囲の終端
-  // （1秒）までしか進まない（バッファ範囲外への新しいRange要求を伴うシークをしていない）。
+  // 先読み側が42秒まで進んでいても、主audio要素のcurrentTimeは一切書き換えられていない
+  // （ハンドオフ開始時点の位置のまま。新しいRange要求や内部デコード再同期を伴う再シークを
+  // 一切行っていないことの確認）。
   const currentTimeAfterHandoff = await page.evaluate(
     () => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime
   );
-  expect(currentTimeAfterHandoff).toBe(1);
+  expect(currentTimeAfterHandoff).toBe(currentTimeBeforeRelease);
   expect(currentTimeAfterHandoff).not.toBe(42);
 });
 

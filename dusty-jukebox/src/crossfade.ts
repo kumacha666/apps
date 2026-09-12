@@ -200,50 +200,16 @@ export function shouldBeginCrossfadeRamp(params: ShouldBeginCrossfadeRampParams)
   return remainingMs !== null && remainingMs <= params.crossfadeDurationMs;
 }
 
-// 実機フィードバック（2026-09-11）：「クロスフェードで曲が切り替わって、シークバーと
-// ステータスが次曲に変わった瞬間に一瞬音飛みします」。原因は`finishCrossfadeHandoff()`
+// 実機フィードバック（2026-09-11〜12）：「クロスフェードで曲が切り替わって、シークバーと
+// ステータスが次曲に変わった瞬間に一瞬音飛みします」。当初の原因分析は`finishCrossfadeHandoff()`
 // （main.ts）が、主audio要素の再生開始（`initialHandoffPosition`から）後に、先読み側
-// （crossfadeAudio、鳴り続けたぶんだけさらに進んでいる）の位置へ**もう一度**再シークして
-// いたこと。この2回目の再シークが、既に受信済みのバッファ範囲を超えていると新しいRange要求
-// を伴い、ちょうどUI切り替えの瞬間に音飛びを起こしていた（HTTPストリーミングの一般的な
-// 性質——バッファ範囲内へのシークは無音のまま即座、範囲外へのシークは新規フェッチが要る）。
-//
-// HTMLAudioElement.bufferedはこのインターフェースと同じ形（length/start/end）のTimeRangesの
-// ため、呼び出し元は追加の変換なしにそのまま渡せる。
-export interface BufferedRangesLike {
-  length: number;
-  start(index: number): number;
-  end(index: number): number;
-}
-
-// 当初「バッファ済みなら再シーク、そうでなければ再シーク自体をスキップ」という設計にしたが、
-// ChatGPTレビュー指摘（2026-09-11）で2つの問題が判明した：①スキップすると、準備待ち・
-// 接続確立にかかった時間ぶん（数百ms〜1秒程度）だけ、ユーザーが先読み側で既に聞いた箇所を
-// 主audio要素が再度最初から再生してしまう（「一瞬の音飛び」が「フレーズの聞き直し」に
-// 置き換わるだけで、本質的な改善になっていない）。②「バッファ済みか」の判定に±0.25秒の
-// 許容誤差を外側へ加えていたため、実際にはバッファされていない位置（例：終端から0.2秒外）を
-// 「バッファ済み」と誤判定し、そこへシークすると結局新しいRange要求＝音飛びが起きうる
-// （許容誤差を設けた本来の目的＝浮動小数点誤差の吸収と矛盾する形で範囲を広げてしまっていた）。
-//
-// 再設計：スキップか実行かの二択ではなく、「今いる位置（audioPlayer.currentTime）が属する
-// バッファ済み範囲の中で、目標位置（finalPosition）を超えない最大の位置」まで進める
-// （`Math.min(desiredPosition, その範囲のend)`）。これにより、①新しいRange要求を伴う
-// シークは構造的に一切発生しない（範囲の外へは出ない）、②可能な限り目標位置へ追いつく
-// （実際には接続直後の最初のチャンクがある程度の長さを持つため、目標位置まで丸ごと
-// バッファ済みであることが多く、その場合は完全に追いつく）、の両方を同時に満たせる。
-// 現在位置がどのバッファ済み範囲にも属さない（想定外の状態）、または目標位置が現在位置より
-// 前（既に追いついている）場合はnullを返し、呼び出し元は再シーク自体を行わない。
-export function bufferedCatchUpPosition(
-  buffered: BufferedRangesLike,
-  currentPosition: number,
-  desiredPosition: number
-): number | null {
-  for (let i = 0; i < buffered.length; i += 1) {
-    const start = buffered.start(i);
-    const end = buffered.end(i);
-    if (currentPosition < start || currentPosition > end) continue;
-    const target = Math.min(desiredPosition, end);
-    return target > currentPosition ? target : null;
-  }
-  return null;
-}
+// （crossfadeAudio、鳴り続けたぶんだけさらに進んでいる）の位置へ**もう一度**再シークしており、
+// バッファ範囲を超えると新しいRange要求を伴うため、というものだった。「バッファ済みの範囲
+// だけへ再シーク」（`isPositionBuffered()`→`bufferedCatchUpPosition()`）と2段階で絞り込んだが、
+// 実機の録画（波形解析）で再検証したところ、範囲内に絞ってもなお同じ瞬間に音飛びが発生して
+// いた。原因はバッファの有無ではなく、`audioPlayer.currentTime`への書き込みという操作
+// そのもの（ブラウザの内部デコードパイプラインを瞬間的に再同期させる）が、その直後の
+// `volume = 1`と重なって聞こえていたことだったと判明した。最終的にmain.tsの
+// `finishCrossfadeHandoff()`からこの位置合わせ用の再シーク自体を撤去し、この関数と
+// `BufferedRangesLike`は不要になったため削除した（詳細な経緯は`dusty-jukebox/CLAUDE.md`の
+// 「クロスフェード」節参照）。

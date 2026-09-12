@@ -45,7 +45,6 @@ import {
   CROSSFADE_PREPARE_LEAD_MS,
   CROSSFADE_PREVIEW_START_TIMEOUT_MS,
   DEFAULT_CROSSFADE_DURATION_SEC,
-  bufferedCatchUpPosition,
   crossfadeDurationMsForSeconds,
   isCrossfadeDurationSec,
   runCrossfade,
@@ -483,9 +482,7 @@ let crossfadePreviewReady = false;
 // クロスフェード自体の長さは変えない）。
 let crossfadeDurationMsActive = crossfadeDurationMsForSeconds(DEFAULT_CROSSFADE_DURATION_SEC);
 // 進行中のクロスフェードが本来先読みしていたfileId（2026-09-10、Codexレビュー指摘：P1）。
-// finishCrossfadeHandoff()が、実際にキューがコミットしたfileIdとこれを比較し、一致する場合
-// だけcrossfadeAudioの再生位置を主audio要素へ同期する（フォールバック等で異なる曲が
-// コミットされた場合、先読み位置を誤って適用すると冒頭をスキップ・曲を丸ごと飛ばしてしまう）。
+// beginCrossfadeRamp()がハンドオフ先として使う（advanceToPreviewedFile()に渡す）。
 let crossfadePreviewedFileId: string | null = null;
 // クロスフェード開始時点の退場側（主audio要素側）のfileId（2026-09-10、ChatGPTレビュー
 // 指摘：P1「Restore the outgoing source when cancelling a committed handoff」）。ハンドオフが
@@ -642,23 +639,25 @@ function cancelCrossfadeIfActive(): { fileId: string; position: number } | null 
 // 実際には再生成功している主audio要素はvolume 0のまま無音になってしまっていた（「先読み再生が
 // 終わると無音になる」）。crossfading自体をガードに使うため、通常経路・認証継続経路の
 // どちらから先に呼ばれても、後から呼ばれた方は早期returnし安全（二重の後始末にならない）。
-// committedFileIdがcrossfadePreviewedFileId（本来先読みしていた曲）と一致する場合のみ
-// crossfadeAudioの再生位置を同期する（フォールバック等で異なる曲がコミットされた場合、
-// 先読み位置を誤って適用すると冒頭をスキップ・曲を丸ごと飛ばしてしまうため）。
-function finishCrossfadeHandoff(committedFileId: string | null): void {
+// 2026-09-12、位置合わせ用の再シークを廃止したため（下記コメント参照）、実際にコミットされた
+// fileIdを見る必要も無くなり、引数無しの単純な後始末専用関数になった。
+function finishCrossfadeHandoff(): void {
   if (!crossfading) return;
   const audioPlayer = el<HTMLAudioElement>("audio-player");
   const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
-  if (committedFileId !== null && committedFileId === crossfadePreviewedFileId) {
-    const finalPosition = crossfadeAudio.currentTime;
-    // 新しいRange要求を伴う（＝音飛びする）再シークは一切行わず、既にバッファ済みの範囲内で
-    // 目標位置（finalPosition）へできるだけ追いつく（2026-09-11、ChatGPTレビュー指摘を受けて
-    // 再設計。crossfade.tsのbufferedCatchUpPosition定義コメント参照）。
-    if (Number.isFinite(finalPosition)) {
-      const target = bufferedCatchUpPosition(audioPlayer.buffered, audioPlayer.currentTime, finalPosition);
-      if (target !== null) audioPlayer.currentTime = target;
-    }
-  }
+  // 2026-09-12、実機フィードバックで「まだ音飛びが直っていない」と判明したため、ハンドオフ
+  // 完了時の位置合わせ用の再シーク自体を廃止した（旧isPositionBuffered()→bufferedCatchUp
+  // Position()と2段階で「バッファ範囲を超えない再シーク」に絞り込んでいたが、それでも実機では
+  // 毎回音飛びしていた）。実機の録画を解析すると、音飛びは「まだバッファされていない位置へ
+  // シークした瞬間」ではなく、シークバー/ステータスの切り替わり＝この関数がaudioPlayer.
+  // currentTimeを書き換えた直後、まさにこの`volume = 1`の直前で発生していた。バッファ範囲内
+  // だとしても、`currentTime`への書き込み自体がブラウザの内部デコードパイプラインを瞬間的に
+  // 再同期させ、直後にvolumeを1へ上げるとその再同期の遅延が聞こえてしまうと考えられる
+  // （ストリーミングのバッファ有無とは別の、シーク操作そのものが持つコスト）。
+  // 再シークを完全に取りやめ、`queue.advanceToPreviewedFile()`が最初に設定した位置
+  // （initialHandoffPosition、まだ何もオーディオが出ていない静音状態でのsrc割り当て時に
+  // 一度だけ指定する開始位置なので、この意味での「シーク」コストは負わない）からそのまま
+  // 再生を続ける。準備待ち・接続確立にかかった時間ぶんの位置ずれ（通常数秒未満）は許容する。
   audioPlayer.volume = 1;
   crossfading = false;
   crossfadePreviewedFileId = null;
@@ -912,15 +911,14 @@ async function beginCrossfadeRamp(): Promise<void> {
     // （認証待ちの場合、Drive 401後の認証継続がこのattemptHandoff()自身の待機より先に成功
     // すると、finishCrossfadeHandoff()側の`if (!crossfading) return;`によりこちらは早期return
     // する既存のガードが働く。2026-09-10、Codexレビュー指摘：P1）。
-    finishCrossfadeHandoff(null);
+    finishCrossfadeHandoff();
     return;
   }
 
   // ハンドオフ成功：主audio要素は既にplay()を解決し（volumeはランプ完了時点の0のまま無音で）
-  // 再生を始めている。第二audio要素はこの間も鳴り続けていたため、実際に切り替える直前の
-  // 位置へ主audio要素を合わせてから、無音のうちに音源を入れ替える（この最終合わせによる
-  // 短い再シークは残るが、接続確立そのものを待つ無音区間よりはるかに短い）。
-  finishCrossfadeHandoff(queue?.currentPlayingFileId() ?? null);
+  // 再生を始めている。第二audio要素はこの間も鳴り続けていたため、ここでvolumeを入れ替え、
+  // 無音のうちに音源を切り替える（2026-09-12、位置合わせの再シークは廃止済み）。
+  finishCrossfadeHandoff();
 }
 // 再生/前へ/次へ/シャッフルはいずれも「再生リストに曲がある間だけ使える」操作のため、有効/無効を
 // まとめて切り替える（開発体制#39④UI-4、シャッフル追加時に既存2ボタンと同じ条件のまま揃える）。
@@ -1696,7 +1694,7 @@ function registerQueuePlaybackContinuation(fileId: string, currentPlayback: Play
       // 二重呼び出しに対して安全（クロスフェード以外のsuppressTransitionCancel:falseな
       // 通常の継続では常にno-op）。
       if (suppressTransitionCancel) {
-        finishCrossfadeHandoff(started ? (queue?.currentPlayingFileId() ?? null) : null);
+        finishCrossfadeHandoff();
         if (!started) {
           // queue.resume()が除外等でfalseを返した場合、新しいplay()を一度も呼んでいない
           // （queue.tsのresume()参照）ため、元のattemptHandoff()自身が呼んだネイティブ
