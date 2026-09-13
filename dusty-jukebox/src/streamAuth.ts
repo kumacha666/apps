@@ -12,8 +12,13 @@ export type StreamTokenRejectedHandler = (fileId: string, requestId: string) => 
 // the pending playback continuation.
 export type StreamTokenIssuedHandler = (fileId: string, requestId: string, token: string | null, playbackGeneration: number) => void;
 
-// Service Workerはトークンを保持しない。各ストリーム要求について、その要求元タブだけに
-// MessageChannelで問い合わせ、現在有効なトークンをその場で返す。
+// ページ側はトークンを保持せず、問い合わせのたびに現在有効な値をその場で返す（更新は
+// 発火しない）。Service Worker側は2026-09-13、(clientId, fileId, playbackGeneration)
+// 単位の上限付き・時間無制限ではないin-memoryキャッシュ（`sw.js`の`tokenCache`、LRUで
+// 上限32件）を持つようになり、同じ3つ組への連続したストリーム要求はこのページ側の
+// 問い合わせをキャッシュヒット時はスキップする（Drive側の401でキャッシュは即座に破棄され、
+// 次の要求では改めてこの問い合わせが発生する。詳細はdusty-jukebox/CLAUDE.mdのクロスフェード
+// 節・sw.jsのtokenCacheコメント参照）。
 export function registerStreamAuthResponder(
   serviceWorker: ServiceWorkerMessageTarget,
   getCurrentAccessToken: GetCurrentAccessToken,
