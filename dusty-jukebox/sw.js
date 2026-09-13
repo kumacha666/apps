@@ -1,4 +1,4 @@
-const CACHE_NAME = "dusty-jukebox-v0.1.119";
+const CACHE_NAME = "dusty-jukebox-v0.1.120";
 const CACHE_PREFIX = "dusty-jukebox-";
 const ASSETS = ["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg"];
 const APP_SHELL_URLS = new Set(ASSETS.map((asset) => new URL(asset, self.location.href).href));
@@ -27,6 +27,47 @@ function unauthorizedResponse() {
 
 let nextTokenRequestId = 0;
 const fileSizeCache = new Map();
+// クロスフェード中は主・先読み用の2本のaudio要素が同時にRangeストリーミングされ、
+// ブラウザはそれぞれのバッファリングのために多数の小さなRangeリクエストを短時間に
+// 連続発行する。従来は1リクエストごとに必ずrequestToken()（ページ側へのMessageChannel
+// 往復）を行っていたため、この往復自体（ネットワーク待ちを含む）がクロスフェード中の
+// 2本同時ストリーミングの負荷源になり、実機録画の波形解析で確認された1秒超の再生停滞・
+// 音飛びの一因になっていたと考えられる（詳細はdusty-jukebox/CLAUDE.mdのクロスフェード節
+// 参照）。同一(clientId, fileId, playbackGeneration)への要求はトークンを問い合わせ直す
+// 必要が無い（トークン自体はこの3つ組の生存期間中は変わらない前提でよく、実際に変わって
+// いた場合は後続のDrive側401がこのキャッシュを破棄して通常の再認証フローに合流する）ため、
+// Promiseそのものをキャッシュして往復を1回にまとめる。
+const tokenCache = new Map();
+
+function tokenCacheKey(clientId, fileId, playbackGeneration) {
+  return `${clientId}:${fileId}:${playbackGeneration}`;
+}
+
+function getCachedOrRequestToken(clientId, fileId, playbackGeneration) {
+  const key = tokenCacheKey(clientId, fileId, playbackGeneration);
+  const cached = tokenCache.get(key);
+  if (cached) return cached;
+  const promise = requestToken(clientId, fileId, playbackGeneration);
+  tokenCache.set(key, promise);
+  // ページ側にトークンが無い（missing/timeout）結果はキャッシュしない：この3つ組への
+  // 後続要求が、同じ「トークン無し」という古い答えをこの世代の残り期間ずっと再利用して
+  // しまうと、page側でその後ログイン・トークン取得が完了しても反映されなくなるため。
+  promise
+    .then((result) => {
+      if (!result?.token && tokenCache.get(key) === promise) tokenCache.delete(key);
+    })
+    .catch(() => {
+      if (tokenCache.get(key) === promise) tokenCache.delete(key);
+    });
+  return promise;
+}
+
+// Drive側の401（トークン失効・拒否）を検知した時点でキャッシュを破棄する。以後の同じ
+// (clientId, fileId, playbackGeneration)への要求は、古い（既に拒否された）トークンを
+// 再利用し続けるのではなく、改めてページへ問い合わせる。
+function invalidateTokenCache(clientId, fileId, playbackGeneration) {
+  tokenCache.delete(tokenCacheKey(clientId, fileId, playbackGeneration));
+}
 
 function parseRange(range) {
   const match = /^bytes=(?:(\d+)-(\d*)|-(\d+))$/.exec(range ?? "");
@@ -123,7 +164,7 @@ async function proxyStream(request, fileId, clientId) {
   // with Number.isInteger(), so a numeric string must be converted here or
   // every get-token message is silently dropped and all playback 401s.
   const playbackGeneration = playbackGenerationParam === null ? null : Number(playbackGenerationParam);
-  const tokenRequest = await requestToken(clientId, fileId, playbackGeneration);
+  const tokenRequest = await getCachedOrRequestToken(clientId, fileId, playbackGeneration);
   const token = tokenRequest?.token;
   if (!token) {
     // A missing page-side token is also an authentication failure.  Report it
@@ -143,6 +184,7 @@ async function proxyStream(request, fileId, clientId) {
   // issued this request about a rejected bearer token so it can clear its cache
   // and offer the user-gesture-only continuation flow.
   if (response.status === 401 && clientId) {
+    invalidateTokenCache(clientId, fileId, playbackGeneration);
     await notifyTokenRejected(clientId, fileId, tokenRequest.requestId);
   }
   const responseHeaders = new Headers();
@@ -156,6 +198,7 @@ async function proxyStream(request, fileId, clientId) {
     if (parsedRange && Number.isSafeInteger(contentLength) && contentLength > 0) {
       const sizeResult = await fetchFileSize(fileId, token);
       if (sizeResult.tokenRejected) {
+        invalidateTokenCache(clientId, fileId, playbackGeneration);
         await notifyTokenRejected(clientId, fileId, tokenRequest.requestId);
       }
       if (sizeResult.size !== null) {
