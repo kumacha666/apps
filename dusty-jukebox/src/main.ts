@@ -697,12 +697,29 @@ async function finishCrossfadeHandoff(): Promise<void> {
     // まだvolume 0のこの待機中は完全な無音区間になってしまう（PR #443で解消したはずの
     // 無音区間の再導入）。先読み側は最後まで鳴らし続けたまま、追いつくべき目標位置を都度
     // 再確認しながら再シークを繰り返し、待機中にさらに進んだ分を後続のイテレーションで
-    // 吸収する（無限に繰り返さないよう試行回数の上限・収束とみなす許容誤差を設ける）。
-    for (let attempt = 0; attempt < CROSSFADE_HANDOFF_CATCHUP_MAX_ATTEMPTS; attempt += 1) {
+    // 吸収する。
+    //
+    // 続けてCodexレビュー指摘：P1「Verify convergence after the final catch-up seek」。
+    // 固定の試行回数（例：3回）で打ち切ると、各回の`seeked`待ちが（ネットワーク事情等で）
+    // 想定より長引く環境では、最後の待機中に先読み側がさらに進んだ分を一切検証せずに
+    // 打ち切ってしまい、合計の残留ずれが単発の再シーク方式（最大1秒）よりむしろ悪化しうる
+    // （3回×最大1秒=最大3秒）。試行回数ではなく、この追いつき処理全体にかけられる合計時間
+    // 予算（`CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS`、単発方式と同じ値を使い回す）で打ち切る
+    // よう変更し、各回の`waitForSeeked`にはその時点の残り予算だけを渡す（合計の無音待機
+    // コストが単発方式の最大値を超えないことを保証する）。試行回数自体にも安全弁として
+    // 上限（`CROSSFADE_HANDOFF_CATCHUP_MAX_ATTEMPTS`）を設ける（`seeked`が想定外に速く
+    // 連続して発火し続けるような病的なケースでも無限ループにしないため）。
+    const catchUpDeadline = Date.now() + CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS;
+    for (
+      let attempt = 0;
+      attempt < CROSSFADE_HANDOFF_CATCHUP_MAX_ATTEMPTS && Date.now() < catchUpDeadline;
+      attempt += 1
+    ) {
       const target = crossfadeAudio.currentTime;
       if (!Number.isFinite(target) || target - audioPlayer.currentTime <= CROSSFADE_HANDOFF_CATCHUP_TOLERANCE_SEC) break;
       audioPlayer.currentTime = target;
-      await waitForSeeked(audioPlayer, CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS);
+      const remainingBudgetMs = Math.max(0, catchUpDeadline - Date.now());
+      await waitForSeeked(audioPlayer, remainingBudgetMs);
       if (crossfadeGeneration !== myGeneration) break;
     }
   }

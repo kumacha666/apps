@@ -2435,6 +2435,78 @@ test("クロスフェードのハンドオフ完了待機中はisCrossfadeFinish
   expect(volumeAfterStaleSeeked).toBe(1);
 });
 
+// 2026-09-13、Codexレビュー指摘：P1「Verify convergence after the final catch-up seek」の
+// 回帰防止。固定の試行回数（例：3回）で打ち切る設計だと、各回の`seeked`待ちがそれぞれ
+// タイムアウト（E2Eでは100ms）まで長引く環境では、追いつき処理全体で最大 試行回数×100ms
+// （3回なら300ms）もの無音待機が発生しうる——単発の再シーク方式（最大100ms）よりむしろ
+// 悪化する回帰。追いつき処理全体の合計待機時間を単発方式と同じ予算（100ms）で打ち切るよう
+// 修正した。
+//
+// 検証方法について：`page.clock`の仮想時間を1回の`runFor()`で大きく進めると、ループの
+// 2回目以降が新たにスケジュールする`setTimeout`が、その`runFor()`呼び出しが処理する
+// 範囲内で実際に発火するかどうかがPlaywrightのfakeタイマー実装の詳細に依存し、
+// 単発方式・旧来の毎回フルタイムアウト方式のどちらでも見かけ上volumeが1へ戻ってしまい、
+// 両者を区別できないことが分かった（時間経過そのものでは判別しない）。代わりに、
+// 「main audio要素のcurrentTimeへ実際に書き込まれた回数」を計装して直接数える：
+// 単発の予算方式は最初の1回だけ書き込んだ後、`Date.now() < catchUpDeadline`が
+// 成立しなくなり2回目以降のループ自体に入らないため、書き込み回数は常に1回のまま。
+// 旧来の毎回フルタイムアウト方式は、先読み側が待機中も進み続ける限り（差分が許容誤差を
+// 超え続ける限り）試行回数の上限（3回）まで毎回書き込む。
+test("クロスフェードのハンドオフ完了時、複数回の追いつきシークが必要でも合計の待機時間は単発方式と同じ予算に収まる（2026-09-13、Codexレビュー指摘：P1「Verify convergence after the final catch-up seek」）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  const releaseKey = "__e2eReleaseHandoffPlay3d";
+  await setUpPendingHandoff(page, releaseKey);
+
+  // 先読み側（crossfadeAudio）が待機中もずっと進み続ける状況を模擬する（実ブラウザでは
+  // 再生が続く限り自然にこうなるが、このE2Eモックの<audio>は自動で進まないため、
+  // page.clockが仮想時間を進めるたびに位置を進める`setInterval`で代替する）。
+  await page.evaluate(() => {
+    const crossfadeAudio = document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!;
+    setInterval(() => { crossfadeAudio.currentTime += 5; }, 10);
+  });
+
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!.currentTime = 42;
+  });
+
+  // main audio要素のcurrentTimeへの書き込み回数を計装する（追いつきループが実際に何回
+  // 書き込みを試みたかを、仮想時間の境界に依存せず直接数える）。
+  await page.evaluate(() => {
+    const audioPlayer = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    const proto = HTMLMediaElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(proto, "currentTime")!;
+    (window as unknown as { __catchUpWriteCount: number }).__catchUpWriteCount = 0;
+    Object.defineProperty(audioPlayer, "currentTime", {
+      configurable: true,
+      get() {
+        return descriptor.get!.call(this);
+      },
+      set(value: number) {
+        (window as unknown as { __catchUpWriteCount: number }).__catchUpWriteCount += 1;
+        descriptor.set!.call(this, value);
+      },
+    });
+    audioPlayer.currentTime = 0;
+    // 上のリセット自体もカウントされてしまうため、計装後の意図的な書き込みだけを数える
+    // よう0へ戻す（これから追いつきループが実際に行う書き込みだけを検証対象にするため）。
+    (window as unknown as { __catchUpWriteCount: number }).__catchUpWriteCount = 0;
+  });
+
+  await page.evaluate((key) => (window as unknown as Record<string, () => void>)[key]?.(), releaseKey);
+
+  // seekedを一切発火させないまま、十分な仮想時間（旧来の毎回フルタイムアウト方式が3回の
+  // 試行を使い切る300msを超える400ms）を進める。先読み側は上のsetIntervalによりこの間
+  // ずっと進み続けるため、複数回の追いつきシークが必要になる状況を再現している。
+  await page.clock.runFor(400);
+
+  const writeCount = await page.evaluate(
+    () => (window as unknown as { __catchUpWriteCount: number }).__catchUpWriteCount,
+  );
+  expect(writeCount).toBe(1);
+
+  await expect.poll(() => page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume)).toBe(1);
+});
+
 // 2026-09-10、実機フィードバックによるハンドオフ再設計の回帰防止（bug #10：クロスフェードが
 // 始まった後にシークバーを操作すると再生ボタンを押さないと再生されなくなる不具合）。
 // 根本原因はcancelCrossfadeIfActive()がqueue.invalidatePendingMove()を呼んでいなかったこと
