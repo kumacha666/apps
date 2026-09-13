@@ -1,4 +1,4 @@
-const CACHE_NAME = "dusty-jukebox-v0.1.121";
+const CACHE_NAME = "dusty-jukebox-v0.1.122";
 const CACHE_PREFIX = "dusty-jukebox-";
 const ASSETS = ["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg"];
 const APP_SHELL_URLS = new Set(ASSETS.map((asset) => new URL(asset, self.location.href).href));
@@ -30,10 +30,14 @@ const fileSizeCache = new Map();
 // クロスフェード中は主・先読み用の2本のaudio要素が同時にRangeストリーミングされ、
 // ブラウザはそれぞれのバッファリングのために多数の小さなRangeリクエストを短時間に
 // 連続発行する。従来は1リクエストごとに必ずrequestToken()（ページ側へのMessageChannel
-// 往復）を行っていたため、この往復自体（ネットワーク待ちを含む）がクロスフェード中の
-// 2本同時ストリーミングの負荷源になり、実機録画の波形解析で確認された1秒超の再生停滞・
-// 音飛びの一因になっていたと考えられる（詳細はdusty-jukebox/CLAUDE.mdのクロスフェード節
-// 参照）。同一(clientId, fileId, playbackGeneration)への要求はトークンを問い合わせ直す
+// 往復）を行っていたため、この往復自体（IPC・メインスレッドのスケジューリングコストを
+// 含む。requestToken()自体はDriveへのネットワークアクセスを一切行わない：ページ側の
+// registerStreamAuthResponder()はauth.getAccessToken()相当の現在保持している値を
+// そのまま返すだけで、実際のDriveアクセスはこの後proxyStream()内で別途行う）が
+// クロスフェード中の2本同時ストリーミングの負荷源になり、実機録画の波形解析で確認
+// された1秒超の再生停滞・音飛びの一因になっているのではという未検証の仮説（詳細は
+// dusty-jukebox/CLAUDE.mdのクロスフェード節参照）。同一(clientId, fileId,
+// playbackGeneration)への要求はトークンを問い合わせ直す
 // 必要が無い（トークン自体はこの3つ組の生存期間中は変わらない前提でよく、実際に変わって
 // いた場合は後続のDrive側401がこのキャッシュを破棄して通常の再認証フローに合流する）ため、
 // Promiseそのものをキャッシュして往復を1回にまとめる。
