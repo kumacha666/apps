@@ -1,4 +1,4 @@
-const CACHE_NAME = "dusty-jukebox-v0.1.119";
+const CACHE_NAME = "dusty-jukebox-v0.1.125";
 const CACHE_PREFIX = "dusty-jukebox-";
 const ASSETS = ["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg"];
 const APP_SHELL_URLS = new Set(ASSETS.map((asset) => new URL(asset, self.location.href).href));
@@ -27,6 +27,70 @@ function unauthorizedResponse() {
 
 let nextTokenRequestId = 0;
 const fileSizeCache = new Map();
+// クロスフェード中は主・先読み用の2本のaudio要素が同時にRangeストリーミングされ、
+// ブラウザはそれぞれのバッファリングのために多数の小さなRangeリクエストを短時間に
+// 連続発行する。従来は1リクエストごとに必ずrequestToken()（ページ側へのMessageChannel
+// 往復）を行っていたため、この往復自体（IPC・メインスレッドのスケジューリングコストを
+// 含む。requestToken()自体はDriveへのネットワークアクセスを一切行わない：ページ側の
+// registerStreamAuthResponder()はauth.getAccessToken()相当の現在保持している値を
+// そのまま返すだけで、実際のDriveアクセスはこの後proxyStream()内で別途行う）が
+// クロスフェード中の2本同時ストリーミングの負荷源になり、実機録画の波形解析で確認
+// された1秒超の再生停滞・音飛びの一因になっているのではという未検証の仮説（詳細は
+// dusty-jukebox/CLAUDE.mdのクロスフェード節参照）。同一(clientId, fileId,
+// playbackGeneration)への要求はトークンを問い合わせ直す
+// 必要が無い（トークン自体はこの3つ組の生存期間中は変わらない前提でよく、実際に変わって
+// いた場合は後続のDrive側401がこのキャッシュを破棄して通常の再認証フローに合流する）ため、
+// Promiseそのものをキャッシュして往復を1回にまとめる。
+// 2026-09-13、ChatGPTレビュー指摘：P2「成功エントリが世代終了後も削除されず増え続ける」。
+// playbackGenerationが変わると新しいキーへ切り替わるだけで、古いキーはMapから自然には
+// 消えない。成功したPromiseは401/missing/errorが起きない限り残り続けるため、長時間利用・
+// 曲送りを繰り返すほどエントリ（Bearer tokenを間接的に保持するPromise）が蓄積する。
+// Service Workerは本来トークンを一切保持しない設計方針（下記PWA・Service Worker
+// ストリーミング節参照）のため、この最適化用キャッシュも上限付きLRUにして無制限には
+// 保持しないようにする。上限を超えて追い出されたエントリは、次のRange要求で単に改めて
+// ページへ問い合わせるだけで機能上は劣化しない（往復削減の効果が薄れるだけ）。
+const tokenCache = new Map();
+const MAX_TOKEN_CACHE_ENTRIES = 32;
+
+function tokenCacheKey(clientId, fileId, playbackGeneration) {
+  return `${clientId}:${fileId}:${playbackGeneration}`;
+}
+
+function getCachedOrRequestToken(clientId, fileId, playbackGeneration) {
+  const key = tokenCacheKey(clientId, fileId, playbackGeneration);
+  const cached = tokenCache.get(key);
+  if (cached) {
+    // LRU: 参照されたエントリをMapの末尾（最も新しい）へ移動する。Mapのキー順は挿入順の
+    // ため、削除してから再設定するだけで順序を更新できる。
+    tokenCache.delete(key);
+    tokenCache.set(key, cached);
+    return cached;
+  }
+  const promise = requestToken(clientId, fileId, playbackGeneration);
+  tokenCache.set(key, promise);
+  while (tokenCache.size > MAX_TOKEN_CACHE_ENTRIES) {
+    const oldestKey = tokenCache.keys().next().value;
+    tokenCache.delete(oldestKey);
+  }
+  // ページ側にトークンが無い（missing/timeout）結果はキャッシュしない：この3つ組への
+  // 後続要求が、同じ「トークン無し」という古い答えをこの世代の残り期間ずっと再利用して
+  // しまうと、page側でその後ログイン・トークン取得が完了しても反映されなくなるため。
+  promise
+    .then((result) => {
+      if (!result?.token && tokenCache.get(key) === promise) tokenCache.delete(key);
+    })
+    .catch(() => {
+      if (tokenCache.get(key) === promise) tokenCache.delete(key);
+    });
+  return promise;
+}
+
+// Drive側の401（トークン失効・拒否）を検知した時点でキャッシュを破棄する。以後の同じ
+// (clientId, fileId, playbackGeneration)への要求は、古い（既に拒否された）トークンを
+// 再利用し続けるのではなく、改めてページへ問い合わせる。
+function invalidateTokenCache(clientId, fileId, playbackGeneration) {
+  tokenCache.delete(tokenCacheKey(clientId, fileId, playbackGeneration));
+}
 
 function parseRange(range) {
   const match = /^bytes=(?:(\d+)-(\d*)|-(\d+))$/.exec(range ?? "");
@@ -123,7 +187,7 @@ async function proxyStream(request, fileId, clientId) {
   // with Number.isInteger(), so a numeric string must be converted here or
   // every get-token message is silently dropped and all playback 401s.
   const playbackGeneration = playbackGenerationParam === null ? null : Number(playbackGenerationParam);
-  const tokenRequest = await requestToken(clientId, fileId, playbackGeneration);
+  const tokenRequest = await getCachedOrRequestToken(clientId, fileId, playbackGeneration);
   const token = tokenRequest?.token;
   if (!token) {
     // A missing page-side token is also an authentication failure.  Report it
@@ -143,6 +207,7 @@ async function proxyStream(request, fileId, clientId) {
   // issued this request about a rejected bearer token so it can clear its cache
   // and offer the user-gesture-only continuation flow.
   if (response.status === 401 && clientId) {
+    invalidateTokenCache(clientId, fileId, playbackGeneration);
     await notifyTokenRejected(clientId, fileId, tokenRequest.requestId);
   }
   const responseHeaders = new Headers();
@@ -156,6 +221,7 @@ async function proxyStream(request, fileId, clientId) {
     if (parsedRange && Number.isSafeInteger(contentLength) && contentLength > 0) {
       const sizeResult = await fetchFileSize(fileId, token);
       if (sizeResult.tokenRejected) {
+        invalidateTokenCache(clientId, fileId, playbackGeneration);
         await notifyTokenRejected(clientId, fileId, tokenRequest.requestId);
       }
       if (sizeResult.size !== null) {
@@ -171,6 +237,14 @@ async function proxyStream(request, fileId, clientId) {
   }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers: responseHeaders });
 }
+
+// ページ側（DriveAuth）のトークンが、ストリームの401を経ずに変化した通知（2026-09-13、
+// Codexレビュー指摘：P2）。影響を受ける(clientId, fileId, playbackGeneration)を特定できない
+// ため、tokenCache全体を破棄する。以後の要求は改めてページへ問い合わせるだけで機能上は
+// 劣化しない。
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "dusty-jukebox:token-rotated") tokenCache.clear();
+});
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);

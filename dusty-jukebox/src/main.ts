@@ -54,7 +54,7 @@ import {
   shouldBeginCrossfadeRamp,
   shouldStartCrossfadePreparation,
 } from "./crossfade";
-import { registerStreamAuthResponder } from "./streamAuth";
+import { registerStreamAuthResponder, notifyServiceWorkerTokenRotated } from "./streamAuth";
 import {
   createChangesListFn,
   createDriveCapabilitiesGetFn,
@@ -2674,6 +2674,9 @@ function init(): void {
 
   if ("serviceWorker" in navigator) {
     registerStreamAuthResponder(navigator.serviceWorker, () => auth.getAccessToken(), handleStreamTokenRejected, handleStreamTokenIssued);
+    // ストリームの401を経ないページ側トークンの変化（例：再生と並行したライブラリスキャンの
+    // サイレント更新）をSWのtokenCacheへ伝える（2026-09-13、Codexレビュー指摘：P2）。
+    auth.setOnTokenChanged(() => notifyServiceWorkerTokenRotated(navigator.serviceWorker));
     // タイムアウトはここでは適用しない（awaitServiceWorkerReady()参照）：ここで一度きり
     // withTimeout()した結果を保存すると、タイムアウト後にService Workerが実際に制御を
     // 取得できても、このpromise自体は既にreject確定済みのままになってしまう。

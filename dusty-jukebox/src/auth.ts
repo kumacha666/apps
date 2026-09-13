@@ -97,6 +97,18 @@ export class DriveAuth {
   private pendingReject: ((err: Error) => void) | null = null;
   // ensureAccessToken()の多重呼び出しが同じ更新処理を共有するための進行中Promise（下記参照）
   private pendingEnsure: Promise<string> | null = null;
+  // トークンの値が実際に変わる（新規取得・クリアのいずれも）たびに呼ばれる。
+  // Service Workerのストリーム用トークンキャッシュ（sw.jsのtokenCache）は同一
+  // (clientId, fileId, playbackGeneration)への連続要求をこの往復を経ずに答えるため、
+  // 再生中に（曲の切り替わり＝新しい世代を経ずに）ページ側のトークンだけが静かに
+  // 更新・失効すると、SW側は古いトークンを使い続けてしまう。このフックはそういった
+  // 「ストリームの401経由ではない」トークン変化をSWへ伝える手段として、main.tsから
+  // 登録する（2026-09-13、Codexレビュー指摘：P2）。
+  private onTokenChanged: (() => void) | null = null;
+
+  setOnTokenChanged(callback: (() => void) | null): void {
+    this.onTokenChanged = callback;
+  }
 
   init(clientId: string): void {
     if (!window.google) {
@@ -125,6 +137,7 @@ export class DriveAuth {
   // （2026-08-19 Codexレビュー指摘）。呼び出し元（main.ts）で401/AuthError検知時に呼び出す。
   clearToken(): void {
     this.state = null;
+    this.onTokenChanged?.();
   }
 
   // prompt: ""はサイレント取得（既存セッションがあれば同意画面を出さない）。
@@ -160,6 +173,7 @@ export class DriveAuth {
         };
         this.state = state;
         resolve(state);
+        this.onTokenChanged?.();
       };
       client.requestAccessToken(opts);
     });

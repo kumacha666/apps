@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { registerStreamAuthResponder, type ServiceWorkerMessageTarget } from "./streamAuth";
+import { registerStreamAuthResponder, notifyServiceWorkerTokenRotated, type ServiceWorkerMessageTarget } from "./streamAuth";
 
 function createServiceWorkerTarget(): { target: ServiceWorkerMessageTarget; dispatch: (event: MessageEvent) => void } {
   let listener: ((event: MessageEvent) => void) | undefined;
@@ -45,5 +45,18 @@ describe("registerStreamAuthResponder", () => {
     dispatch({ data: { type: "dusty-jukebox:stream-token-rejected", fileId: "revoked-file", requestId: "request-a" }, ports: [] } as unknown as MessageEvent);
 
     expect(rejected).toEqual(["revoked-file"]);
+  });
+});
+
+describe("notifyServiceWorkerTokenRotated", () => {
+  test("制御中のService Workerへtoken-rotatedメッセージを送る（2026-09-13、Codexレビュー指摘：P2）", () => {
+    const messages: unknown[] = [];
+    notifyServiceWorkerTokenRotated({ controller: { postMessage: (message) => messages.push(message) } });
+
+    expect(messages).toEqual([{ type: "dusty-jukebox:token-rotated" }]);
+  });
+
+  test("まだ制御中のService Workerが無い場合は何もしない（例外を投げない）", () => {
+    expect(() => notifyServiceWorkerTokenRotated({ controller: null })).not.toThrow();
   });
 });

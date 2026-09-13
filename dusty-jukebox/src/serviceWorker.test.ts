@@ -98,6 +98,10 @@ async function dispatchLifecycle(harness: Harness, type: "install" | "activate")
   await Promise.all(waits);
 }
 
+function dispatchMessage(harness: Harness, data: unknown): void {
+  for (const listener of harness.handlers.get("message") ?? []) (listener as unknown as (event: { data: unknown }) => void)({ data });
+}
+
 function dispatchFetch(harness: Harness, url: string, headers: Headers = new Headers(), clientId = "tab-1"): Promise<Response> {
   let response: Promise<Response> | Response | undefined;
   (harness.handlers.get("fetch")?.[0] as unknown as FetchHandler)({
@@ -398,6 +402,180 @@ describe("service worker", () => {
     expect((await validResponse).headers.get("Content-Range")).toBe("bytes 5-9/1000");
     expect(revokedMessages).toContainEqual({ type: "dusty-jukebox:stream-token-rejected", fileId: "shared-file", requestId: "1" });
     expect(validMessages).not.toContainEqual(expect.objectContaining({ type: "dusty-jukebox:stream-token-rejected" }));
+  });
+
+  test("同一クライアント・同一ファイル・同一playbackGenerationへの連続Range要求はトークン問い合わせを1回にまとめる", async () => {
+    // クロスフェード中の2本同時ストリーミングでは、ブラウザが同じファイルへ多数の
+    // Range要求を短時間に連続発行する。1要求ごとに必ずページへのMessageChannel往復
+    // （requestToken()）を行っていた旧実装は、この往復自体が負荷源になっていた
+    // （sw.jsのtokenCacheコメント参照）。同じ3つ組（clientId, fileId, playbackGeneration）
+    // への要求はトークンをキャッシュして往復を1回にまとめることを検証する。
+    const harness = createHarness();
+    const messages: unknown[] = [];
+    harness.clients.set("tab-1", {
+      postMessage: (message, ports = []) => {
+        messages.push(message);
+        ports[0]?.postMessage({ token: "cached-token" });
+      },
+    });
+    harness.setFetchImplementation(async (input) => String(input).includes("fields=size")
+      ? Response.json({ size: "1000" })
+      : new Response("audio", { status: 206, headers: { "Content-Length": "100" } }));
+    harness.run();
+
+    const first = await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1", new Headers({ Range: "bytes=0-99" }));
+    const second = await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1", new Headers({ Range: "bytes=100-199" }));
+
+    expect(first.status).toBe(206);
+    expect(second.status).toBe(206);
+    expect(messages).toHaveLength(1);
+  });
+
+  test("Drive側の401でトークンキャッシュを破棄し、次の要求では改めてトークンを問い合わせる", async () => {
+    const harness = createHarness();
+    const messages: unknown[] = [];
+    let issuedToken = "stale-token";
+    harness.clients.set("tab-1", {
+      postMessage: (message, ports = []) => {
+        messages.push(message);
+        ports[0]?.postMessage({ token: issuedToken });
+      },
+    });
+    harness.setFetchImplementation(async (input, init) => {
+      if (String(input).includes("fields=size")) return Response.json({ size: "1000" });
+      const authorization = new Headers(init?.headers).get("Authorization");
+      return authorization === "Bearer stale-token"
+        ? new Response("Unauthorized", { status: 401 })
+        : new Response("audio", { status: 206, headers: { "Content-Length": "100" } });
+    });
+    harness.run();
+
+    const first = await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1", new Headers({ Range: "bytes=0-99" }));
+    expect(first.status).toBe(401);
+    // get-token問い合わせ1件 + トークン拒否通知1件。
+    expect(messages).toHaveLength(2);
+    const getTokenMessages = () => messages.filter((message) => (message as { type?: string }).type === "dusty-jukebox:get-token");
+    expect(getTokenMessages()).toHaveLength(1);
+
+    // ページ側が新しいトークンを取得し終えた想定(実際にはDriveの401検知でauth.clearToken()
+    // →再認証フローが挟まるが、SW単体のこのテストでは次のget-token応答が新しい値を返す
+    // ことだけを模擬すれば十分)。
+    issuedToken = "fresh-token";
+    const second = await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1", new Headers({ Range: "bytes=100-199" }));
+
+    expect(second.status).toBe(206);
+    // 401がキャッシュを破棄しなかった場合、2回目の要求も古いトークンをそのまま再利用して
+    // しまい、改めてページへ問い合わせない（get-token問い合わせが1件のまま）はず。
+    expect(getTokenMessages()).toHaveLength(2);
+  });
+
+  test("playbackGenerationが異なれば同じファイルでも別々にトークンを問い合わせる", async () => {
+    // クロスフェード中、主audio要素と先読みaudio要素はそれぞれ別のplaybackGeneration
+    // （main.tsのcrossfadeStreamGeneration参照）を使う。同じfileIdへの再生（例：
+    // 曲の繰り返し再生）であっても世代が異なれば別のキャッシュエントリとして扱う
+    // べきで、片方の世代の後続要求がもう片方の世代の古いトークンを誤って再利用しない
+    // ことを確認する。
+    const harness = createHarness();
+    const messages: unknown[] = [];
+    harness.clients.set("tab-1", {
+      postMessage: (message, ports = []) => {
+        messages.push(message);
+        ports[0]?.postMessage({ token: "token" });
+      },
+    });
+    harness.setFetchImplementation(async () => new Response("audio", { status: 206, headers: { "Content-Length": "5" } }));
+    harness.run();
+
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=2");
+
+    expect(messages).toHaveLength(2);
+  });
+
+  test("トークンキャッシュは上限付きLRUで、上限を超えると最も古いエントリを追い出す（2026-09-13、ChatGPTレビュー指摘：P2）", async () => {
+    // Service Workerは本来トークンを一切保持しない設計方針のため、この往復削減用の
+    // キャッシュも無制限には増やさない。MAX_TOKEN_CACHE_ENTRIES（32）を超える数の
+    // 異なる(clientId, fileId, playbackGeneration)へ要求すると、最初に問い合わせた
+    // エントリが追い出され、それへの再要求は改めてページへ問い合わせることを検証する。
+    const harness = createHarness();
+    const messages: unknown[] = [];
+    harness.clients.set("tab-1", {
+      postMessage: (message, ports = []) => {
+        messages.push(message);
+        ports[0]?.postMessage({ token: "token" });
+      },
+    });
+    harness.setFetchImplementation(async () => new Response("audio", { status: 206, headers: { "Content-Length": "5" } }));
+    harness.run();
+
+    // 上限（32）ちょうどまで別々のキーを埋める。最初に問い合わせたfile-0がまだ生き残って
+    // いることを確認するため、この時点では一度も追い出しが起きていないはず。
+    for (let i = 0; i < 32; i += 1) {
+      await dispatchFetch(harness, `https://example.test/dusty-jukebox/stream/file-${i}?playbackGeneration=1`);
+    }
+    expect(messages).toHaveLength(32);
+
+    // 同じ最初のキー（file-0）への再要求はまだキャッシュされているため、追加の
+    // get-token問い合わせは発生しない。
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-0?playbackGeneration=1");
+    expect(messages).toHaveLength(32);
+
+    // 上限を超える33件目の別キーを要求すると、最も古い（LRUで一度も再参照されていない）
+    // file-1が追い出される。
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-32?playbackGeneration=1");
+    expect(messages).toHaveLength(33);
+
+    // file-0は直前の再要求でLRUの末尾（最新）へ移動済みのため、まだキャッシュされている。
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-0?playbackGeneration=1");
+    expect(messages).toHaveLength(33);
+
+    // file-1は一度も再参照されないまま追い出されたため、再要求すると改めて問い合わせる。
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
+    expect(messages).toHaveLength(34);
+  });
+
+  test("ページ側トークンの変化（token-rotatedメッセージ）でトークンキャッシュ全体が破棄される（2026-09-13、Codexレビュー指摘：P2「ストリームの401を経ない静かなトークン変化がキャッシュに反映されない」）", async () => {
+    const harness = createHarness();
+    const messages: unknown[] = [];
+    harness.clients.set("tab-1", {
+      postMessage: (message, ports = []) => {
+        messages.push(message);
+        ports[0]?.postMessage({ token: "token" });
+      },
+    });
+    harness.setFetchImplementation(async () => new Response("audio", { status: 206, headers: { "Content-Length": "5" } }));
+    harness.run();
+
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
+    // 通常は同じ3つ組への再要求はキャッシュヒットで問い合わせを増やさない。
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
+    expect(messages).toHaveLength(1);
+
+    // ライブラリスキャン等、ストリームの401を経ない静かなトークン変化をページ側から通知する。
+    dispatchMessage(harness, { type: "dusty-jukebox:token-rotated" });
+
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
+    expect(messages).toHaveLength(2);
+  });
+
+  test("token-rotated以外のメッセージ（未知のtype）は無視する", async () => {
+    const harness = createHarness();
+    const messages: unknown[] = [];
+    harness.clients.set("tab-1", {
+      postMessage: (message, ports = []) => {
+        messages.push(message);
+        ports[0]?.postMessage({ token: "token" });
+      },
+    });
+    harness.setFetchImplementation(async () => new Response("audio", { status: 206, headers: { "Content-Length": "5" } }));
+    harness.run();
+
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
+    dispatchMessage(harness, { type: "unrelated-message" });
+    dispatchMessage(harness, {});
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
+
+    expect(messages).toHaveLength(1);
   });
 
   test("登録スコープからストリームパスを導出し、ルート配信でも横取りする", async () => {

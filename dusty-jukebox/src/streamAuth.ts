@@ -12,8 +12,14 @@ export type StreamTokenRejectedHandler = (fileId: string, requestId: string) => 
 // the pending playback continuation.
 export type StreamTokenIssuedHandler = (fileId: string, requestId: string, token: string | null, playbackGeneration: number) => void;
 
-// Service Workerはトークンを保持しない。各ストリーム要求について、その要求元タブだけに
-// MessageChannelで問い合わせ、現在有効なトークンをその場で返す。
+// ページ側（main.tsが渡すgetCurrentAccessToken、実体はauth.getAccessToken()）が
+// 現在保持している確認済みトークンを、問い合わせのたびにその場でそのまま返すだけで、
+// これを契機にトークン更新は発火しない。Service Worker側は2026-09-13、
+// (clientId, fileId, playbackGeneration)単位の上限付き・時間無制限ではない
+// in-memoryキャッシュ（`sw.js`の`tokenCache`、LRUで上限32件）を持つようになり、
+// 同じ3つ組への連続したストリーム要求はこの問い合わせをキャッシュヒット時はスキップする
+// （Drive側の401でキャッシュは即座に破棄され、次の要求では改めてこの問い合わせが発生する。
+// 詳細はdusty-jukebox/CLAUDE.mdのクロスフェード節・sw.jsのtokenCacheコメント参照）。
 export function registerStreamAuthResponder(
   serviceWorker: ServiceWorkerMessageTarget,
   getCurrentAccessToken: GetCurrentAccessToken,
@@ -44,4 +50,22 @@ export function registerStreamAuthResponder(
       })
       .catch(() => event.ports[0].postMessage({ token: null }));
   });
+}
+
+export interface ServiceWorkerControllerLike {
+  controller: { postMessage(message: unknown): void } | null;
+}
+
+// Service Worker側のtokenCache（sw.js）は、同一(clientId, fileId, playbackGeneration)への
+// 連続したストリーム要求を、このページへの問い合わせを経ずに答える。この最適化は「その3つ組の
+// 生存期間中はページのトークンが変わらない」前提に乗っているが、再生中に曲の切り替わり（＝新しい
+// playbackGenerationへの移行）を伴わないままページ側のトークンだけが更新・クリアされるケース
+// （例：再生と並行してライブラリのスキャンが実行され、その中のensureAccessToken()がサイレント
+// 更新を行う場合）がある。この場合、SWは古いトークンをDriveへ送り続け、後続の401はauth.clearToken()
+// による正しい後始末を経ていない不整合な状態と誤認されうる（2026-09-13、Codexレビュー指摘：P2）。
+// DriveAuthのトークンが変化するたびにこの関数を呼び、SW側の全キャッシュを破棄する（どの3つ組が
+// 影響を受けるか特定できないため一括破棄。以後の要求は単に改めてこの問い合わせが発生するだけで、
+// 往復削減の効果が薄れる以上の実害は無い）。
+export function notifyServiceWorkerTokenRotated(serviceWorker: ServiceWorkerControllerLike): void {
+  serviceWorker.controller?.postMessage({ type: "dusty-jukebox:token-rotated" });
 }

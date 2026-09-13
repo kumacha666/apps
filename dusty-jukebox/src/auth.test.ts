@@ -132,6 +132,45 @@ describe("auth", () => {
     expect(auth.getAccessToken()).toBeNull();
   });
 
+  test("DriveAuth: setOnTokenChanged()のコールバックは新しいトークン取得時に呼ばれる（2026-09-13、Codexレビュー指摘：P2、SWのtokenCacheへ伝播するため）", async () => {
+    const gis = installFakeGis();
+    const auth = new DriveAuth();
+    auth.init("dummy-client-id");
+    let callCount = 0;
+    auth.setOnTokenChanged(() => {
+      callCount += 1;
+    });
+
+    const pending = auth.requestAccessToken({ prompt: "consent" });
+    gis.emitToken({ access_token: "token-1", expires_in: 3600, scope: OAUTH_SCOPES });
+    await pending;
+
+    expect(callCount).toBe(1);
+  });
+
+  test("DriveAuth: setOnTokenChanged()のコールバックはclearToken()でも呼ばれ、部分許可等の失敗時は呼ばれない", async () => {
+    const gis = installFakeGis();
+    const auth = new DriveAuth();
+    auth.init("dummy-client-id");
+    let callCount = 0;
+    auth.setOnTokenChanged(() => {
+      callCount += 1;
+    });
+
+    const failing = auth.requestAccessToken({ prompt: "consent" });
+    gis.emitToken({ access_token: "partial-token", expires_in: 3600, scope: DRIVE_READONLY_SCOPE });
+    await expect(failing).rejects.toBeInstanceOf(AuthError);
+    expect(callCount).toBe(0);
+
+    const pending = auth.requestAccessToken({ prompt: "consent" });
+    gis.emitToken({ access_token: "token-1", expires_in: 3600, scope: OAUTH_SCOPES });
+    await pending;
+    expect(callCount).toBe(1);
+
+    auth.clearToken();
+    expect(callCount).toBe(2);
+  });
+
   test("hasAllRequiredScopes: 要求スコープが全て付与されていればtrue", () => {
     expect(hasAllRequiredScopes(OAUTH_SCOPES, OAUTH_SCOPES)).toBe(true);
   });
