@@ -51,3 +51,21 @@ export function registerStreamAuthResponder(
       .catch(() => event.ports[0].postMessage({ token: null }));
   });
 }
+
+export interface ServiceWorkerControllerLike {
+  controller: { postMessage(message: unknown): void } | null;
+}
+
+// Service Worker側のtokenCache（sw.js）は、同一(clientId, fileId, playbackGeneration)への
+// 連続したストリーム要求を、このページへの問い合わせを経ずに答える。この最適化は「その3つ組の
+// 生存期間中はページのトークンが変わらない」前提に乗っているが、再生中に曲の切り替わり（＝新しい
+// playbackGenerationへの移行）を伴わないままページ側のトークンだけが更新・クリアされるケース
+// （例：再生と並行してライブラリのスキャンが実行され、その中のensureAccessToken()がサイレント
+// 更新を行う場合）がある。この場合、SWは古いトークンをDriveへ送り続け、後続の401はauth.clearToken()
+// による正しい後始末を経ていない不整合な状態と誤認されうる（2026-09-13、Codexレビュー指摘：P2）。
+// DriveAuthのトークンが変化するたびにこの関数を呼び、SW側の全キャッシュを破棄する（どの3つ組が
+// 影響を受けるか特定できないため一括破棄。以後の要求は単に改めてこの問い合わせが発生するだけで、
+// 往復削減の効果が薄れる以上の実害は無い）。
+export function notifyServiceWorkerTokenRotated(serviceWorker: ServiceWorkerControllerLike): void {
+  serviceWorker.controller?.postMessage({ type: "dusty-jukebox:token-rotated" });
+}

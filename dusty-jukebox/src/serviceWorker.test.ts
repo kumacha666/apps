@@ -98,6 +98,10 @@ async function dispatchLifecycle(harness: Harness, type: "install" | "activate")
   await Promise.all(waits);
 }
 
+function dispatchMessage(harness: Harness, data: unknown): void {
+  for (const listener of harness.handlers.get("message") ?? []) (listener as unknown as (event: { data: unknown }) => void)({ data });
+}
+
 function dispatchFetch(harness: Harness, url: string, headers: Headers = new Headers(), clientId = "tab-1"): Promise<Response> {
   let response: Promise<Response> | Response | undefined;
   (harness.handlers.get("fetch")?.[0] as unknown as FetchHandler)({
@@ -528,6 +532,50 @@ describe("service worker", () => {
     // file-1は一度も再参照されないまま追い出されたため、再要求すると改めて問い合わせる。
     await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
     expect(messages).toHaveLength(34);
+  });
+
+  test("ページ側トークンの変化（token-rotatedメッセージ）でトークンキャッシュ全体が破棄される（2026-09-13、Codexレビュー指摘：P2「ストリームの401を経ない静かなトークン変化がキャッシュに反映されない」）", async () => {
+    const harness = createHarness();
+    const messages: unknown[] = [];
+    harness.clients.set("tab-1", {
+      postMessage: (message, ports = []) => {
+        messages.push(message);
+        ports[0]?.postMessage({ token: "token" });
+      },
+    });
+    harness.setFetchImplementation(async () => new Response("audio", { status: 206, headers: { "Content-Length": "5" } }));
+    harness.run();
+
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
+    // 通常は同じ3つ組への再要求はキャッシュヒットで問い合わせを増やさない。
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
+    expect(messages).toHaveLength(1);
+
+    // ライブラリスキャン等、ストリームの401を経ない静かなトークン変化をページ側から通知する。
+    dispatchMessage(harness, { type: "dusty-jukebox:token-rotated" });
+
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
+    expect(messages).toHaveLength(2);
+  });
+
+  test("token-rotated以外のメッセージ（未知のtype）は無視する", async () => {
+    const harness = createHarness();
+    const messages: unknown[] = [];
+    harness.clients.set("tab-1", {
+      postMessage: (message, ports = []) => {
+        messages.push(message);
+        ports[0]?.postMessage({ token: "token" });
+      },
+    });
+    harness.setFetchImplementation(async () => new Response("audio", { status: 206, headers: { "Content-Length": "5" } }));
+    harness.run();
+
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
+    dispatchMessage(harness, { type: "unrelated-message" });
+    dispatchMessage(harness, {});
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
+
+    expect(messages).toHaveLength(1);
   });
 
   test("登録スコープからストリームパスを導出し、ルート配信でも横取りする", async () => {

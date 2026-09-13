@@ -1,4 +1,4 @@
-const CACHE_NAME = "dusty-jukebox-v0.1.124";
+const CACHE_NAME = "dusty-jukebox-v0.1.125";
 const CACHE_PREFIX = "dusty-jukebox-";
 const ASSETS = ["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg"];
 const APP_SHELL_URLS = new Set(ASSETS.map((asset) => new URL(asset, self.location.href).href));
@@ -237,6 +237,14 @@ async function proxyStream(request, fileId, clientId) {
   }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers: responseHeaders });
 }
+
+// ページ側（DriveAuth）のトークンが、ストリームの401を経ずに変化した通知（2026-09-13、
+// Codexレビュー指摘：P2）。影響を受ける(clientId, fileId, playbackGeneration)を特定できない
+// ため、tokenCache全体を破棄する。以後の要求は改めてページへ問い合わせるだけで機能上は
+// 劣化しない。
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "dusty-jukebox:token-rotated") tokenCache.clear();
+});
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
