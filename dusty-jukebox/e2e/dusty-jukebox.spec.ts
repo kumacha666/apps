@@ -2502,58 +2502,15 @@ test("クロスフェードのハンドオフ完了時、複数回の追いつ�
   const writeCount = await page.evaluate(
     () => (window as unknown as { __catchUpWriteCount: number }).__catchUpWriteCount,
   );
-  // ループ自体は予算を使い切って1回だけ書き込むが、2026-09-13の続けての修正（下記の
-  // 「収束せずに待機を終えても最新の先読み位置へ最後にもう一度追いつく」テスト参照）で、
-  // ループ終了後に最新位置へもう一度だけ（待たずに）書き込む最終キャッチアップを追加した
-  // ため、合計は最大2回になる（ループの旧・毎回フルタイムアウト方式へ戻すと、ループ自体が
-  // 3回書き込み+最終キャッチアップの計4回になり、この上限を超えて引き続き失敗する）。
-  expect(writeCount).toBeLessThanOrEqual(2);
+  // 単発の予算方式は最初の1回だけ書き込んだ後、`Date.now() < catchUpDeadline`が成立しなく
+  // なり2回目以降のループ自体に入らないため常に1回。2026-09-13、ChatGPTレビュー指摘を受けて
+  // 「ループが収束せず終了した場合、最後にもう一度〈待たずに〉最新位置へ書き込む」対応を
+  // 撤回した（このPRの根本原因——`currentTime`書き換え直後にvolumeを上げると可聴グリッチが
+  // 露出する——をfallback経路で再導入してしまうため。収束できなかった場合は、ループが最後に
+  // 書き込んだ位置をそのまま使う設計に戻した）ため、書き込み回数は常に1回のまま。
+  expect(writeCount).toBe(1);
 
   await expect.poll(() => page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume)).toBe(1);
-});
-
-// 2026-09-13、続けてCodexレビュー指摘：P1「Recheck the offset after the final catch-up
-// seek」の回帰防止。上のテストが検証する「合計待機時間の予算」自体を守っていても、ループが
-// 収束せずに（seekedが届かず）予算を使い切って終了した場合、ループ最後の待機中にも先読み側は
-// 進み続けているため、ループが最後に書き込んだ`target`はこの時点で既に古い値になる。この
-// 古い値のままvolumeを1へ戻すと、実機で報告された「巻き戻ってフレーズを聞き直す」不具合が
-// 形を変えて残ってしまう。ループ終了後にもう一度（待たずに）最新の`crossfadeAudio.currentTime`
-// を読み直し、許容誤差を超えていれば最後に一度だけ追いつくことを検証する。
-test("クロスフェードのハンドオフ完了時、収束せずに待機を終えても最後に最新の先読み位置へ追いつく（2026-09-13、Codexレビュー指摘：P1「Recheck the offset after the final catch-up seek」）", async ({ context, page }) => {
-  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  const releaseKey = "__e2eReleaseHandoffPlay3e";
-  await setUpPendingHandoff(page, releaseKey);
-
-  await page.evaluate(() => {
-    const crossfadeAudio = document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!;
-    setInterval(() => { crossfadeAudio.currentTime += 5; }, 10);
-  });
-
-  await page.evaluate(() => {
-    document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!.currentTime = 42;
-  });
-  await page.evaluate(() => {
-    document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime = 0;
-  });
-  await page.evaluate((key) => (window as unknown as Record<string, () => void>)[key]?.(), releaseKey);
-
-  // seekedを一切発火させないまま、単発方式と同じ予算（100ms）ぶんだけ仮想時間を進める。
-  // 先読み側は上のsetIntervalによりこの間ずっと進み続ける。
-  await page.clock.runFor(100);
-
-  await expect.poll(() => page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume)).toBe(1);
-
-  // 2つの要素の値を1回のevaluate呼び出しでまとめて読む（別々の呼び出しに分けると、その間に
-  // setIntervalがさらに1回発火してpreviewCurrentTime側だけ余分に進み、誤差が本質的でない
-  // 理由で開いてしまうため）。
-  const { finalCurrentTime, previewCurrentTime } = await page.evaluate(() => ({
-    finalCurrentTime: document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime,
-    previewCurrentTime: document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!.currentTime,
-  }));
-  // ループが最初に書き込んだ値（42）のまま残っていれば不具合の再現（差が大きい）。最後に
-  // もう一度追いついていれば、先読み側の最新位置とほぼ一致するはず。
-  expect(finalCurrentTime).toBeGreaterThan(60);
-  expect(Math.abs(finalCurrentTime - previewCurrentTime)).toBeLessThanOrEqual(0.1);
 });
 
 // 2026-09-10、実機フィードバックによるハンドオフ再設計の回帰防止（bug #10：クロスフェードが

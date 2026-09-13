@@ -722,23 +722,16 @@ async function finishCrossfadeHandoff(): Promise<void> {
       await waitForSeeked(audioPlayer, remainingBudgetMs);
       if (crossfadeGeneration !== myGeneration) break;
     }
-    // 2026-09-13、続けてCodexレビュー指摘：P1「Recheck the offset after the final catch-up
-    // seek」。上のループが収束せずに（`seeked`が届かず予算/試行回数を使い切って）終了した
-    // 場合、直前の`waitForSeeked`の待機中にも先読み側はさらに進み続けているため、ループが
-    // 最後に書き込んだ`target`はこの時点で既に古い。ここでもう一度（待たずに）最新の
-    // `crossfadeAudio.currentTime`を読み直し、まだ許容誤差を超えていれば最後にもう一度
-    // 書き込む。この最後の書き込みには`seeked`待ちを付けない：これは「収束を確認できな
-    // かった」経路（タイムアウトで抜けた場合は元々このあとの`seeked`未確認のまま volume を
-    // 1へ上げていた、既存の「seekedイベントが発火しなくてもタイムアウトでvolumeが1へ戻る」
-    // テストが検証している既知の許容挙動）のさらに一歩であり、新たな無音待機を追加しない
-    // （待てば残留ずれはさらに縮むが、その間も先読み側が進み続ける以上、待機を追加しても
-    // 収束を保証できない——待機自体を増やさずに、その時点で得られる最新の位置を使うだけ）。
-    if (crossfadeGeneration === myGeneration) {
-      const finalTarget = crossfadeAudio.currentTime;
-      if (Number.isFinite(finalTarget) && finalTarget - audioPlayer.currentTime > CROSSFADE_HANDOFF_CATCHUP_TOLERANCE_SEC) {
-        audioPlayer.currentTime = finalTarget;
-      }
-    }
+    // 2026-09-13、ChatGPTレビュー指摘：P1「収束できなかった場合に、待たない最後の再seekを
+    // 追加しない」。一度は「ループが収束せず終了した場合、最後にもう一度〈待たずに〉最新位置
+    // へ書き込む」対応（Codexレビュー指摘：P1「Recheck the offset after the final catch-up
+    // seek」）を入れたが、これはこのPRが実機録画のffmpeg解析で切り分けた根本原因——
+    // `currentTime`の書き換え直後にvolumeを上げるとブラウザの内部デコード再同期が可聴グリッチ
+    // として露出する——をfallback経路で再導入してしまう指摘を受け撤回した。収束できなかった
+    // 場合は、ループが最後に書き込んだ位置（`seeked`未確認のままタイムアウトで諦めた場合を
+    // 含む、既存の「seekedイベントが発火しなくてもタイムアウトでvolumeが1へ戻る」テストが
+    // 検証している既知の許容挙動）をそのまま使う。位置ずれ（最大でも予算1回分、通常の
+    // `seeked`遅延程度）を許容する方が、このPRの目的（音飛びを出さない）には一貫している。
   }
   crossfadeFinishing = false;
   if (crossfadeGeneration !== myGeneration) {
