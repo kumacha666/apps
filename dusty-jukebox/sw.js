@@ -1,4 +1,4 @@
-const CACHE_NAME = "dusty-jukebox-v0.1.120";
+const CACHE_NAME = "dusty-jukebox-v0.1.121";
 const CACHE_PREFIX = "dusty-jukebox-";
 const ASSETS = ["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg"];
 const APP_SHELL_URLS = new Set(ASSETS.map((asset) => new URL(asset, self.location.href).href));
@@ -37,7 +37,16 @@ const fileSizeCache = new Map();
 // 必要が無い（トークン自体はこの3つ組の生存期間中は変わらない前提でよく、実際に変わって
 // いた場合は後続のDrive側401がこのキャッシュを破棄して通常の再認証フローに合流する）ため、
 // Promiseそのものをキャッシュして往復を1回にまとめる。
+// 2026-09-13、ChatGPTレビュー指摘：P2「成功エントリが世代終了後も削除されず増え続ける」。
+// playbackGenerationが変わると新しいキーへ切り替わるだけで、古いキーはMapから自然には
+// 消えない。成功したPromiseは401/missing/errorが起きない限り残り続けるため、長時間利用・
+// 曲送りを繰り返すほどエントリ（Bearer tokenを間接的に保持するPromise）が蓄積する。
+// Service Workerは本来トークンを一切保持しない設計方針（下記PWA・Service Worker
+// ストリーミング節参照）のため、この最適化用キャッシュも上限付きLRUにして無制限には
+// 保持しないようにする。上限を超えて追い出されたエントリは、次のRange要求で単に改めて
+// ページへ問い合わせるだけで機能上は劣化しない（往復削減の効果が薄れるだけ）。
 const tokenCache = new Map();
+const MAX_TOKEN_CACHE_ENTRIES = 32;
 
 function tokenCacheKey(clientId, fileId, playbackGeneration) {
   return `${clientId}:${fileId}:${playbackGeneration}`;
@@ -46,9 +55,19 @@ function tokenCacheKey(clientId, fileId, playbackGeneration) {
 function getCachedOrRequestToken(clientId, fileId, playbackGeneration) {
   const key = tokenCacheKey(clientId, fileId, playbackGeneration);
   const cached = tokenCache.get(key);
-  if (cached) return cached;
+  if (cached) {
+    // LRU: 参照されたエントリをMapの末尾（最も新しい）へ移動する。Mapのキー順は挿入順の
+    // ため、削除してから再設定するだけで順序を更新できる。
+    tokenCache.delete(key);
+    tokenCache.set(key, cached);
+    return cached;
+  }
   const promise = requestToken(clientId, fileId, playbackGeneration);
   tokenCache.set(key, promise);
+  while (tokenCache.size > MAX_TOKEN_CACHE_ENTRIES) {
+    const oldestKey = tokenCache.keys().next().value;
+    tokenCache.delete(oldestKey);
+  }
   // ページ側にトークンが無い（missing/timeout）結果はキャッシュしない：この3つ組への
   // 後続要求が、同じ「トークン無し」という古い答えをこの世代の残り期間ずっと再利用して
   // しまうと、page側でその後ログイン・トークン取得が完了しても反映されなくなるため。

@@ -488,6 +488,48 @@ describe("service worker", () => {
     expect(messages).toHaveLength(2);
   });
 
+  test("トークンキャッシュは上限付きLRUで、上限を超えると最も古いエントリを追い出す（2026-09-13、ChatGPTレビュー指摘：P2）", async () => {
+    // Service Workerは本来トークンを一切保持しない設計方針のため、この往復削減用の
+    // キャッシュも無制限には増やさない。MAX_TOKEN_CACHE_ENTRIES（32）を超える数の
+    // 異なる(clientId, fileId, playbackGeneration)へ要求すると、最初に問い合わせた
+    // エントリが追い出され、それへの再要求は改めてページへ問い合わせることを検証する。
+    const harness = createHarness();
+    const messages: unknown[] = [];
+    harness.clients.set("tab-1", {
+      postMessage: (message, ports = []) => {
+        messages.push(message);
+        ports[0]?.postMessage({ token: "token" });
+      },
+    });
+    harness.setFetchImplementation(async () => new Response("audio", { status: 206, headers: { "Content-Length": "5" } }));
+    harness.run();
+
+    // 上限（32）ちょうどまで別々のキーを埋める。最初に問い合わせたfile-0がまだ生き残って
+    // いることを確認するため、この時点では一度も追い出しが起きていないはず。
+    for (let i = 0; i < 32; i += 1) {
+      await dispatchFetch(harness, `https://example.test/dusty-jukebox/stream/file-${i}?playbackGeneration=1`);
+    }
+    expect(messages).toHaveLength(32);
+
+    // 同じ最初のキー（file-0）への再要求はまだキャッシュされているため、追加の
+    // get-token問い合わせは発生しない。
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-0?playbackGeneration=1");
+    expect(messages).toHaveLength(32);
+
+    // 上限を超える33件目の別キーを要求すると、最も古い（LRUで一度も再参照されていない）
+    // file-1が追い出される。
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-32?playbackGeneration=1");
+    expect(messages).toHaveLength(33);
+
+    // file-0は直前の再要求でLRUの末尾（最新）へ移動済みのため、まだキャッシュされている。
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-0?playbackGeneration=1");
+    expect(messages).toHaveLength(33);
+
+    // file-1は一度も再参照されないまま追い出されたため、再要求すると改めて問い合わせる。
+    await dispatchFetch(harness, "https://example.test/dusty-jukebox/stream/file-1?playbackGeneration=1");
+    expect(messages).toHaveLength(34);
+  });
+
   test("登録スコープからストリームパスを導出し、ルート配信でも横取りする", async () => {
     const harness = createHarness("https://example.test/");
     harness.clients.set("tab-1", { postMessage: (_message, ports) => ports[0].postMessage({ token: "token" }) });
