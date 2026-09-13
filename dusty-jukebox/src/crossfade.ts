@@ -61,6 +61,15 @@ export const CROSSFADE_PREPARE_LEAD_MS = import.meta.env.VITE_E2E === "true" ? 2
 // フォールバック経路（audioPlayer.endedなら通常の自然終了フローへ）に合流させる。
 export const CROSSFADE_PREVIEW_START_TIMEOUT_MS = import.meta.env.VITE_E2E === "true" ? 200 : 5000;
 
+// ハンドオフ完了時、主audio要素をまだ無音（volume 0）のうちに先読み側の到達位置へ追いつかせる
+// 再シークの「seeked」イベント待ちに与えるタイムアウト（2026-09-12、ChatGPTレビュー指摘：
+// P1。詳細はmain.tsのfinishCrossfadeHandoff()コメント参照）。この待機がタイムアウトしても
+// 致命的ではない（その時点のcurrentTimeのままvolumeを1へ進めるだけ）ため、他の待機
+// （CROSSFADE_PREVIEW_START_TIMEOUT_MS等）より短い値にしている——通常この再シークは既に
+// バッファ済みの範囲内で完結する軽い操作のはずで、長時間かかる場合はもう追いつくのを
+// 諦めた方がユーザー体験上望ましいため。
+export const CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS = import.meta.env.VITE_E2E === "true" ? 100 : 1000;
+
 // 進行度（0=開始直後、1=完了）に対する退場側/入場側それぞれの音量。単純な線形（合計は常に1）。
 export function crossfadeVolumes(progress: number): { outgoing: number; incoming: number } {
   const p = Math.min(1, Math.max(0, progress));

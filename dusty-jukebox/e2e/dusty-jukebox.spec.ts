@@ -2221,16 +2221,35 @@ test("クロスフェードのハンドオフ待機中も、第二audio要素は
 });
 
 // 2026-09-11〜12、実機フィードバック「クロスフェードで曲が切り替わって、シークバーと
-// ステータスが次曲に変わった瞬間に一瞬音飛びします」。①「バッファ済みの位置だけへ再シーク」
+// ステータスが次曲に変わった瞬間に一瞬音飛みします」。①「バッファ済みの位置だけへ再シーク」
 // （isPositionBuffered）②「バッファ済み範囲内で目標位置へできるだけ追いつく」
 // （bufferedCatchUpPosition）と2段階で絞り込んだが、実機の録画（波形解析）で再検証したところ、
-// バッファの有無に関わらず同じ瞬間に音飛びが再現した。`currentTime`への書き込みという操作
-// そのものが原因と判明したため、finishCrossfadeHandoff()から位置合わせの再シーク自体を撤去
-// した（詳細は`dusty-jukebox/CLAUDE.md`「クロスフェード」節参照）。このテストは、先読み側
-// （crossfadeAudio）が待機中にどれだけ進んでいても、主audio要素のcurrentTimeが一切書き
-// 換えられない（＝ハンドオフ開始時に設定した初期位置からそのまま連続再生される）ことを検証する。
-test("クロスフェードのハンドオフ完了時、主audio要素のcurrentTimeを再シークしない（実機フィードバック：切り替え時の音飛び、2026-09-11〜12）", async ({ context, page }) => {
-  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+// バッファの有無に関わらず同じ瞬間に音飛びが再現した。一度は再シーク自体を撤去したが
+// （`currentTime`書き換えが原因と判明したため）、ChatGPTレビューで「削除するとhandoff待機
+// 時間ぶん曲が巻き戻って同じ区間を聞き直すことになる」と指摘され、**再シークそのものではなく
+// 再シーク直後に無条件でvolumeを1へ上げていたタイミングが問題**という設計へ変更した
+// （詳細は`dusty-jukebox/CLAUDE.md`「クロスフェード」節参照）。主audio要素がまだvolume 0
+// （無音）のうちに先読み側の現在位置へ追いつく再シークを行い、`seeked`イベントを待ってから
+// 初めてvolumeを1へ戻す。以下のテストは、この順序（無音のうちにシーク→seeked待ち→volume
+// 復元）が実際に守られていることを検証する。
+function overrideHandoffPlayHold(page: import("@playwright/test").Page, releaseKey: string) {
+  return page.evaluate((key) => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player" && this.src.includes("album-track-2")) {
+          return new Promise<void>((resolve) => {
+            (window as unknown as Record<string, () => void>)[key] = resolve;
+          });
+        }
+        return originalPlay.call(this);
+      },
+    });
+  }, releaseKey);
+}
+
+async function setUpPendingHandoff(page: import("@playwright/test").Page, releaseKey: string) {
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
@@ -2242,23 +2261,7 @@ test("クロスフェードのハンドオフ完了時、主audio要素のcurren
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
 
   await page.clock.install();
-
-  // 主audio要素（album-track-2）のplay()呼び出しだけを保留し、その待機中に先読み側
-  // （crossfadeAudio）がさらに進む状況を再現する。
-  await page.evaluate(() => {
-    const originalPlay = HTMLMediaElement.prototype.play;
-    Object.defineProperty(HTMLMediaElement.prototype, "play", {
-      configurable: true,
-      value: function (this: HTMLMediaElement) {
-        if (this.id === "audio-player" && this.src.includes("album-track-2")) {
-          return new Promise<void>((resolve) => {
-            (window as unknown as { __e2eReleaseHandoffPlay3?: () => void }).__e2eReleaseHandoffPlay3 = resolve;
-          });
-        }
-        return originalPlay.call(this);
-      },
-    });
-  });
+  await overrideHandoffPlayHold(page, releaseKey);
 
   await page.evaluate(() => {
     const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
@@ -2270,11 +2273,20 @@ test("クロスフェードのハンドオフ完了時、主audio要素のcurren
   await expect(page.locator("#audio-player-crossfade")).toHaveAttribute("src", /album-track-2(\?|$)/);
   await page.clock.runFor(100);
   await expect.poll(() =>
-    page.evaluate(() => Boolean((window as unknown as { __e2eReleaseHandoffPlay3?: () => void }).__e2eReleaseHandoffPlay3))
+    page.evaluate((key) => Boolean((window as unknown as Record<string, unknown>)[key]), releaseKey)
   ).toBe(true);
+}
 
-  // 先読み側が、待機中にさらに進んだことにする（はっきり区別できる値）。この位置には
-  // 一切追いつこうとしないことを検証したい。
+test("クロスフェードのハンドオフ完了時、主audio要素は無音のうちに先読み側の位置へ追いつき、seeked後にvolumeを戻す（実機フィードバックの再設計、2026-09-12）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  const releaseKey = "__e2eReleaseHandoffPlay3";
+  await setUpPendingHandoff(page, releaseKey);
+
+  // ランプ完了により主audio要素は既に無音（volume 0）のはず。
+  const volumeBeforeRelease = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
+  expect(volumeBeforeRelease).toBe(0);
+
+  // 先読み側が、待機中にさらに進んだことにする（はっきり区別できる値。追いつくべき目標）。
   await page.evaluate(() => {
     document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!.currentTime = 42;
   });
@@ -2284,21 +2296,111 @@ test("クロスフェードのハンドオフ完了時、主audio要素のcurren
   await page.evaluate(() => {
     document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime = 0;
   });
-  const currentTimeBeforeRelease = await page.evaluate(
-    () => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime
-  );
   // 保留していたplay()を解放してハンドオフを完了させる。
-  await page.evaluate(() => (window as unknown as { __e2eReleaseHandoffPlay3?: () => void }).__e2eReleaseHandoffPlay3?.());
-  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
+  await page.evaluate((key) => (window as unknown as Record<string, () => void>)[key]?.(), releaseKey);
 
-  // 先読み側が42秒まで進んでいても、主audio要素のcurrentTimeは一切書き換えられていない
-  // （ハンドオフ開始時点の位置のまま。新しいRange要求や内部デコード再同期を伴う再シークを
-  // 一切行っていないことの確認）。
-  const currentTimeAfterHandoff = await page.evaluate(
-    () => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime
+  // 主audio要素は無音のうちに先読み側の位置（42）へ追いつく。seekedがまだ発火していない
+  // 間はvolumeもまだ1へ戻らない（無音のうちにシークが完結していることの確認）。
+  await expect.poll(() => page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime)).toBe(42);
+  const volumeDuringSeekWait = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
+  expect(volumeDuringSeekWait).toBe(0);
+
+  // seekedイベント（実ブラウザの内部デコードパイプライン再同期の完了通知）が発火すると、
+  // 初めてvolumeが1へ戻る。
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("seeked"));
+  });
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
+  const volumeAfterSeeked = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
+  expect(volumeAfterSeeked).toBe(1);
+});
+
+// seekedイベントが（実ブラウザの異常等で）一切発火しなかった場合でも、CROSSFADE_HANDOFF_
+// SEEK_TIMEOUT_MS（E2Eでは100ms）のタイムアウトで諦めてvolumeを1へ戻し、無音のまま
+// 固まらないことを検証する。
+test("クロスフェードのハンドオフ完了時、seekedイベントが発火しなくてもタイムアウトでvolumeが1へ戻る", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  const releaseKey = "__e2eReleaseHandoffPlay3b";
+  await setUpPendingHandoff(page, releaseKey);
+
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!.currentTime = 42;
+  });
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime = 0;
+  });
+  await page.evaluate((key) => (window as unknown as Record<string, () => void>)[key]?.(), releaseKey);
+
+  await expect.poll(() => page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime)).toBe(42);
+  const volumeBeforeTimeout = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
+  expect(volumeBeforeTimeout).toBe(0);
+
+  // seekedを一切発火させず、タイムアウト（100ms）分だけ仮想時刻を進める。
+  await page.clock.runFor(100);
+  await expect.poll(() => page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume)).toBe(1);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
+});
+
+// 2026-09-12、finishCrossfadeHandoff()の非同期化（無音のうちにseekedを待つ設計）に伴い、
+// この待機中かどうかを検証するための`window.__e2e.isCrossfadeFinishing()`フックを追加した
+// （ChatGPTレビュー指摘：P1「この経路は認証継続・手動Pause/Seek/Nextによるgeneration
+// cancellationとも競合するため、修正時は『seek待機中にキャンセルされた場合に古いhandoffが
+// 後からvolumeを戻さない』回帰テストも必要です」）。フラグが実際に待機状態を反映すること、
+// および待機中に本物の割り込み（一時停止）が発生した場合、割り込み後に遅れて届いた古い
+// seekedイベントがその後の状態（一時停止で復元した退場曲の表示・volume）を巻き戻さないことを
+// 検証する。
+test("クロスフェードのハンドオフ完了待機中はisCrossfadeFinishing()がtrueを返し、待機中に一時停止しても古いseekedが後から状態を巻き戻さない", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  const releaseKey = "__e2eReleaseHandoffPlay3c";
+  await setUpPendingHandoff(page, releaseKey);
+
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!.currentTime = 42;
+  });
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime = 0;
+  });
+  await page.evaluate((key) => (window as unknown as Record<string, () => void>)[key]?.(), releaseKey);
+
+  // 主audio要素が先読み側の位置へ追いついた（＝finishCrossfadeHandoff()がseeked待ちに入った）
+  // 時点で、isCrossfadeFinishing()がtrueを返す。
+  await expect.poll(() => page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime)).toBe(42);
+  const finishingDuringWait = await page.evaluate(
+    () => (window as unknown as { __e2e?: { isCrossfadeFinishing: () => boolean } }).__e2e?.isCrossfadeFinishing()
   );
-  expect(currentTimeAfterHandoff).toBe(currentTimeBeforeRelease);
-  expect(currentTimeAfterHandoff).not.toBe(42);
+  expect(finishingDuringWait).toBe(true);
+
+  // 待機中に本物の割り込み（一時停止）が発生する。ハンドオフは既にaudio.srcを次曲（Scherzo）
+  // へコミット済みのため、一時停止は退場曲（Overture）へ音を鳴らさず復元する
+  // （cancelCrossfadeIfActive()→loadPaused()、詳細はCLAUDE.md参照）。
+  await page.getByRole("button", { name: "一時停止" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  const volumeAfterPause = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
+  expect(volumeAfterPause).toBe(1);
+
+  // loadPaused()は退場側の位置（crossfading開始時点の曲末尾間近の値）へcurrentTimeを
+  // 書き戻すため、このE2Eモック環境では`.paused`を固定値falseでオーバーライドしており
+  // 実ブラウザのように`.pause()`呼び出しと連動しないので、この書き戻し自体が
+  // shouldStartCrossfadePreparation()の残り時間条件を再び満たしてしまい、以降で検証したい
+  // 「古いstale seekedの影響」とは無関係な、別の正当なクロスフェードが誤って再発火し
+  // テストを偽陽性/偽陰性にしうる（他の複数のクロスフェードE2Eで既知の注意点と同種）。
+  // ここでは曲末尾から明示的に離すことでこの副作用を回避する（crossfadeOutgoingPositionは
+  // crossfading開始時点で既に確定済みのため、この後の変更は検証対象のガード自体には影響しない）。
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime = 0;
+  });
+
+  // 割り込み後、古いfinishCrossfadeHandoff()自身の待機はまだ解決していない可能性がある
+  // （isCrossfadeFinishing()は待機自体が終わるまでtrueのまま残る設計、詳細は
+  // crossfadeFinishing変数宣言コメント参照）。その古い待機に対して、遅れて`seeked`が届いても、
+  // 一時停止で復元した状態（退場曲のaudio.src・volume）を巻き戻さないことを検証する
+  // （generation不一致による早期returnガードの回帰防止）。
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("seeked"));
+  });
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  const volumeAfterStaleSeeked = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
+  expect(volumeAfterStaleSeeked).toBe(1);
 });
 
 // 2026-09-10、実機フィードバックによるハンドオフ再設計の回帰防止（bug #10：クロスフェードが
