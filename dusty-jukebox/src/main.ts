@@ -685,6 +685,15 @@ async function finishCrossfadeHandoff(): Promise<void> {
   // 先読み側が既に追い越している場合だけ、無音のうちに追いつく（後退方向のシークは行わない、
   // 既に追いついている・先読み側が止まっている等の場合は無音区間を作るだけで意味が無いため）。
   if (Number.isFinite(finalPosition) && finalPosition > audioPlayer.currentTime) {
+    // 2026-09-13、Codexレビュー指摘：P1「Freeze the preview during the catch-up seek」。
+    // 先読み側（crossfadeAudio）を止めずに鳴らし続けたまま主audio要素の`seeked`を待つと、
+    // 待機に要した時間ぶん先読み側がさらに進んでしまい、待機完了後に主audio要素を
+    // finalPosition（待機開始時点のスナップショット、既に古い）でvolume=1にする際、
+    // ユーザーが直前まで聞いていた位置より手前へ後退してしまう（この待機自体は
+    // タイムアウトで最大`CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS`まで延びうるため、#446で
+    // 対応したはずの「同じ区間を聞き直す」フレーズリピート回帰と同種の問題を再導入しうる）。
+    // finalPositionを確定させるこの時点で先読み側を止め、位置を固定する。
+    crossfadeAudio.pause();
     audioPlayer.currentTime = finalPosition;
     await waitForSeeked(audioPlayer, CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS);
   }

@@ -2286,6 +2286,25 @@ test("クロスフェードのハンドオフ完了時、主audio要素は無音
   const volumeBeforeRelease = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
   expect(volumeBeforeRelease).toBe(0);
 
+  // 先読み側（crossfadeAudio）へのpause()呼び出し回数を記録する（2026-09-13、Codexレビュー
+  // 指摘：P1「Freeze the preview during the catch-up seek」の回帰防止）。このE2Eモック環境
+  // では`<audio>`が実際にはデコードできないダミーデータのため、pause()を呼ばなくても
+  // `.paused`は元々true（真の再生が起きていないため）のまま観測されてしまい、`.paused`だけを
+  // 見る検証では偽陰性になる。呼び出し自体を直接記録することで判別力を持たせる。
+  await page.evaluate(() => {
+    const originalPause = HTMLMediaElement.prototype.pause;
+    (window as unknown as { __previewPauseCount: number }).__previewPauseCount = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "pause", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.id === "audio-player-crossfade") {
+          (window as unknown as { __previewPauseCount: number }).__previewPauseCount += 1;
+        }
+        return originalPause.call(this);
+      },
+    });
+  });
+
   // 先読み側が、待機中にさらに進んだことにする（はっきり区別できる値。追いつくべき目標）。
   await page.evaluate(() => {
     document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!.currentTime = 42;
@@ -2304,6 +2323,13 @@ test("クロスフェードのハンドオフ完了時、主audio要素は無音
   await expect.poll(() => page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime)).toBe(42);
   const volumeDuringSeekWait = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
   expect(volumeDuringSeekWait).toBe(0);
+  // 先読み側（crossfadeAudio）は待機開始時点で一時停止され、位置が42のまま固定されている
+  // （2026-09-13、Codexレビュー指摘：P1「Freeze the preview during the catch-up seek」。
+  // 一時停止しないと、seeked待ちに要した時間ぶん先読み側がさらに進んでしまい、待機完了後に
+  // 主audio要素をこの時点のfinalPosition〈もう古い値〉でvolume=1にする際、ユーザーが直前まで
+  // 聞いていた位置より手前へ後退する＝#446で対応したはずのフレーズリピート回帰の再導入になる）。
+  const previewPauseCountDuringWait = await page.evaluate(() => (window as unknown as { __previewPauseCount: number }).__previewPauseCount);
+  expect(previewPauseCountDuringWait).toBeGreaterThan(0);
 
   // seekedイベント（実ブラウザの内部デコードパイプライン再同期の完了通知）が発火すると、
   // 初めてvolumeが1へ戻る。
