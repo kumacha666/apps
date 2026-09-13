@@ -42,10 +42,12 @@ import { formatSeekTime, isSeekableDuration } from "./seekBar";
 import { shouldResumeExternalPlayback } from "./externalPlayback";
 import {
   CROSSFADE_DURATION_OPTIONS_SEC,
+  CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS,
+  CROSSFADE_HANDOFF_CATCHUP_MAX_ATTEMPTS,
+  CROSSFADE_HANDOFF_CATCHUP_TOLERANCE_SEC,
   CROSSFADE_PREPARE_LEAD_MS,
   CROSSFADE_PREVIEW_START_TIMEOUT_MS,
   DEFAULT_CROSSFADE_DURATION_SEC,
-  bufferedCatchUpPosition,
   crossfadeDurationMsForSeconds,
   isCrossfadeDurationSec,
   runCrossfade,
@@ -483,10 +485,15 @@ let crossfadePreviewReady = false;
 // クロスフェード自体の長さは変えない）。
 let crossfadeDurationMsActive = crossfadeDurationMsForSeconds(DEFAULT_CROSSFADE_DURATION_SEC);
 // 進行中のクロスフェードが本来先読みしていたfileId（2026-09-10、Codexレビュー指摘：P1）。
-// finishCrossfadeHandoff()が、実際にキューがコミットしたfileIdとこれを比較し、一致する場合
-// だけcrossfadeAudioの再生位置を主audio要素へ同期する（フォールバック等で異なる曲が
-// コミットされた場合、先読み位置を誤って適用すると冒頭をスキップ・曲を丸ごと飛ばしてしまう）。
+// beginCrossfadeRamp()がハンドオフ先として使う（advanceToPreviewedFile()に渡す）。
 let crossfadePreviewedFileId: string | null = null;
+// finishCrossfadeHandoff()自身が、無音のうちに主audio要素を先読み側の位置へ追いつかせる
+// 再シークの「seeked」待ち（下記関数コメント参照）の最中かどうか（2026-09-12）。
+// finishCrossfadeHandoff()は複数の経路（通常のハンドオフ成功・Drive 401後の認証継続）から
+// 独立に呼ばれうるため、`crossfading`自体は待機中もtrueのまま保つ必要がある（cancelCrossfade
+// IfActive()が本物の割り込みを正しく検知・後始末できるように）。そのため二重実行の防止には
+// `crossfading`とは別のこのフラグを使う。
+let crossfadeFinishing = false;
 // クロスフェード開始時点の退場側（主audio要素側）のfileId（2026-09-10、ChatGPTレビュー
 // 指摘：P1「Restore the outgoing source when cancelling a committed handoff」）。ハンドオフが
 // `audio.src`を次曲へ既にコミット済み（ただしnative play()の解決待ち中）のタイミングで
@@ -633,6 +640,20 @@ function cancelCrossfadeIfActive(): { fileId: string; position: number } | null 
   return outgoingRestore;
 }
 
+// audioの「seeked」イベント（currentTime書き換えの結果、実際に新しい位置で再生可能になった
+// 通知）を待つ。timeoutMs以内に発火しなければ黙って諦める（呼び出し元はその時点のcurrentTime
+// のまま進める——致命的ではないため、失敗として扱わずvoidを返す）。
+function waitForSeeked(audio: HTMLAudioElement, timeoutMs: number): Promise<void> {
+  const seeked = new Promise<void>((resolve) => {
+    const onSeeked = () => {
+      audio.removeEventListener("seeked", onSeeked);
+      resolve();
+    };
+    audio.addEventListener("seeked", onSeeked);
+  });
+  return withTimeout(seeked, timeoutMs, "seek timeout").catch(() => {});
+}
+
 // クロスフェードのハンドオフが実際に成功した時点の共通の後始末（2026-09-10、Codexレビュー
 // 指摘：P1）。以前はmaybeStartCrossfade()自身のattemptHandoff()が解決した時にしか呼ばれて
 // いなかったが、Drive 401後の認証継続（queue.resume()、registerQueuePlaybackContinuation()
@@ -642,23 +663,86 @@ function cancelCrossfadeIfActive(): { fileId: string; position: number } | null 
 // 実際には再生成功している主audio要素はvolume 0のまま無音になってしまっていた（「先読み再生が
 // 終わると無音になる」）。crossfading自体をガードに使うため、通常経路・認証継続経路の
 // どちらから先に呼ばれても、後から呼ばれた方は早期returnし安全（二重の後始末にならない）。
-// committedFileIdがcrossfadePreviewedFileId（本来先読みしていた曲）と一致する場合のみ
-// crossfadeAudioの再生位置を同期する（フォールバック等で異なる曲がコミットされた場合、
-// 先読み位置を誤って適用すると冒頭をスキップ・曲を丸ごと飛ばしてしまうため）。
-function finishCrossfadeHandoff(committedFileId: string | null): void {
-  if (!crossfading) return;
+//
+// 2026-09-12、実機フィードバックで「まだ音飛びが直っていない」と判明し、いったん位置合わせ
+// 用の再シーク自体を撤去したが（バッファ範囲かどうかに関わらず、シークバー/ステータスが
+// 切り替わる瞬間＝この関数がaudioPlayer.currentTimeを書き換えた直後に毎回音飛びしていたため）、
+// ChatGPTレビュー指摘（P1）で「削除すると、handoff待機時間ぶん曲が巻き戻って同じ区間を
+// 聞き直すことになる」（#446で一度対応したはずの問題の再導入）と指摘された。**再シーク
+// そのものではなく、再シーク直後に無条件でvolumeを1へ上げていたタイミングが問題**という
+// 見立てに基づき、「主audio要素がまだvolume 0（無音）のうちに先読み側の現在位置へ追いつく
+// 再シークを行い、ブラウザの`seeked`イベント（内部デコードパイプラインの再同期が実際に
+// 完了した通知）を待ってから、初めてvolumeを1へ上げる」設計に変更した。無音の間に再シークの
+// コストを吸収し、位置ずれも残さない。
+async function finishCrossfadeHandoff(): Promise<void> {
+  // crossfadeFinishingは二重実行防止専用（上記変数宣言コメント参照）。crossfading自体は
+  // 下のawait中もtrueのまま維持し、cancelCrossfadeIfActive()が本物の割り込み（一時停止・
+  // シーク・次へ等）を正しく検知・後始末できるようにする。
+  if (!crossfading || crossfadeFinishing) return;
+  crossfadeFinishing = true;
+  const myGeneration = crossfadeGeneration;
   const audioPlayer = el<HTMLAudioElement>("audio-player");
   const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
-  if (committedFileId !== null && committedFileId === crossfadePreviewedFileId) {
-    const finalPosition = crossfadeAudio.currentTime;
-    // 新しいRange要求を伴う（＝音飛びする）再シークは一切行わず、既にバッファ済みの範囲内で
-    // 目標位置（finalPosition）へできるだけ追いつく（2026-09-11、ChatGPTレビュー指摘を受けて
-    // 再設計。crossfade.tsのbufferedCatchUpPosition定義コメント参照）。
-    if (Number.isFinite(finalPosition)) {
-      const target = bufferedCatchUpPosition(audioPlayer.buffered, audioPlayer.currentTime, finalPosition);
-      if (target !== null) audioPlayer.currentTime = target;
+  // 2026-09-13、Codexレビュー指摘：P1「Apply the preview position only to the matching
+  // track」。先読み対象自体が待機中に除外・削除され、advanceToPreviewedFile()が別の曲へ
+  // フォールバックしていた場合、crossfadeAudio.currentTimeはもう無関係な曲（先読みして
+  // いた元の曲）の位置のため、フォールバック先（先頭から再生されるべき）へ適用してはならない。
+  // crossfadePreviewedFileId（この時点ではまだ末尾のリセット前）と、実際にコミットされた
+  // fileId（queue.currentPlayingFileId()）が一致する場合だけ追いつく。
+  const previewedFileId = crossfadePreviewedFileId;
+  const committedFileId = queue?.currentPlayingFileId() ?? null;
+  if (previewedFileId !== null && committedFileId === previewedFileId) {
+    // 2026-09-13、続けてCodexレビュー指摘：P1「Keep an audible source running until the
+    // seek completes」。先読み側（crossfadeAudio）を早期に一時停止すると、主audio要素が
+    // まだvolume 0のこの待機中は完全な無音区間になってしまう（PR #443で解消したはずの
+    // 無音区間の再導入）。先読み側は最後まで鳴らし続けたまま、追いつくべき目標位置を都度
+    // 再確認しながら再シークを繰り返し、待機中にさらに進んだ分を後続のイテレーションで
+    // 吸収する。
+    //
+    // 続けてCodexレビュー指摘：P1「Verify convergence after the final catch-up seek」。
+    // 固定の試行回数（例：3回）で打ち切ると、各回の`seeked`待ちが（ネットワーク事情等で）
+    // 想定より長引く環境では、最後の待機中に先読み側がさらに進んだ分を一切検証せずに
+    // 打ち切ってしまい、合計の残留ずれが単発の再シーク方式（最大1秒）よりむしろ悪化しうる
+    // （3回×最大1秒=最大3秒）。試行回数ではなく、この追いつき処理全体にかけられる合計時間
+    // 予算（`CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS`、単発方式と同じ値を使い回す）で打ち切る
+    // よう変更し、各回の`waitForSeeked`にはその時点の残り予算だけを渡す（合計の無音待機
+    // コストが単発方式の最大値を超えないことを保証する）。試行回数自体にも安全弁として
+    // 上限（`CROSSFADE_HANDOFF_CATCHUP_MAX_ATTEMPTS`）を設ける（`seeked`が想定外に速く
+    // 連続して発火し続けるような病的なケースでも無限ループにしないため）。
+    const catchUpDeadline = Date.now() + CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS;
+    for (
+      let attempt = 0;
+      attempt < CROSSFADE_HANDOFF_CATCHUP_MAX_ATTEMPTS && Date.now() < catchUpDeadline;
+      attempt += 1
+    ) {
+      const target = crossfadeAudio.currentTime;
+      if (!Number.isFinite(target) || target - audioPlayer.currentTime <= CROSSFADE_HANDOFF_CATCHUP_TOLERANCE_SEC) break;
+      audioPlayer.currentTime = target;
+      const remainingBudgetMs = Math.max(0, catchUpDeadline - Date.now());
+      await waitForSeeked(audioPlayer, remainingBudgetMs);
+      if (crossfadeGeneration !== myGeneration) break;
     }
+    // 2026-09-13、ChatGPTレビュー指摘：P1「収束できなかった場合に、待たない最後の再seekを
+    // 追加しない」。一度は「ループが収束せず終了した場合、最後にもう一度〈待たずに〉最新位置
+    // へ書き込む」対応（Codexレビュー指摘：P1「Recheck the offset after the final catch-up
+    // seek」）を入れたが、これはこのPRが実機録画のffmpeg解析で切り分けた根本原因——
+    // `currentTime`の書き換え直後にvolumeを上げるとブラウザの内部デコード再同期が可聴グリッチ
+    // として露出する——をfallback経路で再導入してしまう指摘を受け撤回した。収束できなかった
+    // 場合は、ループが最後に書き込んだ位置（`seeked`未確認のままタイムアウトで諦めた場合を
+    // 含む、既存の「seekedイベントが発火しなくてもタイムアウトでvolumeが1へ戻る」テストが
+    // 検証している既知の許容挙動）をそのまま使う。位置ずれ（最大でも予算1回分、通常の
+    // `seeked`遅延程度）を許容する方が、このPRの目的（音飛びを出さない）には一貫している。
   }
+  crossfadeFinishing = false;
+  if (crossfadeGeneration !== myGeneration) {
+    // 待機中に本物の割り込み（cancelCrossfadeIfActive()）が発生し、既にそちらが後始末
+    // （volume復元・crossfadeAudioのリセット等）を済ませている。ここでは何もしない
+    // （二重の後始末・割り込み後の誤ったvolume=1上書きを防ぐ）。
+    return;
+  }
+  // ここまで先読み側は一度も一時停止していない（鳴らし続けたまま）。ここで初めて一時停止し
+  // volumeを入れ替える——以後、主audio要素側には追加のcurrentTime書き換えを行わないため、
+  // volumeを上げる瞬間に新たなシークが重なる（そもそもの音飛びの原因だった）ことはない。
   audioPlayer.volume = 1;
   crossfading = false;
   crossfadePreviewedFileId = null;
@@ -912,15 +996,15 @@ async function beginCrossfadeRamp(): Promise<void> {
     // （認証待ちの場合、Drive 401後の認証継続がこのattemptHandoff()自身の待機より先に成功
     // すると、finishCrossfadeHandoff()側の`if (!crossfading) return;`によりこちらは早期return
     // する既存のガードが働く。2026-09-10、Codexレビュー指摘：P1）。
-    finishCrossfadeHandoff(null);
+    await finishCrossfadeHandoff();
     return;
   }
 
   // ハンドオフ成功：主audio要素は既にplay()を解決し（volumeはランプ完了時点の0のまま無音で）
-  // 再生を始めている。第二audio要素はこの間も鳴り続けていたため、実際に切り替える直前の
-  // 位置へ主audio要素を合わせてから、無音のうちに音源を入れ替える（この最終合わせによる
-  // 短い再シークは残るが、接続確立そのものを待つ無音区間よりはるかに短い）。
-  finishCrossfadeHandoff(queue?.currentPlayingFileId() ?? null);
+  // 再生を始めている。第二audio要素はこの間も鳴り続けていたため、ここでvolumeを入れ替え、
+  // 無音のうちに音源を切り替える（2026-09-12、先読み側への追いつきをvolume=1の直前ではなく
+  // 無音のうちに行うよう再設計済み。finishCrossfadeHandoff()コメント参照）。
+  await finishCrossfadeHandoff();
 }
 // 再生/前へ/次へ/シャッフルはいずれも「再生リストに曲がある間だけ使える」操作のため、有効/無効を
 // まとめて切り替える（開発体制#39④UI-4、シャッフル追加時に既存2ボタンと同じ条件のまま揃える）。
@@ -1696,7 +1780,7 @@ function registerQueuePlaybackContinuation(fileId: string, currentPlayback: Play
       // 二重呼び出しに対して安全（クロスフェード以外のsuppressTransitionCancel:falseな
       // 通常の継続では常にno-op）。
       if (suppressTransitionCancel) {
-        finishCrossfadeHandoff(started ? (queue?.currentPlayingFileId() ?? null) : null);
+        await finishCrossfadeHandoff();
         if (!started) {
           // queue.resume()が除外等でfalseを返した場合、新しいplay()を一度も呼んでいない
           // （queue.tsのresume()参照）ため、元のattemptHandoff()自身が呼んだネイティブ
@@ -2807,6 +2891,7 @@ if (import.meta.env.VITE_E2E === "true") {
         getPlaylistsCommitCount: () => number;
         getLastExternalPlaybackPosition: () => number | null;
         isManualTransitionInFlight: () => boolean;
+        isCrossfadeFinishing: () => boolean;
       };
     }
   ).__e2e = {
@@ -2825,5 +2910,9 @@ if (import.meta.env.VITE_E2E === "true") {
     // StartCrossfade()自体は既存のユニットテストでカバー済みのため、main.ts側のガードの
     // 増減タイミングだけをこのフックで検証する）。
     isManualTransitionInFlight: () => manualTransitionCount > 0,
+    // finishCrossfadeHandoff()が「無音のうちに先読み側の位置へ追いつく再シーク」の`seeked`
+    // 待ちの最中かどうかを直接検証するためのフック（2026-09-12、ChatGPTレビュー指摘：P1。
+    // この待機・二重実行防止ガード自体はmain.ts内に閉じておりユニットテスト対象外のため）。
+    isCrossfadeFinishing: () => crossfadeFinishing,
   };
 }
