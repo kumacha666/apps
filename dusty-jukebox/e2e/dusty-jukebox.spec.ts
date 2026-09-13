@@ -2323,22 +2323,28 @@ test("クロスフェードのハンドオフ完了時、主audio要素は無音
   await expect.poll(() => page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime)).toBe(42);
   const volumeDuringSeekWait = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
   expect(volumeDuringSeekWait).toBe(0);
-  // 先読み側（crossfadeAudio）は待機開始時点で一時停止され、位置が42のまま固定されている
-  // （2026-09-13、Codexレビュー指摘：P1「Freeze the preview during the catch-up seek」。
-  // 一時停止しないと、seeked待ちに要した時間ぶん先読み側がさらに進んでしまい、待機完了後に
-  // 主audio要素をこの時点のfinalPosition〈もう古い値〉でvolume=1にする際、ユーザーが直前まで
-  // 聞いていた位置より手前へ後退する＝#446で対応したはずのフレーズリピート回帰の再導入になる）。
+  // この待機の間、先読み側（crossfadeAudio）はまだ一時停止されていない（2026-09-13、
+  // Codexレビュー指摘：P1「Keep an audible source running until the seek completes」。
+  // 早期に一時停止すると、主audio要素がまだ無音のこの待機中は完全な無音区間になってしまう
+  // ため、先読み側は最後まで鳴らし続けたまま追いつく設計にした）。
   const previewPauseCountDuringWait = await page.evaluate(() => (window as unknown as { __previewPauseCount: number }).__previewPauseCount);
-  expect(previewPauseCountDuringWait).toBeGreaterThan(0);
+  expect(previewPauseCountDuringWait).toBe(0);
 
   // seekedイベント（実ブラウザの内部デコードパイプライン再同期の完了通知）が発火すると、
-  // 初めてvolumeが1へ戻る。
+  // 目標位置（42）へ既に追いついている（差が許容誤差以内）ため追加の再シークは行わず、
+  // このタイミングで初めて先読み側を一時停止しvolumeが1へ戻る。
   await page.evaluate(() => {
     document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("seeked"));
   });
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
   const volumeAfterSeeked = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
   expect(volumeAfterSeeked).toBe(1);
+  // 先読み側は追いつき確定後（＝これ以上主audio要素をシークする必要がないと判断した後）に
+  // 初めて一時停止される（2026-09-13、Codexレビュー指摘：P1「Apply the preview position
+  // only to the matching track」に対応した再設計。先読み側を鳴らし続ける設計と両立させる
+  // ため、シーク回数を都度再確認する収束ループへ変更した詳細はcrossfade.tsのコメント参照）。
+  const previewPauseCountAfterSeeked = await page.evaluate(() => (window as unknown as { __previewPauseCount: number }).__previewPauseCount);
+  expect(previewPauseCountAfterSeeked).toBeGreaterThan(0);
 });
 
 // seekedイベントが（実ブラウザの異常等で）一切発火しなかった場合でも、CROSSFADE_HANDOFF_
@@ -2679,6 +2685,14 @@ test("先読み対象が待機中に除外されフォールバックした場�
   // 位置まで進んでいることにする。
   await page.evaluate(() => {
     document.querySelector<HTMLAudioElement>("#audio-player-crossfade")!.currentTime = 150;
+  });
+  // 主audio要素の初期位置を明示的に0へ模擬する（このE2Eモック環境ではsrc代入がcurrentTimeを
+  // 実ブラウザのように0へリセットしないことがあるため、既存の複数のクロスフェードE2Eと同じ
+  // 「耐久性のため」の対策。ここで明示的にリセットしないと、先読み側の150秒より前の値が
+  // 偶然残ってしまい、finishCrossfadeHandoff()の「既に追いついている」早期break分岐を
+  // 意図せず通ってしまい、これから検証したい識別チェック自体を経由しなくなる）。
+  await page.evaluate(() => {
+    document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime = 0;
   });
 
   // 先読み対象自体をチェックボックスで除外する（フォールバックを引き起こす）。

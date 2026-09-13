@@ -43,6 +43,8 @@ import { shouldResumeExternalPlayback } from "./externalPlayback";
 import {
   CROSSFADE_DURATION_OPTIONS_SEC,
   CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS,
+  CROSSFADE_HANDOFF_CATCHUP_MAX_ATTEMPTS,
+  CROSSFADE_HANDOFF_CATCHUP_TOLERANCE_SEC,
   CROSSFADE_PREPARE_LEAD_MS,
   CROSSFADE_PREVIEW_START_TIMEOUT_MS,
   DEFAULT_CROSSFADE_DURATION_SEC,
@@ -681,29 +683,39 @@ async function finishCrossfadeHandoff(): Promise<void> {
   const myGeneration = crossfadeGeneration;
   const audioPlayer = el<HTMLAudioElement>("audio-player");
   const crossfadeAudio = el<HTMLAudioElement>("audio-player-crossfade");
-  const finalPosition = crossfadeAudio.currentTime;
-  // 先読み側が既に追い越している場合だけ、無音のうちに追いつく（後退方向のシークは行わない、
-  // 既に追いついている・先読み側が止まっている等の場合は無音区間を作るだけで意味が無いため）。
-  if (Number.isFinite(finalPosition) && finalPosition > audioPlayer.currentTime) {
-    // 2026-09-13、Codexレビュー指摘：P1「Freeze the preview during the catch-up seek」。
-    // 先読み側（crossfadeAudio）を止めずに鳴らし続けたまま主audio要素の`seeked`を待つと、
-    // 待機に要した時間ぶん先読み側がさらに進んでしまい、待機完了後に主audio要素を
-    // finalPosition（待機開始時点のスナップショット、既に古い）でvolume=1にする際、
-    // ユーザーが直前まで聞いていた位置より手前へ後退してしまう（この待機自体は
-    // タイムアウトで最大`CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS`まで延びうるため、#446で
-    // 対応したはずの「同じ区間を聞き直す」フレーズリピート回帰と同種の問題を再導入しうる）。
-    // finalPositionを確定させるこの時点で先読み側を止め、位置を固定する。
-    crossfadeAudio.pause();
-    audioPlayer.currentTime = finalPosition;
-    await waitForSeeked(audioPlayer, CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS);
+  // 2026-09-13、Codexレビュー指摘：P1「Apply the preview position only to the matching
+  // track」。先読み対象自体が待機中に除外・削除され、advanceToPreviewedFile()が別の曲へ
+  // フォールバックしていた場合、crossfadeAudio.currentTimeはもう無関係な曲（先読みして
+  // いた元の曲）の位置のため、フォールバック先（先頭から再生されるべき）へ適用してはならない。
+  // crossfadePreviewedFileId（この時点ではまだ末尾のリセット前）と、実際にコミットされた
+  // fileId（queue.currentPlayingFileId()）が一致する場合だけ追いつく。
+  const previewedFileId = crossfadePreviewedFileId;
+  const committedFileId = queue?.currentPlayingFileId() ?? null;
+  if (previewedFileId !== null && committedFileId === previewedFileId) {
+    // 2026-09-13、続けてCodexレビュー指摘：P1「Keep an audible source running until the
+    // seek completes」。先読み側（crossfadeAudio）を早期に一時停止すると、主audio要素が
+    // まだvolume 0のこの待機中は完全な無音区間になってしまう（PR #443で解消したはずの
+    // 無音区間の再導入）。先読み側は最後まで鳴らし続けたまま、追いつくべき目標位置を都度
+    // 再確認しながら再シークを繰り返し、待機中にさらに進んだ分を後続のイテレーションで
+    // 吸収する（無限に繰り返さないよう試行回数の上限・収束とみなす許容誤差を設ける）。
+    for (let attempt = 0; attempt < CROSSFADE_HANDOFF_CATCHUP_MAX_ATTEMPTS; attempt += 1) {
+      const target = crossfadeAudio.currentTime;
+      if (!Number.isFinite(target) || target - audioPlayer.currentTime <= CROSSFADE_HANDOFF_CATCHUP_TOLERANCE_SEC) break;
+      audioPlayer.currentTime = target;
+      await waitForSeeked(audioPlayer, CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS);
+      if (crossfadeGeneration !== myGeneration) break;
+    }
   }
   crossfadeFinishing = false;
   if (crossfadeGeneration !== myGeneration) {
-    // 上の待機中に本物の割り込み（cancelCrossfadeIfActive()）が発生し、既にそちらが後始末
+    // 待機中に本物の割り込み（cancelCrossfadeIfActive()）が発生し、既にそちらが後始末
     // （volume復元・crossfadeAudioのリセット等）を済ませている。ここでは何もしない
     // （二重の後始末・割り込み後の誤ったvolume=1上書きを防ぐ）。
     return;
   }
+  // ここまで先読み側は一度も一時停止していない（鳴らし続けたまま）。ここで初めて一時停止し
+  // volumeを入れ替える——以後、主audio要素側には追加のcurrentTime書き換えを行わないため、
+  // volumeを上げる瞬間に新たなシークが重なる（そもそもの音飛びの原因だった）ことはない。
   audioPlayer.volume = 1;
   crossfading = false;
   crossfadePreviewedFileId = null;

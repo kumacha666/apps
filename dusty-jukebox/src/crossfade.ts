@@ -70,6 +70,22 @@ export const CROSSFADE_PREVIEW_START_TIMEOUT_MS = import.meta.env.VITE_E2E === "
 // 諦めた方がユーザー体験上望ましいため。
 export const CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS = import.meta.env.VITE_E2E === "true" ? 100 : 1000;
 
+// 2026-09-13、Codexレビュー指摘（P1×2）を受けた再設計：①「Keep an audible source running
+// until the seek completes」——先読み側（crossfadeAudio）を早期に一時停止すると、主audio要素が
+// まだ無音のこの待機中は完全な無音区間になってしまう（一時対応した「一時停止して位置を凍結する」
+// 設計自体が、PR #443で解消したはずの無音区間を再導入していた）。②「Freeze the preview at the
+// snapshot or otherwise account for its elapsed time」——一方、先読み側を鳴らし続けたまま単発の
+// 再シークだけで済ませると、待機に要した時間ぶん先読み側がさらに進んでしまい、位置がずれる
+// （#446のフレーズリピート回帰の再導入）。両立させるため、先読み側は最後まで鳴らし続けたまま
+// （＝①を満たす）、追いつくべき目標位置を都度再確認しながら再シークを複数回繰り返し、待機中の
+// 前進分を後続のイテレーションで吸収する（＝②を満たす）方式にした。無限に繰り返さないよう
+// 試行回数の上限（`CROSSFADE_HANDOFF_CATCHUP_MAX_ATTEMPTS`）と、十分収束したとみなす許容誤差
+// （`CROSSFADE_HANDOFF_CATCHUP_TOLERANCE_SEC`）を設ける。最後のイテレーション後は追加の
+// シークを行わずvolumeを1へ進めるため、音量を上げる瞬間に新たな`currentTime`書き換えが
+// 起きることはない（=これがそもそもの音飛びの原因だったため、ここが崩れると再発する）。
+export const CROSSFADE_HANDOFF_CATCHUP_MAX_ATTEMPTS = 3;
+export const CROSSFADE_HANDOFF_CATCHUP_TOLERANCE_SEC = 0.05;
+
 // 進行度（0=開始直後、1=完了）に対する退場側/入場側それぞれの音量。単純な線形（合計は常に1）。
 export function crossfadeVolumes(progress: number): { outgoing: number; incoming: number } {
   const p = Math.min(1, Math.max(0, progress));
