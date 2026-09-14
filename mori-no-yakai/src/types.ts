@@ -29,6 +29,21 @@ export interface CenterCardsData {
   cards: RoleId[];
 }
 
+/**
+ * ふくろう（占い師）が夜に見た内容のスナップショット。実プレイで「自分が何を見たか
+ * 忘れてしまう」ケースが報告されたため、見た瞬間の役職を保存し、以後discuss/vote/result
+ * でも本人にだけ表示し続けられるようにする（2026-09-14）。currentRoleへの参照だけを
+ * 保存すると、その後の交換（きつね）で値が変わりうるため、見た瞬間の役職名を直接保存する。
+ */
+export interface SeerReveal {
+  kind: "player" | "center" | "skip";
+  /** kind==="player"のときの対象メンバーID・名前（表示用に見た瞬間の名前もスナップショット）。 */
+  targetId?: string;
+  targetName?: string;
+  /** kind==="player"なら長さ1、kind==="center"なら長さ2。kind==="skip"では無し。 */
+  roles?: RoleId[];
+}
+
 export interface Member {
   id: string;
   name: string;
@@ -56,6 +71,8 @@ export interface Member {
   nightReadyStep?: number;
   /** 議論フェーズで「つぎへ」をタップしたときのroundNumber。全員が現在のroundNumberに追いつくと早期に次へ進む。 */
   discussReadyRound?: number;
+  /** ふくろうが夜に見た内容のスナップショット。SeerReveal参照。 */
+  seerReveal?: SeerReveal;
 }
 
 export interface RoomState {

@@ -1,6 +1,7 @@
 import type { AppContext } from "./context";
-import { participants, myKnownRoleBanner } from "./context";
+import { participants, myKnownRoleBanner, mySeerRevealBanner } from "./context";
 import { submitVote, maybeCloseVoteEarly } from "../roomSync";
+import { renderForceResetButton, wireForceResetButton } from "./hostControls";
 
 export function render(container: HTMLElement, ctx: AppContext): void {
   const self = ctx.members[ctx.memberId];
@@ -12,14 +13,22 @@ export function render(container: HTMLElement, ctx: AppContext): void {
   if (!self?.originalRole) {
     container.innerHTML = `
       <h2>🗳️ 投票</h2>
+      <button id="btn-leave-room" class="btn-link">← トップに戻る</button>
       <p class="waiting-text">このゲームには参加していません。結果を待ちましょう。</p>
+      ${renderForceResetButton(ctx)}
     `;
+    container.querySelector("#btn-leave-room")?.addEventListener("click", () => {
+      ctx.requestLeaveRoom();
+    });
+    wireForceResetButton(container, ctx);
     return;
   }
 
   container.innerHTML = `
     <h2>🗳️ 投票</h2>
+    <button id="btn-leave-room" class="btn-link">← トップに戻る</button>
     ${myKnownRoleBanner(ctx)}
+    ${mySeerRevealBanner(ctx)}
     <div class="vote-timer">${remainingSec}秒</div>
     <p class="hint-text">あやしいと思う相手に1人投票しよう（${votedCount}/${dealt.length}人 投票済み）</p>
     <p class="hint-text">誰も2票以上を集めなければ、誰も脱落しません。</p>
@@ -45,6 +54,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
         <span class="hint-text">上の森陣営の条件を満たせなければ勝利（例: おおかみが生き残る。場におおかみがいない場合は子狼以外の誰かが脱落する）。</span>
       </li>
     </ul>
+    ${renderForceResetButton(ctx)}
   `;
 
   container.querySelectorAll<HTMLButtonElement>("[data-vote-target]").forEach((btn) => {
@@ -54,6 +64,11 @@ export function render(container: HTMLElement, ctx: AppContext): void {
       await maybeCloseVoteEarly(ctx.roomId);
     });
   });
+
+  container.querySelector("#btn-leave-room")?.addEventListener("click", () => {
+    ctx.requestLeaveRoom();
+  });
+  wireForceResetButton(container, ctx);
 }
 
 function escapeHtml(text: string): string {

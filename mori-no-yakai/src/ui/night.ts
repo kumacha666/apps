@@ -1,10 +1,13 @@
 import type { AppContext } from "./context";
-import { participants, myKnownRoleBanner } from "./context";
+import { participants, myKnownRoleBanner, mySeerRevealBanner } from "./context";
 import { ROLE_META } from "../roles";
-import { robberSwap, markNightReady } from "../roomSync";
+import { robberSwap, markNightReady, recordSeerReveal } from "../roomSync";
+import { renderForceResetButton, wireForceResetButton } from "./hostControls";
 import type { RoleId } from "../types";
 
 interface NightUiState {
+  roomId: string;
+  memberId: string;
   step: number;
   round: number;
   readyTapped?: boolean;
@@ -20,7 +23,7 @@ interface NightUiState {
   centerCardsSnapshot?: RoleId[];
 }
 
-let uiState: NightUiState = { step: -1, round: -1 };
+let uiState: NightUiState = { roomId: "", memberId: "", step: -1, round: -1 };
 
 export function render(container: HTMLElement, ctx: AppContext): void {
   const stepIndex = ctx.state.nightStepIndex;
@@ -28,9 +31,18 @@ export function render(container: HTMLElement, ctx: AppContext): void {
   // stepIndexだけを見て比較すると、対局を跨いで両方とも最初のステップが0の場合に
   // リセットされず、前回の対局でタップ済みのローカル状態が残ってしまう（サーバー側は
   // startGame()でnightReadyStepを消しているのにボタンが押せないままになる）ため、
-  // roundNumberも合わせて比較する。
-  if (uiState.step !== stepIndex || uiState.round !== roundNumber) {
-    uiState = { step: stepIndex, round: roundNumber };
+  // roundNumberも合わせて比較する。加えてroomId/memberIdも比較する。night/discuss/vote
+  // 画面に「トップに戻る」を追加したことで、ページをリロードせず別の部屋（または
+  // 同じ部屋への入り直しで新しいmemberId）へ移れるようになったため、roundNumber等が
+  // たまたま一致する別の部屋のuiStateを引き継いでしまうと、centerCardsSnapshotに
+  // 前の部屋の中央カードが残るなど誤表示の原因になる（2026-09-14、レビュー指摘）。
+  if (
+    uiState.roomId !== ctx.roomId ||
+    uiState.memberId !== ctx.memberId ||
+    uiState.step !== stepIndex ||
+    uiState.round !== roundNumber
+  ) {
+    uiState = { roomId: ctx.roomId, memberId: ctx.memberId, step: stepIndex, round: roundNumber };
   }
   // 一度受信できたcenterCardsはラウンド中は不変なので、初回受信時点でスナップショットを
   // 固定する。以降の描画では常にこのスナップショットを使い、centerCardsリスナーの
@@ -49,9 +61,16 @@ export function render(container: HTMLElement, ctx: AppContext): void {
   // 議論開始後に役職が変わってしまう恐れがあるため、交換の完了まではボタンを無効化する。
   const readyDisabled = alreadyReady || uiState.robberPending === true;
 
+  // ふくろう自身の番（currentRoleId==="seer"）は本文側で同じ内容を表示するため、
+  // 二重表示を避けてここでは出さない。それ以外のステップ（自分の番の後）では
+  // 「自分が何を見たか忘れる」ことがないよう常に見えるようにする（2026-09-14）。
+  const seerMemo = currentRoleId === "seer" ? "" : mySeerRevealBanner(ctx);
+
   const header = `
     <h2>🌙 夜がふけていく…</h2>
+    <button id="btn-leave-room" class="btn-link">← トップに戻る</button>
     ${myKnownRoleBanner(ctx)}
+    ${seerMemo}
     <div class="night-timer">${remainingSec}秒</div>
   `;
 
@@ -80,6 +99,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     </button>
     <p class="hint-text">準備完了 ${readyCount}/${dealt.length}人</p>
     <p class="hint-text">全員がタップすると次に進みます（役職と関係なく全員タップしてください）</p>
+    ${renderForceResetButton(ctx)}
   `;
 
   if (isMyTurn && !alreadyReady) wireActions(container, currentRoleId, ctx);
@@ -90,6 +110,11 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     render(container, ctx);
     void markNightReady(ctx.roomId, ctx.memberId, stepIndex);
   });
+
+  container.querySelector("#btn-leave-room")?.addEventListener("click", () => {
+    ctx.requestLeaveRoom();
+  });
+  wireForceResetButton(container, ctx);
 }
 
 /** 「つぎへ」タップ後の読み取り専用表示。すでに決めた結果があればそれを見せ、なければ何もしなかった旨を表示する。 */
@@ -103,7 +128,9 @@ function renderReadOnly(roleId: RoleId, ctx: AppContext): string {
     case "minion":
       return renderMinion(ctx);
     case "seer":
-      if (uiState.seerChoice) return renderSeer(ctx);
+      // ローカルのuiStateはこの夜フェーズ中にリロードすると消えてしまうため、
+      // RTDBに保存済みのseerRevealもフォールバックとして参照する（2026-09-14）。
+      if (uiState.seerChoice || ctx.members[ctx.memberId]?.seerReveal) return renderSeer(ctx);
       return `<p>${ROLE_META.seer.emoji} 何も見ませんでした。</p>`;
     case "robber":
       if (uiState.robberResult) return renderRobber(ctx);
@@ -188,6 +215,9 @@ function renderMinion(ctx: AppContext): string {
 function renderSeer(ctx: AppContext): string {
   const description = `<p class="role-description">${ROLE_META.seer.description}</p>`;
   const centerCards = uiState.centerCardsSnapshot ?? ctx.centerCards;
+  // RTDBに保存済みのseerRevealをフォールバックにする（ローカルuiStateはこの夜フェーズ中に
+  // リロードすると消えてしまうため、2026-09-14）。ローカルの選択が残っていればそちらを優先する。
+  const persisted = ctx.members[ctx.memberId]?.seerReveal;
 
   if (uiState.seerChoice === "player" && uiState.seerTargetId) {
     const target = ctx.members[uiState.seerTargetId];
@@ -201,6 +231,19 @@ function renderSeer(ctx: AppContext): string {
   }
   if (uiState.seerChoice === "skip") {
     return `<p>何も見ませんでした。</p>${description}`;
+  }
+  if (!uiState.seerChoice && persisted) {
+    if (persisted.kind === "player" && persisted.roles?.[0]) {
+      const meta = ROLE_META[persisted.roles[0]];
+      return `<p>${escapeHtml(persisted.targetName ?? "?")}の役職は ${meta.emoji} ${meta.name}</p>${description}`;
+    }
+    if (persisted.kind === "center" && persisted.roles) {
+      const text = persisted.roles.map((r) => `${ROLE_META[r].emoji} ${ROLE_META[r].name}`).join(" と ");
+      return `<p>中央カードは ${text}</p>${description}`;
+    }
+    if (persisted.kind === "skip") {
+      return `<p>何も見ませんでした。</p>${description}`;
+    }
   }
 
   const others = participants(ctx).filter((m) => m.id !== ctx.memberId);
@@ -262,20 +305,36 @@ function wireActions(container: HTMLElement, roleId: RoleId, ctx: AppContext): v
     container.querySelectorAll<HTMLButtonElement>("[data-seer-player]").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (uiState.seerChoice) return;
+        const targetId = btn.dataset.seerPlayer!;
         uiState.seerChoice = "player";
-        uiState.seerTargetId = btn.dataset.seerPlayer;
+        uiState.seerTargetId = targetId;
         render(container, ctx);
+        const target = ctx.members[targetId];
+        // ふくろうは夜順で先に行動するため、この時点のcurrentRoleはoriginalRoleと一致する
+        // （night.ts上部のrenderSeerと同じ前提。CLAUDE.md「knownRoleとcurrentRoleの区別」参照）
+        void recordSeerReveal(ctx.roomId, ctx.memberId, ctx.state.roundNumber, {
+          kind: "player",
+          targetId,
+          targetName: target.name,
+          roles: target.currentRole ? [target.currentRole] : undefined,
+        });
       });
     });
     container.querySelector("[data-seer-center]")?.addEventListener("click", () => {
       if (uiState.seerChoice) return;
       uiState.seerChoice = "center";
       render(container, ctx);
+      const centerCards = uiState.centerCardsSnapshot ?? ctx.centerCards;
+      void recordSeerReveal(ctx.roomId, ctx.memberId, ctx.state.roundNumber, {
+        kind: "center",
+        roles: centerCards.slice(0, 2),
+      });
     });
     container.querySelector("[data-seer-skip]")?.addEventListener("click", () => {
       if (uiState.seerChoice) return;
       uiState.seerChoice = "skip";
       render(container, ctx);
+      void recordSeerReveal(ctx.roomId, ctx.memberId, ctx.state.roundNumber, { kind: "skip" });
     });
   }
 
