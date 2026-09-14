@@ -7,6 +7,7 @@ class FakeAudio implements AudioElementLike {
   volume = 1;
   paused = true;
   ended = false;
+  duration = NaN;
   playCount = 0;
   pauseCount = 0;
   private errorListener: (() => void) | undefined;

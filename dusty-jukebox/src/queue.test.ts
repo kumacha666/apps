@@ -887,7 +887,7 @@ describe("PlaybackQueue", () => {
   test("setList()（別アルバム・プレイリスト選択）は、実PlaybackController内で進行中だったフェードもキャンセルし、フェード完了後に選ばれていない旧リストの曲が実際に鳴らないようにする（2026-09-08、Codexレビュー指摘：P1続き。activeFadeTokenの失効だけではキュー側の状態を正すのみで、PlaybackController内で進行中のフェード付きplay()自体はキャンセルされないため、フェード完了後に旧リストの曲のaudio.srcが設定されaudio.play()が実際に呼ばれてしまっていた）", async () => {
     vi.useFakeTimers();
     class IntegrationAudio implements AudioElementLike {
-      src = ""; currentTime = 0; volume = 1; paused = true; ended = false;
+      src = ""; currentTime = 0; volume = 1; paused = true; ended = false; duration = NaN;
       private listeners: Record<string, Array<() => void>> = {};
       async play(): Promise<void> { this.paused = false; this.ended = false; }
       pause(): void { this.paused = true; }

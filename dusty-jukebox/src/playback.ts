@@ -15,6 +15,9 @@ export interface AudioElementLike {
   currentTime: number;
   volume: number;
   paused: boolean;
+  // シークバー・クロスフェードのゲート判定（seekBar.ts/crossfade.ts）がactiveスロットの
+  // durationを読むために必要（2026-09-14〜、ロールスワップ再設計）。
+  duration: number;
   // 曲が最後まで再生され自然終了した場合にtrueになる（ネイティブブラウザの挙動）。
   // 自然終了時も`paused`はtrueになるため、明示的な一時停止と区別するために必要
   // （2026-09-08、Codexレビュー指摘：P1）。
