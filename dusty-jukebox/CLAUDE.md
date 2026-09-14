@@ -469,7 +469,13 @@ PR分割はChatGPT提案の3段階（①DualAudioPlayer基盤〈挙動は変え�
   - いずれも該当コードを一時的に無効化して実際に失敗することを確認済み（`playbackContinuation.test.ts`新規1ケース：上限超過で最も古い継続が追い出されること、`crossfade.test.ts`の既存テスト17にアサーション追加：タイムアウト後にリスナーが0件になること）。
   - 706 unit（705+1）+ 61 E2E、全green。`npx tsc --noEmit`クリーン。`npm run deploy`実行済み（`app.js` 286.45kB、SW v0.1.132→v0.1.133）。
 - **2026-09-14、PR #450マージ後、実機で動作確認済み**：ユーザーから「完璧です。治りました」と報告あり。role-swap化により#442〜#448のクリック/音飛びの根本原因（ハンドオフ機構が持っていたシーク・音量ジャンプという操作自体の発生）が構造的に排除されたことを実機で確認できた。
-- **PR3（旧ハンドオフコードの大規模削除）は未着手**：`PlaybackQueue.advanceToPreviewedFile()`・`suppressTransitionCancel`・`PlaybackInterruptedError`/`PlaybackPausedError`機構等、旧設計専用だった死んだコードの削除は、実機検証で問題が無いことを確認できたため**着手可能**になった（当初の計画通り、この実機確認がゲートだった）。次セッションでの着手候補。
+- **PR3（旧ハンドオフコードの削除）完了**：実装前に対象コードを実際に読み直したところ、PR2以前の計画メモ（本ファイルの過去の記述）が不正確だったことが判明した。`PlaybackInterruptedError`/`PlaybackPausedError`・`generationReasons`・`pendingFadeOriginalVolume`/`reclaimPendingFadeVolume()`・`activeFadeToken`は、クロスフェードのハンドオフ専用ではなく「手動スキップ/一時停止時のフェードアウト」機能（2026-09-08〜09、開発体制#42④の一部、クロスフェード〈2026-09-10〜〉より前に実装・現役）が今も使っている共通の作り込みのため、**削除しなかった**。実際に死んでいたのは以下の2点のみ（main.tsの既存コメントが「`suppressTransitionCancel`がtrueになる呼び出しは現時点で存在しない」と明示しており、grepでも呼び出し元が無いことを確認済み）：
+  1. `PlaybackQueue.advanceToPreviewedFile()`：role-swapでは先読み側が別audio要素で独立に再生済みのため、キュー側はcommitPreparedFile()で帳簿を更新するだけでよく、このメソッド（先読み曲への再生し直し＋除外時のフォールバック探索＋player.pause()呼び出し）は呼び出し元が無いまま残っていた。丸ごと削除。付随して、これが最後の呼び出し元だった`PlayerLike.pause?()`も削除。
+  2. `PlayOptions.suppressTransitionCancel`：role-swapでは`DualAudioPlayer`がonTransitionStart通知自体をactiveスロットだけへ絞り込むため、非アクティブ側（先読み）の`play()`が誤って自己キャンセルを起こす心配が無くなり不要になっていた。`PlaybackController.play()`・`PlayerLike`・`BeforeQueuePlay`型・`PlaybackQueue.playAndCommit()`/`resume()`・main.tsの`registerQueuePlaybackContinuation()`から除去。
+  - ユニットテスト：`advanceToPreviewedFile()`向けの9ケース（`queue.test.ts`）・`suppressTransitionCancel`向けの2ケース（`playback.test.ts`）・1ケース（`queue.test.ts`の`resume()`）を削除、残る`onBeforePlay`呼び出しのアサーション（`queue.test.ts`、streamIdのみの2引数）を更新。削除のみのPRのため新規disable-and-verifyは不要（既存の694テスト全green、削除前706テストから12件減、差分は上記削除分と一致）。
+  - 694 unit + 61 E2E、全green。`npx tsc --noEmit`クリーン。`npm run deploy`実行済み（`app.js` 285.86kB、SW v0.1.133→v0.1.134）。
+  - **既知の制限（未修正、上記「一時停止時のフェードアウト」節末尾に記載済みの既存の制限がそのまま残る）**：フェードを伴う手動スキップのDrive 401認証継続に関する狭いタイミング窓の制限は、このPRの対象外（クロスフェードとは無関係の、フェードアウト機能自体の既知の制限のため）。
+  - 実機での動作確認はまだ（次セッションでの確認事項。ただし削除のみのリファクタリングで挙動変更は無い想定のため、優先度は低い）。
 
 ## 絞り込み欄同士の連動（開発体制#43、2026-09-08）
 
