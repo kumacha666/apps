@@ -498,17 +498,37 @@ export class CrossfadeOrchestrator {
     return true;
   }
 
+  // ランプを安全に諦める（先読みがprepareリード中に既に自然終了していた、またはランプ開始前の
+  // seek完了が確認できなかった場合、2026-09-14〜、ChatGPTレビュー指摘）。discardPreview()で
+  // 継続を無効化しつつ状態をリセットし、ランプが変更したactive側volumeがあれば復元、非アクティブ
+  // 側を後始末する。outgoing（active）側が既に自然終了済みなら通常の自然終了フローへ委ねる。
+  private abandonRamp(wasActiveEnded: boolean): void {
+    this.crossfading = false;
+    this.restoreActiveVolumeIfNeeded();
+    this.discardPreview();
+    this.player.resetInactive();
+    if (wasActiveEnded) this.options.onFallbackToNaturalEnd?.();
+  }
+
   private async beginRamp(): Promise<void> {
     const nextFileId = this.previewedFileId;
     if (!nextFileId) {
       this.preparing = false;
       return;
     }
+    const activeAudio = this.player.activeAudioElement();
+    const inactiveAudio = this.player.inactiveAudioElement();
+    // 先読み側（次の曲）自体がprepareリード時間（最大CROSSFADE_PREPARE_LEAD_MS、本番5秒）より
+    // 短く、ランプ開始前に既に自然終了していた場合（2026-09-14〜、ChatGPTレビュー再指摘：P1）。
+    // 停止済み・無音のBをそのままpromotionすると、無音化した曲へ切り替わるだけで実質何も
+    // 再生されなくなる。安全側でこのクロスフェード自体を諦め、通常の自然終了フローに委ねる。
+    if (inactiveAudio.ended) {
+      this.abandonRamp(activeAudio.ended);
+      return;
+    }
     this.preparing = false;
     this.crossfading = true;
     const myGeneration = this.generation;
-    const activeAudio = this.player.activeAudioElement();
-    const inactiveAudio = this.player.inactiveAudioElement();
     // ランプ開始前のactive側volumeを記録する（2026-09-14〜、ChatGPTレビュー指摘：P1）。
     // cancel()・commit失敗でpromotionされずに終わった場合、ランプが変更したこの値を
     // 復元するために使う。
@@ -520,20 +540,26 @@ export class CrossfadeOrchestrator {
       // incoming.volumeが0のうちに、この巻き戻し（seek）が実際に完了するのを確認してから
       // ランプを開始する（2026-09-14〜、ChatGPTレビュー指摘：P2「ramp直前のcurrentTime=0と
       // 可聴化の間にseek完了保証がありません」）。seekedが届かない環境（実機のデコーダ次第・
-      // このアプリのE2Eモック環境）もあるため、タイムアウトしても致命的にはせず、その時点の
-      // currentTimeのままランプへ進む。
+      // このアプリのE2Eモック環境）もあるため、タイムアウトした場合はランプを開始せず、この
+      // クロスフェード自体を安全に諦める（2026-09-14〜、ChatGPTレビュー再指摘：P2続き。
+      // 「seek未settleのままincoming volume>0」の経路を残さないという設計目的に一貫させる）。
       const seeked = new Promise<void>((resolve) => {
         inactiveAudio.addEventListener("seeked", () => resolve());
       });
       inactiveAudio.currentTime = 0;
       const withTimeout = this.options.withTimeout ?? defaultWithTimeoutFn;
+      let settled = true;
       try {
         await withTimeout(seeked, this.options.seekTimeoutMs ?? CROSSFADE_RAMP_SEEK_TIMEOUT_MS, "クロスフェードのランプ開始前seekがタイムアウトしました");
       } catch {
-        // タイムアウトは致命的ではない（その時点のcurrentTimeのままランプへ進むだけ）。
+        settled = false;
       }
       // seek待ち中に本物の割り込み（cancel()）が発生していれば、既にそちらが後始末済み。
       if (this.generation !== myGeneration) return;
+      if (!settled) {
+        this.abandonRamp(activeAudio.ended);
+        return;
+      }
     }
     // 退場側が既に自然終了している場合のみ、ランプ自体を省略して直ちに完了値へ進める。
     const rampDurationMs = activeAudio.ended ? 0 : this.durationMsActive;

@@ -657,23 +657,94 @@ describe("CrossfadeOrchestrator", () => {
     expect(orchestrator.isPendingPreview("next", 1)).toBe(false); // promotion後は「先読み中」ではなくなる
   });
 
-  it("14. 入場側がランプ完了前に自然終了(ended)すると、promotion後に自動送り（onFallbackToNaturalEnd）が発火する（P1）", async () => {
+  it("14. 入場側がランプ完了前に（ランプ開始後に）自然終了(ended)すると、promotion後に自動送り（onFallbackToNaturalEnd）が発火する（P1）", async () => {
+    // shouldFinishEarly: () => inactiveAudio.ended。先読み側（次の曲）自体がクロスフェード長より
+    // 短く、ランプ完了前に自然終了した状態を模擬する。ランプ開始「前」（prepareリード中）に
+    // 既にendedなケースは別テスト（16）が担うため、ここではランプが実際に始まった後で
+    // endedへ切り替える（controlledWaitでステップの合間に差し込む）。
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const fallbacks: number[] = [];
+    const release: { fn: (() => void) | null } = { fn: null };
+    const controlledWait: WaitFn = () => new Promise((resolve) => { release.fn = resolve; });
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, {
+      wait: controlledWait,
+      steps: 4,
+      onFallbackToNaturalEnd: () => { fallbacks.push(1); },
+    });
+    setNearEnd(player);
+
+    const started = orchestrator.maybeStart({ enabled: true, durationMs: 4000, manualTransitionInFlight: false });
+    await vi.waitFor(() => expect(orchestrator.isCrossfading()).toBe(true));
+    release.fn?.(); // 1/4ステップぶん進める（この時点ではまだended=false）
+    await vi.waitFor(() => expect(player.inactiveAudio.volume).toBeGreaterThan(0));
+    player.inactiveAudio.ended = true; // ランプ開始後に入場側が自然終了
+    release.fn?.(); // 残りのステップでshouldFinishEarlyが拾う
+    await started;
+
+    expect(player.promotions).toBe(1);
+    expect(fallbacks).toEqual([1]);
+  });
+
+  it("16. 先読み側がprepareリード中（ランプ開始前）に既に自然終了していた場合、そのまま昇格させず自然終了フローへ委ねる（P1）", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const fallbacks: number[] = [];
+    const discarded: number[] = [];
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, {
+      wait: immediateWait,
+      steps: 1,
+      onFallbackToNaturalEnd: () => { fallbacks.push(1); },
+      onPreviewDiscarded: (streamId) => discarded.push(streamId),
+    });
+    setNearEnd(player);
+    player.activeAudio.ended = true; // 退場側（A）も既に自然終了している状態を模擬
+    // 先読み（次の曲）自体がprepareリード時間より短く、ランプ開始前に既に自然終了・
+    // 一時停止していた状態を模擬（実HTMLAudioElementと同様、ended時はpausedもtrueになる）。
+    player.inactiveAudio.ended = true;
+    player.inactiveAudio.paused = true;
+
+    await orchestrator.maybeStart({ enabled: true, durationMs: 3000, manualTransitionInFlight: false });
+
+    // 停止済み・無音のBをそのままpromotionしていない。
+    expect(player.promotions).toBe(0);
+    expect(orchestrator.isActive()).toBe(false);
+    // 退場側（A）も既にendedのため、通常の自然終了フローへ明示的に委ねる。
+    expect(fallbacks).toEqual([1]);
+    // 先読みの継続（登録されていれば）も破棄されている。
+    expect(discarded).toEqual([1]);
+  });
+
+  it("17. ランプ開始前のseek完了待ちがタイムアウトすると、ランプを開始せずクロスフェードを諦める（P2）", async () => {
     const player = new FakeDualPlayer();
     const queue = new FakeQueue();
     const fallbacks: number[] = [];
     const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, {
       wait: immediateWait,
-      steps: 4,
+      steps: 1,
+      seekTimeoutMs: 10,
+      withTimeout: (promise, _timeoutMs, message) => {
+        // seek完了待ちだけを即座にタイムアウトさせる（seekedが絶対に発火しないシナリオを
+        // 模擬、実機のデコーダ次第・E2Eモック環境で起こりうる）。先読み再生の開始自体の
+        // タイムアウト（別のmessage）は通常通りpromiseの解決を待つ。
+        if (message.includes("seek")) {
+          return new Promise((_, reject) => setTimeout(() => reject(new Error(message)), 0));
+        }
+        return promise;
+      },
       onFallbackToNaturalEnd: () => { fallbacks.push(1); },
     });
     setNearEnd(player);
-    // shouldFinishEarly: () => inactiveAudio.ended。先読み側（次の曲）自体がクロスフェード長より
-    // 短く、ランプ完了前に自然終了した状態を模擬する。
-    player.inactiveAudio.ended = true;
+    player.activeAudio.ended = true; // 退場側（A）も既に自然終了している状態を模擬
+    const previewAudio = player.inactiveAudio;
+    previewAudio.currentTime = 5; // 準備リード時間ぶん進んでいた状態を模擬（seek対象になる）
 
-    await orchestrator.maybeStart({ enabled: true, durationMs: 4000, manualTransitionInFlight: false });
+    await orchestrator.maybeStart({ enabled: true, durationMs: 3000, manualTransitionInFlight: false });
 
-    expect(player.promotions).toBe(1);
+    // seek未settleのままランプ（volume上昇）を開始していない。
+    expect(previewAudio.volume).toBe(0);
+    expect(player.promotions).toBe(0);
+    expect(orchestrator.isActive()).toBe(false);
     expect(fallbacks).toEqual([1]);
   });
 
