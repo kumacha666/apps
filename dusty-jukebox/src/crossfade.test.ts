@@ -283,6 +283,12 @@ class FakeAudioEl implements CrossfadeAudioElement {
   addEventListener(type: "seeked", listener: () => void, options: { once: boolean }): void {
     if (type === "seeked") this.seekedListeners.push({ listener, once: options.once });
   }
+  // タイムアウト等でリスナーを明示的に外す経路の回帰防止に使う
+  // （2026-09-14〜、Codexレビュー指摘：P2「Remove the seek listener when abandoning the wait」）。
+  removeEventListener(type: "seeked", listener: () => void): void {
+    if (type !== "seeked") return;
+    this.seekedListeners = this.seekedListeners.filter((entry) => entry.listener !== listener);
+  }
   // テスト側から実際にseek完了を模擬する（本物の<audio>が発火する'seeked'相当）。once指定の
   // リスナーは本物のaddEventListener({once:true})と同じく発火後に自動で外れる
   // （2026-09-14〜、Codexレビュー指摘：P2「Remove settled seek listeners after each ramp」
@@ -779,6 +785,11 @@ describe("CrossfadeOrchestrator", () => {
     expect(player.promotions).toBe(0);
     expect(orchestrator.isActive()).toBe(false);
     expect(fallbacks).toEqual([1]);
+    // {once: true}は発火しない限り自動で外れないため、タイムアウトで待ちを諦める経路では
+    // 明示的にリスナーを外している必要がある（2026-09-14〜、Codexレビュー指摘：P2「Remove
+    // the seek listener when abandoning the wait」の回帰防止。audio要素は長寿命で使い回される
+    // ため、外さないとタイムアウトのたびにリスナーが蓄積してしまう）。
+    expect(previewAudio.seekedListenerCount()).toBe(0);
   });
 
   it("15. ランプ開始前、先読み側のcurrentTime=0への巻き戻しがseeked完了するまでincoming.volumeを上げない（P2）", async () => {

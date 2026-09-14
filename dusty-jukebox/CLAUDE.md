@@ -463,6 +463,11 @@ PR分割はChatGPT提案の3段階（①DualAudioPlayer基盤〈挙動は変え�
   2. **ランプ開始前のseek完了待ちリスナーが`{once: true}`で登録されておらず、無期限に蓄積しうる**：`beginRamp()`が先読み側の`currentTime=0`巻き戻し後に張る`seeked`リスナーは、audio要素自体がクロスフェードのたびに使い回される長寿命な要素であるにも関わらず、毎回追加登録されるだけで一度も除去されていなかった。`CrossfadeAudioElement.addEventListener`のシグネチャに必須の3引数目`options: { once: boolean }`を追加し、`beginRamp()`の呼び出しに`{ once: true }`を渡すよう修正（`AudioElementLike`側の狭いシグネチャがTypeScriptのbivariant method-parameter checkingにより構造的にこの要求を満たすため、`playback.ts`側の変更は不要）。
   - いずれも該当コードを一時的に無効化して実際に失敗することを確認済み（`dualAudioPlayer.test.ts`新規1ケース：非アクティブ側のerrorが中継されずactive側は中継されること、`crossfade.test.ts`新規1ケース〈19番〉：`{once: true}`により発火後リスナーが自動的に外れること）。
   - 705 unit（703+2）+ 61 E2E、全green。`npx tsc --noEmit`クリーン。`npm run deploy`実行済み（`app.js` 286.23kB、SW v0.1.131→v0.1.132）。
+- **続けて2026-09-14、最終HEAD（`186ea17`）への再レビューを依頼、指摘2件（いずれもP2）を修正**：
+  1. **クロスフェード無効時（既定）も含め、`PlaybackContinuationRegistry`の継続が無期限に蓄積する**：旧設計（単一の`active`フィールド）と異なりMap化（PR2）した`continuations`は、毎回の再生（次へ/前へ/単曲試聴等）が新しいstreamIdで`register()`する一方、`clearStreamId()`はクロスフェードの先読み破棄・退役ストリームの後始末からしか呼ばれない。クロスフェードを使わない（既定OFFの）通常利用では、タブを開いたまま聴き続ける限り古いエントリが一切除去されず無期限に蓄積してしまっていた。既存の`tokenRequests`（同ファイル内、SW由来のトークン要求の有界履歴）と同じ方針で、`register()`に上限（32件）を超えたら最も古いエントリから追い出す処理を追加した。
+  2. **seek完了待ちのタイムアウト時、`{once: true}`のリスナーが外れないまま残る**：前回ラウンドで追加した`{once: true}`は`seeked`が実際に発火した場合しか自動で外れないため、タイムアウトで待ちを諦める経路（`beginRamp()`のcatch節）では登録したリスナーが外れないまま残っていた。実機のデコーダ次第・E2Eモック環境では`seeked`が届かないことがあり、このタイムアウト経路自体が正常に想定されたフォールバックであるため、繰り返しクロスフェードを試みるたびにリスナーが蓄積しうる。`CrossfadeAudioElement`に省略可能な`removeEventListener?()`を追加し、タイムアウト時に明示的に外すよう修正。
+  - いずれも該当コードを一時的に無効化して実際に失敗することを確認済み（`playbackContinuation.test.ts`新規1ケース：上限超過で最も古い継続が追い出されること、`crossfade.test.ts`の既存テスト17にアサーション追加：タイムアウト後にリスナーが0件になること）。
+  - 706 unit（705+1）+ 61 E2E、全green。`npx tsc --noEmit`クリーン。`npm run deploy`実行済み（`app.js` 286.45kB、SW v0.1.132→v0.1.133）。
 - **実機での動作確認はまだ**（次セッションでの確認事項。role-swap化によって#442〜#448のクリック/音飛びの根本原因〈シーク・音量ジャンプという操作自体の発生〉が構造的に排除されたはずだが、最終確認は実機でなければできない）。
 - **PR3（旧ハンドオフコードの大規模削除）は未着手**：`PlaybackQueue.advanceToPreviewedFile()`・`suppressTransitionCancel`・`PlaybackInterruptedError`/`PlaybackPausedError`機構等、旧設計専用だった死んだコードの削除は、実機検証で問題が無いことを確認してから着手する（当初の計画通り）。
 

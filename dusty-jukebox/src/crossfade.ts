@@ -259,6 +259,12 @@ export interface CrossfadeAudioElement {
   // 登録するため、onceで自動的に外さないと、連続再生のたびにリスナーが無制限に積み上がり、
   // 以後の無関係な'seeked'発火のたびに過去の（既に役目を終えた）リスナー全てが呼ばれ続ける。
   addEventListener(type: "seeked", listener: () => void, options: { once: boolean }): void;
+  // タイムアウトで待ちを諦める場合、{once: true}は発火しない限り自動で外れないため明示的に
+  // 外す必要がある（2026-09-14〜、Codexレビュー指摘：P2「Remove the seek listener when
+  // abandoning the wait」）。省略可能：実HTMLAudioElementはネイティブに実装済みのため常に
+  // 呼べるが、テスト用の簡易フェイクは未実装でも構わない（その場合は単に外れないだけで、
+  // 少なくとも{once: true}適用前の「無期限に蓄積する」状態からは後退しない）。
+  removeEventListener?(type: "seeked", listener: () => void): void;
 }
 
 export interface CrossfadePlaybackControllerLike {
@@ -547,8 +553,10 @@ export class CrossfadeOrchestrator {
       // このアプリのE2Eモック環境）もあるため、タイムアウトした場合はランプを開始せず、この
       // クロスフェード自体を安全に諦める（2026-09-14〜、ChatGPTレビュー再指摘：P2続き。
       // 「seek未settleのままincoming volume>0」の経路を残さないという設計目的に一貫させる）。
+      let seekedListener: (() => void) | undefined;
       const seeked = new Promise<void>((resolve) => {
-        inactiveAudio.addEventListener("seeked", () => resolve(), { once: true });
+        seekedListener = () => resolve();
+        inactiveAudio.addEventListener("seeked", seekedListener, { once: true });
       });
       inactiveAudio.currentTime = 0;
       const withTimeout = this.options.withTimeout ?? defaultWithTimeoutFn;
@@ -557,6 +565,13 @@ export class CrossfadeOrchestrator {
         await withTimeout(seeked, this.options.seekTimeoutMs ?? CROSSFADE_RAMP_SEEK_TIMEOUT_MS, "クロスフェードのランプ開始前seekがタイムアウトしました");
       } catch {
         settled = false;
+        // タイムアウト時、{once: true}は'seeked'が実際に発火した場合しか自動で外れないため、
+        // 発火しないまま待ちを諦めるこの経路では明示的に外す必要がある（2026-09-14〜、
+        // Codexレビュー指摘：P2「Remove the seek listener when abandoning the wait」）。
+        // audio要素は長寿命で使い回されるため、外さないとタイムアウトのたびにリスナーが
+        // 蓄積してしまう（実機のデコーダ次第・E2Eモック環境ではseekedが届かないことがあり、
+        // このタイムアウト経路自体は正常に想定されたフォールバックであるため蓄積しやすい）。
+        if (seekedListener) inactiveAudio.removeEventListener?.("seeked", seekedListener);
       }
       // seek待ち中に本物の割り込み（cancel()）が発生していれば、既にそちらが後始末済み。
       if (this.generation !== myGeneration) return;

@@ -30,6 +30,15 @@ interface StreamTokenRequest {
 // PlaybackController.play()がstream-idを実際に確定した瞬間（audio.src設定より前）に
 // `PlayOptions.onStreamIdAllocated`コールバックで通知される正確な値をそのまま使う
 // （playback.ts参照）。
+// クロスフェード無効時（既定）は毎回の再生（次へ/前へ/単曲試聴等）が新しいstreamIdで
+// register()するが、clearStreamId()はクロスフェードの先読み破棄・退役ストリームの後始末
+// からしか呼ばれないため、通常の再生では古いエントリが一切除去されない（2026-09-14〜、
+// Codexレビュー指摘：P2「Evict superseded playback continuations」）。旧設計（単一の
+// activeフィールド）ではこの問題が無かったが、Map化に伴い、使い続けるタブでは無期限に
+// 蓄積してしまう。tokenRequestsの既存の有界履歴と同じ方針（Mapの挿入順＝古い順に、
+// 上限を超えた分から追い出す）で上限を設ける。
+const MAX_CONTINUATION_ENTRIES = 32;
+
 export class PlaybackContinuationRegistry {
   private readonly continuations = new Map<number, PlaybackContinuation>();
   private readonly tokenRequests = new Map<string, StreamTokenRequest>();
@@ -37,6 +46,11 @@ export class PlaybackContinuationRegistry {
   register(continuation: Omit<PlaybackContinuation, "position">): PlaybackContinuation {
     const full: PlaybackContinuation = { ...continuation, position: 0 };
     this.continuations.set(continuation.streamId, full);
+    while (this.continuations.size > MAX_CONTINUATION_ENTRIES) {
+      const oldest = this.continuations.keys().next().value;
+      if (typeof oldest !== "number") break;
+      this.continuations.delete(oldest);
+    }
     return full;
   }
 

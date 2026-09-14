@@ -78,6 +78,25 @@ describe("PlaybackContinuationRegistry", () => {
     expect(registry.isCurrent(continuationB)).toBe(true);
   });
 
+  // クロスフェード無効時（既定）は毎回の再生が新しいstreamIdでregister()するだけで、
+  // clearStreamId()はクロスフェード専用の経路からしか呼ばれないため、通常再生を続ける限り
+  // 古いエントリが除去されないままだった（2026-09-14〜、Codexレビュー指摘：P2「Evict
+  // superseded playback continuations」）。上限を超えたら古い順に追い出すことを確認する。
+  test("register()の件数が上限を超えると、最も古い継続から追い出される（無期限の蓄積を防ぐ）", () => {
+    const registry = new PlaybackContinuationRegistry();
+    const first = registry.register({ fileId: "song-0", streamId: 0, resume: async () => true });
+    for (let streamId = 1; streamId < 32; streamId += 1) {
+      registry.register({ fileId: `song-${streamId}`, streamId, resume: async () => true });
+    }
+    // まだ上限（32件）以内のため、最初の登録もまだ有効。
+    expect(registry.isCurrent(first)).toBe(true);
+
+    // 33件目の登録で上限を超え、最も古い（streamId 0）が追い出される。
+    const last = registry.register({ fileId: "song-32", streamId: 32, resume: async () => true });
+    expect(registry.isCurrent(first)).toBe(false);
+    expect(registry.isCurrent(last)).toBe(true);
+  });
+
   test("同じstreamIdで登録し直すと、isCurrent()は新しい継続オブジェクトだけを現在有効とみなす", () => {
     const registry = new PlaybackContinuationRegistry();
     const first = registry.register({ fileId: "song-a", streamId: 10, resume: async () => true });
