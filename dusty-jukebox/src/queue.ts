@@ -8,7 +8,6 @@ export interface PlayerLike {
     position?: number,
     options?: {
       fadeOut?: boolean;
-      suppressTransitionCancel?: boolean;
       // ロールスワップ再設計（2026-09-14〜、PR2）向け：streamIdが実際に確定した瞬間
       // （audio.src設定より前）に同期的に呼ばれる。onBeforePlay()呼び出しをここへ移した
       // 理由はBeforeQueuePlayのコメント参照。
@@ -19,30 +18,13 @@ export interface PlayerLike {
   // 無効化するために使う（2026-09-08、Codexレビュー指摘：P1、詳細はplayback.tsの実装参照）。
   // 実PlaybackController以外の簡易モック（既存テスト等）を壊さないためoptionalにする。
   cancelPendingTransition?(): void;
-  // advanceToPreviewedFile()が除外の再確認ループを使い果たした（最後にコミット・再生開始
-  // 済みの候補も除外されており、これ以上フォールバック先が無い）場合に、鳴り続けている
-  // 音声を明示的に止めるために使う（2026-09-10、Codexレビュー指摘：P1続き。queue.ts自体には
-  // PlayerLike経由の停止手段しか無いため、cancelPendingTransition()と同じ理由でoptionalに
-  // する）。
-  pause?(): void;
 }
-// suppressTransitionCancel（2026-09-10、Codexレビュー指摘：P1）：登録する認証継続の
-// resume()自身も、元の呼び出しと同じsuppressTransitionCancelを引き継ぐ必要があるかを
-// 呼び出し元へ伝える。クロスフェードのハンドオフ（advanceToPreviewedFile()経由）は
-// suppressTransitionCancel:trueでplayer.play()を呼ぶが、Drive 401後の再試行
-// （queue.resume()、main.tsのregisterQueuePlaybackContinuation()参照）はこれを
-// 引き継がずに呼んでいたため、再試行自身のplayer.play()がonTransitionStart()経由で
-// cancelCrossfadeIfActive()→invalidatePendingMove()を呼び、まだcrossfadingがtrueのままの
-// 状態（＝再試行が401を検知した時点で、元のハンドオフ自身のplayer.play()がまだ解決して
-// いない）だと、この自己無効化により実際には再生が成功しているのにplayAndCommit()の
-// generation確認に失敗し、キュー・UIが次の曲へコミットされないまま認証通知も出ない
-// （音は鳴っているのに何も表示されない）不整合が生じていた。
 // streamId（2026-09-14〜、PR2）：以前は「player.play()呼び出しの直前」に呼ばれ、呼び出し元
 // （main.ts）が次のstreamId（=streamGeneration）を`currentGeneration()+1`で予測していたが、
 // 共有stream-idアロケータ下ではこの予測が成立しないため廃止した。今はPlaybackController自身が
 // stream-idを実際に確定した瞬間（PlayOptions.onStreamIdAllocated経由）に呼ばれ、その正確な
 // 値がそのままここへ渡る。
-export type BeforeQueuePlay = (fileId: string, streamId: number, suppressTransitionCancel: boolean) => void;
+export type BeforeQueuePlay = (fileId: string, streamId: number) => void;
 
 export class PlaybackQueue {
   private songs: Song[] = []; private currentFileId: string | null = null; private excluded = new Set<string>(); private isQueuePlayback = false;
@@ -179,7 +161,7 @@ export class PlaybackQueue {
   peekNextFileId(): string | null {
     return this.findNext()?.fileId ?? null;
   }
-  private async playAndCommit(fileId: string, generation: number, position?: number, fadeOut = false, suppressTransitionCancel = false): Promise<boolean> {
+  private async playAndCommit(fileId: string, generation: number, position?: number, fadeOut = false): Promise<boolean> {
     // このフェード操作自身のトークンを発行する（2026-09-08、Codexレビュー指摘：P1）。
     let myFadeToken: number | null = null;
     if (fadeOut) {
@@ -190,11 +172,10 @@ export class PlaybackQueue {
     try {
       await this.player.play(fileId, position, {
         fadeOut: fadeOut || undefined,
-        suppressTransitionCancel: suppressTransitionCancel || undefined,
         // stream-idが実際に確定した瞬間（native play promiseの解決より前）に呼ばれるため、
         // Register a continuation before the native play promise settles: the
         // initial stream request can receive a 401 while that promise is pending.
-        onStreamIdAllocated: (streamId) => this.onBeforePlay(fileId, streamId, suppressTransitionCancel),
+        onStreamIdAllocated: (streamId) => this.onBeforePlay(fileId, streamId),
       });
     } catch (err) {
       // フェード中にユーザーが明示的に一時停止した場合（2026-09-08、Codexレビュー指摘：P1）。
@@ -322,61 +303,6 @@ export class PlaybackQueue {
       return true;
     });
   }
-  // クロスフェード向け：ランプ中に先読み再生していた曲を、途中でキューが変更されても必ず
-  // その曲へ確定させる（2026-09-10、Codexレビュー指摘：P1）。next()/advanceOnEnded()は
-  // 実行時点の最新の並びでfindNext()を再探索するため、ランプ中にexclude/並べ替え/シャッフル
-  // 等でキューが変わっていると、既に先読み再生していた曲と異なる曲へコミットしてしまい、
-  // 一部の曲が丸ごとスキップされたり別の曲へ不自然に切り替わったりする不具合があった。
-  // 先読みしていた曲が既にリストから消えている・除外された場合のみ、通常のfindNext()へ
-  // フォールバックする（advanceOnEnded()と同じく、次の曲が無ければisQueuePlaybackをfalseへ
-  // 遷移させる）。
-  advanceToPreviewedFile(fileId: string, startPosition?: number): Promise<boolean> {
-    // このハンドオフ要求が発行された時点のキュー世代（2026-09-10、Codexレビュー指摘：P1）。
-    // player.play()の解決待ち中にユーザーが別のキュー（setList()）を選び直した場合、この古い
-    // ハンドオフが後から（generation不一致によるfalseで）解決しても、新しいキューの
-    // isQueuePlaybackを誤ってfalseへ戻してはならない。
-    const generationAtCall = this.generation;
-    return this.move(async (generation) => {
-      const stillQueued = this.list().some((song) => song.fileId === fileId);
-      let candidate = stillQueued ? fileId : this.findNext()?.fileId;
-      // startPositionは先読みしていたfileId自身の再生位置であり、フォールバック先
-      // （先読みしていた曲が消えている・除外された場合のfindNext()の結果）には引き継がない
-      // （2026-09-10、Codexレビュー指摘：P1。別の曲をその秒数から開始すると冒頭をスキップ
-      // してしまう）。一度でもfileId以外へフォールバックしたら、以後は使わない。
-      let appliedStartPosition = false;
-      // player.play()の待機中に対象曲自体がチェックボックスで除外された場合（2026-09-10、
-      // Codexレビュー指摘：P1続き）。exclude()はgenerationを進めないため、事前のstillQueued
-      // 判定・playAndCommit内部のgeneration確認のどちらでも検知できず、除外済みの曲が
-      // そのまま再生され続けてしまう。commit後に対象の除外状態を再確認し、除外されていれば
-      // その時点で有効な次の曲へ切り替える処理を、フォールバック先が重ねて除外された場合にも
-      // 対応できるようループにする（Codexレビュー再指摘：フォールバック先自身の待機中に
-      // さらに除外されるケース）。
-      while (candidate) {
-        const position = candidate === fileId && !appliedStartPosition ? startPosition : undefined;
-        if (candidate === fileId) appliedStartPosition = true;
-        // suppressTransitionCancel: このメソッドはクロスフェードのハンドオフ専用のため、
-        // 自身のplayer.play()呼び出しでクロスフェード自体を自己キャンセルさせない
-        // （2026-09-10、実機フィードバックによる再設計。詳細はplayback.tsのPlayOptions.
-        // suppressTransitionCancelコメント参照）。
-        const started = await this.playAndCommit(candidate, generation, position, false, true);
-        if (!started) return false;
-        if (!this.isExcluded(candidate)) return true;
-        const next = this.findNext();
-        if (!next) {
-          // 除外済みの候補が既にコミット・再生開始済みのまま、これ以上フォールバック先が
-          // 無い場合（2026-09-10、Codexレビュー指摘：P1続き）。何もしないと、除外したはずの
-          // 曲がキューの管理外で鳴り続けてしまう。明示的に一時停止する。
-          this.player.pause?.();
-          return false;
-        }
-        candidate = next.fileId;
-      }
-      return false;
-    }).then((started) => {
-      if (!started && this.generation === generationAtCall) this.isQueuePlayback = false;
-      return started;
-    });
-  }
   // fadeOut：next()と同じ（開発体制#42④）。
   previous(fadeOut = false): Promise<boolean> { return this.move(async (generation) => { if (this.currentFileId === null) return false; const currentIndex = this.songs.findIndex((song) => song.fileId === this.currentFileId); for (let index = currentIndex - 1; index >= 0; index -= 1) { const song = this.songs[index]; if (!this.isExcluded(song.fileId)) return this.playAndCommit(song.fileId, generation, undefined, fadeOut); } return false; }); }
   resumeCurrent(position: number): Promise<boolean> { return this.move(async (generation) => this.currentFileId ? this.playAndCommit(this.currentFileId, generation, position) : false, true); }
@@ -458,16 +384,10 @@ export class PlaybackQueue {
       return true;
     });
   }
-  // suppressTransitionCancel（2026-09-10、Codexレビュー指摘：P1）：認証継続の呼び出し元
-  // （main.tsのregisterQueuePlaybackContinuation()）が、無効化した元の呼び出し自身が
-  // suppressTransitionCancel:trueだった場合（クロスフェードのハンドオフ）はこれを引き継ぐ。
-  // 引き継がないと、この再試行自身のplayer.play()がonTransitionStart()経由で
-  // cancelCrossfadeIfActive()を呼び返し、まだ解決していない元のハンドオフ自身のgeneration
-  // チェックを自己無効化してしまう（BeforeQueuePlayのコメント参照）。
-  resume(fileId: string, position: number, suppressTransitionCancel = false): Promise<boolean> {
+  resume(fileId: string, position: number): Promise<boolean> {
     return this.move(async (generation) =>
       this.songs.some((song) => song.fileId === fileId) && !this.isExcluded(fileId)
-        ? this.playAndCommit(fileId, generation, position, false, suppressTransitionCancel)
+        ? this.playAndCommit(fileId, generation, position)
         : false,
       true
     );

@@ -373,14 +373,6 @@ describe("PlaybackQueue", () => {
     expect(await stalePlayAtPromise).toBe(false);
     expect(queue.currentPlayingFileId()).toBe("c");
   });
-  test("resume()はsuppressTransitionCancelを引き継いでplayer.play()へ渡す（2026-09-10、Codexレビュー指摘：P1続き。クロスフェードのハンドオフ〈advanceToPreviewedFile()経由〉が401で認証継続に回った際、resume()自身のplayer.play()がonTransitionStart()を発火してしまうと、cancelCrossfadeIfActive()経由の自己無効化により、実際には再生成功しているのにキュー側がコミットできない不整合が生じる）", async () => {
-    const play = vi.fn(async () => {});
-    const audio = new Audio();
-    const queue = new PlaybackQueue({ play }, audio);
-    queue.setList([song("a"), song("b")]);
-    await queue.resume("a", 12.5, true);
-    expect(play).toHaveBeenCalledWith("a", 12.5, { fadeOut: undefined, suppressTransitionCancel: true, onStreamIdAllocated: expect.any(Function) });
-  });
   test("moveSongは指定した曲を1つ上/下へ入れ替える（開発体制#42②、上下ボタン）", async () => {
     const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
     queue.setList([song("a"), song("b"), song("c")]);
@@ -647,7 +639,7 @@ describe("PlaybackQueue", () => {
 
     const firstNext = queue.next();
     const secondNext = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, { fadeOut: undefined, suppressTransitionCancel: undefined, onStreamIdAllocated: expect.any(Function) }));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, { fadeOut: undefined, onStreamIdAllocated: expect.any(Function) }));
     expect(play).toHaveBeenCalledTimes(1);
     resolveFirst?.();
     await Promise.all([firstNext, secondNext]);
@@ -662,7 +654,7 @@ describe("PlaybackQueue", () => {
     queue.setList([song("old-a"), song("old-b")]);
 
     const oldMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a", undefined, { fadeOut: undefined, suppressTransitionCancel: undefined, onStreamIdAllocated: expect.any(Function) }));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a", undefined, { fadeOut: undefined, onStreamIdAllocated: expect.any(Function) }));
     queue.setList([song("new-a"), song("new-b")]);
     resolvePlayback?.();
     await oldMove;
@@ -680,10 +672,10 @@ describe("PlaybackQueue", () => {
     queue.setList([song("old-a")]);
 
     const oldMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a", undefined, { fadeOut: undefined, suppressTransitionCancel: undefined, onStreamIdAllocated: expect.any(Function) }));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a", undefined, { fadeOut: undefined, onStreamIdAllocated: expect.any(Function) }));
     queue.setList([song("new-a")]);
     const newMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("new-a", undefined, { fadeOut: undefined, suppressTransitionCancel: undefined, onStreamIdAllocated: expect.any(Function) }));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("new-a", undefined, { fadeOut: undefined, onStreamIdAllocated: expect.any(Function) }));
     await newMove;
 
     resolveOldPlayback?.();
@@ -745,7 +737,7 @@ describe("PlaybackQueue", () => {
     queue.setList([song("a")]);
 
     const move = queue.next();
-    await vi.waitFor(() => expect(beforePlay).toHaveBeenCalledWith("a", 1, false));
+    await vi.waitFor(() => expect(beforePlay).toHaveBeenCalledWith("a", 1));
     expect(queue.currentPlayingFileId()).toBeNull();
     registry.recordTokenRequest("first-request", "a", 1, "rejected-token");
     expect(registry.acceptTokenRejection("first-request", "a", "rejected-token")).not.toBeNull();
@@ -762,9 +754,9 @@ describe("PlaybackQueue", () => {
     queue.setList([song("a")]);
 
     const originalMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, { fadeOut: undefined, suppressTransitionCancel: undefined, onStreamIdAllocated: expect.any(Function) }));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, { fadeOut: undefined, onStreamIdAllocated: expect.any(Function) }));
     const resumed = queue.resume("a", 12.5);
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", 12.5, { fadeOut: undefined, suppressTransitionCancel: undefined, onStreamIdAllocated: expect.any(Function) }));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", 12.5, { fadeOut: undefined, onStreamIdAllocated: expect.any(Function) }));
     await expect(resumed).resolves.toBe(true);
 
     settleOriginal();
@@ -1092,193 +1084,6 @@ describe("PlaybackQueue", () => {
       });
     });
 
-    // 2026-09-10、Codexレビュー指摘：P1。findNext()による再探索ではなく、先読み再生していた
-    // 曲へ必ず確定させることを検証する。
-    describe("advanceToPreviewedFile", () => {
-      test("先読みしていた曲へ確定し、startPositionをplayer.play()へ渡す", async () => {
-        const positions: (number | undefined)[] = [];
-        const audio = new Audio();
-        const queue = new PlaybackQueue(
-          { play: async (_id, position) => { positions.push(position); } },
-          audio
-        );
-        queue.setList([song("a"), song("b"), song("c")]);
-        await queue.playAt(0);
-        await queue.advanceToPreviewedFile("b", 12);
-        expect(queue.currentPlayingFileId()).toBe("b");
-        expect(positions).toEqual([undefined, 12]);
-      });
-
-      test("ランプ中に並べ替えられても、findNext()の再探索結果ではなく先読みしていた曲へ確定する", async () => {
-        const played: string[] = [];
-        const audio = new Audio();
-        const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
-        queue.setList([song("a"), song("b"), song("c")]);
-        await queue.playAt(0);
-        // クロスフェードが"b"を先読みし始めた後、キューが並べ替えられ"c"がfindNext()の
-        // 結果になる状況を模擬する。
-        queue.moveSong("c", "up");
-        await queue.whenIdle();
-        expect(queue.peekNextFileId()).toBe("c");
-        await queue.advanceToPreviewedFile("b");
-        expect(played).toEqual(["a", "b"]);
-        expect(queue.currentPlayingFileId()).toBe("b");
-      });
-
-      test("先読みしていた曲が除外されていた場合はfindNext()の結果へフォールバックする", async () => {
-        const played: string[] = [];
-        const audio = new Audio();
-        const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
-        queue.setList([song("a"), song("b"), song("c")]);
-        await queue.playAt(0);
-        queue.exclude("b", true);
-        await queue.advanceToPreviewedFile("b");
-        expect(played).toEqual(["a", "c"]);
-        expect(queue.currentPlayingFileId()).toBe("c");
-      });
-
-      // 2026-09-10、Codexレビュー指摘：P1続き。先読みしていた曲("b")が除外され、フォール
-      // バック先("c")へ切り替わる場合、"b"自身の再生位置(startPosition)を"c"へ引き継いでは
-      // ならない（別の曲の冒頭をスキップしてしまう）。
-      test("除外によるフォールバック時、先読みしていた曲のstartPositionをフォールバック先へ引き継がない", async () => {
-        const positions: (number | undefined)[] = [];
-        const audio = new Audio();
-        const queue = new PlaybackQueue(
-          { play: async (_id, position) => { positions.push(position); } },
-          audio
-        );
-        queue.setList([song("a"), song("b"), song("c")]);
-        await queue.playAt(0);
-        queue.exclude("b", true);
-        await queue.advanceToPreviewedFile("b", 42);
-        expect(positions).toEqual([undefined, undefined]);
-        expect(queue.currentPlayingFileId()).toBe("c");
-      });
-
-      test("次の曲が無ければfalseを返しisPlayingFromQueueがfalseへ遷移する", async () => {
-        const audio = new Audio();
-        const queue = new PlaybackQueue({ play: async () => {} }, audio);
-        queue.setList([song("a")]);
-        await queue.playAt(0);
-        const started = await queue.advanceToPreviewedFile("missing");
-        expect(started).toBe(false);
-        expect(queue.isPlayingFromQueue()).toBe(false);
-      });
-
-      // 2026-09-10、Codexレビュー指摘：P1続き。ハンドオフがplayer.play()の解決待ち中に、
-      // ユーザーが別のキュー（setList()）を選び直した場合、この古いハンドオフが後から
-      // （世代不一致によるfalseで）解決しても、新しいキューのisQueuePlaybackを誤って
-      // falseへ戻してはならない（そうでないと、以後の自然終了'ended'が無視され続け
-      // キューが二度と自動で進まなくなる）。
-      test("待機中に別のキューへ切り替わった場合、古いハンドオフの遅延解決が新しいキューの状態を巻き戻さない", async () => {
-        const played: string[] = [];
-        let resolveOldPlay: (() => void) | undefined;
-        const audio = new Audio();
-        const queue = new PlaybackQueue({
-          play: async (id) => {
-            played.push(id);
-            if (id === "b") await new Promise<void>((resolve) => { resolveOldPlay = resolve; });
-          },
-        }, audio);
-        queue.setList([song("a"), song("b")]);
-        await queue.playAt(0);
-        const stalePromise = queue.advanceToPreviewedFile("b");
-        await vi.waitFor(() => expect(played).toContain("b"));
-
-        // 待機中に別のキューへ切り替え、先頭曲を再生する。
-        queue.setList([song("x"), song("y")]);
-        await queue.playAt(0);
-        expect(queue.isPlayingFromQueue()).toBe(true);
-
-        // 古いハンドオフを解決させる（世代不一致でfalseになるはず）。
-        resolveOldPlay?.();
-        expect(await stalePromise).toBe(false);
-        // 新しいキューの状態が巻き戻されていないことを確認する。
-        expect(queue.isPlayingFromQueue()).toBe(true);
-        expect(queue.currentPlayingFileId()).toBe("x");
-      });
-
-      // 2026-09-10、Codexレビュー指摘：P1続き。exclude()はgenerationを進めないため、
-      // player.play()の待機中に対象曲自体が除外されても、上のstillQueued判定・
-      // playAndCommit内部のgeneration確認のどちらも検知できない。
-      test("player.play()の待機中に先読みしていた曲自体が除外されると、除外済みの曲を再生し続けず次の有効な曲へ切り替える", async () => {
-        const played: string[] = [];
-        let resolvePlayB: (() => void) | undefined;
-        const audio = new Audio();
-        const queue = new PlaybackQueue({
-          play: async (id) => {
-            played.push(id);
-            if (id === "b") await new Promise<void>((resolve) => { resolvePlayB = resolve; });
-          },
-        }, audio);
-        queue.setList([song("a"), song("b"), song("c")]);
-        await queue.playAt(0);
-        const promise = queue.advanceToPreviewedFile("b");
-        await vi.waitFor(() => expect(played).toContain("b"));
-        // player.play("b")がまだ解決していない間に、"b"自身が除外される。
-        queue.exclude("b", true);
-        resolvePlayB?.();
-        expect(await promise).toBe(true);
-        expect(played).toEqual(["a", "b", "c"]);
-        expect(queue.currentPlayingFileId()).toBe("c");
-      });
-
-      // 2026-09-10、Codexレビュー指摘：P1再指摘。フォールバック先("c")自身のplayer.play()待機中に
-      // さらに除外された場合も、1回のフォールバックで止まらず有効な曲まで辿り着く必要がある。
-      test("フォールバック先自身の待機中にさらに除外されても、有効な曲が見つかるまで辿り続ける", async () => {
-        const played: string[] = [];
-        let resolvePlayB: (() => void) | undefined;
-        let resolvePlayC: (() => void) | undefined;
-        const audio = new Audio();
-        const queue = new PlaybackQueue({
-          play: async (id) => {
-            played.push(id);
-            if (id === "b") await new Promise<void>((resolve) => { resolvePlayB = resolve; });
-            if (id === "c") await new Promise<void>((resolve) => { resolvePlayC = resolve; });
-          },
-        }, audio);
-        queue.setList([song("a"), song("b"), song("c"), song("d")]);
-        await queue.playAt(0);
-        const promise = queue.advanceToPreviewedFile("b");
-        await vi.waitFor(() => expect(played).toContain("b"));
-        queue.exclude("b", true);
-        resolvePlayB?.();
-        await vi.waitFor(() => expect(played).toContain("c"));
-        // "c"へのフォールバック中（player.play("c")未解決）に、"c"自身も除外される。
-        queue.exclude("c", true);
-        resolvePlayC?.();
-        expect(await promise).toBe(true);
-        expect(played).toEqual(["a", "b", "c", "d"]);
-        expect(queue.currentPlayingFileId()).toBe("d");
-      });
-
-      // 2026-09-10、Codexレビュー指摘：P1再々指摘。最後の候補（フォールバック先が尽きる直前の
-      // 候補）自身がplayer.play()待機中に除外されると、それが既にコミット・再生開始済みの
-      // まま残ってしまう（次の候補が無いため）。queue.ts自体にはPlayerLike経由の停止手段しか
-      // 無いため、注入したpause()が呼ばれることを確認する。
-      test("最後の候補も除外され次の候補が無い場合、鳴り続けないようplayer.pause()を呼ぶ", async () => {
-        const played: string[] = [];
-        let pauseCalls = 0;
-        let resolvePlayB: (() => void) | undefined;
-        const audio = new Audio();
-        const queue = new PlaybackQueue({
-          play: async (id) => {
-            played.push(id);
-            if (id === "b") await new Promise<void>((resolve) => { resolvePlayB = resolve; });
-          },
-          pause: () => { pauseCalls += 1; },
-        }, audio);
-        queue.setList([song("a"), song("b")]);
-        await queue.playAt(0);
-        const promise = queue.advanceToPreviewedFile("b");
-        await vi.waitFor(() => expect(played).toContain("b"));
-        // "b"が唯一の次の候補であり、これも除外される（フォールバック先が無い）。
-        queue.exclude("b", true);
-        resolvePlayB?.();
-        expect(await promise).toBe(false);
-        expect(pauseCalls).toBe(1);
-      });
-    });
   });
 });
 

@@ -1206,21 +1206,14 @@ function awaitServiceWorkerReady(): Promise<void> {
 // `if (generation !== this.generation) return false;`）が既に担っており、こちらは
 // stream-idベースのルーティング（401がどの継続に属するか）専用のため、PlaybackController
 // 側のisSuperseded確認は不要。
-// suppressTransitionCancel（2026-09-14〜、PR2でロールスワップ化）：ロールスワップの
-// クロスフェード準備（CrossfadeOrchestrator.startPreparation()）はキュー由来の
-// player.play()（onBeforePlay/このcontinuation登録の対象）を一切経由しない
-// （player.inactiveController().play()を直接呼ぶ設計のため）。したがって、このパラメータが
-// trueになる呼び出しは現時点で存在しないが、`queue.ts`のBeforeQueuePlay型・
-// `PlaybackQueue.resume()`のシグネチャ自体はPR3まで温存する（advanceToPreviewedFile()等、
-// PR3で削除予定の旧ハンドオフAPIとの整合を保つため）。
-function registerQueuePlaybackContinuation(fileId: string, streamId: number, suppressTransitionCancel: boolean): void {
+function registerQueuePlaybackContinuation(fileId: string, streamId: number): void {
   // PlaybackQueue invokes this immediately before PlaybackController commits
   // audio.src. Do not wait for the queue to commit currentFileId: a Drive 401
   // can arrive while native play() is still pending.
   playbackContinuations.register({
     fileId,
     streamId,
-    resume: async (position) => queue?.resume(fileId, position, suppressTransitionCancel) ?? false,
+    resume: async (position) => queue?.resume(fileId, position) ?? false,
   });
 }
 
@@ -2187,7 +2180,7 @@ function init(): void {
         }
         void handleQueuePlayback(() => queue?.advanceOnEnded());
       },
-      (fileId, streamId, suppressTransitionCancel) => registerQueuePlaybackContinuation(fileId, streamId, suppressTransitionCancel)
+      (fileId, streamId) => registerQueuePlaybackContinuation(fileId, streamId)
     );
     crossfadeOrchestrator = new CrossfadeOrchestrator(
       playback,
