@@ -2176,11 +2176,16 @@ function init(): void {
       () => auth.getAccessToken() !== null,
       {
         // promotion自体は何のDOMイベントも発火しない（不変条件）ため、シークバー表示は
-        // 次のtimeupdate発火を待たずここで即座に更新する。
+        // 次のtimeupdate発火を待たずここで即座に更新する。commitPreparedFile()の成功で
+        // queue.currentFileIdは既に新しい曲へ確定しているが、キュー表示（再生中のハイライト・
+        // 「再生中」ラベル）自体はここで明示的にrenderQueue()しない限り更新されない
+        // （handleQueuePlayback()由来の通常のコミットはhandlePlaybackAction()の成功分岐が
+        // 担うが、クロスフェードのコミットはそれを経由しないため）。
         onPromoted: () => {
           if (!playback) return;
           updateSeekDuration(playback.activeAudioElement().duration);
           updateSeekPosition(playback.activeAudioElement().currentTime);
+          renderQueue();
         },
         onFallbackToNaturalEnd: () => { void handleQueuePlayback(() => queue?.advanceOnEnded()); },
       }
@@ -2304,6 +2309,7 @@ if (import.meta.env.VITE_E2E === "true") {
         getLastExternalPlaybackPosition: () => number | null;
         isManualTransitionInFlight: () => boolean;
         isCrossfadeActive: () => boolean;
+        activeAudioElementId: () => string | null;
       };
     }
   ).__e2e = {
@@ -2328,5 +2334,8 @@ if (import.meta.env.VITE_E2E === "true") {
     // 排除したため不要になった。E2Eから状態機械の進行を確認する用途はisCrossfadeActiveへ
     // 統合する）。
     isCrossfadeActive: () => crossfadeOrchestrator?.isActive() ?? false,
+    // ロールスワップでは「今どちらのDOM要素がactiveか」がpromotionのたびに入れ替わるため、
+    // 固定の#audio-player要素ではなくこのフックでE2Eから直接確認する（2026-09-14〜、PR2）。
+    activeAudioElementId: () => (playback ? (playback.activeAudioElement() as unknown as HTMLAudioElement).id : null),
   };
 }
