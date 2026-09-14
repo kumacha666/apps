@@ -36,11 +36,17 @@ export interface PlaybackControllerLike {
   currentStreamGeneration(): number | null;
 }
 
+// main.ts側のUI結線（シークバー・MediaSession・クロスフェードのtimeupdate駆動等）が必要とする
+// イベント種別。role-swap後は「今どちらの要素が主か」がpromotion()で動的に変わるため、これらの
+// イベントは常にactiveスロットの要素からだけ中継しなければならない（さもないと、準備中の
+// 非アクティブ側の内部再生が、まだ主ではない段階でシークバー表示等を乱してしまう）。
+export type FacadeEventType = "ended" | "playing" | "pause" | "timeupdate" | "durationchange" | "loadedmetadata" | "emptied";
+
 export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackControllerLike {
   private active: PlayerSlot = 0;
   private readonly controllers: [PlaybackController, PlaybackController];
   private readonly audios: [AudioElementLike, AudioElementLike];
-  private endedListeners: Array<() => void> = [];
+  private readonly listeners = new Map<FacadeEventType, Array<() => void>>();
 
   constructor(
     audioA: AudioElementLike,
@@ -81,20 +87,26 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
           new PlaybackController(audioB, getValidAccessToken, onPlaybackError, makeOnTransitionStart(1)),
         ];
     this.audios = [audioA, audioB];
-    // 両方のaudio要素のendedを常時購読し、発火した瞬間に「その要素が現在アクティブか」で
-    // 絞り込んでから外部へ中継する（ChatGPTレビュー指摘：④）。PlaybackQueueは1つの
+    // 両方のaudio要素の対象イベントを常時購読し、発火した瞬間に「その要素が現在アクティブか」で
+    // 絞り込んでから外部へ中継する（ChatGPTレビュー指摘：④、"ended"以外のイベント種別は
+    // ロールスワップのオーケストレーション本体〈PR2〉向けに一般化）。PlaybackQueueは1つの
     // AudioEndedLikeにしか結線できないため、DualAudioPlayer自身がこのfaçadeを担う。
-    audioA.addEventListener("ended", () => this.handleEnded(0));
-    audioB.addEventListener("ended", () => this.handleEnded(1));
+    const facadeEventTypes: FacadeEventType[] = ["ended", "playing", "pause", "timeupdate", "durationchange", "loadedmetadata", "emptied"];
+    for (const type of facadeEventTypes) {
+      audioA.addEventListener(type, () => this.forward(type, 0));
+      audioB.addEventListener(type, () => this.forward(type, 1));
+    }
   }
 
-  private handleEnded(slot: PlayerSlot): void {
+  private forward(type: FacadeEventType, slot: PlayerSlot): void {
     if (this.active !== slot) return;
-    for (const listener of this.endedListeners) listener();
+    for (const listener of this.listeners.get(type) ?? []) listener();
   }
 
-  addEventListener(type: "ended", listener: () => void): void {
-    if (type === "ended") this.endedListeners.push(listener);
+  addEventListener(type: FacadeEventType, listener: () => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
   }
 
   private get activeController(): PlaybackController {

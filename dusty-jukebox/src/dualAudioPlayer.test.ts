@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { streamUrl, type AudioElementLike } from "./playback";
 import { DualAudioPlayer, createSharedStreamIdAllocator } from "./dualAudioPlayer";
+import { PlaybackContinuationRegistry } from "./playbackContinuation";
+
+type FakeAudioEventType = "error" | "pause" | "ended" | "playing" | "timeupdate" | "durationchange" | "loadedmetadata" | "emptied";
 
 class FakeAudio implements AudioElementLike {
   src = "";
@@ -8,8 +11,9 @@ class FakeAudio implements AudioElementLike {
   volume = 1;
   paused = true;
   ended = false;
+  duration = NaN;
   playCount = 0;
-  private endedListener: (() => void) | undefined;
+  private readonly listeners = new Map<FakeAudioEventType, Array<() => void>>();
 
   async play(): Promise<void> {
     this.playCount += 1;
@@ -21,14 +25,20 @@ class FakeAudio implements AudioElementLike {
     this.paused = true;
   }
 
-  addEventListener(type: "error" | "pause" | "ended", listener: () => void): void {
-    if (type === "ended") this.endedListener = listener;
+  addEventListener(type: FakeAudioEventType, listener: () => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+
+  emit(type: FakeAudioEventType): void {
+    for (const listener of this.listeners.get(type) ?? []) listener();
   }
 
   emitEnded(): void {
     this.paused = true;
     this.ended = true;
-    this.endedListener?.();
+    this.emit("ended");
   }
 }
 
@@ -200,6 +210,28 @@ describe("DualAudioPlayer", () => {
     expect(player.inactiveController().currentGeneration()).toBeGreaterThan(genAfterPreview);
   });
 
+  // 2026-09-14、PR2：ロールスワップのUI結線（シークバー・MediaSession・クロスフェードの
+  // timeupdate駆動）が必要とする"ended"以外のイベント種別も、同じactive-slotフィルタで
+  // 中継されることを確認する（"timeupdate"を代表例として検証）。
+  test("timeupdate等の追加イベント種別も、activeスロットの発火だけを中継する", async () => {
+    const { player, audioA, audioB } = createPlayer();
+    const ticks: number[] = [];
+    player.addEventListener("timeupdate", () => ticks.push(1));
+
+    audioA.emit("timeupdate"); // active(0)
+    expect(ticks).toEqual([1]);
+
+    audioB.emit("timeupdate"); // inactive(1)、中継されない
+    expect(ticks).toEqual([1]);
+
+    await player.play("A");
+    player.commitPromotion(); // active が 1(B) へ切り替わる
+    audioA.emit("timeupdate"); // 今はinactive、中継されない
+    expect(ticks).toEqual([1]);
+    audioB.emit("timeupdate"); // 今はactive、中継される
+    expect(ticks).toEqual([1, 1]);
+  });
+
   test("markStreamTokenRejected()は非アクティブ側のstreamGenerationにもマッチする", async () => {
     const { player } = createPlayer();
     await player.play("A");
@@ -209,5 +241,44 @@ describe("DualAudioPlayer", () => {
     // activeController（スロット0）には一致しないgenerationのため、
     // 非アクティブ側（スロット1）へフォールバックしてマッチする必要がある。
     expect(player.markStreamTokenRejected("preview", inactiveStreamGen!)).not.toBeNull();
+  });
+
+  // 9. ChatGPTレビュー（PR2の設計条件）：同一fileIdをA/Bで扱ってもstream-idが衝突せず、
+  // SW token cache/401 continuationが正しいslotへ紐づくこと。共有アロケータ＋実際の
+  // PlaybackController×2＋PlaybackContinuationRegistryを組み合わせた統合テスト
+  // （曲のリピート・同一曲へのシーク後のクロスフェード等、同じfileIdがA/B両方に
+  // 現れる状況の再現）。
+  test("9. 同一fileIdをA/B両方で再生しても、共有アロケータによりstream-idは衝突せず、401継続は正しいstream-idの継続だけに紐づく", async () => {
+    const audioA = new FakeAudio();
+    const audioB = new FakeAudio();
+    const allocator = createSharedStreamIdAllocator();
+    const player = new DualAudioPlayer(audioA, audioB, () => "valid-token", () => {}, () => {}, allocator);
+    const registry = new PlaybackContinuationRegistry();
+
+    // Aが"song"を再生中。
+    await player.play("song");
+    const streamIdA = player.currentStreamGeneration()!;
+    const continuationA = registry.register({ fileId: "song", streamId: streamIdA, resume: async () => true });
+
+    // Bが同じ"song"を先読み再生（曲のリピート等）。共有アロケータのため、streamIdはAとは
+    // 別の値になる。
+    await player.inactiveController().play("song");
+    const streamIdB = player.inactiveController().currentStreamGeneration()!;
+    expect(streamIdB).not.toBe(streamIdA);
+    const continuationB = registry.register({ fileId: "song", streamId: streamIdB, resume: async () => true });
+
+    // それぞれのstreamIdでトークン要求を記録し、401を受理する。
+    registry.recordTokenRequest("request-a", "song", streamIdA, "token-a");
+    registry.recordTokenRequest("request-b", "song", streamIdB, "token-b");
+
+    // Bの401はBの継続だけを返す。
+    expect(registry.acceptTokenRejection("request-b", "song", "token-b")).toBe(continuationB);
+    // Aは無関係のまま、Aの401は引き続きAの継続に正しく紐づく。
+    expect(registry.acceptTokenRejection("request-a", "song", "token-a")).toBe(continuationA);
+
+    // markStreamTokenRejected()もstream-id単位で正しいコントローラへルーティングされる
+    // （同一fileIdでもstreamIdが異なるため取り違えない）。
+    expect(player.markStreamTokenRejected("song", streamIdA)).not.toBeNull();
+    expect(player.markStreamTokenRejected("song", streamIdB)).not.toBeNull();
   });
 });

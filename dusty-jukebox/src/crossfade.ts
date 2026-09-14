@@ -225,6 +225,273 @@ export function shouldBeginCrossfadeRamp(params: ShouldBeginCrossfadeRampParams)
   return remainingMs !== null && remainingMs <= params.crossfadeDurationMs;
 }
 
+// ============================================================================
+// クロスフェード ロールスワップ・オーケストレーター（2026-09-14〜、PR2）
+// ============================================================================
+// 上記の純粋な判定関数（shouldStartCrossfadePreparation/shouldBeginCrossfadeRamp/
+// runCrossfade）はそのまま再利用できる（旧ハンドオフ方式でも「音量をどうランプするか」
+// 「いつ準備・ランプを始めるべきか」という判定自体は同じだったため）。変わるのは「準備・
+// ランプ・コミットを実際にどう実行するか」——旧方式は一時的な第二audio要素へシーク＋
+// 音量ジャンプでメインへ制御を渡す「ハンドオフ」だったが、role-swapはDualAudioPlayerの
+// 非アクティブスロットで先読み再生を最後まで独立に続け、コミット瞬間はポインタの
+// 付け替えだけ（src/currentTime/play/pause/volumeのいずれにも触れない）にする。
+// 状態機械（準備中→ランプ中→コミット）自体はmain.tsではなくここ（テスト可能なモジュール）に
+// 持たせる——main.tsはDOM結線のみを担うという本リポジトリ全体の既存方針（AI開発ルール1）に
+// 沿う。
+
+export interface CrossfadeAudioElement {
+  volume: number;
+  paused: boolean;
+  ended: boolean;
+  duration: number;
+  currentTime: number;
+  pause(): void;
+}
+
+export interface CrossfadePlaybackControllerLike {
+  play(fileId: string, position?: number): Promise<void>;
+  cancelPendingTransition?(): void;
+}
+
+// main.tsのDualAudioPlayerが実装するインターフェースの、このオーケストレーターが必要とする
+// 部分だけを切り出したもの（テスト時は薄いフェイクで満たせる）。
+export interface CrossfadeDualPlayerLike {
+  inactiveController(): CrossfadePlaybackControllerLike;
+  activeAudioElement(): CrossfadeAudioElement;
+  inactiveAudioElement(): CrossfadeAudioElement;
+  // 不変条件そのもの：src/currentTime/play()/pause()/volumeのいずれにも触れず、
+  // activeスロットを付け替えるだけ。
+  commitPromotion(): void;
+  // 昇格後、非アクティブ側（＝旧アクティブ側 or 打ち切られた準備）を後始末する。
+  resetInactive(): void;
+}
+
+export interface CrossfadeQueueLike {
+  peekNextFileId(): string | null;
+  isPlayingFromQueue(): boolean;
+  // 不変条件：prepared曲が除外済み・別リストへ変更済み・世代不一致ならfalseを返し
+  // （commitしない）、trueを返した場合だけ実際にキューのcurrentFileId/isQueuePlaybackが
+  // 確定する。player.play()は一切呼ばない。
+  commitPreparedFile(fileId: string): Promise<boolean>;
+}
+
+export type WaitFn = (ms: number) => Promise<void>;
+export type WithTimeoutFn = <T>(promise: Promise<T>, timeoutMs: number, message: string) => Promise<T>;
+
+export interface CrossfadeOrchestratorOptions {
+  steps?: number;
+  wait?: WaitFn;
+  withTimeout?: WithTimeoutFn;
+  prepareLeadMs?: number;
+  previewStartTimeoutMs?: number;
+  // promotion完了直後（awaitを挟まず同期的に）呼ばれる。呼び出し元がシークバー等の表示を
+  // 次のtimeupdate発火を待たず即座に更新するためのフック。
+  onPromoted?: () => void;
+  // 進行中の準備・ランプが、この曲自体の理由（先読み再生開始失敗・タイムアウト・退場側の
+  // 自然終了に追いつけない等）で諦める必要が生じた場合に呼ばれる。呼び出し元は通常の
+  // 自然終了フロー（advanceOnEnded()等）へフォールバックする。
+  onFallbackToNaturalEnd?: () => void;
+}
+
+export interface CrossfadeStartParams {
+  enabled: boolean;
+  durationMs: number;
+  manualTransitionInFlight: boolean;
+}
+
+const defaultWithTimeoutFn: WithTimeoutFn = (promise, timeoutMs, message) =>
+  Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), timeoutMs)),
+  ]);
+
+export class CrossfadeOrchestrator {
+  private generation = 0;
+  private preparing = false;
+  private crossfading = false;
+  private previewReady = false;
+  private previewedFileId: string | null = null;
+  private durationMsActive = 0;
+
+  constructor(
+    private readonly player: CrossfadeDualPlayerLike,
+    private readonly queue: CrossfadeQueueLike,
+    private readonly hasToken: () => boolean,
+    private readonly options: CrossfadeOrchestratorOptions = {}
+  ) {}
+
+  isPreparing(): boolean { return this.preparing; }
+  isCrossfading(): boolean { return this.crossfading; }
+  isActive(): boolean { return this.preparing || this.crossfading; }
+
+  // main.tsのtimeupdate（activeスロットのfaçade経由）から毎回呼ぶ。①準備中でも実行中でも
+  // なければ準備を試み、②準備中かつ実行中でなければランプ開始を試みる（同一呼び出し内で
+  // カスケードしうる：残り時間が既にランプしきい値以下なら、準備を試みた直後にランプ判定も
+  // 行われる）。
+  async maybeStart(params: CrossfadeStartParams): Promise<void> {
+    if (!this.preparing && !this.crossfading) {
+      if (!this.shouldPrepareNow(params)) return;
+      await this.startPreparation(params.durationMs);
+    }
+    if (this.preparing && !this.crossfading) {
+      await this.tryBeginRamp(params);
+    }
+  }
+
+  private shouldPrepareNow(params: CrossfadeStartParams): boolean {
+    const audio = this.player.activeAudioElement();
+    return (
+      shouldStartCrossfadePreparation({
+        crossfadeEnabled: params.enabled,
+        isPreparing: this.preparing,
+        isCrossfading: this.crossfading,
+        hasNextSong: Boolean(this.queue.peekNextFileId()),
+        duration: audio.duration,
+        currentTime: audio.currentTime,
+        prepareThresholdMs: params.durationMs + (this.options.prepareLeadMs ?? CROSSFADE_PREPARE_LEAD_MS),
+        audioPaused: audio.paused,
+        manualTransitionInFlight: params.manualTransitionInFlight,
+      }) && this.queue.isPlayingFromQueue()
+    );
+  }
+
+  private async startPreparation(durationMs: number): Promise<void> {
+    const nextFileId = this.queue.peekNextFileId();
+    // 現在有効なトークンが無ければクロスフェードを諦め、通常の自然終了フローに委ねる
+    // （v1と同じ既知の制限：クロスフェードの先読み再生自体はDrive 401の認証継続フローに
+    // フックしない）。
+    if (!nextFileId || !this.hasToken()) return;
+
+    this.preparing = true;
+    this.previewReady = false;
+    this.durationMsActive = durationMs;
+    this.previewedFileId = nextFileId;
+    const myGeneration = this.generation;
+    const inactiveAudio = this.player.inactiveAudioElement();
+    inactiveAudio.volume = 0;
+    const withTimeout = this.options.withTimeout ?? defaultWithTimeoutFn;
+    try {
+      await withTimeout(
+        this.player.inactiveController().play(nextFileId),
+        this.options.previewStartTimeoutMs ?? CROSSFADE_PREVIEW_START_TIMEOUT_MS,
+        "クロスフェードの先読み再生がタイムアウトしました"
+      );
+      // play()が実際に解決した時点でのみ「準備完了」とする。待機中に本物の割り込み
+      // （cancel()）で既に打ち切られていた場合は反映しない。
+      if (this.generation === myGeneration) this.previewReady = true;
+    } catch {
+      if (this.generation === myGeneration && this.preparing) {
+        const wasActiveEnded = this.player.activeAudioElement().ended;
+        this.resetPrepareState();
+        this.player.resetInactive();
+        if (wasActiveEnded) this.options.onFallbackToNaturalEnd?.();
+      }
+      // generationが既に変わっていれば、cancel()側が後始末済み（何もしない）。
+    }
+  }
+
+  private resetPrepareState(): void {
+    this.preparing = false;
+    this.previewReady = false;
+    this.previewedFileId = null;
+  }
+
+  // 準備完了後、実際にランプを開始してよいタイミングかどうかを判定し、満たしていればランプを
+  // 実行する。呼び出し元（queueのonEnded経由、退場側が準備中に先に自然終了した場合の即時
+  // ハンドオフ）からも呼べるよう公開する。
+  async tryBeginRamp(params: CrossfadeStartParams): Promise<boolean> {
+    const activeAudio = this.player.activeAudioElement();
+    const ok =
+      shouldBeginCrossfadeRamp({
+        crossfadeEnabled: params.enabled,
+        isPreparing: this.preparing,
+        isCrossfading: this.crossfading,
+        hasNextSong: Boolean(this.queue.peekNextFileId()),
+        duration: activeAudio.duration,
+        currentTime: activeAudio.currentTime,
+        crossfadeDurationMs: this.durationMsActive,
+        audioPaused: activeAudio.paused,
+        audioEnded: activeAudio.ended,
+        manualTransitionInFlight: params.manualTransitionInFlight,
+        previewReady: this.previewReady,
+      }) && this.queue.isPlayingFromQueue();
+    if (!ok) return false;
+    await this.beginRamp();
+    return true;
+  }
+
+  private async beginRamp(): Promise<void> {
+    const nextFileId = this.previewedFileId;
+    if (!nextFileId) {
+      this.preparing = false;
+      return;
+    }
+    this.preparing = false;
+    this.crossfading = true;
+    const myGeneration = this.generation;
+    const activeAudio = this.player.activeAudioElement();
+    const inactiveAudio = this.player.inactiveAudioElement();
+    // 準備開始からランプ開始までの間、先読み側は無音のまま鳴り続けているため、この時点の
+    // currentTimeは既に数秒進んでいる（CROSSFADE_PREPARE_LEAD_MS分）。次の曲は「冒頭から」
+    // 重ねて鳴らす設計のため、ランプ開始前に先頭へ巻き戻す。
+    if (inactiveAudio.currentTime !== 0) inactiveAudio.currentTime = 0;
+    // 退場側が既に自然終了している場合のみ、ランプ自体を省略して直ちに完了値へ進める。
+    const rampDurationMs = activeAudio.ended ? 0 : this.durationMsActive;
+    await runCrossfade(activeAudio, inactiveAudio, rampDurationMs, {
+      isCancelled: () => this.generation !== myGeneration,
+      // 次の曲（入場側）自体がクロスフェード長より短く、ランプ完了前に自然終了した場合。
+      shouldFinishEarly: () => inactiveAudio.ended,
+      steps: this.options.steps,
+      wait: this.options.wait,
+    });
+    if (this.generation !== myGeneration) return;
+    await this.commit(nextFileId, myGeneration);
+  }
+
+  private async commit(nextFileId: string, myGeneration: number): Promise<void> {
+    // queue.commitPreparedFile()はplayer.play()を一切呼ばない純粋な帳簿更新（pendingMove
+    // 直列化のためawaitは必要）。この待機中に本物の割り込み（cancel()）が発生していれば、
+    // 既にそちらが後始末済みのため何もしない。
+    const committed = await this.queue.commitPreparedFile(nextFileId);
+    if (this.generation !== myGeneration) return;
+    if (!committed) {
+      // 不変条件：commit失敗時はpromotionしない（除外済み・別リストへ変更済み等）。
+      this.crossfading = false;
+      this.previewedFileId = null;
+      this.player.resetInactive();
+      return;
+    }
+    // 不変条件のコア：commitとpromotionの間にawaitを挟まない。ランプ完了時点で既に
+    // outgoing.volume===0 / incoming.volume===1が成立しているため、promotionの前後で
+    // 聴感上の変化は生じない。旧active側の後始末（pause/src破棄）はpromotion完了後、
+    // 今や非アクティブになったその要素に対して行う。
+    this.player.commitPromotion();
+    this.crossfading = false;
+    this.previewedFileId = null;
+    this.player.resetInactive();
+    this.options.onPromoted?.();
+  }
+
+  // 本物の割り込み（一時停止・シーク・次へ/前へ・setList等）が起きた場合に呼ぶ。進行中の
+  // 準備・ランプを打ち切り、非アクティブ側だけを後始末する。アクティブ側のsrc/currentTime/
+  // play/pauseには一切触れない（不変条件：古いslotの後始末が新active側の遷移状態を
+  // 巻き込まない）——これは、準備・ランプが常に非アクティブ側のコントローラだけを操作し
+  // （ChatGPTレビュー指摘③、DualAudioPlayerのonTransitionStartが非アクティブ側を無視する
+  // ことと対になる設計）、この打ち切りも非アクティブ側のコントローラだけを対象にする
+  // （player.cancelPendingTransition()という両スロット無効化のブロードな版ではなく、
+  // inactiveController()経由で狭くスコープする）ことで保証される。
+  cancel(): void {
+    if (!this.preparing && !this.crossfading) return;
+    this.generation += 1;
+    this.preparing = false;
+    this.crossfading = false;
+    this.previewReady = false;
+    this.previewedFileId = null;
+    this.player.inactiveController().cancelPendingTransition?.();
+    this.player.resetInactive();
+  }
+}
+
 // 実機フィードバック（2026-09-11〜12）：「クロスフェードで曲が切り替わって、シークバーと
 // ステータスが次曲に変わった瞬間に一瞬音飛みします」。当初の原因分析は`finishCrossfadeHandoff()`
 // （main.ts）が、主audio要素の再生開始（`initialHandoffPosition`から）後に、先読み側

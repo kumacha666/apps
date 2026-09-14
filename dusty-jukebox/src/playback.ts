@@ -21,9 +21,12 @@ export interface AudioElementLike {
   ended: boolean;
   play(): Promise<void>;
   pause(): void;
-  // "ended"はDualAudioPlayer（2026-09-14〜、ロールスワップ再設計）がactive-slotの
-  // 自然終了を判別するために購読する。PlaybackController自身はこのイベントを使わない。
-  addEventListener(type: "error" | "pause" | "ended", listener: () => void): void;
+  // "ended"以外の追加イベント種別（"playing"/"timeupdate"/"durationchange"/"loadedmetadata"/
+  // "emptied"）はDualAudioPlayer（2026-09-14〜、ロールスワップ再設計）がUI結線
+  // （シークバー・MediaSession・クロスフェードのtimeupdate駆動）向けのactive-slotフィルタ
+  // 済みfaçadeとして購読するために必要。PlaybackController自身はこれらのイベントを使わない
+  // （"error"以外は一切listenしない）。
+  addEventListener(type: "error" | "pause" | "ended" | "playing" | "timeupdate" | "durationchange" | "loadedmetadata" | "emptied", listener: () => void): void;
 }
 
 export interface PlayOptions {
