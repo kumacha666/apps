@@ -1170,7 +1170,7 @@ test("手動で「次へ」を押すとクロスフェードが中断され、#a
   });
 
   await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(false);
-  await expect(page.locator("#audio-player-b")).toHaveAttribute("src", "");
+  await expect(page.locator("#audio-player-b")).not.toHaveAttribute("src");
   // 手動「次へ」自身がactiveなスロット（audio-player）でScherzoへ進む（打ち切られた
   // クロスフェードのpromotionには一切依存しない、通常のキュー操作として完了する）。
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
@@ -1208,7 +1208,7 @@ test("シークするとクロスフェードのランプが打ち切られ、#a
   });
 
   await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(false);
-  await expect(page.locator("#audio-player-b")).toHaveAttribute("src", "");
+  await expect(page.locator("#audio-player-b")).not.toHaveAttribute("src");
   // アクティブ側（audio-player）はそのままシーク先へ移動しただけで、曲自体は変わっていない。
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
 });
@@ -1237,7 +1237,7 @@ test("一時停止するとクロスフェードのランプが打ち切られ�
   await page.getByRole("button", { name: "一時停止" }).click();
 
   await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(false);
-  await expect(page.locator("#audio-player-b")).toHaveAttribute("src", "");
+  await expect(page.locator("#audio-player-b")).not.toHaveAttribute("src");
 });
 
 // 先読み再生の開始（#audio-player-bのplay()）が応答なく固まっても、タイムアウトして

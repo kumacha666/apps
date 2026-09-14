@@ -2235,7 +2235,21 @@ function init(): void {
         // promotion成功直後、退役した旧activeストリームの継続を無効化する（2026-09-14〜、
         // ChatGPTレビュー指摘：P1「promotion後に旧outgoing streamの遅延401が来ても認証UIを
         // 復活させないよう、旧streamのcontroller/Continuationも無効化してください」）。
-        onOutgoingStreamRetired: (streamId) => { if (streamId !== null) playbackContinuations.clearStreamId(streamId); },
+        onOutgoingStreamRetired: (streamId) => {
+          if (streamId !== null) playbackContinuations.clearStreamId(streamId);
+          // 退役した旧outgoingストリームの遅延認証継続操作も無効化する（2026-09-14〜、
+          // Codexレビュー指摘：P1「Invalidate deferred outgoing auth actions on
+          // promotion」）。旧outgoingがランプ中に401を受けていた場合、handleStreamTokenRejected()
+          // が既にplaybackAuthGate.defer()へ「その旧ストリームを再開する」操作を積んでいる。
+          // ここでレジストリのContinuationだけを無効化しても、この保留中のgate操作自体は
+          // 残ったままのため、promotion成功後に「認証を更新して続行」をクリックすると
+          // 退役した旧曲へ巻き戻ってしまう。promotionという「より新しい再生の成功」は、
+          // handlePlaybackAction()の成功分岐が既存の保留操作を無条件にclear()するのと
+          // 同じ既存の不変条件（「A later successful playback makes an older deferred
+          // operation obsolete」）に従い、ここでも無条件にclear()・通知非表示にする。
+          playbackAuthGate?.clear();
+          setPlaybackAuthNotice(false);
+        },
       }
     );
     for (const el2 of [audioPlayer, audioPlayerB]) {
@@ -2336,7 +2350,11 @@ function init(): void {
       // canResumeCurrent()が偽の場合（キュー曲を一度も再生していない、またはキュー外の
       // 単曲試聴で上書きされている）は先頭から再生する。currentPlayingFileId()単独では
       // 判定できない理由はcanResumeCurrent()のコメント参照（2026-09-06 レビュー指摘）。
-      return queue.canResumeCurrent() ? queue.resume(queue.currentPlayingFileId()!, audioPlayer.currentTime) : queue.playAt(0);
+      // playback.activeAudioElement()（動的な現在のactiveスロット）から読む（2026-09-14〜、
+      // Codexレビュー指摘：P1）。以前は固定のaudioPlayer（スロットA）を直接参照していたため、
+      // クロスフェードでBへpromotionされた後に一時停止→再生ボタンを押すと、Bの一時停止位置
+      // ではなく固定のA（cleanup後は0のことが多い）の位置を渡してしまっていた。
+      return queue.canResumeCurrent() ? queue.resume(queue.currentPlayingFileId()!, playback?.activeAudioElement().currentTime ?? 0) : queue.playAt(0);
     }));
     el<HTMLButtonElement>("save-playlist-btn").addEventListener("click", () => void handleSavePlaylist());
     el<HTMLButtonElement>("refresh-playlists-btn").addEventListener("click", () => void handleRefreshPlaylists());

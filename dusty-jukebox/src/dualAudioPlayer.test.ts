@@ -201,6 +201,30 @@ describe("DualAudioPlayer", () => {
     expect(audioA.src).toBe(srcABefore);
   });
 
+  // 2026-09-14〜、Codexレビュー指摘：P2「Remove the inactive src attribute instead of
+  // emptying it」。実HTMLAudioElement相当（removeAttribute実装済み）のフェイクでは、
+  // resetInactive()が`src = ""`ではなく`removeAttribute("src")`を呼ぶことを検証する。
+  test("resetInactive()はremoveAttribute実装済みのaudio要素では、srcへの空文字列代入ではなく属性除去を使う", async () => {
+    class RemovableAudio extends FakeAudio {
+      removedAttributes: string[] = [];
+      removeAttribute(qualifiedName: string): void {
+        this.removedAttributes.push(qualifiedName);
+      }
+    }
+    const audioA = new RemovableAudio();
+    const audioB = new RemovableAudio();
+    const player = new DualAudioPlayer(audioA, audioB, () => "valid-token", () => {}, () => {});
+    await player.play("A");
+    audioB.src = "https://example.com/preview";
+
+    player.resetInactive();
+
+    expect(audioB.removedAttributes).toEqual(["src"]);
+    // removeAttribute()自体はsrcプロパティを書き換えないフェイクだが、`src=""`への
+    // フォールバック代入が二重に走っていないことも確認する（両方呼ばれるのは不整合）。
+    expect(audioB.src).toBe("https://example.com/preview");
+  });
+
   test("cancelPendingTransition()は両スロットを無効化する（非アクティブ側の先読みも打ち切る）", async () => {
     const { player } = createPlayer();
     await player.play("A");

@@ -583,11 +583,12 @@ export class CrossfadeOrchestrator {
     if (!committed) {
       // 不変条件：commit失敗時はpromotionしない（除外済み・別リストへ変更済み等）。ランプで
       // 0まで下げたactive側のvolumeも、promotionしない以上は復元する（2026-09-14〜、
-      // ChatGPTレビュー指摘：P1）。
-      this.restoreActiveVolumeIfNeeded();
-      this.crossfading = false;
-      this.discardPreview();
-      this.player.resetInactive();
+      // ChatGPTレビュー指摘：P1）。ランプ完走後のこの時点では、outgoing（active）側は
+      // 既に自然終了済み（ended）であることが多い——crossfading中はこの'ended'を無視する
+      // 設計のため、promotionしないままここで終わると自動送りのトリガーを失う
+      // （2026-09-14〜、Codexレビュー指摘：P1「Fall back when a failed commit follows
+      // outgoing end」）。abandonRamp()と同じ後始末＋フォールバック判定に委ねる。
+      this.abandonRamp(this.player.activeAudioElement().ended);
       return;
     }
     // promotion成功時はランプが下げたoutgoing側のvolume（=0）が正しい最終値のため、

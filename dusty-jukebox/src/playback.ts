@@ -33,6 +33,11 @@ export interface AudioElementLike {
   // currentTime=0への巻き戻しが実際に完了したかを確認するために必要（2026-09-14〜、ChatGPT
   // レビュー指摘：P2）。
   addEventListener(type: "error" | "pause" | "ended" | "playing" | "timeupdate" | "durationchange" | "loadedmetadata" | "emptied" | "seeked", listener: () => void): void;
+  // ロールスワップの後始末（DualAudioPlayer.resetInactive()）が、`src`を空文字列へ設定する
+  // 代わりに属性自体を除去するために使う（2026-09-14〜、Codexレビュー指摘：P2「Remove the
+  // inactive src attribute instead of emptying it」）。省略可能：テスト用の簡易フェイクは
+  // 実装しなくてよく、その場合resetInactive()は従来通り`src = ""`へフォールバックする。
+  removeAttribute?(qualifiedName: string): void;
 }
 
 export interface PlayOptions {

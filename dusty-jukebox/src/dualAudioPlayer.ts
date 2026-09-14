@@ -147,10 +147,18 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
   }
 
   // 昇格後、旧アクティブ側（今の非アクティブ側）の後始末。無音確定後に呼ぶ想定。
+  // `src = ""`ではなく属性自体を除去する（2026-09-14〜、Codexレビュー指摘：P2）：
+  // `src`へ空文字列を代入すると、attribute自体は「存在するが空」のままリソース選択
+  // アルゴリズムを走らせてしまい、両スロットのコントローラが張ったままの`error`
+  // リスナー（rejectedGeneration不一致時は汎用の「音声を再生できませんでした」を
+  // 発火する）が誤って発火し、実際には新active側が問題なく再生中でもこのエラーが
+  // 表示されてしまう。テスト用の簡易フェイク（removeAttribute未実装）は従来通り
+  // `src = ""`へフォールバックする。
   resetInactive(): void {
     const audio = this.inactiveAudioElement();
     audio.pause();
-    audio.src = "";
+    if (audio.removeAttribute) audio.removeAttribute("src");
+    else audio.src = "";
   }
 
   play(fileId: string, position?: number, options?: PlayOptions): Promise<void> {

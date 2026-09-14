@@ -634,6 +634,28 @@ describe("CrossfadeOrchestrator", () => {
     expect(player.promotions).toBe(0);
   });
 
+  it("18. commitPreparedFile()が失敗した時点でoutgoing（active）側が既に自然終了していれば、自動送り（onFallbackToNaturalEnd）へ委ねる（2026-09-14〜、Codexレビュー指摘：P1）", async () => {
+    // ランプ完走後（=outgoing.volumeが既に0まで下がった時点）は、outgoing側が自然終了済み
+    // であることが多い。crossfading中はこの'ended'を無視する設計のため、commit失敗で
+    // promotionしないままここで終わると、自動送りのトリガーを失い再生が止まってしまう。
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    queue.commitResult = false;
+    const fallbacks: number[] = [];
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, {
+      wait: immediateWait,
+      steps: 1,
+      onFallbackToNaturalEnd: () => { fallbacks.push(1); },
+    });
+    setNearEnd(player);
+    player.activeAudio.ended = true; // outgoing側が既に自然終了している状態を模擬
+
+    await orchestrator.maybeStart({ enabled: true, durationMs: 3000, manualTransitionInFlight: false });
+
+    expect(player.promotions).toBe(0);
+    expect(fallbacks).toEqual([1]);
+  });
+
   it("13. promotion成功時は先読みの継続を無効化せず維持し、代わりに旧activeストリームの継続をonOutgoingStreamRetiredで無効化する（P1）", async () => {
     const player = new FakeDualPlayer();
     const queue = new FakeQueue();
