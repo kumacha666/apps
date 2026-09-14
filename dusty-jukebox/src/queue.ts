@@ -287,6 +287,25 @@ export class PlaybackQueue {
       return started;
     });
   }
+  // クロスフェードのロールスワップ再設計（2026-09-14〜、PR2）向け：先読み側のaudio要素で
+  // 既に鳴っている曲を、`player.play()`を一切呼ばずにcurrentFileId/isQueuePlaybackへ確定する
+  // （ChatGPTレビュー指摘：①「再生」と「commit」の分離）。旧`advanceToPreviewedFile()`は
+  // 「先読み再生していたaudio要素をメインへ引き継ぐ」ために自分自身で`player.play()`を
+  // 呼んでいたが、ロールスワップでは先読み側は既に別のaudio要素（DualAudioPlayerの非
+  // アクティブスロット）で独立に再生中のため、キュー側は帳簿（どの曲が「現在曲」か）を
+  // 更新するだけでよい。呼び出し時点でこのfileIdが除外・削除等で既に無効なら何もせずfalseを
+  // 返す（呼び出し元がそれを見てクロスフェード自体をキャンセルする想定。旧
+  // advanceToPreviewedFile()のような「フォールバック先を探して再生し直す」処理はしない：
+  // フォールバックにはaudio要素側の再生し直し＝シークや音量操作が伴い、role-swapが排除した
+  // かった「ハンドオフ瞬間の操作」を再導入してしまうため）。
+  commitPreparedFile(fileId: string): Promise<boolean> {
+    return this.move(async () => {
+      if (!this.list().some((song) => song.fileId === fileId)) return false;
+      this.currentFileId = fileId;
+      this.isQueuePlayback = true;
+      return true;
+    });
+  }
   // クロスフェード向け：ランプ中に先読み再生していた曲を、途中でキューが変更されても必ず
   // その曲へ確定させる（2026-09-10、Codexレビュー指摘：P1）。next()/advanceOnEnded()は
   // 実行時点の最新の並びでfindNext()を再探索するため、ランプ中にexclude/並べ替え/シャッフル

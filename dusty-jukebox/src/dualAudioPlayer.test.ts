@@ -140,10 +140,74 @@ describe("DualAudioPlayer", () => {
     expect(transitions.length).toBeGreaterThan(0);
   });
 
-  // 非アクティブなスロット（次PRで先読み用に使う想定）の遷移が本物の通知へ転送されないこと
-  // （ChatGPTレビュー指摘：③）の直接検証は、外からスロット1のコントローラへplay()する公開
-  // APIがこのPRにはまだ無いため書けない。makeOnTransitionStart()とhandleEnded()は同じ
-  // `if (this.active === slot)`パターンで実装しており、endedの方は上のテストで実際に
-  // 非アクティブ側が無視されることを確認済み。play()経由での直接検証は、次PRで
-  // 非アクティブ側の先読みAPIを追加した時点で統合テストとして追加する。
+  // 非アクティブ側の遷移が本物の通知へ転送されないこと（ChatGPTレビュー指摘：③）。
+  // inactiveController()経由でスロット1のコントローラへ直接play()し、本物の
+  // 割り込み通知（onRealTransitionStart）が呼ばれないことを検証する。
+  test("非アクティブ側（inactiveController経由）の遷移はonTransitionStart通知へ転送されない", async () => {
+    const { player, transitions } = createPlayer();
+    await player.inactiveController().play("preview");
+    expect(transitions).toEqual([]);
+  });
+
+  test("activeAudioElement()/inactiveAudioElement()はactiveの現在値を反映する", () => {
+    const { player, audioA, audioB } = createPlayer();
+    expect(player.activeAudioElement()).toBe(audioA);
+    expect(player.inactiveAudioElement()).toBe(audioB);
+  });
+
+  test("commitPromotion()はsrc/currentTime/play/pauseのいずれにも触れず、activeスロットを付け替えるだけ", async () => {
+    const { player, audioA, audioB } = createPlayer();
+    await player.play("A");
+    audioA.volume = 0;
+    audioB.volume = 1;
+    const srcA = audioA.src;
+    const srcB = audioB.src;
+    const playCountA = audioA.playCount;
+    const playCountB = audioB.playCount;
+
+    player.commitPromotion();
+
+    // 不変条件：コミット自体はsrc/currentTime/play()/pause()のいずれも呼ばない。
+    expect(audioA.src).toBe(srcA);
+    expect(audioB.src).toBe(srcB);
+    expect(audioA.playCount).toBe(playCountA);
+    expect(audioB.playCount).toBe(playCountB);
+    // activeがBへ入れ替わったことは、以後の委譲先で確認できる。
+    expect(player.activeAudioElement()).toBe(audioB);
+    expect(player.inactiveAudioElement()).toBe(audioA);
+  });
+
+  test("resetInactive()は非アクティブ側を一時停止しsrcを破棄する（アクティブ側には触れない）", async () => {
+    const { player, audioA, audioB } = createPlayer();
+    await player.play("A");
+    audioB.src = "https://example.com/preview";
+    audioB.paused = false;
+    const srcABefore = audioA.src;
+
+    player.resetInactive();
+
+    expect(audioB.paused).toBe(true);
+    expect(audioB.src).toBe("");
+    expect(audioA.src).toBe(srcABefore);
+  });
+
+  test("cancelPendingTransition()は両スロットを無効化する（非アクティブ側の先読みも打ち切る）", async () => {
+    const { player } = createPlayer();
+    await player.play("A");
+    await player.inactiveController().play("preview");
+    const genAfterPreview = player.inactiveController().currentGeneration();
+    player.cancelPendingTransition();
+    expect(player.inactiveController().currentGeneration()).toBeGreaterThan(genAfterPreview);
+  });
+
+  test("markStreamTokenRejected()は非アクティブ側のstreamGenerationにもマッチする", async () => {
+    const { player } = createPlayer();
+    await player.play("A");
+    await player.inactiveController().play("preview");
+    const inactiveStreamGen = player.inactiveController().currentStreamGeneration();
+    expect(inactiveStreamGen).not.toBeNull();
+    // activeController（スロット0）には一致しないgenerationのため、
+    // 非アクティブ側（スロット1）へフォールバックしてマッチする必要がある。
+    expect(player.markStreamTokenRejected("preview", inactiveStreamGen!)).not.toBeNull();
+  });
 });

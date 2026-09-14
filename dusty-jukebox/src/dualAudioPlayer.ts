@@ -39,6 +39,7 @@ export interface PlaybackControllerLike {
 export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackControllerLike {
   private active: PlayerSlot = 0;
   private readonly controllers: [PlaybackController, PlaybackController];
+  private readonly audios: [AudioElementLike, AudioElementLike];
   private endedListeners: Array<() => void> = [];
 
   constructor(
@@ -79,6 +80,7 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
           new PlaybackController(audioA, getValidAccessToken, onPlaybackError, makeOnTransitionStart(0)),
           new PlaybackController(audioB, getValidAccessToken, onPlaybackError, makeOnTransitionStart(1)),
         ];
+    this.audios = [audioA, audioB];
     // 両方のaudio要素のendedを常時購読し、発火した瞬間に「その要素が現在アクティブか」で
     // 絞り込んでから外部へ中継する（ChatGPTレビュー指摘：④）。PlaybackQueueは1つの
     // AudioEndedLikeにしか結線できないため、DualAudioPlayer自身がこのfaçadeを担う。
@@ -99,6 +101,39 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
     return this.controllers[this.active];
   }
 
+  private get inactiveSlot(): PlayerSlot {
+    return this.active === 0 ? 1 : 0;
+  }
+
+  // ロールスワップ（PR2）向け：非アクティブ側のコントローラ・audio要素への参照。
+  // 先読み再生・クロスフェードのランプはこちらへ向けて行う。
+  inactiveController(): PlaybackControllerLike {
+    return this.controllers[this.inactiveSlot];
+  }
+
+  activeAudioElement(): AudioElementLike {
+    return this.audios[this.active];
+  }
+
+  inactiveAudioElement(): AudioElementLike {
+    return this.audios[this.inactiveSlot];
+  }
+
+  // コミット瞬間の不変条件（ChatGPTレビュー、役割交換の核心）：
+  // 「A.volume=0/B.volume=1になった後、activeSlotを付け替えるだけ」。
+  // このメソッド自身はsrc/currentTime/play()/pause()のいずれにも一切触れない
+  // （呼び出し元が事前に音量ランプを完了させてから呼ぶ前提）。
+  commitPromotion(): void {
+    this.active = this.inactiveSlot;
+  }
+
+  // 昇格後、旧アクティブ側（今の非アクティブ側）の後始末。無音確定後に呼ぶ想定。
+  resetInactive(): void {
+    const audio = this.inactiveAudioElement();
+    audio.pause();
+    audio.src = "";
+  }
+
   play(fileId: string, position?: number, options?: PlayOptions): Promise<void> {
     return this.activeController.play(fileId, position, options);
   }
@@ -107,16 +142,25 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
     return this.activeController.pause(fadeOut);
   }
 
+  // 両スロットを無効化する（ChatGPTレビュー指摘：PR2前提①）。非アクティブ側が
+  // 実際に先読み再生するようになった以上、setList()等の割り込みはその先読みも
+  // 打ち切らなければ、後から鳴り始めてしまう恐れがある。
   cancelPendingTransition(): void {
-    this.activeController.cancelPendingTransition();
+    this.controllers[0].cancelPendingTransition();
+    this.controllers[1].cancelPendingTransition();
   }
 
   loadPaused(fileId: string, position = 0): void {
     this.activeController.loadPaused(fileId, position);
   }
 
+  // 両スロットに問い合わせる（ChatGPTレビュー指摘：PR2前提②の一部）。非アクティブ側の
+  // 先読みストリームがDrive 401を受けた場合、そちらのコントローラでしかmatchしないため。
   markStreamTokenRejected(fileId: string, generation: number): number | null {
-    return this.activeController.markStreamTokenRejected(fileId, generation);
+    return (
+      this.controllers[0].markStreamTokenRejected(fileId, generation) ??
+      this.controllers[1].markStreamTokenRejected(fileId, generation)
+    );
   }
 
   currentGeneration(): number {

@@ -426,6 +426,28 @@ PR分割はChatGPT提案の3段階（①DualAudioPlayer基盤〈挙動は変え�
 - 667 unit + 93 E2E、全green（E2Eは一度、上記の共有カウンタ既定値バグにより7件が実際に失敗することを確認した上で、fixして全件復旧させている）。`npm run deploy`実行済み（`app.js` 282.70kB、SW v0.1.125→v0.1.126）。
 - **実機での動作確認はまだ**（PR1はDualAudioPlayerを導入するが挙動を変えないため、実機確認の主眼はPR2〈クロスフェードのrole-swap化〉完了後になる）。
 
+### PR2（進行中、2026-09-14〜）：Queueの二段階commit API＋DualAudioPlayerのrole-swap API surface
+
+**未コミット・未push・未PR**。ブランチ`claude/crossfade-role-swap-2`（PR1マージ後の`main`から新規作成）で作業中。ここまでの実装：
+
+- `src/queue.ts`に`PlaybackQueue.commitPreparedFile(fileId)`を追加（ChatGPTレビュー指摘①「再生」と「commit」の分離）。既存の`pendingMove`直列化チェーンに参加し、`player.play()`を一切呼ばずに`currentFileId`/`isQueuePlayback`を確定するだけ。呼び出し時点で対象fileIdが除外・削除等で無効なら何もせずfalseを返す（旧`advanceToPreviewedFile()`のような「フォールバック先を探して再生し直す」処理はしない：フォールバックにはシーク・音量操作が伴い、role-swapが排除したい「ハンドオフ瞬間の操作」を再導入してしまうため。フォールバックが必要な場合の扱いは呼び出し元＝main.ts側のオーケストレーションで別途判断する）。`queue.test.ts`に4ケース追加（player.play()を呼ばないこと・除外/削除済みfileIdの拒否・存在しないfileIdの拒否・next()等と同じpendingMove直列化に参加すること）、いずれも disable-and-verify 確認済み。
+- `src/dualAudioPlayer.ts`に role-swap 本体の API surface を追加：
+  - `inactiveController(): PlaybackControllerLike` / `activeAudioElement(): AudioElementLike` / `inactiveAudioElement(): AudioElementLike`（非アクティブ側への先読み再生・音量ランプ用の参照）
+  - `commitPromotion(): void`（不変条件そのもの：`this.active`を付け替えるだけで、src/currentTime/play()/pause()のいずれにも触れない）
+  - `resetInactive(): void`（昇格後、旧アクティブ側の後始末。`pause()`＋`src = ""`）
+  - `cancelPendingTransition()`を両スロット無効化に拡張（ChatGPTレビューのPR2前提①：非アクティブ側の先読みも、setList()等の割り込みで打ち切れるようにする）
+  - `markStreamTokenRejected()`を両スロットへの問い合わせ（`??`フォールバック）に拡張（ChatGPTレビューのPR2前提②の一部：非アクティブ側の先読みストリームのDrive 401にも対応できるようにする）
+  - `dualAudioPlayer.test.ts`に6ケース追加（非アクティブ側の`play()`が`onTransitionStart`を発火しないこと、active/inactiveAudioElementの現在値反映、commitPromotionの不変条件〈src/currentTime/play/pauseに触れない〉、resetInactiveの非アクティブ側限定の後始末、cancelPendingTransitionの両スロット無効化、markStreamTokenRejectedの非アクティブ側フォールバック）。**このうちcancelPendingTransition用の最初のテスト実装は、`genBefore`をplay()呼び出し**前**に捕まえていたため、play()自体が行うgeneration incrementと区別できず「無効化しなくても通ってしまう」偽陽性だった**（disable-and-verifyで発覚、`genAfterPreview`＝play()完了後の値を基準にするよう修正して解消）。全6ケースとも修正後にdisable-and-verify確認済み。
+- 677 unit（PR1の667+10）全green、`npx tsc --noEmit`クリーン。E2Eは未実行（main.tsからは未結線のため対象コードパスが無く、既存93件は無変更のまま通る想定だが、このチェックポイントでは`npm test`〈vitest〉のみ実行、`npm run build`〈E2E込み〉は次のまとまった区切りで回す）。
+
+**未着手（このチェックポイント以降に必要な作業）**：
+1. `main.ts`に、非アクティブ側（先読み）専用の`PlaybackContinuationRegistry`をもう1つ用意し、`registerQueuePlaybackContinuation()`と対になる「preparing」側の登録関数を追加（ChatGPTレビューのPR2前提②の残り：Drive 401が非アクティブ側のfileId/generationで来た場合に正しく相関させる）
+2. 上記1が実装・テストされてから、`main.ts`の`DualAudioPlayer`構築時に`createSharedStreamIdAllocator()`を実際に注入する（**それより前に注入するとPR1で踏んだのと同じ種類の回帰＝`currentGeneration()+1`予測の前提崩れを再発しうる**）
+3. `crossfade.ts`のオーケストレーション（`shouldStartCrossfadePreparation`/`shouldBeginCrossfadeRamp`等）と`main.ts`の大きなクロスフェード節（`maybeStartCrossfade`/`startCrossfadePreparation`/`beginCrossfadeRamp`/`finishCrossfadeHandoff`/`attemptHandoff`等）を、非アクティブ側で先読み再生→音量ランプ→`queue.commitPreparedFile()`→`playback.commitPromotion()`→`playback.resetInactive()`という新しい流れに置き換える（旧ハンドオフ機構の置き換え、PR3で旧コードを削除する前提）
+4. `e2e/dusty-jukebox.spec.ts`のクロスフェード関連テスト（20件超、#442〜#448の積み重ねで増えたもの）を新しい仕組みに合わせて書き換える
+5. `npx tsc --noEmit`・`npx vitest run`・`npx playwright test`・`npm run deploy`のフルセット実行、`app.js`/SWバージョンの更新
+6. 本節をPR2の最終結果（設計・テスト件数・デプロイ実績）で書き換える、コミット・push・PR作成・`subscribe_pr_activity`・レビュー依頼・Merge Ready判定
+
 ## 絞り込み欄同士の連動（開発体制#43、2026-09-08）
 
 ユーザー指摘：アーティストを選んでいるのに、アルバム欄の候補にそのアーティスト以外のアルバムまで出るのは意味が無い（一般的な「カスケードフィルタ」UXへの改善要望）。従来は`artist`/`album`/`composer`/`genre`/`releaseType`の5つの絞り込み欄すべての候補（datalist）が、他の欄の現在値に関わらず索引全体から一律に算出されていた。

@@ -1028,6 +1028,66 @@ describe("PlaybackQueue", () => {
       expect(positions).toEqual([undefined, undefined]);
     });
 
+    // 2026-09-14、クロスフェードのロールスワップ再設計（PR2）向け。
+    describe("commitPreparedFile", () => {
+      test("player.play()を一切呼ばずにcurrentFileId/isQueuePlaybackを確定する", async () => {
+        const played: string[] = [];
+        const audio = new Audio();
+        const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
+        queue.setList([song("a"), song("b"), song("c")]);
+        await queue.playAt(0);
+        played.length = 0; // playAt(0)分をリセット
+        const started = await queue.commitPreparedFile("b");
+        expect(started).toBe(true);
+        expect(played).toEqual([]); // player.play()が呼ばれていないこと
+        expect(queue.currentPlayingFileId()).toBe("b");
+        expect(queue.isPlayingFromQueue()).toBe(true);
+      });
+
+      test("既に除外・削除済みのfileIdはfalseを返し、何もコミットしない", async () => {
+        const audio = new Audio();
+        const queue = new PlaybackQueue({ play: async () => {} }, audio);
+        queue.setList([song("a"), song("b")]);
+        await queue.playAt(0);
+        queue.exclude("b", true);
+        const started = await queue.commitPreparedFile("b");
+        expect(started).toBe(false);
+        expect(queue.currentPlayingFileId()).toBe("a"); // 変更されない
+      });
+
+      test("存在しないfileIdはfalseを返す", async () => {
+        const audio = new Audio();
+        const queue = new PlaybackQueue({ play: async () => {} }, audio);
+        queue.setList([song("a")]);
+        await queue.playAt(0);
+        const started = await queue.commitPreparedFile("missing");
+        expect(started).toBe(false);
+      });
+
+      test("next()/playAt()等と同じpendingMoveの直列化チェーンに参加する（進行中の操作の後に評価される）", async () => {
+        const played: string[] = [];
+        let resolvePlayB: (() => void) | undefined;
+        const audio = new Audio();
+        const queue = new PlaybackQueue({
+          play: async (id) => {
+            played.push(id);
+            if (id === "b") await new Promise<void>((resolve) => { resolvePlayB = resolve; });
+          },
+        }, audio);
+        queue.setList([song("a"), song("b"), song("c")]);
+        await queue.playAt(0);
+        const nextPromise = queue.next(); // b未解決のまま保留
+        await vi.waitFor(() => expect(played).toContain("b"));
+        // この時点でcurrentFileIdはまだ"a"。commitPreparedFile("c")はnext()の完了を待ってから
+        // 評価される（同時に実行されない）。
+        const commitPromise = queue.commitPreparedFile("c");
+        resolvePlayB?.();
+        await nextPromise;
+        await commitPromise;
+        expect(queue.currentPlayingFileId()).toBe("c");
+      });
+    });
+
     // 2026-09-10、Codexレビュー指摘：P1。findNext()による再探索ではなく、先読み再生していた
     // 曲へ必ず確定させることを検証する。
     describe("advanceToPreviewedFile", () => {
