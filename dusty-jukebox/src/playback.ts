@@ -21,7 +21,9 @@ export interface AudioElementLike {
   ended: boolean;
   play(): Promise<void>;
   pause(): void;
-  addEventListener(type: "error" | "pause", listener: () => void): void;
+  // "ended"はDualAudioPlayer（2026-09-14〜、ロールスワップ再設計）がactive-slotの
+  // 自然終了を判別するために購読する。PlaybackController自身はこのイベントを使わない。
+  addEventListener(type: "error" | "pause" | "ended", listener: () => void): void;
 }
 
 export interface PlayOptions {
@@ -152,7 +154,16 @@ export class PlaybackController {
     // 先頭で必ず呼ぶ」という既存の設計パターンに乗せることで、非同期の待機経路の長さに
     // 関わらず、実際に遷移がコミットされる瞬間には必ずクロスフェードが打ち切られていることを
     // 保証する。
-    private readonly onTransitionStart: () => void = () => {}
+    private readonly onTransitionStart: () => void = () => {},
+    // 複数のPlaybackControllerを同時に稼働させる場合（ロールスワップ設計、2026-09-14）、
+    // SW送信用URL・streamGeneration・認証継続レジストリに渡す値がコントローラ間で衝突
+    // しないよう、呼び出し元が共有の採番関数を注入できるようにする（ChatGPTレビュー
+    // 指摘：②）。内部の追い越し判定（isSuperseded）・generationReasonsはこのコントローラ
+    // 単体で完結する、既存の作り込み済みロジックのため意図的に分離し変更しない
+    // （this.generationの私有カウンタ自体は今まで通り+1ずつ進む）。未指定時は従来通り
+    // `this.generation`（＝play()呼び出し時点のplayGeneration）をそのまま使うため、
+    // 単一コントローラでの既存の挙動・テストには一切影響しない。
+    private readonly allocateStreamId: () => number = () => this.generation
   ) {
     audio.addEventListener("error", () => {
       if (this.rejectedGeneration === this.generation) {
@@ -247,7 +258,8 @@ export class PlaybackController {
     // 呼び出しであり、自己キャンセルさせないため）。
     if (!options.suppressTransitionCancel) this.onTransitionStart();
     this.currentFileId = fileId;
-    this.audio.src = streamUrl(fileId, playGeneration);
+    const streamId = this.allocateStreamId();
+    this.audio.src = streamUrl(fileId, streamId);
     // フェードアウトした分だけ、次の曲の開始時にフェード開始前のvolumeへ戻す
     // （フェードアウトはこの1回のスキップだけの演出のため）。フェードしていない場合は
     // volumeへ一切触れず、ユーザーが<audio controls>で設定した値をそのまま維持する。
@@ -255,7 +267,7 @@ export class PlaybackController {
       this.audio.volume = preFadeVolume;
       this.pendingFadeOriginalVolume = null;
     }
-    this.streamGeneration = playGeneration;
+    this.streamGeneration = streamId;
     // Set this after src so a resumed stream seeks instead of being reset by
     // assigning the new media URL. Browsers retain the requested position until
     // metadata is available, and the fake audio used by unit tests mirrors that
@@ -320,11 +332,11 @@ export class PlaybackController {
   // 誤った位置から再開していた）。
   loadPaused(fileId: string, position = 0): void {
     this.generation += 1;
-    const gen = this.generation;
     this.currentFileId = fileId;
-    this.streamGeneration = gen;
+    const streamId = this.allocateStreamId();
+    this.streamGeneration = streamId;
     this.rejectedGeneration = null;
-    this.audio.src = streamUrl(fileId, gen);
+    this.audio.src = streamUrl(fileId, streamId);
     if (Number.isFinite(position) && position > 0) this.audio.currentTime = position;
     this.audio.pause();
   }

@@ -805,4 +805,51 @@ describe("PlaybackController", () => {
       expect(audio.src).toBe("");
     });
   });
+
+  describe("allocateStreamId（ロールスワップ用の共有ストリームID注入、2026-09-14）", () => {
+    test("未指定時は従来通りplayGeneration（内部generation）をそのままstreamGeneration/URLへ使う", async () => {
+      const audio = new FakeAudio();
+      const playback = new PlaybackController(audio, () => "valid-token");
+      await playback.play("A");
+      expect(playback.currentStreamGeneration()).toBe(playback.currentGeneration());
+      expect(audio.src).toBe(streamUrl("A", playback.currentGeneration()));
+    });
+
+    test("注入した採番関数の戻り値がstreamGeneration/URLへ使われ、内部generationとは独立する", async () => {
+      const audio = new FakeAudio();
+      let nextStreamId = 100;
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, undefined, () => nextStreamId++);
+      await playback.play("A");
+      // 内部generationは通常通り1（play()呼び出し1回分）だが、streamGeneration/URLには
+      // 注入した採番関数の値（100）が使われる。
+      expect(playback.currentGeneration()).toBe(1);
+      expect(playback.currentStreamGeneration()).toBe(100);
+      expect(audio.src).toBe(streamUrl("A", 100));
+
+      await playback.play("B");
+      expect(playback.currentGeneration()).toBe(2);
+      expect(playback.currentStreamGeneration()).toBe(101);
+      expect(audio.src).toBe(streamUrl("B", 101));
+    });
+
+    test("loadPaused()も同じ採番関数を使う", () => {
+      const audio = new FakeAudio();
+      let nextStreamId = 500;
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, undefined, () => nextStreamId++);
+      playback.loadPaused("A", 10);
+      expect(playback.currentStreamGeneration()).toBe(500);
+      expect(audio.src).toBe(streamUrl("A", 500));
+    });
+
+    test("markStreamTokenRejected()は注入されたstreamGenerationで正しく照合する", async () => {
+      const audio = new FakeAudio();
+      let nextStreamId = 900;
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, undefined, () => nextStreamId++);
+      await playback.play("A");
+      expect(playback.currentStreamGeneration()).toBe(900);
+      // 内部generation（1）ではなく、実際のstreamGeneration（900）で照合しなければ拒否される。
+      expect(playback.markStreamTokenRejected("A", 1)).toBeNull();
+      expect(playback.markStreamTokenRejected("A", 900)).not.toBeNull();
+    });
+  });
 });
