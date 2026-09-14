@@ -15,15 +15,29 @@ export interface AudioElementLike {
   currentTime: number;
   volume: number;
   paused: boolean;
+  // シークバー・クロスフェードのゲート判定（seekBar.ts/crossfade.ts）がactiveスロットの
+  // durationを読むために必要（2026-09-14〜、ロールスワップ再設計）。
+  duration: number;
   // 曲が最後まで再生され自然終了した場合にtrueになる（ネイティブブラウザの挙動）。
   // 自然終了時も`paused`はtrueになるため、明示的な一時停止と区別するために必要
   // （2026-09-08、Codexレビュー指摘：P1）。
   ended: boolean;
   play(): Promise<void>;
   pause(): void;
-  // "ended"はDualAudioPlayer（2026-09-14〜、ロールスワップ再設計）がactive-slotの
-  // 自然終了を判別するために購読する。PlaybackController自身はこのイベントを使わない。
-  addEventListener(type: "error" | "pause" | "ended", listener: () => void): void;
+  // "ended"以外の追加イベント種別（"playing"/"timeupdate"/"durationchange"/"loadedmetadata"/
+  // "emptied"）はDualAudioPlayer（2026-09-14〜、ロールスワップ再設計）がUI結線
+  // （シークバー・MediaSession・クロスフェードのtimeupdate駆動）向けのactive-slotフィルタ
+  // 済みfaçadeとして購読するために必要。PlaybackController自身はこれらのイベントを使わない
+  // （"error"以外は一切listenしない）。
+  // "seeked"はクロスフェードのロールスワップ（crossfade.ts）が、ランプ開始前の先読み側の
+  // currentTime=0への巻き戻しが実際に完了したかを確認するために必要（2026-09-14〜、ChatGPT
+  // レビュー指摘：P2）。
+  addEventListener(type: "error" | "pause" | "ended" | "playing" | "timeupdate" | "durationchange" | "loadedmetadata" | "emptied" | "seeked", listener: () => void): void;
+  // ロールスワップの後始末（DualAudioPlayer.resetInactive()）が、`src`を空文字列へ設定する
+  // 代わりに属性自体を除去するために使う（2026-09-14〜、Codexレビュー指摘：P2「Remove the
+  // inactive src attribute instead of emptying it」）。省略可能：テスト用の簡易フェイクは
+  // 実装しなくてよく、その場合resetInactive()は従来通り`src = ""`へフォールバックする。
+  removeAttribute?(qualifiedName: string): void;
 }
 
 export interface PlayOptions {
@@ -46,6 +60,23 @@ export interface PlayOptions {
   // 正しく使えるようにする（generation自体は通常通り進める：フェード付きplay()等、他の
   // 既存の割り込み判定はこれまで通り機能させる必要があるため）。
   suppressTransitionCancel?: boolean;
+  // ロールスワップ再設計（2026-09-14〜、PR2）向け：このコントローラが実際にstream-idを
+  // 確定した瞬間（audio.src設定より前）に同期的に呼ばれる。streamId自体（SW送信URL・
+  // 認証継続レジストリに使う一意な値）に加えて、`isSuperseded`——「このplay()呼び出しが
+  // 自分自身のコントローラ内で既に追い越されたか」を返す、このコントローラのprivateな
+  // generationカウンタを直接参照するクロージャ——も渡す。上位（main.ts）はこれを使って
+  // Drive 401後の認証継続をこの正確なstream-idで登録できる。以前は`currentGeneration()+1`で
+  // 次のstream-idを予測し、play()呼び出し直後のcurrentStreamGeneration()で事後的に補正する
+  // 方式だったが、この補正は「play()の最初のawaitを終える前はstreamGenerationがまだ古い
+  // ストリームを指したまま」という事実に依存しており、共有stream-idアロケータ（A/B2つの
+  // コントローラが同じ採番カウンタを使う）の下では予測自体が成立しない
+  // （`this.generation`は各コントローラのprivateなカウンタで、streamIdの実際の値とは
+  // 無関係に進むため）。加えて`isSuperseded`をコールバック経由で直接渡すことで、上位が
+  // DualAudioPlayerのような「今どちらがactiveか」を推測する必要のあるファサード越しに
+  // 世代を再確認する必要も無くなる（ファサードのactiveポインタは、この呼び出しの完了を
+  // 待っている間に別の理由で変化しうるため、そちら経由の再確認は誤ったコントローラの
+  // 状態を参照しうる）。
+  onStreamIdAllocated?: (streamId: number, isSuperseded: () => boolean) => void;
 }
 
 export type PlaybackErrorHandler = (error: unknown) => void;
@@ -259,6 +290,11 @@ export class PlaybackController {
     if (!options.suppressTransitionCancel) this.onTransitionStart();
     this.currentFileId = fileId;
     const streamId = this.allocateStreamId();
+    // audio.src設定より前に、確定したstream-idを通知する（PlayOptions.onStreamIdAllocated
+    // コメント参照）。この時点で既に`isSuperseded()`はfalse（直前のチェックで確認済み）であり、
+    // かつこの後にawaitを挟まず同期的にaudio.srcを設定するため、呼び出し元がこのコールバック内で
+    // 同期的にstreamIdを使った処理（認証継続の登録等）を行える。
+    options.onStreamIdAllocated?.(streamId, isSuperseded);
     this.audio.src = streamUrl(fileId, streamId);
     // フェードアウトした分だけ、次の曲の開始時にフェード開始前のvolumeへ戻す
     // （フェードアウトはこの1回のスキップだけの演出のため）。フェードしていない場合は

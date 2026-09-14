@@ -3,7 +3,18 @@ import { sortSongsForQueue, type QueueSortDirection, type QueueSortField } from 
 import { PlaybackInterruptedError, PlaybackPausedError } from "./playback";
 export interface AudioEndedLike { addEventListener(type: "ended", listener: () => void): void; }
 export interface PlayerLike {
-  play(fileId: string, position?: number, options?: { fadeOut?: boolean; suppressTransitionCancel?: boolean }): Promise<void>;
+  play(
+    fileId: string,
+    position?: number,
+    options?: {
+      fadeOut?: boolean;
+      suppressTransitionCancel?: boolean;
+      // ロールスワップ再設計（2026-09-14〜、PR2）向け：streamIdが実際に確定した瞬間
+      // （audio.src設定より前）に同期的に呼ばれる。onBeforePlay()呼び出しをここへ移した
+      // 理由はBeforeQueuePlayのコメント参照。
+      onStreamIdAllocated?: (streamId: number, isSuperseded: () => boolean) => void;
+    }
+  ): Promise<void>;
   // setList()（別アルバム・プレイリスト選択）でPlaybackController側の進行中フェードも
   // 無効化するために使う（2026-09-08、Codexレビュー指摘：P1、詳細はplayback.tsの実装参照）。
   // 実PlaybackController以外の簡易モック（既存テスト等）を壊さないためoptionalにする。
@@ -26,7 +37,12 @@ export interface PlayerLike {
 // いない）だと、この自己無効化により実際には再生が成功しているのにplayAndCommit()の
 // generation確認に失敗し、キュー・UIが次の曲へコミットされないまま認証通知も出ない
 // （音は鳴っているのに何も表示されない）不整合が生じていた。
-export type BeforeQueuePlay = (fileId: string, suppressTransitionCancel: boolean) => void;
+// streamId（2026-09-14〜、PR2）：以前は「player.play()呼び出しの直前」に呼ばれ、呼び出し元
+// （main.ts）が次のstreamId（=streamGeneration）を`currentGeneration()+1`で予測していたが、
+// 共有stream-idアロケータ下ではこの予測が成立しないため廃止した。今はPlaybackController自身が
+// stream-idを実際に確定した瞬間（PlayOptions.onStreamIdAllocated経由）に呼ばれ、その正確な
+// 値がそのままここへ渡る。
+export type BeforeQueuePlay = (fileId: string, streamId: number, suppressTransitionCancel: boolean) => void;
 
 export class PlaybackQueue {
   private songs: Song[] = []; private currentFileId: string | null = null; private excluded = new Set<string>(); private isQueuePlayback = false;
@@ -164,9 +180,6 @@ export class PlaybackQueue {
     return this.findNext()?.fileId ?? null;
   }
   private async playAndCommit(fileId: string, generation: number, position?: number, fadeOut = false, suppressTransitionCancel = false): Promise<boolean> {
-    // Register a continuation before the native play promise settles: the
-    // initial stream request can receive a 401 while that promise is pending.
-    this.onBeforePlay(fileId, suppressTransitionCancel);
     // このフェード操作自身のトークンを発行する（2026-09-08、Codexレビュー指摘：P1）。
     let myFadeToken: number | null = null;
     if (fadeOut) {
@@ -175,11 +188,14 @@ export class PlaybackQueue {
       this.activeFadeToken = myFadeToken;
     }
     try {
-      await this.player.play(
-        fileId,
-        position,
-        fadeOut || suppressTransitionCancel ? { fadeOut: fadeOut || undefined, suppressTransitionCancel: suppressTransitionCancel || undefined } : undefined
-      );
+      await this.player.play(fileId, position, {
+        fadeOut: fadeOut || undefined,
+        suppressTransitionCancel: suppressTransitionCancel || undefined,
+        // stream-idが実際に確定した瞬間（native play promiseの解決より前）に呼ばれるため、
+        // Register a continuation before the native play promise settles: the
+        // initial stream request can receive a 401 while that promise is pending.
+        onStreamIdAllocated: (streamId) => this.onBeforePlay(fileId, streamId, suppressTransitionCancel),
+      });
     } catch (err) {
       // フェード中にユーザーが明示的に一時停止した場合（2026-09-08、Codexレビュー指摘：P1）。
       // player.play()は次の曲へ実際には切り替わっていないため、これを再生成功として
@@ -285,6 +301,25 @@ export class PlaybackQueue {
     return this.next(false, startPosition).then((started) => {
       if (!started) this.isQueuePlayback = false;
       return started;
+    });
+  }
+  // クロスフェードのロールスワップ再設計（2026-09-14〜、PR2）向け：先読み側のaudio要素で
+  // 既に鳴っている曲を、`player.play()`を一切呼ばずにcurrentFileId/isQueuePlaybackへ確定する
+  // （ChatGPTレビュー指摘：①「再生」と「commit」の分離）。旧`advanceToPreviewedFile()`は
+  // 「先読み再生していたaudio要素をメインへ引き継ぐ」ために自分自身で`player.play()`を
+  // 呼んでいたが、ロールスワップでは先読み側は既に別のaudio要素（DualAudioPlayerの非
+  // アクティブスロット）で独立に再生中のため、キュー側は帳簿（どの曲が「現在曲」か）を
+  // 更新するだけでよい。呼び出し時点でこのfileIdが除外・削除等で既に無効なら何もせずfalseを
+  // 返す（呼び出し元がそれを見てクロスフェード自体をキャンセルする想定。旧
+  // advanceToPreviewedFile()のような「フォールバック先を探して再生し直す」処理はしない：
+  // フォールバックにはaudio要素側の再生し直し＝シークや音量操作が伴い、role-swapが排除した
+  // かった「ハンドオフ瞬間の操作」を再導入してしまうため）。
+  commitPreparedFile(fileId: string): Promise<boolean> {
+    return this.move(async () => {
+      if (!this.list().some((song) => song.fileId === fileId)) return false;
+      this.currentFileId = fileId;
+      this.isQueuePlayback = true;
+      return true;
     });
   }
   // クロスフェード向け：ランプ中に先読み再生していた曲を、途中でキューが変更されても必ず
