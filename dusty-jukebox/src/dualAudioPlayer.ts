@@ -109,7 +109,7 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
     this.listeners.set(type, list);
   }
 
-  private get activeController(): PlaybackController {
+  private get activePlaybackController(): PlaybackController {
     return this.controllers[this.active];
   }
 
@@ -121,6 +121,13 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
   // 先読み再生・クロスフェードのランプはこちらへ向けて行う。
   inactiveController(): PlaybackControllerLike {
     return this.controllers[this.inactiveSlot];
+  }
+
+  // ChatGPTレビュー指摘（2026-09-14、PR2続き）：クロスフェードのコミット時、旧active側の
+  // 実際のstreamId（退役するストリーム）を取得し、その継続（PlaybackContinuationRegistry）を
+  // 明示的に無効化できるようにするために必要。
+  activeController(): PlaybackControllerLike {
+    return this.controllers[this.active];
   }
 
   activeAudioElement(): AudioElementLike {
@@ -147,11 +154,11 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
   }
 
   play(fileId: string, position?: number, options?: PlayOptions): Promise<void> {
-    return this.activeController.play(fileId, position, options);
+    return this.activePlaybackController.play(fileId, position, options);
   }
 
   pause(fadeOut = false): Promise<boolean> {
-    return this.activeController.pause(fadeOut);
+    return this.activePlaybackController.pause(fadeOut);
   }
 
   // 両スロットを無効化する（ChatGPTレビュー指摘：PR2前提①）。非アクティブ側が
@@ -163,7 +170,7 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
   }
 
   loadPaused(fileId: string, position = 0): void {
-    this.activeController.loadPaused(fileId, position);
+    this.activePlaybackController.loadPaused(fileId, position);
   }
 
   // 両スロットに問い合わせる（ChatGPTレビュー指摘：PR2前提②の一部）。非アクティブ側の
@@ -176,10 +183,10 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
   }
 
   currentGeneration(): number {
-    return this.activeController.currentGeneration();
+    return this.activePlaybackController.currentGeneration();
   }
 
   currentStreamGeneration(): number | null {
-    return this.activeController.currentStreamGeneration();
+    return this.activePlaybackController.currentStreamGeneration();
   }
 }

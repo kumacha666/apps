@@ -29,7 +29,10 @@ export interface AudioElementLike {
   // （シークバー・MediaSession・クロスフェードのtimeupdate駆動）向けのactive-slotフィルタ
   // 済みfaçadeとして購読するために必要。PlaybackController自身はこれらのイベントを使わない
   // （"error"以外は一切listenしない）。
-  addEventListener(type: "error" | "pause" | "ended" | "playing" | "timeupdate" | "durationchange" | "loadedmetadata" | "emptied", listener: () => void): void;
+  // "seeked"はクロスフェードのロールスワップ（crossfade.ts）が、ランプ開始前の先読み側の
+  // currentTime=0への巻き戻しが実際に完了したかを確認するために必要（2026-09-14〜、ChatGPT
+  // レビュー指摘：P2）。
+  addEventListener(type: "error" | "pause" | "ended" | "playing" | "timeupdate" | "durationchange" | "loadedmetadata" | "emptied" | "seeked", listener: () => void): void;
 }
 
 export interface PlayOptions {

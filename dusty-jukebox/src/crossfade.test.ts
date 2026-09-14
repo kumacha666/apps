@@ -278,23 +278,42 @@ class FakeAudioEl implements CrossfadeAudioElement {
   duration = 100;
   currentTime = 0;
   pauseCalls = 0;
+  private seekedListeners: Array<() => void> = [];
   pause(): void { this.pauseCalls += 1; this.paused = true; }
+  addEventListener(type: "seeked", listener: () => void): void {
+    if (type === "seeked") this.seekedListeners.push(listener);
+  }
+  // テスト側から実際にseek完了を模擬する（本物の<audio>が発火する'seeked'相当）。
+  fireSeeked(): void {
+    for (const listener of this.seekedListeners) listener();
+  }
 }
 
 class FakeController implements CrossfadePlaybackControllerLike {
   playCalls: Array<{ fileId: string; position?: number }> = [];
   cancelCalls = 0;
   autoResolve = true;
+  streamIdCounter = 0;
+  streamGeneration: number | null = null;
   private pending: { resolve: () => void; reject: (e: unknown) => void } | null = null;
 
-  play(fileId: string, position?: number): Promise<void> {
+  play(
+    fileId: string,
+    position?: number,
+    options?: { onStreamIdAllocated?: (streamId: number, isSuperseded: () => boolean) => void }
+  ): Promise<void> {
     this.playCalls.push({ fileId, position });
+    this.streamIdCounter += 1;
+    const streamId = this.streamIdCounter;
+    this.streamGeneration = streamId;
+    options?.onStreamIdAllocated?.(streamId, () => false);
     if (this.autoResolve) return Promise.resolve();
     return new Promise((resolve, reject) => { this.pending = { resolve, reject }; });
   }
   resolvePending(): void { this.pending?.resolve(); this.pending = null; }
   rejectPending(e: unknown): void { this.pending?.reject(e); this.pending = null; }
   cancelPendingTransition(): void { this.cancelCalls += 1; }
+  currentStreamGeneration(): number | null { return this.streamGeneration; }
 }
 
 class FakeDualPlayer implements CrossfadeDualPlayerLike {
@@ -306,6 +325,7 @@ class FakeDualPlayer implements CrossfadeDualPlayerLike {
   resets = 0;
 
   inactiveController(): CrossfadePlaybackControllerLike { return this.inactiveControllerInstance; }
+  activeController(): CrossfadePlaybackControllerLike { return this.activeControllerInstance; }
   activeAudioElement(): CrossfadeAudioElement { return this.activeAudio; }
   inactiveAudioElement(): CrossfadeAudioElement { return this.inactiveAudio; }
   commitPromotion(): void {
@@ -522,5 +542,159 @@ describe("CrossfadeOrchestrator", () => {
     // 一度もcancelPendingTransition()を呼ばれていない（cleanupは常にinactiveController()＝
     // 旧activeのAだけを対象にする）。
     expect(player.activeControllerInstance.cancelCalls).toBe(0);
+  });
+
+  // 2026-09-14〜、ChatGPTレビュー指摘（HEAD `834557e`）4件の回帰防止テスト。
+
+  it("9. ランプ途中でcancel()すると、active側のvolumeがランプ開始前の値へ復元される（P1）", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const release: { fn: (() => void) | null } = { fn: null };
+    const controlledWait: WaitFn = () => new Promise((resolve) => { release.fn = resolve; });
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, { wait: controlledWait, steps: 2 });
+    setNearEnd(player);
+    player.activeAudio.volume = 0.6; // ユーザーが独自に調整していた音量を模擬
+
+    const started = orchestrator.maybeStart({ enabled: true, durationMs: 4000, manualTransitionInFlight: false });
+    await vi.waitFor(() => expect(orchestrator.isCrossfading()).toBe(true));
+    release.fn?.(); // 1/2ステップぶん進める
+    await vi.waitFor(() => expect(player.activeAudio.volume).toBeLessThan(0.6));
+    expect(player.activeAudio.volume).toBeGreaterThan(0); // ランプ中の中間値のまま
+
+    orchestrator.cancel(); // Seek/Next/Previous/Pause/setList相当
+    expect(player.activeAudio.volume).toBe(0.6);
+
+    release.fn?.(); // 残りのタイマーも解放し、Promiseが浮遊したままにならないようにする
+    await started;
+  });
+
+  it("10. 先読み開始時にonPreviewStreamAllocatedが実際のfileId/streamIdで呼ばれ、isPendingPreview()もこの間trueを返す（P1）", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const allocated: Array<{ fileId: string; streamId: number }> = [];
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, {
+      wait: immediateWait,
+      steps: 1,
+      onPreviewStreamAllocated: (fileId, streamId) => allocated.push({ fileId, streamId }),
+    });
+    setNearEnd(player);
+    player.inactiveControllerInstance.autoResolve = false;
+
+    const started = orchestrator.maybeStart({ enabled: true, durationMs: 3000, manualTransitionInFlight: false });
+    await Promise.resolve();
+
+    expect(allocated).toEqual([{ fileId: "next", streamId: 1 }]);
+    expect(orchestrator.isPendingPreview("next", 1)).toBe(true);
+    expect(orchestrator.isPendingPreview("next", 2)).toBe(false);
+    expect(orchestrator.isPendingPreview("other", 1)).toBe(false);
+
+    player.inactiveControllerInstance.resolvePending();
+    await started;
+  });
+
+  it("11. cancel()でpromotionされないまま打ち切られた先読みは、onPreviewDiscardedで継続が無効化されisPendingPreview()もfalseになる（P1）", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const discarded: number[] = [];
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, {
+      wait: immediateWait,
+      steps: 1,
+      onPreviewDiscarded: (streamId) => discarded.push(streamId),
+    });
+    setNearEnd(player);
+    player.inactiveControllerInstance.autoResolve = false;
+
+    const started = orchestrator.maybeStart({ enabled: true, durationMs: 3000, manualTransitionInFlight: false });
+    await Promise.resolve();
+    expect(orchestrator.isPendingPreview("next", 1)).toBe(true);
+
+    orchestrator.cancel();
+    expect(discarded).toEqual([1]);
+    expect(orchestrator.isPendingPreview("next", 1)).toBe(false);
+
+    player.inactiveControllerInstance.resolvePending();
+    await started;
+  });
+
+  it("12. commitPreparedFile()が失敗した場合もonPreviewDiscardedで継続が無効化される（P1）", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    queue.commitResult = false;
+    const discarded: number[] = [];
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, {
+      wait: immediateWait,
+      steps: 1,
+      onPreviewDiscarded: (streamId) => discarded.push(streamId),
+    });
+    setNearEnd(player);
+
+    await orchestrator.maybeStart({ enabled: true, durationMs: 3000, manualTransitionInFlight: false });
+
+    expect(discarded).toEqual([1]);
+    expect(player.promotions).toBe(0);
+  });
+
+  it("13. promotion成功時は先読みの継続を無効化せず維持し、代わりに旧activeストリームの継続をonOutgoingStreamRetiredで無効化する（P1）", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const discarded: number[] = [];
+    const retired: Array<number | null> = [];
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, {
+      wait: immediateWait,
+      steps: 1,
+      onPreviewDiscarded: (streamId) => discarded.push(streamId),
+      onOutgoingStreamRetired: (streamId) => retired.push(streamId),
+    });
+    setNearEnd(player);
+    // 旧active（元々のA）が既に発行済みのstreamId（実運用ではこの曲自身の再生開始時に確定済み）。
+    await player.activeControllerInstance.play("current");
+
+    await orchestrator.maybeStart({ enabled: true, durationMs: 3000, manualTransitionInFlight: false });
+
+    expect(player.promotions).toBe(1);
+    expect(discarded).toEqual([]); // promotionされたので破棄されない
+    expect(retired).toEqual([1]); // 旧active（元A）のstreamId
+    expect(orchestrator.isPendingPreview("next", 1)).toBe(false); // promotion後は「先読み中」ではなくなる
+  });
+
+  it("14. 入場側がランプ完了前に自然終了(ended)すると、promotion後に自動送り（onFallbackToNaturalEnd）が発火する（P1）", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const fallbacks: number[] = [];
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, {
+      wait: immediateWait,
+      steps: 4,
+      onFallbackToNaturalEnd: () => { fallbacks.push(1); },
+    });
+    setNearEnd(player);
+    // shouldFinishEarly: () => inactiveAudio.ended。先読み側（次の曲）自体がクロスフェード長より
+    // 短く、ランプ完了前に自然終了した状態を模擬する。
+    player.inactiveAudio.ended = true;
+
+    await orchestrator.maybeStart({ enabled: true, durationMs: 4000, manualTransitionInFlight: false });
+
+    expect(player.promotions).toBe(1);
+    expect(fallbacks).toEqual([1]);
+  });
+
+  it("15. ランプ開始前、先読み側のcurrentTime=0への巻き戻しがseeked完了するまでincoming.volumeを上げない（P2）", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, { wait: immediateWait, steps: 1 });
+    setNearEnd(player);
+    const previewAudio = player.inactiveAudio;
+    previewAudio.currentTime = 5; // 準備リード時間ぶん進んでいた状態を模擬
+    previewAudio.volume = 0;
+
+    const started = orchestrator.maybeStart({ enabled: true, durationMs: 3000, manualTransitionInFlight: false });
+    await vi.waitFor(() => expect(previewAudio.currentTime).toBe(0));
+
+    // 巻き戻し自体は既に行われているが、seeked未発火のためまだランプは始まっていない。
+    expect(previewAudio.volume).toBe(0);
+
+    previewAudio.fireSeeked();
+    await started;
+
+    expect(previewAudio.volume).toBe(1);
   });
 });

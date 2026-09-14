@@ -9,7 +9,7 @@
 // （hasCompletedInitialScan=true）はrunDifferentialSync（changes.list消費）に切り替わる。
 import { AuthError, DriveAuth } from "./auth";
 import { PlaybackAuthenticationRequiredError } from "./playback";
-import { DualAudioPlayer, type PlaybackControllerLike } from "./dualAudioPlayer";
+import { DualAudioPlayer, createSharedStreamIdAllocator, type PlaybackControllerLike } from "./dualAudioPlayer";
 import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStatus";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
@@ -1284,6 +1284,16 @@ function handleStreamTokenIssued(fileId: string, requestId: string, token: strin
 function handleStreamTokenRejected(fileId: string, requestId: string): void {
   const continuation = playbackContinuations.acceptTokenRejection(requestId, fileId, auth.getAccessToken());
   if (!continuation || !playback || !playbackAuthGate) return;
+  // クロスフェードの先読み（まだpromotionされていない）自身のstreamへの401は、通常の認証継続
+  // フローへ進めず静かにクロスフェードを中止する（2026-09-14〜、ChatGPTレビュー指摘：P1）。
+  // active側（A）は無関係の別ストリームで問題なく再生を続けているため、ユーザーへ再認証を
+  // 要求してA側の再生まで中断させる必要が無い（v1から続く既知の設計：クロスフェード自体は
+  // 401リトライフローにフックしない）。promotion済みの同じstreamIdへの401は
+  // isPendingPreview()がfalseを返すため、以下の通常経路（認証継続UI）で復旧する。
+  if (crossfadeOrchestrator?.isPendingPreview(fileId, continuation.streamId)) {
+    crossfadeOrchestrator.cancel();
+    return;
+  }
   const position = playback.markStreamTokenRejected(fileId, continuation.streamId);
   if (position === null) return;
   // A Drive-side revocation can happen before expiresAt. Clear only the token
@@ -2133,7 +2143,16 @@ function init(): void {
       // クロスフェード：実際に新しい遷移がコミットされる瞬間（play()/pause()/
       // cancelPendingTransition()それぞれの先頭）で必ず打ち切る（2026-09-10、
       // Codexレビュー指摘：P1。詳細はplayback.tsのonTransitionStartコメント参照）。
-      () => crossfadeOrchestrator?.cancel()
+      () => crossfadeOrchestrator?.cancel(),
+      // 非アクティブ側（クロスフェードの先読み）が実際にstream-idを消費するようになった
+      // ため、A/B間でstream-idが衝突しないよう共有アロケータを注入する（2026-09-14〜、
+      // ChatGPTレビュー指摘：P1「production の main.ts では createSharedStreamIdAllocator()
+      // を注入しておらず、A/Bは依然それぞれのprivate generationをstreamIdとして使っている」）。
+      // これを注入する前提として、PlaybackContinuationRegistryをMap<streamId,...>化する
+      // stream-id予測の廃止（27b11f8）と、先読み側のstreamIdが確定した瞬間に継続を登録する
+      // onPreviewStreamAllocated配線（下記）が先に必要（このコメントの経緯はdusty-jukebox/
+      // CLAUDE.mdのクロスフェード節参照）。
+      createSharedStreamIdAllocator()
     );
     wireSeekBar(playback);
     playback.addEventListener("timeupdate", () => void maybeStartCrossfade());
@@ -2188,6 +2207,35 @@ function init(): void {
           renderQueue();
         },
         onFallbackToNaturalEnd: () => { void handleQueuePlayback(() => queue?.advanceOnEnded()); },
+        // 先読みの実際のstream-idが確定した時点で継続を登録する（2026-09-14〜、ChatGPTレビュー
+        // 指摘：P1「preview側streamに認証Continuationが無いため、promotion後の401を回復できません」）。
+        // この継続はpromotion後も（同じstreamIdがそのままactiveストリームとして使われ続けるため）
+        // 有効なまま残る。resumeは「まだ現在の（先読みしていた）曲がcommit済みか」で分岐する：
+        // 既にqueue.currentPlayingFileId()がこのfileIdならpromotion済みの通常の認証継続
+        // （queue.resumeCurrent()）で復旧し、そうでなければ（まだpromotion前、または既に
+        // 別の理由で状況が変わっている）何もしない——ChatGPTレビュー指摘の通り「previewの401は
+        // crossfadeを中止してAを継続する」設計のため、promotion前の401自体は下記
+        // handleStreamTokenRejected()側でcrossfadeOrchestrator.cancel()により静かに処理する
+        // （このresumeが呼ばれるのはユーザーが「認証を更新して続行」をクリックした後、＝既に
+        // promotion済みの場合のみ）。
+        onPreviewStreamAllocated: (fileId, streamId) => {
+          playbackContinuations.register({
+            fileId,
+            streamId,
+            resume: async (position) => {
+              if (queue?.currentPlayingFileId() !== fileId) return false;
+              return queue.resumeCurrent(position);
+            },
+          });
+        },
+        // promotionされないまま打ち切られた先読み（cancel()・commit失敗）の継続を無効化する
+        // （2026-09-14〜、ChatGPTレビュー指摘：P1）。遅れて届く401が、既に破棄された先読みへ
+        // 向けて認証UIを復活させないようにする。
+        onPreviewDiscarded: (streamId) => playbackContinuations.clearStreamId(streamId),
+        // promotion成功直後、退役した旧activeストリームの継続を無効化する（2026-09-14〜、
+        // ChatGPTレビュー指摘：P1「promotion後に旧outgoing streamの遅延401が来ても認証UIを
+        // 復活させないよう、旧streamのcontroller/Continuationも無効化してください」）。
+        onOutgoingStreamRetired: (streamId) => { if (streamId !== null) playbackContinuations.clearStreamId(streamId); },
       }
     );
     for (const el2 of [audioPlayer, audioPlayerB]) {

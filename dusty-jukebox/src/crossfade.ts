@@ -86,6 +86,12 @@ export const CROSSFADE_HANDOFF_SEEK_TIMEOUT_MS = import.meta.env.VITE_E2E === "t
 export const CROSSFADE_HANDOFF_CATCHUP_MAX_ATTEMPTS = 3;
 export const CROSSFADE_HANDOFF_CATCHUP_TOLERANCE_SEC = 0.05;
 
+// ランプ開始前、先読み側をcurrentTime=0へ巻き戻すseek完了（'seeked'）待ちのタイムアウト
+// （2026-09-14〜、ChatGPTレビュー指摘：P2「ramp直前のcurrentTime=0と可聴化の間にseek完了
+// 保証がありません」）。この待機がタイムアウトしても致命的ではない（その時点のcurrentTimeの
+// ままランプを開始するだけ）ため、CROSSFADE_HANDOFF_SEEK_TIMEOUT_MSと同じ短めの値にする。
+export const CROSSFADE_RAMP_SEEK_TIMEOUT_MS = import.meta.env.VITE_E2E === "true" ? 100 : 1000;
+
 // 進行度（0=開始直後、1=完了）に対する退場側/入場側それぞれの音量。単純な線形（合計は常に1）。
 export function crossfadeVolumes(progress: number): { outgoing: number; incoming: number } {
   const p = Math.min(1, Math.max(0, progress));
@@ -246,17 +252,30 @@ export interface CrossfadeAudioElement {
   duration: number;
   currentTime: number;
   pause(): void;
+  // ランプ開始前、先読み側をcurrentTime=0へ巻き戻した実際の完了を確認するために必要
+  // （2026-09-14〜、ChatGPTレビュー指摘：P2）。
+  addEventListener(type: "seeked", listener: () => void): void;
 }
 
 export interface CrossfadePlaybackControllerLike {
-  play(fileId: string, position?: number): Promise<void>;
+  play(
+    fileId: string,
+    position?: number,
+    options?: { onStreamIdAllocated?: (streamId: number, isSuperseded: () => boolean) => void }
+  ): Promise<void>;
   cancelPendingTransition?(): void;
+  // 退役する旧activeストリームのContinuation無効化に必要（2026-09-14〜、ChatGPTレビュー
+  // 指摘：P1「promotion後の旧outgoing streamの遅延401」）。
+  currentStreamGeneration?(): number | null;
 }
 
 // main.tsのDualAudioPlayerが実装するインターフェースの、このオーケストレーターが必要とする
 // 部分だけを切り出したもの（テスト時は薄いフェイクで満たせる）。
 export interface CrossfadeDualPlayerLike {
   inactiveController(): CrossfadePlaybackControllerLike;
+  // 旧activeストリームのstreamId取得専用（2026-09-14〜、ChatGPTレビュー指摘：P1）。
+  // activeController()自体はplay()を呼ばない（能動的な遷移操作は一切行わない）。
+  activeController(): CrossfadePlaybackControllerLike;
   activeAudioElement(): CrossfadeAudioElement;
   inactiveAudioElement(): CrossfadeAudioElement;
   // 不変条件そのもの：src/currentTime/play()/pause()/volumeのいずれにも触れず、
@@ -284,6 +303,9 @@ export interface CrossfadeOrchestratorOptions {
   withTimeout?: WithTimeoutFn;
   prepareLeadMs?: number;
   previewStartTimeoutMs?: number;
+  // ランプ開始前、先読み側をcurrentTime=0へ巻き戻すseek完了待ちのタイムアウト
+  // （2026-09-14〜、ChatGPTレビュー指摘：P2）。
+  seekTimeoutMs?: number;
   // promotion完了直後（awaitを挟まず同期的に）呼ばれる。呼び出し元がシークバー等の表示を
   // 次のtimeupdate発火を待たず即座に更新するためのフック。
   onPromoted?: () => void;
@@ -291,6 +313,19 @@ export interface CrossfadeOrchestratorOptions {
   // 自然終了に追いつけない等）で諦める必要が生じた場合に呼ばれる。呼び出し元は通常の
   // 自然終了フロー（advanceOnEnded()等）へフォールバックする。
   onFallbackToNaturalEnd?: () => void;
+  // 先読み側のstream-idが実際に確定した時点（2026-09-14〜、ChatGPTレビュー指摘：P1
+  // 「preview側streamに認証Continuationが無いため、promotion後の401を回復できません」）。
+  // 呼び出し元はここでPlaybackContinuationRegistryへ継続を登録する。この継続はpromotion後も
+  // （同じstreamIdがそのままactiveストリームとして使われ続けるため）有効なまま残す。
+  onPreviewStreamAllocated?: (fileId: string, streamId: number) => void;
+  // 先読み（promotion前）が、promotionされないまま打ち切られた（cancel()・commit失敗の
+  // いずれか）場合に呼ばれる。呼び出し元は該当streamIdの継続を無効化し、打ち切られた
+  // 先読みの遅延401が認証UIを復活させないようにする。
+  onPreviewDiscarded?: (streamId: number) => void;
+  // promotion成功直後、退役した旧activeストリームのstreamIdを渡す（nullは旧ストリームが
+  // 一度もstream-idを確定していなかった場合）。呼び出し元は該当streamIdの継続も無効化し、
+  // 旧ストリームの遅延401が認証UIを復活させないようにする。
+  onOutgoingStreamRetired?: (streamId: number | null) => void;
 }
 
 export interface CrossfadeStartParams {
@@ -311,7 +346,15 @@ export class CrossfadeOrchestrator {
   private crossfading = false;
   private previewReady = false;
   private previewedFileId: string | null = null;
+  // 先読み側の実際のstream-id（onStreamIdAllocated経由で確定、2026-09-14〜、ChatGPTレビュー
+  // 指摘：P1）。isPendingPreview()の照合・discardPreview()での継続無効化通知に使う。
+  private previewedStreamId: number | null = null;
   private durationMsActive = 0;
+  // ランプ開始直前のactive側volume（2026-09-14〜、ChatGPTレビュー指摘：P1「ランプ途中のcancelで
+  // 現active側のvolumeが中間値のまま残ります」）。ランプが実際に開始した場合のみ設定され、
+  // promotion成功時は復元不要（0が正しい最終値のため）なのでnullへクリアするだけ、
+  // cancel()・commit失敗時はこの値へ復元してからnullへクリアする。
+  private activeVolumeBeforeRamp: number | null = null;
 
   constructor(
     private readonly player: CrossfadeDualPlayerLike,
@@ -323,6 +366,24 @@ export class CrossfadeOrchestrator {
   isPreparing(): boolean { return this.preparing; }
   isCrossfading(): boolean { return this.crossfading; }
   isActive(): boolean { return this.preparing || this.crossfading; }
+
+  // 指定したfileId/streamIdが、promotionされないままの現在進行中の先読みそのものかどうか
+  // （2026-09-14〜、ChatGPTレビュー指摘：P1）。main.ts側がDrive 401の扱いを、
+  // 「まだpromotionされていない先読み（クロスフェードを中止してactive側を継続させる）」と
+  // 「既にpromotion済みのactiveストリーム（通常の認証継続フローで復旧する）」とで
+  // 区別するために使う。
+  isPendingPreview(fileId: string, streamId: number): boolean {
+    return (this.preparing || this.crossfading) && this.previewedFileId === fileId && this.previewedStreamId === streamId;
+  }
+
+  // ランプで変更したactive側のvolumeを、promotionされなかった場合に開始前の値へ戻す
+  // （2026-09-14〜、ChatGPTレビュー指摘：P1）。ランプが実際に開始していなければ何もしない。
+  private restoreActiveVolumeIfNeeded(): void {
+    if (this.activeVolumeBeforeRamp !== null) {
+      this.player.activeAudioElement().volume = this.activeVolumeBeforeRamp;
+      this.activeVolumeBeforeRamp = null;
+    }
+  }
 
   // main.tsのtimeupdate（activeスロットのfaçade経由）から毎回呼ぶ。①準備中でも実行中でも
   // なければ準備を試み、②準備中かつ実行中でなければランプ開始を試みる（同一呼び出し内で
@@ -364,6 +425,7 @@ export class CrossfadeOrchestrator {
 
     this.preparing = true;
     this.previewReady = false;
+    this.previewedStreamId = null;
     this.durationMsActive = durationMs;
     this.previewedFileId = nextFileId;
     const myGeneration = this.generation;
@@ -372,7 +434,18 @@ export class CrossfadeOrchestrator {
     const withTimeout = this.options.withTimeout ?? defaultWithTimeoutFn;
     try {
       await withTimeout(
-        this.player.inactiveController().play(nextFileId),
+        this.player.inactiveController().play(nextFileId, undefined, {
+          // 先読みの実際のstream-idが確定した瞬間に登録する（2026-09-14〜、ChatGPTレビュー
+          // 指摘：P1）。この時点で既に打ち切られていれば（cancel()等でgenerationが進んでいれば）
+          // 何もしない：PlaybackController.play()自身のisSuperseded()チェックにより、この
+          // コールバック自体、打ち切り後に実際にaudio.srcをコミットするような呼び出しでは
+          // そもそも発火しない設計だが、念のためこちらでも確認する。
+          onStreamIdAllocated: (streamId) => {
+            if (this.generation !== myGeneration) return;
+            this.previewedStreamId = streamId;
+            this.options.onPreviewStreamAllocated?.(nextFileId, streamId);
+          },
+        }),
         this.options.previewStartTimeoutMs ?? CROSSFADE_PREVIEW_START_TIMEOUT_MS,
         "クロスフェードの先読み再生がタイムアウトしました"
       );
@@ -382,7 +455,7 @@ export class CrossfadeOrchestrator {
     } catch {
       if (this.generation === myGeneration && this.preparing) {
         const wasActiveEnded = this.player.activeAudioElement().ended;
-        this.resetPrepareState();
+        this.discardPreview();
         this.player.resetInactive();
         if (wasActiveEnded) this.options.onFallbackToNaturalEnd?.();
       }
@@ -390,10 +463,15 @@ export class CrossfadeOrchestrator {
     }
   }
 
-  private resetPrepareState(): void {
+  // promotionされないまま先読みを諦める（タイムアウト・commit失敗・cancel()のいずれか）。
+  // 継続が登録済みなら呼び出し元へ無効化を通知してから状態をリセットする（2026-09-14〜、
+  // ChatGPTレビュー指摘：P1）。
+  private discardPreview(): void {
+    if (this.previewedStreamId !== null) this.options.onPreviewDiscarded?.(this.previewedStreamId);
     this.preparing = false;
     this.previewReady = false;
     this.previewedFileId = null;
+    this.previewedStreamId = null;
   }
 
   // 準備完了後、実際にランプを開始してよいタイミングかどうかを判定し、満たしていればランプを
@@ -431,10 +509,32 @@ export class CrossfadeOrchestrator {
     const myGeneration = this.generation;
     const activeAudio = this.player.activeAudioElement();
     const inactiveAudio = this.player.inactiveAudioElement();
+    // ランプ開始前のactive側volumeを記録する（2026-09-14〜、ChatGPTレビュー指摘：P1）。
+    // cancel()・commit失敗でpromotionされずに終わった場合、ランプが変更したこの値を
+    // 復元するために使う。
+    this.activeVolumeBeforeRamp = activeAudio.volume;
     // 準備開始からランプ開始までの間、先読み側は無音のまま鳴り続けているため、この時点の
     // currentTimeは既に数秒進んでいる（CROSSFADE_PREPARE_LEAD_MS分）。次の曲は「冒頭から」
     // 重ねて鳴らす設計のため、ランプ開始前に先頭へ巻き戻す。
-    if (inactiveAudio.currentTime !== 0) inactiveAudio.currentTime = 0;
+    if (inactiveAudio.currentTime !== 0) {
+      // incoming.volumeが0のうちに、この巻き戻し（seek）が実際に完了するのを確認してから
+      // ランプを開始する（2026-09-14〜、ChatGPTレビュー指摘：P2「ramp直前のcurrentTime=0と
+      // 可聴化の間にseek完了保証がありません」）。seekedが届かない環境（実機のデコーダ次第・
+      // このアプリのE2Eモック環境）もあるため、タイムアウトしても致命的にはせず、その時点の
+      // currentTimeのままランプへ進む。
+      const seeked = new Promise<void>((resolve) => {
+        inactiveAudio.addEventListener("seeked", () => resolve());
+      });
+      inactiveAudio.currentTime = 0;
+      const withTimeout = this.options.withTimeout ?? defaultWithTimeoutFn;
+      try {
+        await withTimeout(seeked, this.options.seekTimeoutMs ?? CROSSFADE_RAMP_SEEK_TIMEOUT_MS, "クロスフェードのランプ開始前seekがタイムアウトしました");
+      } catch {
+        // タイムアウトは致命的ではない（その時点のcurrentTimeのままランプへ進むだけ）。
+      }
+      // seek待ち中に本物の割り込み（cancel()）が発生していれば、既にそちらが後始末済み。
+      if (this.generation !== myGeneration) return;
+    }
     // 退場側が既に自然終了している場合のみ、ランプ自体を省略して直ちに完了値へ進める。
     const rampDurationMs = activeAudio.ended ? 0 : this.durationMsActive;
     await runCrossfade(activeAudio, inactiveAudio, rampDurationMs, {
@@ -455,12 +555,21 @@ export class CrossfadeOrchestrator {
     const committed = await this.queue.commitPreparedFile(nextFileId);
     if (this.generation !== myGeneration) return;
     if (!committed) {
-      // 不変条件：commit失敗時はpromotionしない（除外済み・別リストへ変更済み等）。
+      // 不変条件：commit失敗時はpromotionしない（除外済み・別リストへ変更済み等）。ランプで
+      // 0まで下げたactive側のvolumeも、promotionしない以上は復元する（2026-09-14〜、
+      // ChatGPTレビュー指摘：P1）。
+      this.restoreActiveVolumeIfNeeded();
       this.crossfading = false;
-      this.previewedFileId = null;
+      this.discardPreview();
       this.player.resetInactive();
       return;
     }
+    // promotion成功時はランプが下げたoutgoing側のvolume（=0）が正しい最終値のため、
+    // 復元せずクリアするのみ。
+    this.activeVolumeBeforeRamp = null;
+    // 旧active（退役する側）の実際のstream-idを、promotionで入れ替わる前に確定させる
+    // （2026-09-14〜、ChatGPTレビュー指摘：P1「promotion後の旧outgoing streamの遅延401」）。
+    const outgoingStreamId = this.player.activeController().currentStreamGeneration?.() ?? null;
     // 不変条件のコア：commitとpromotionの間にawaitを挟まない。ランプ完了時点で既に
     // outgoing.volume===0 / incoming.volume===1が成立しているため、promotionの前後で
     // 聴感上の変化は生じない。旧active側の後始末（pause/src破棄）はpromotion完了後、
@@ -468,8 +577,19 @@ export class CrossfadeOrchestrator {
     this.player.commitPromotion();
     this.crossfading = false;
     this.previewedFileId = null;
+    // promotion後も、この継続（もはや旧アクティブになったのではなく、今アクティブになった
+    // このストリーム自身）は有効なまま残す——discardPreview()は呼ばない。
+    this.previewedStreamId = null;
     this.player.resetInactive();
     this.options.onPromoted?.();
+    this.options.onOutgoingStreamRetired?.(outgoingStreamId);
+    // 入場側（次の曲）自体がクロスフェード長より短く、ランプ完了前に自然終了していた場合
+    // （shouldFinishEarly経由）、promotion後の新active要素は既にended済み。DualAudioPlayerの
+    // façadeはpromotion前に発火した'ended'を中継しておらず、ブラウザはpromotion後に
+    // 同じ'ended'を再発火しないため、明示的に自動送りへ進める必要がある（2026-09-14〜、
+    // ChatGPTレビュー指摘：P1「incomingがランプ中にendedすると、promotion後に自動送りが
+    // 発火しません」）。
+    if (this.player.activeAudioElement().ended) this.options.onFallbackToNaturalEnd?.();
   }
 
   // 本物の割り込み（一時停止・シーク・次へ/前へ・setList等）が起きた場合に呼ぶ。進行中の
@@ -483,10 +603,13 @@ export class CrossfadeOrchestrator {
   cancel(): void {
     if (!this.preparing && !this.crossfading) return;
     this.generation += 1;
-    this.preparing = false;
+    // ランプが既に変更していたactive側volumeを、開始前の値へ戻す（2026-09-14〜、
+    // ChatGPTレビュー指摘：P1）。ランプ未開始（準備中のみ）なら何もしない。
+    this.restoreActiveVolumeIfNeeded();
+    // discardPreview()が先読みの継続を無効化してから状態をリセットする
+    // （2026-09-14〜、ChatGPTレビュー指摘：P1）。
+    this.discardPreview();
     this.crossfading = false;
-    this.previewReady = false;
-    this.previewedFileId = null;
     this.player.inactiveController().cancelPendingTransition?.();
     this.player.resetInactive();
   }

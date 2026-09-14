@@ -1157,6 +1157,17 @@ test("手動で「次へ」を押すとクロスフェードが中断され、#a
   await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(true);
 
   await page.getByRole("button", { name: "次へ" }).click();
+  // 耐久性のため（他のクロスフェードE2Eと同じ既知の注意点）：#audio-playerへ固定したduration/
+  // pausedのオーバーライドは、この「次へ」によるScherzoへの遷移後もDOM要素自身に残り続ける。
+  // このモック環境ではsrc再代入がcurrentTimeを自然にリセットしない場合があるため、万一この後
+  // 何らかのtimeupdateが実際に発火すると、遷移直後の新しい曲（Scherzo）に対しても再び
+  // 「残り時間が閾値以内」を満たしてしまい、このテストの意図（「次へ」でクロスフェードが
+  // 打ち切られること）とは無関係な新しいクロスフェード（Finale等）が誤って始まりうる。
+  // 遷移直後にオーバーライドを解除し、この干渉を防ぐ。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: NaN, configurable: true });
+  });
 
   await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(false);
   await expect(page.locator("#audio-player-b")).toHaveAttribute("src", "");
