@@ -83,3 +83,30 @@ function roleBannerFor(role: RoleId | undefined): string {
   const meta = ROLE_META[role];
   return `<p class="role-reminder">${meta.emoji} あなたは ${meta.name}</p>`;
 }
+
+/**
+ * ふくろうが夜に見た内容を、discuss/vote/result画面や夜フェーズの以後のステップでも
+ * 本人にだけ表示し続けるためのバナー。Member.seerRevealが未設定（＝ふくろうでない、
+ * またはまだ何も見ていない）なら空文字を返す（2026-09-14、実プレイで「自分が何を
+ * 見たか忘れる」というケースが報告されたための追加）。
+ */
+export function mySeerRevealBanner(ctx: AppContext): string {
+  const reveal = ctx.members[ctx.memberId]?.seerReveal;
+  if (!reveal || reveal.kind === "skip") return "";
+
+  if (reveal.kind === "player" && reveal.roles?.[0]) {
+    const meta = ROLE_META[reveal.roles[0]];
+    return `<p class="hint-text seer-memo">🦉 見たもの: ${escapeHtml(reveal.targetName ?? "?")}は ${meta.emoji} ${meta.name}</p>`;
+  }
+  if (reveal.kind === "center" && reveal.roles && reveal.roles.length > 0) {
+    const text = reveal.roles.map((r) => `${ROLE_META[r].emoji} ${ROLE_META[r].name}`).join(" と ");
+    return `<p class="hint-text seer-memo">🦉 見たもの: 中央カードは ${text}</p>`;
+  }
+  return "";
+}
+
+function escapeHtml(text: string): string {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}

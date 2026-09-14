@@ -1,11 +1,14 @@
 import type { AppContext } from "./context";
-import { participants, myKnownRoleBanner } from "./context";
+import { participants, myKnownRoleBanner, mySeerRevealBanner } from "./context";
 import { ROLE_META } from "../roles";
 import { markDiscussReady } from "../roomSync";
+import { renderForceResetButton, wireForceResetButton } from "./hostControls";
 
 interface DiscussUiState {
   round: number;
   readyTapped?: boolean;
+  /** 「画面をかくす」トグルの状態。ラウンドが変わるたびに表示状態へ戻す。 */
+  hidden?: boolean;
 }
 
 let uiState: DiscussUiState = { round: -1 };
@@ -28,16 +31,30 @@ export function render(container: HTMLElement, ctx: AppContext): void {
   const dealt = participants(ctx);
   const readyCount = dealt.filter((m) => m.discussReadyRound === roundNumber).length;
 
+  // 話し合い中は端末の画面を他人に覗かれると役職がバレてしまうため、ボタン1つで
+  // 役職を表示しない「かくす」表示に切り替えられるようにする（ローカルのUI状態のみ、
+  // 他プレイヤーやRTDBには一切影響しない。2026-09-14、実プレイでの要望）。
+  // タイマー・準備完了ボタン自体は役職を明かさないため、かくした状態でも操作を続けられる。
+  const roleArea = uiState.hidden
+    ? `<p class="hint-text seer-memo">🙈 画面をかくしています</p>`
+    : `
+      ${myKnownRoleBanner(ctx)}
+      ${mySeerRevealBanner(ctx)}
+      ${role ? `<p class="role-description">${ROLE_META[role].description}</p>` : ""}
+    `;
+
   container.innerHTML = `
     <h2>🗣️ 議論タイム</h2>
-    ${myKnownRoleBanner(ctx)}
+    <button id="btn-leave-room" class="btn-link">← トップに戻る</button>
+    ${roleArea}
     <div class="discuss-timer">${min}:${String(sec).padStart(2, "0")}</div>
-    ${role ? `<p class="role-description">${ROLE_META[role].description}</p>` : ""}
     <p class="hint-text">声に出して話し合おう。うそをついてもOK！</p>
+    <button id="btn-toggle-hide" class="btn-secondary">${uiState.hidden ? "👀 表示に戻す" : "🙈 画面をかくす"}</button>
     <button id="btn-discuss-ready" class="btn-primary" ${alreadyReady ? "disabled" : ""}>
       ${alreadyReady ? "投票を待っています…" : "話し合いおわり・投票へ"}
     </button>
     <p class="hint-text">準備完了 ${readyCount}/${dealt.length}人</p>
+    ${renderForceResetButton(ctx)}
   `;
 
   container.querySelector("#btn-discuss-ready")?.addEventListener("click", () => {
@@ -46,4 +63,14 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     render(container, ctx);
     void markDiscussReady(ctx.roomId, ctx.memberId, roundNumber);
   });
+
+  container.querySelector("#btn-toggle-hide")?.addEventListener("click", () => {
+    uiState.hidden = !uiState.hidden;
+    render(container, ctx);
+  });
+
+  container.querySelector("#btn-leave-room")?.addEventListener("click", () => {
+    ctx.requestLeaveRoom();
+  });
+  wireForceResetButton(container, ctx);
 }

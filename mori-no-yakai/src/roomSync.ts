@@ -10,7 +10,7 @@ import {
 } from "firebase/database";
 import { db } from "./firebase";
 import { isHostUnlocked } from "./hostAuth";
-import type { Member, RoomState, RoleConfig, RoleId, CenterCardsData } from "./types";
+import type { Member, RoomState, RoleConfig, RoleId, CenterCardsData, SeerReveal } from "./types";
 import { buildRoleDeck, buildNightOrderFromConfig, shuffle, defaultRoleConfig } from "./roles";
 import {
   DEFAULT_NIGHT_STEP_DURATION_MS,
@@ -192,6 +192,7 @@ export async function startGame(roomId: string): Promise<void> {
       delete members[id].vote;
       delete members[id].nightReadyStep;
       delete members[id].discussReadyRound;
+      delete members[id].seerReveal;
     }
     memberIds.forEach((id, i) => {
       members[id].originalRole = dealt[i];
@@ -255,6 +256,21 @@ export async function robberSwap(
     [`${selfId}/knownRole`]: targetRole,
   });
   return targetRole;
+}
+
+/**
+ * ふくろうが夜に見た内容をRTDBへ記録する。ローカルのUI状態（night.tsのuiState）だけに
+ * 持たせていると、夜フェーズが次のステップに進んだ時点でリセットされ、discuss/vote画面は
+ * もちろん同じ夜フェーズ内でもリロードすると消えてしまう。見た瞬間の役職をスナップショットで
+ * 保存し、以後の画面でも本人にだけ表示し続けられるようにする
+ * （2026-09-14、実プレイで「自分が何を見たか忘れる」ケースが報告されたための追加）。
+ */
+export async function recordSeerReveal(
+  roomId: string,
+  memberId: string,
+  reveal: SeerReveal
+): Promise<void> {
+  await update(ref(db, `rooms/${roomId}/members/${memberId}`), { seerReveal: reveal });
 }
 
 /**
@@ -442,6 +458,7 @@ export async function resetToLobby(roomId: string): Promise<void> {
       delete members[id].vote;
       delete members[id].nightReadyStep;
       delete members[id].discussReadyRound;
+      delete members[id].seerReveal;
     }
     room.members = members;
     room.centerCards = null;
