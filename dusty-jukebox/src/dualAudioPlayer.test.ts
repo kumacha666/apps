@@ -225,6 +225,32 @@ describe("DualAudioPlayer", () => {
     expect(audioB.src).toBe("https://example.com/preview");
   });
 
+  // 2026-09-14〜、Codexレビュー指摘：P2「Filter playback errors from the inactive slot」。
+  // 先読み中（非アクティブ側）のメディアerrorは、実際に再生中のactive側とは無関係なため、
+  // 汎用の「音声を再生できませんでした」でステータスを上書きしてはならない。
+  test("非アクティブ側のメディアerrorはonPlaybackErrorへ中継されない（アクティブ側のerrorは中継される）", async () => {
+    const audioA = new FakeAudio();
+    const audioB = new FakeAudio();
+    const errors: unknown[] = [];
+    const player = new DualAudioPlayer(audioA, audioB, () => "valid-token", (e) => errors.push(e), () => {});
+
+    // 現在active（スロット0=audioA）のerrorは中継される。
+    audioA.emit("error");
+    expect(errors.length).toBe(1);
+
+    // 非アクティブなaudioBのerrorは中継されない。
+    audioB.emit("error");
+    expect(errors.length).toBe(1);
+
+    // activeを切り替えると、以後はaudioB側のerrorが中継されaudioA側は中継されなくなる。
+    await player.play("A");
+    player.commitPromotion();
+    audioB.emit("error");
+    expect(errors.length).toBe(2);
+    audioA.emit("error");
+    expect(errors.length).toBe(2);
+  });
+
   test("cancelPendingTransition()は両スロットを無効化する（非アクティブ側の先読みも打ち切る）", async () => {
     const { player } = createPlayer();
     await player.play("A");

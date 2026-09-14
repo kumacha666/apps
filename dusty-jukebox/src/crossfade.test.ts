@@ -278,14 +278,25 @@ class FakeAudioEl implements CrossfadeAudioElement {
   duration = 100;
   currentTime = 0;
   pauseCalls = 0;
-  private seekedListeners: Array<() => void> = [];
+  private seekedListeners: Array<{ listener: () => void; once: boolean }> = [];
   pause(): void { this.pauseCalls += 1; this.paused = true; }
-  addEventListener(type: "seeked", listener: () => void): void {
-    if (type === "seeked") this.seekedListeners.push(listener);
+  addEventListener(type: "seeked", listener: () => void, options: { once: boolean }): void {
+    if (type === "seeked") this.seekedListeners.push({ listener, once: options.once });
   }
-  // テスト側から実際にseek完了を模擬する（本物の<audio>が発火する'seeked'相当）。
+  // テスト側から実際にseek完了を模擬する（本物の<audio>が発火する'seeked'相当）。once指定の
+  // リスナーは本物のaddEventListener({once:true})と同じく発火後に自動で外れる
+  // （2026-09-14〜、Codexレビュー指摘：P2「Remove settled seek listeners after each ramp」
+  // の回帰防止に使う）。
   fireSeeked(): void {
-    for (const listener of this.seekedListeners) listener();
+    const remaining: typeof this.seekedListeners = [];
+    for (const entry of this.seekedListeners) {
+      entry.listener();
+      if (!entry.once) remaining.push(entry);
+    }
+    this.seekedListeners = remaining;
+  }
+  seekedListenerCount(): number {
+    return this.seekedListeners.length;
   }
 }
 
@@ -789,5 +800,25 @@ describe("CrossfadeOrchestrator", () => {
     await started;
 
     expect(previewAudio.volume).toBe(1);
+  });
+
+  it("19. seek完了待ちのリスナーは{once:true}で登録され、発火後は自動的に外れる（2026-09-14〜、Codexレビュー指摘：P2「Remove settled seek listeners after each ramp」）", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, { wait: immediateWait, steps: 1 });
+    setNearEnd(player);
+    const previewAudio = player.inactiveAudio;
+    previewAudio.currentTime = 5; // 準備リード時間ぶん進んでいた状態を模擬（seek対象になる）
+
+    const started = orchestrator.maybeStart({ enabled: true, durationMs: 3000, manualTransitionInFlight: false });
+    await vi.waitFor(() => expect(previewAudio.seekedListenerCount()).toBe(1));
+
+    previewAudio.fireSeeked();
+    await started;
+
+    // {once: true}で登録されているため、発火後はリスナーが自動的に外れている必要がある
+    // （audio要素は長寿命でクロスフェードのたびに使い回されるため、外れなければリスナーが
+    // 無期限に蓄積してしまう）。
+    expect(previewAudio.seekedListenerCount()).toBe(0);
   });
 });

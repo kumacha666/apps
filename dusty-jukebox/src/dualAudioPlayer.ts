@@ -77,14 +77,23 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
     const makeOnTransitionStart = (slot: PlayerSlot) => () => {
       if (this.active === slot) onRealTransitionStart();
     };
+    // 非アクティブ側（先読み準備中）のメディアerrorを、activeスロットの再生状態とは無関係に
+    // 無条件でonPlaybackErrorへ流さない（2026-09-14〜、Codexレビュー指摘：P2「Filter
+    // playback errors from the inactive slot」）。façadeイベント（forward()）と同じ
+    // 「今アクティブなスロットのものだけを外部へ中継する」方針に揃える：先読み中のBが
+    // 壊れたファイル・アクセス不可等でerrorを起こしても、実際に再生中のA側には無関係な
+    // ため、汎用の「音声を再生できませんでした」でステータスを上書きしてはならない。
+    const makeOnPlaybackError = (slot: PlayerSlot) => (error: unknown) => {
+      if (this.active === slot) onPlaybackError(error);
+    };
     this.controllers = allocateStreamId
       ? [
-          new PlaybackController(audioA, getValidAccessToken, onPlaybackError, makeOnTransitionStart(0), allocateStreamId),
-          new PlaybackController(audioB, getValidAccessToken, onPlaybackError, makeOnTransitionStart(1), allocateStreamId),
+          new PlaybackController(audioA, getValidAccessToken, makeOnPlaybackError(0), makeOnTransitionStart(0), allocateStreamId),
+          new PlaybackController(audioB, getValidAccessToken, makeOnPlaybackError(1), makeOnTransitionStart(1), allocateStreamId),
         ]
       : [
-          new PlaybackController(audioA, getValidAccessToken, onPlaybackError, makeOnTransitionStart(0)),
-          new PlaybackController(audioB, getValidAccessToken, onPlaybackError, makeOnTransitionStart(1)),
+          new PlaybackController(audioA, getValidAccessToken, makeOnPlaybackError(0), makeOnTransitionStart(0)),
+          new PlaybackController(audioB, getValidAccessToken, makeOnPlaybackError(1), makeOnTransitionStart(1)),
         ];
     this.audios = [audioA, audioB];
     // 両方のaudio要素の対象イベントを常時購読し、発火した瞬間に「その要素が現在アクティブか」で

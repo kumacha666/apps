@@ -254,7 +254,11 @@ export interface CrossfadeAudioElement {
   pause(): void;
   // ランプ開始前、先読み側をcurrentTime=0へ巻き戻した実際の完了を確認するために必要
   // （2026-09-14〜、ChatGPTレビュー指摘：P2）。
-  addEventListener(type: "seeked", listener: () => void): void;
+  // optionsのonceサポートが必須（2026-09-14〜、Codexレビュー指摘：P2「Remove settled seek
+  // listeners after each ramp」）：beginRamp()は長寿命のaudio要素へ毎回新しいリスナーを
+  // 登録するため、onceで自動的に外さないと、連続再生のたびにリスナーが無制限に積み上がり、
+  // 以後の無関係な'seeked'発火のたびに過去の（既に役目を終えた）リスナー全てが呼ばれ続ける。
+  addEventListener(type: "seeked", listener: () => void, options: { once: boolean }): void;
 }
 
 export interface CrossfadePlaybackControllerLike {
@@ -544,7 +548,7 @@ export class CrossfadeOrchestrator {
       // クロスフェード自体を安全に諦める（2026-09-14〜、ChatGPTレビュー再指摘：P2続き。
       // 「seek未settleのままincoming volume>0」の経路を残さないという設計目的に一貫させる）。
       const seeked = new Promise<void>((resolve) => {
-        inactiveAudio.addEventListener("seeked", () => resolve());
+        inactiveAudio.addEventListener("seeked", () => resolve(), { once: true });
       });
       inactiveAudio.currentTime = 0;
       const withTimeout = this.options.withTimeout ?? defaultWithTimeoutFn;
