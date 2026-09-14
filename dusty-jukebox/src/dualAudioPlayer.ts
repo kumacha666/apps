@@ -1,0 +1,129 @@
+import { PlaybackController, type AudioElementLike, type GetValidAccessToken, type PlaybackErrorHandler, type PlayOptions } from "./playback";
+import type { AudioEndedLike, PlayerLike } from "./queue";
+
+// クロスフェードのロールスワップ再設計（2026-09-14、実機で検出した約22msの繋ぎ目クリック
+// を受けて着手。詳細は`dusty-jukebox/CLAUDE.md`のクロスフェード節参照）第1段階：既存の
+// `PlaybackController`をそのまま2インスタンス（audio要素A・B用）持ち、「今どちらが主か」
+// を指すポインタの付け替えだけで主従を切り替えるための土台。このPRでは挙動を変えない
+// （非アクティブ側の準備・ランプ・コミットAPIは次PRで追加する）：常に`active`側だけが
+// 通常のplay()/pause()/cancelPendingTransition()/loadPaused()/markStreamTokenRejected()を
+// 受け、既存の単一コントローラと全く同じに振る舞う。
+
+// SW送信用URL・streamGeneration・認証継続レジストリに渡す値が、A/B間で衝突しないよう
+// 共有する採番関数（ChatGPTレビュー指摘：②）。単純な+1カウンタで十分：各コントローラの
+// 内部generation（isSuperseded判定・generationReasons）は意図的にこの採番と分離したまま
+// （playback.tsのallocateStreamIdコメント参照）。
+export type StreamIdAllocator = () => number;
+
+export function createSharedStreamIdAllocator(seed = 0): StreamIdAllocator {
+  let next = seed;
+  return () => ++next;
+}
+
+export type PlayerSlot = 0 | 1;
+
+// main.ts側がPlaybackControllerの具象型を直接参照している箇所（pause/loadPaused/
+// markStreamTokenRejected/currentGeneration/currentStreamGeneration）を、
+// DualAudioPlayerでも同じ形で満たすための型。play()の`options`からPlayOptionsを直接
+// 再エクスポートせず、PlayerLikeと同じ緩い型で受ける（queue.tsとの結線を壊さないため）。
+export interface PlaybackControllerLike {
+  play(fileId: string, position?: number, options?: PlayOptions): Promise<void>;
+  pause(fadeOut?: boolean): Promise<boolean>;
+  cancelPendingTransition(): void;
+  loadPaused(fileId: string, position?: number): void;
+  markStreamTokenRejected(fileId: string, generation: number): number | null;
+  currentGeneration(): number;
+  currentStreamGeneration(): number | null;
+}
+
+export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackControllerLike {
+  private active: PlayerSlot = 0;
+  private readonly controllers: [PlaybackController, PlaybackController];
+  private endedListeners: Array<() => void> = [];
+
+  constructor(
+    audioA: AudioElementLike,
+    audioB: AudioElementLike,
+    getValidAccessToken: GetValidAccessToken,
+    onPlaybackError: PlaybackErrorHandler = () => {},
+    // 「本物の」遷移開始通知（main.ts側のcancelCrossfadeIfActive()等）。今アクティブな
+    // スロットの遷移だけをこれへ転送する（ChatGPTレビュー指摘：③）。非アクティブ側
+    // （次PR以降、準備中のコントローラ）の内部play()呼び出しは、role-swap自身の先読み
+    // 開始のためのものであり、「本物の割り込み」として扱うと自己キャンセルしてしまう
+    // ため、活動中でない側の通知は握りつぶす。
+    onRealTransitionStart: () => void = () => {},
+    // 未指定時はここでは共有カウンタを作らない（2026-09-14、E2Eで発覚した回帰を受けて修正）。
+    // main.ts側の`currentGeneration() + 1`という予測（registerQueuePlaybackContinuation等、
+    // Drive 401後の認証継続レジストリに登録するgenerationの決め方）は、「次のplay()呼び出しの
+    // streamGenerationは、呼び出し前の内部generation+1と必ず一致する」という前提に依存して
+    // いる。この前提は、streamIdが各コントローラ自身のprivateなgenerationカウンタと同一の
+    // 場合にのみ成り立つ。ここで無条件に共有アロケータを既定値にしてしまうと、この前提が
+    // 崩れ、Drive 401後の認証継続が正しい世代と一致しなくなり「音声を再生できませんでした」
+    // という汎用エラーに化けてしまう（実際にE2Eで検出：401モックが効かなくなった）。
+    // 共有アロケータ自体が必要になるのは、非アクティブ側が実際にstreamIdを消費するように
+    // なる次PR（先読み準備の追加）以降であり、その時に上記の予測ロジック自体も合わせて
+    // 見直す。このPRの時点では、呼び出し元が明示的に注入しない限り両コントローラとも
+    // 自身の既定（`() => this.generation`）のまま——単一のactiveスロットしか実際には
+    // 使われないため、既存の予測ロジックと完全に同じ挙動を保つ。
+    allocateStreamId?: StreamIdAllocator
+  ) {
+    const makeOnTransitionStart = (slot: PlayerSlot) => () => {
+      if (this.active === slot) onRealTransitionStart();
+    };
+    this.controllers = allocateStreamId
+      ? [
+          new PlaybackController(audioA, getValidAccessToken, onPlaybackError, makeOnTransitionStart(0), allocateStreamId),
+          new PlaybackController(audioB, getValidAccessToken, onPlaybackError, makeOnTransitionStart(1), allocateStreamId),
+        ]
+      : [
+          new PlaybackController(audioA, getValidAccessToken, onPlaybackError, makeOnTransitionStart(0)),
+          new PlaybackController(audioB, getValidAccessToken, onPlaybackError, makeOnTransitionStart(1)),
+        ];
+    // 両方のaudio要素のendedを常時購読し、発火した瞬間に「その要素が現在アクティブか」で
+    // 絞り込んでから外部へ中継する（ChatGPTレビュー指摘：④）。PlaybackQueueは1つの
+    // AudioEndedLikeにしか結線できないため、DualAudioPlayer自身がこのfaçadeを担う。
+    audioA.addEventListener("ended", () => this.handleEnded(0));
+    audioB.addEventListener("ended", () => this.handleEnded(1));
+  }
+
+  private handleEnded(slot: PlayerSlot): void {
+    if (this.active !== slot) return;
+    for (const listener of this.endedListeners) listener();
+  }
+
+  addEventListener(type: "ended", listener: () => void): void {
+    if (type === "ended") this.endedListeners.push(listener);
+  }
+
+  private get activeController(): PlaybackController {
+    return this.controllers[this.active];
+  }
+
+  play(fileId: string, position?: number, options?: PlayOptions): Promise<void> {
+    return this.activeController.play(fileId, position, options);
+  }
+
+  pause(fadeOut = false): Promise<boolean> {
+    return this.activeController.pause(fadeOut);
+  }
+
+  cancelPendingTransition(): void {
+    this.activeController.cancelPendingTransition();
+  }
+
+  loadPaused(fileId: string, position = 0): void {
+    this.activeController.loadPaused(fileId, position);
+  }
+
+  markStreamTokenRejected(fileId: string, generation: number): number | null {
+    return this.activeController.markStreamTokenRejected(fileId, generation);
+  }
+
+  currentGeneration(): number {
+    return this.activeController.currentGeneration();
+  }
+
+  currentStreamGeneration(): number | null {
+    return this.activeController.currentStreamGeneration();
+  }
+}

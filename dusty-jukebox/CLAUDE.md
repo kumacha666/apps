@@ -410,6 +410,22 @@
     1. スマホでのバックグラウンド再生が不安定：再生リスト再生中、キュー内の曲が自然終了したタイミングでバックグラウンドだと再生が止まり、その状態でBluetoothの再生ボタンを押しても再開しない。診断は2026-09-11時点で着手済み（`mediaSession.ts`のBluetooth/OS再生ハンドラが素の`audioPlayer.play()`のみで、失敗時に`queue.resume()`（401検知・再認証等を含む本来の経路）へフォールバックしない点、Wake Lock API・`visibilitychange`検知が未実装でOSがバックグラウンドタブを凍結するとトークン供給用のページ側JS実行自体が止まる点が原因候補として既に記録済み、上記「Media Session対応」節参照）。着手する際は改めて設計相談する
     2. アルバム一覧が長すぎて使いづらい（多少短くしても解決しない、根本的な対策が必要）：ユーザーからの提案として、再生・次へ・前へ等の再生操作UIを、既存のシークバー・ステータス表示（`.now-playing-bar`、画面下部に`position: fixed`で常時表示中）と同様に常時表示にすることで、アルバム一覧を都度スクロールして操作系まで戻る必要をなくせるのではという仮説がある。UI設計自体は未着手、次回改めて相談してから着手する
 
+## クロスフェード ロールスワップ再設計（2026-09-14〜）
+
+上記の通り、#442〜#448で積み上げてきた「一時的な第二audio要素→メインaudio要素へシーク＋音量ジャンプで制御を渡す」ハンドオフ方式は、実機で繋ぎ目のクリックとして構造的な限界を露呈した。ChatGPTに設計レビューを依頼し、以下5点の指摘を受けて設計へ反映した上で着手：①Queueの「再生」と「commit」の分離（先読み済み曲を`player.play()`を一切呼ばずcurrentへ確定するAPIが必要）、②2つの`PlaybackController`のgeneration衝突回避（SW送信URL・認証継続に渡す値だけを共有カウンタへ分離、内部の追い越し判定用generationは触らない）、③非アクティブ側の`play()`は「本物の遷移」として扱ってはいけない（自己キャンセル回避）、④`ended`イベントのactive-slot化（`PlaybackQueue`は1つの`AudioEndedLike`にしか結線できないため、DualAudioPlayer自身がfaçadeを担う）、⑤`activeFadeToken`（手動フェード遷移の直列化用、ハンドオフとは無関係）は削除対象に含めない。**不変条件**：コミット瞬間は「A.volume=0/B.volume=1になった後、activeSlotを付け替えるだけ」——`src`・`currentTime`・`play()`・`pause()`のいずれも一切呼ばない。旧側の後始末（pause・src破棄）は昇格後、無音確定後に行う。
+
+PR分割はChatGPT提案の3段階（①DualAudioPlayer基盤〈挙動は変えない〉→②Queueの二段階commit API＋クロスフェードのrole-swap化→③実機確認後の旧ハンドオフコード削除）に同意。
+
+### PR1（基盤、挙動は変えない）
+
+- `src/playback.ts`：`PlaybackController`のコンストラクタに省略可能な第6引数`allocateStreamId`（既定`() => this.generation`、従来通り）を追加。SW送信用URL・`streamGeneration`に使う値を、内部の追い越し判定用`this.generation`（generationReasons等の既存の作り込み済みロジック）から分離できるようにした。未指定時は完全に従来と同じ挙動。
+- `src/dualAudioPlayer.ts`（新規）：`DualAudioPlayer`が2つの`PlaybackController`（audio要素A・B用）を持ち、`PlayerLike`/`AudioEndedLike`/`PlaybackControllerLike`（`main.ts`が直接参照するpause/loadPaused/markStreamTokenRejected/currentGeneration/currentStreamGeneration用の新設インターフェース）をすべて「今アクティブな方」への委譲で満たす。`ended`は両要素を常時購読し、発火した瞬間のactiveスロットだけを外部へ中継するfaçade。`onTransitionStart`も同じ「今activeか」でルーティングする（ChatGPT指摘③）。
+- **`allocateStreamId`は未指定時、DualAudioPlayerもデフォルトの共有カウンタを強制しない（重要な設計修正）**：最初の実装ではコンストラクタ既定値を`createSharedStreamIdAllocator()`（1,2,3,...の共有カウンタ）にしていたが、**main.ts統合後のE2Eで実際に回帰を検出**：`registerQueuePlaybackContinuation()`等（Drive 401後の認証継続レジストリへの登録）は`currentPlayback.currentGeneration() + 1`で次のstreamGenerationを**予測**しており、この予測は「streamGenerationが内部generationと同じ数列である」という前提に依存していた。共有カウンタを既定にするとこの前提が崩れ、401後の認証継続が世代不一致で握りつぶされ「音声を再生できませんでした」という汎用エラーに化けてしまった（E2E7件が実際に失敗して発覚）。**呼び出し元が明示的に注入しない限り、両コントローラとも自身の既定（`() => this.generation`）のまま**に変更し解消（共有カウンタ自体が必要になるのは非アクティブ側が実際にstreamIdを消費するPR2以降で、その時に上記の予測ロジック自体も合わせて見直す）。この経緯は、ChatGPTの②の指摘の方向性自体は正しいが、実装の詳細（「何を分離し、何を共有するか」）に既存コードとの隠れた結合があったことを示す実例として記録する。
+- `main.ts`：`playback`変数の型を`PlaybackController`から`DualAudioPlayer`へ。第2のaudio要素（`#audio-player-b`、`.now-playing-bar`内、既存のCSSで自動的に非表示）を追加し、`DualAudioPlayer`のコンストラクタへ渡す（`allocateStreamId`は未指定のまま＝上記の通り挙動は変えない）。`PlaybackQueue`への`audio: AudioEndedLike`引数も、生の`audioPlayer`要素から`playback`（DualAudioPlayerのfaçade）へ差し替え。既存の`#audio-player-crossfade`・旧ハンドオフ機構（`crossfade.ts`・`main.ts`のクロスフェード節）は無改造のまま残す（PR2で置き換える）。
+- ユニットテスト：`playback.test.ts`に`allocateStreamId`注入の4ケース（未指定時の従来互換・注入時の分離・`loadPaused()`・`markStreamTokenRejected()`の照合）、`dualAudioPlayer.test.ts`（新規、8ケース：play/pause/cancelPendingTransition/loadPaused/markStreamTokenRejected/currentGeneration/currentStreamGenerationの委譲、共有アロケータ関数自体の単体テスト、コンストラクタへ注入した採番関数が両コントローラで共有されること〈スパイで検証〉、`ended`のactive-slotフィルタリング、**上記回帰の直接的な回帰防止テスト**〈allocateStreamId未注入時はstreamGenerationが常にcurrentGeneration()と一致し続けること〉）。いずれも該当コードを一時的に無効化して実際に失敗することを確認済み。
+- 667 unit + 93 E2E、全green（E2Eは一度、上記の共有カウンタ既定値バグにより7件が実際に失敗することを確認した上で、fixして全件復旧させている）。`npm run deploy`実行済み（`app.js` 282.70kB、SW v0.1.125→v0.1.126）。
+- **実機での動作確認はまだ**（PR1はDualAudioPlayerを導入するが挙動を変えないため、実機確認の主眼はPR2〈クロスフェードのrole-swap化〉完了後になる）。
+
 ## 絞り込み欄同士の連動（開発体制#43、2026-09-08）
 
 ユーザー指摘：アーティストを選んでいるのに、アルバム欄の候補にそのアーティスト以外のアルバムまで出るのは意味が無い（一般的な「カスケードフィルタ」UXへの改善要望）。従来は`artist`/`album`/`composer`/`genre`/`releaseType`の5つの絞り込み欄すべての候補（datalist）が、他の欄の現在値に関わらず索引全体から一律に算出されていた。

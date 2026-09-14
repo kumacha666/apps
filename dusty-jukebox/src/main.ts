@@ -8,7 +8,8 @@
 // （runFullScan、フォルダ全体の再帰走査＋バッチ処理・中断再開）を行う。完了後
 // （hasCompletedInitialScan=true）はrunDifferentialSync（changes.list消費）に切り替わる。
 import { AuthError, DriveAuth } from "./auth";
-import { PlaybackAuthenticationRequiredError, PlaybackController, streamUrl } from "./playback";
+import { PlaybackAuthenticationRequiredError, streamUrl } from "./playback";
+import { DualAudioPlayer, type PlaybackControllerLike } from "./dualAudioPlayer";
 import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStatus";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
@@ -154,7 +155,7 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 export const SERVICE_WORKER_READY_TIMEOUT_MS = import.meta.env.VITE_E2E === "true" ? 2000 : 8000;
 
 const auth = new DriveAuth();
-let playback: PlaybackController | null = null;
+let playback: DualAudioPlayer | null = null;
 let queue: PlaybackQueue | null = null;
 let playbackAuthGate: PlaybackAuthenticationGate | null = null;
 // 単曲試聴（「この曲を再生」、キュー外）で最後に再生を開始したfileId（2026-09-09、ChatGPT
@@ -244,6 +245,11 @@ function render(): void {
       <div class="now-playing-bar">
         <audio id="audio-player"></audio>
         <audio id="audio-player-crossfade"></audio>
+        <!-- クロスフェードのロールスワップ再設計（2026-09-14〜）用の2つ目のDualAudioPlayer
+             スロット。この時点ではまだ何も再生しない（PR1は挙動を変えないため、activeは常に
+             audio-player側のまま）。既存のaudio-player-crossfadeとは無関係（旧ハンドオフ方式が
+             役目を終えたら削除する）。 -->
+        <audio id="audio-player-b"></audio>
         <div class="seek-bar">
           <span id="seek-current-time" class="seek-time">0:00</span>
           <input id="seek-slider" type="range" min="0" max="0" step="0.1" value="0" disabled />
@@ -1649,7 +1655,7 @@ async function handlePlay(): Promise<void> {
   });
 }
 
-async function startExternalPlayback(fileId: string, currentPlayback: PlaybackController): Promise<boolean> {
+async function startExternalPlayback(fileId: string, currentPlayback: PlaybackControllerLike): Promise<boolean> {
   lastExternalPlaybackPositionForE2E = 0;
   await awaitServiceWorkerReady();
   // Register first: HTMLMediaElement.play() can remain pending (or reject) while
@@ -1672,7 +1678,7 @@ async function startExternalPlayback(fileId: string, currentPlayback: PlaybackCo
   return true;
 }
 
-async function startExternalPlaybackAt(fileId: string, currentPlayback: PlaybackController, position: number): Promise<boolean> {
+async function startExternalPlaybackAt(fileId: string, currentPlayback: PlaybackControllerLike, position: number): Promise<boolean> {
   lastExternalPlaybackPositionForE2E = position;
   await awaitServiceWorkerReady();
   let continuation!: PlaybackContinuation;
@@ -1748,7 +1754,7 @@ function awaitServiceWorkerReady(): Promise<void> {
   );
 }
 
-function registerQueuePlaybackContinuation(fileId: string, currentPlayback: PlaybackController, suppressTransitionCancel: boolean): void {
+function registerQueuePlaybackContinuation(fileId: string, currentPlayback: PlaybackControllerLike, suppressTransitionCancel: boolean): void {
   // PlaybackQueue invokes this immediately before PlaybackController.play().
   // Do not wait for the queue to commit currentFileId: a Drive 401 can arrive
   // while native play() is still pending.
@@ -2699,10 +2705,16 @@ function init(): void {
       return;
     }
     const audioPlayer = el<HTMLAudioElement>("audio-player");
+    const audioPlayerB = el<HTMLAudioElement>("audio-player-b");
     wireSeekBar(audioPlayer);
     audioPlayer.addEventListener("timeupdate", () => void maybeStartCrossfade());
-    playback = new PlaybackController(
+    // ロールスワップ再設計の第1段階（2026-09-14）：DualAudioPlayerが2本のaudio要素
+    // （audio-player=スロット0・audio-player-b=スロット1）を持つが、このPRでは
+    // activeが常にスロット0のままで挙動は変えない（次PR以降、クロスフェード自体をこちらへ
+    // 移行する。詳細はdusty-jukebox/CLAUDE.mdのクロスフェード節参照）。
+    playback = new DualAudioPlayer(
       audioPlayer,
+      audioPlayerB,
       () => auth.getAccessToken(),
       (error) => {
         // The SW message has already converted a confirmed Drive 401 into the
@@ -2722,7 +2734,11 @@ function init(): void {
     });
     queue = new PlaybackQueue(
       playback,
-      audioPlayer,
+      // 'ended'はDualAudioPlayer自身のactive-slot façade経由で受ける（audio-player要素へ
+      // 直接結線しない）：将来スロットが切り替わっても正しいaudio要素の自然終了だけを
+      // 拾えるようにするため（ChatGPTレビュー指摘：④）。PR1の時点ではactiveが常にスロット0
+      // のままのため、audio-player要素へ直接結線していた従来の挙動と同一。
+      playback,
       (error) => setStatus(error instanceof Error ? error.message : String(error), true),
       () => {
         // クロスフェードが進行中の間は、この自然終了（'ended'）は既にクロスフェード自身が
