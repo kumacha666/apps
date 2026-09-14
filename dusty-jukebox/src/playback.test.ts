@@ -852,4 +852,49 @@ describe("PlaybackController", () => {
       expect(playback.markStreamTokenRejected("A", 900)).not.toBeNull();
     });
   });
+
+  describe("PlayOptions.onStreamIdAllocated（ロールスワップの継続登録用通知、2026-09-14）", () => {
+    test("audio.src設定より前に、実際に確定したstreamIdで同期的に呼ばれる", async () => {
+      const audio = new FakeAudio();
+      const playback = new PlaybackController(audio, () => "valid-token");
+      const calls: number[] = [];
+      let srcAtCallTime: string | undefined;
+      await playback.play("A", 0, {
+        onStreamIdAllocated: (streamId) => {
+          calls.push(streamId);
+          srcAtCallTime = audio.src;
+        },
+      });
+      expect(calls).toEqual([playback.currentStreamGeneration()]);
+      // コールバック発火時点ではまだaudio.srcへ書き込まれていない（呼ばれる前の値のまま）。
+      expect(srcAtCallTime).toBe("");
+      expect(audio.src).not.toBe("");
+    });
+
+    test("isSupersededはこの呼び出し自身が追い越されるまではfalse、追い越された後はtrueを返す", async () => {
+      const audio = new FakeAudio();
+      const playback = new PlaybackController(audio, () => "valid-token");
+      let capturedIsSuperseded: (() => boolean) | undefined;
+      await playback.play("A", 0, {
+        onStreamIdAllocated: (_streamId, isSuperseded) => { capturedIsSuperseded = isSuperseded; },
+      });
+      expect(capturedIsSuperseded?.()).toBe(false);
+      await playback.play("B");
+      expect(capturedIsSuperseded?.()).toBe(true);
+    });
+
+    test("共有アロケータ注入時も、コールバックへ渡るstreamIdは実際に採番された正確な値（内部generationからの予測ではない）", async () => {
+      const audio = new FakeAudio();
+      // 内部generationとstreamIdが大きくズレるよう、共有アロケータを大きな値から開始する。
+      let nextStreamId = 5000;
+      const playback = new PlaybackController(audio, () => "valid-token", undefined, undefined, () => nextStreamId++);
+      const received: number[] = [];
+      await playback.play("A", 0, { onStreamIdAllocated: (streamId) => received.push(streamId) });
+      // 内部generationは1のまま（採番関数とは独立）。もし旧来の「currentGeneration()+1」的な
+      // 予測ロジックが残っていれば1や2に近い値になってしまうはずだが、実際に使われた5000が
+      // そのままコールバックへ届く。
+      expect(playback.currentGeneration()).toBe(1);
+      expect(received).toEqual([5000]);
+    });
+  });
 });

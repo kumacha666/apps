@@ -379,7 +379,7 @@ describe("PlaybackQueue", () => {
     const queue = new PlaybackQueue({ play }, audio);
     queue.setList([song("a"), song("b")]);
     await queue.resume("a", 12.5, true);
-    expect(play).toHaveBeenCalledWith("a", 12.5, { fadeOut: undefined, suppressTransitionCancel: true });
+    expect(play).toHaveBeenCalledWith("a", 12.5, { fadeOut: undefined, suppressTransitionCancel: true, onStreamIdAllocated: expect.any(Function) });
   });
   test("moveSongは指定した曲を1つ上/下へ入れ替える（開発体制#42②、上下ボタン）", async () => {
     const audio = new Audio(); const queue = new PlaybackQueue({ play: async () => {} }, audio);
@@ -647,7 +647,7 @@ describe("PlaybackQueue", () => {
 
     const firstNext = queue.next();
     const secondNext = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, undefined));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, { fadeOut: undefined, suppressTransitionCancel: undefined, onStreamIdAllocated: expect.any(Function) }));
     expect(play).toHaveBeenCalledTimes(1);
     resolveFirst?.();
     await Promise.all([firstNext, secondNext]);
@@ -662,7 +662,7 @@ describe("PlaybackQueue", () => {
     queue.setList([song("old-a"), song("old-b")]);
 
     const oldMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a", undefined, undefined));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a", undefined, { fadeOut: undefined, suppressTransitionCancel: undefined, onStreamIdAllocated: expect.any(Function) }));
     queue.setList([song("new-a"), song("new-b")]);
     resolvePlayback?.();
     await oldMove;
@@ -680,10 +680,10 @@ describe("PlaybackQueue", () => {
     queue.setList([song("old-a")]);
 
     const oldMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a", undefined, undefined));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("old-a", undefined, { fadeOut: undefined, suppressTransitionCancel: undefined, onStreamIdAllocated: expect.any(Function) }));
     queue.setList([song("new-a")]);
     const newMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("new-a", undefined, undefined));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("new-a", undefined, { fadeOut: undefined, suppressTransitionCancel: undefined, onStreamIdAllocated: expect.any(Function) }));
     await newMove;
 
     resolveOldPlayback?.();
@@ -728,7 +728,7 @@ describe("PlaybackQueue", () => {
     await queue.next();
     await queue.resumeCurrent(42.25);
 
-    expect(play.mock.calls).toEqual([["a", undefined, undefined], ["a", 42.25, undefined]]);
+    expect(play.mock.calls).toEqual([["a", undefined, expect.any(Object)], ["a", 42.25, expect.any(Object)]]);
   });
 
   test("最初の曲のnative playが未解決でも、開始前フックが継続情報を登録できる", async () => {
@@ -736,12 +736,16 @@ describe("PlaybackQueue", () => {
     let settlePlay!: () => void;
     const nativePlay = new Promise<void>((resolve) => { settlePlay = resolve; });
     const registry = new PlaybackContinuationRegistry();
-    const beforePlay = vi.fn((fileId: string) => registry.register({ fileId, generation: 1, resume: async () => true }));
-    const queue = new PlaybackQueue({ play: () => nativePlay }, audio, () => {}, null, beforePlay);
+    const beforePlay = vi.fn((fileId: string, streamId: number) => registry.register({ fileId, streamId, resume: async () => true }));
+    const play = (_fileId: string, _position?: number, options?: { onStreamIdAllocated?: (streamId: number, isSuperseded: () => boolean) => void }) => {
+      options?.onStreamIdAllocated?.(1, () => false);
+      return nativePlay;
+    };
+    const queue = new PlaybackQueue({ play }, audio, () => {}, null, beforePlay);
     queue.setList([song("a")]);
 
     const move = queue.next();
-    await vi.waitFor(() => expect(beforePlay).toHaveBeenCalledWith("a", false));
+    await vi.waitFor(() => expect(beforePlay).toHaveBeenCalledWith("a", 1, false));
     expect(queue.currentPlayingFileId()).toBeNull();
     registry.recordTokenRequest("first-request", "a", 1, "rejected-token");
     expect(registry.acceptTokenRejection("first-request", "a", "rejected-token")).not.toBeNull();
@@ -758,9 +762,9 @@ describe("PlaybackQueue", () => {
     queue.setList([song("a")]);
 
     const originalMove = queue.next();
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, undefined));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, { fadeOut: undefined, suppressTransitionCancel: undefined, onStreamIdAllocated: expect.any(Function) }));
     const resumed = queue.resume("a", 12.5);
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", 12.5, undefined));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", 12.5, { fadeOut: undefined, suppressTransitionCancel: undefined, onStreamIdAllocated: expect.any(Function) }));
     await expect(resumed).resolves.toBe(true);
 
     settleOriginal();
@@ -780,7 +784,7 @@ describe("PlaybackQueue", () => {
     queue.setList([song("a"), song("b"), song("c")]);
 
     const originalMove = queue.next(true); // "a"へフェードあり移動、player.play()は未解決のまま残る
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, { fadeOut: true }));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("a", undefined, { fadeOut: true, onStreamIdAllocated: expect.any(Function) }));
     // 認証継続がチェーンを置き換える（resumeはreplacePending=trueで内部move()を呼ぶ）。
     const resumed = queue.resume("b", 0);
     await expect(resumed).resolves.toBe(true);
@@ -810,7 +814,7 @@ describe("PlaybackQueue", () => {
     await queue.playAt(0); // "a"が再生中
 
     const orphanedMove = queue.next(true); // "a"→"b"へフェード、未解決のまま孤立させる
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("b", undefined, { fadeOut: true }));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("b", undefined, { fadeOut: true, onStreamIdAllocated: expect.any(Function) }));
 
     // 認証継続でチェーンが置き換わり、"c"へ直接遷移する（上のフェード操作は孤立する）。
     const resumed = queue.resume("c", 0);
@@ -819,7 +823,7 @@ describe("PlaybackQueue", () => {
 
     // resume後、ユーザーが新しく別のフェード付きスキップを開始する（"c"→"d"）。
     const newFadeMove = queue.next(true);
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("d", undefined, { fadeOut: true }));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("d", undefined, { fadeOut: true, onStreamIdAllocated: expect.any(Function) }));
 
     // ここで、孤立していた古いフェード操作（"b"）が（例えば元々の再生要求がネットワークエラー等で
     // 最終的に失敗して）ようやく解決する。この時点で新しいフェード操作（"d"）はまだ進行中のため、
@@ -861,7 +865,7 @@ describe("PlaybackQueue", () => {
     await queue.playAt(0); // "a"が再生中
 
     const orphanedMove = queue.next(true); // "a"→"b"へフェード、未解決のまま孤立させる
-    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("b", undefined, { fadeOut: true }));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledWith("b", undefined, { fadeOut: true, onStreamIdAllocated: expect.any(Function) }));
 
     // フェード待機中に、別アルバム・プレイリストを選んでsetList()＋playAt()する
     // （resume()のreplacePendingとは異なる独立した経路で孤立が発生する）。

@@ -12,7 +12,7 @@ import { PlaybackAuthenticationRequiredError, streamUrl } from "./playback";
 import { DualAudioPlayer, type PlaybackControllerLike } from "./dualAudioPlayer";
 import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStatus";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
-import { continuationGeneration, PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
+import { PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
 import { parseIndexRows, filterSongs, groupSongsByAlbum, groupAlbumsByArtist, filterAlbumGroups, sortSongs, distinctFieldValuesForFilters, type AlbumGroup, type AutocompleteField, type Song, type SongFilters } from "./catalog";
 import { withTimeout } from "./withTimeout";
 import { CatalogOperationGate } from "./catalogOperationGate";
@@ -628,7 +628,7 @@ function cancelCrossfadeIfActive(): { fileId: string; position: number } | null 
   // からclear()するのは、この継続がまだ置き換えられていない場合のみに限定するため
   // （既に別の正当なplay()が新しい継続を登録済みの場合、そちらを誤って巻き込まない）。
   if (crossfadeHandoffContinuation && playbackContinuations.isCurrent(crossfadeHandoffContinuation)) {
-    playbackContinuations.clear();
+    playbackContinuations.clearStreamId(crossfadeHandoffContinuation.streamId);
     // Drive 401がこの打ち切りより前にhandleStreamTokenRejected()へ既に届いていた場合、
     // playbackAuthGate.pendingOperationにもこの継続のresumeを呼ぶクロージャが保留されて
     // いる（2026-09-10、ChatGPTレビュー指摘：P1）。上のレジストリのclear()だけでは
@@ -1656,41 +1656,38 @@ async function handlePlay(): Promise<void> {
 }
 
 async function startExternalPlayback(fileId: string, currentPlayback: PlaybackControllerLike): Promise<boolean> {
-  lastExternalPlaybackPositionForE2E = 0;
+  return startExternalPlaybackAt(fileId, currentPlayback, undefined);
+}
+
+// position省略時は先頭から（旧startExternalPlayback()相当）。継続登録は
+// PlaybackController.play()がstream-idを実際に確定した瞬間（PlayOptions.
+// onStreamIdAllocated、audio.src設定より前）に行う（2026-09-14〜、PR2）。以前は
+// `currentGeneration()+1`で次のstream-idを予測してから登録していたが、共有stream-id
+// アロケータ（A/B2つのコントローラが同じ採番カウンタを使う）下ではこの予測が成立しない
+// ため廃止した。isSupersededコールバックも同じ通知に含まれるため、「この呼び出しが
+// 依然として自分自身のコントローラで最新か」の確認もfaçade（DualAudioPlayer）の
+// 揺れ動くactiveポインタ経由ではなく、実際に呼び出した特定のコントローラのprivateな
+// generationを直接参照する。
+async function startExternalPlaybackAt(fileId: string, currentPlayback: PlaybackControllerLike, position?: number): Promise<boolean> {
+  lastExternalPlaybackPositionForE2E = position ?? 0;
   await awaitServiceWorkerReady();
-  // Register first: HTMLMediaElement.play() can remain pending (or reject) while
-  // the first stream request already receives a Drive 401.
-  let continuation!: PlaybackContinuation;
-  continuation = playbackContinuations.register({
-    fileId,
-    generation: currentPlayback.currentGeneration() + 1,
-    resume: async (position) => startExternalPlaybackAt(fileId, currentPlayback, position),
+  let continuation: PlaybackContinuation | undefined;
+  let isStreamSuperseded: (() => boolean) | undefined;
+  const playPromise = currentPlayback.play(fileId, position, {
+    onStreamIdAllocated: (streamId, isSuperseded) => {
+      isStreamSuperseded = isSuperseded;
+      continuation = playbackContinuations.register({
+        fileId,
+        streamId,
+        resume: async (resumePosition) => startExternalPlaybackAt(fileId, currentPlayback, resumePosition),
+      });
+    },
   });
-  const playPromise = currentPlayback.play(fileId);
-  continuation.generation = continuationGeneration(continuation.generation, currentPlayback.currentStreamGeneration());
   await playPromise;
-  if (!playbackContinuations.isCurrent(continuation) || continuation.generation !== currentPlayback.currentGeneration()) return false;
   // Do not detach the existing queue until the new file has really reached the
   // playback controller. A locally-expired token must leave the old queue song
   // eligible to advance when it ends.
-  queue?.notifyExternalPlaybackStarted();
-  lastExternalFileId = fileId;
-  return true;
-}
-
-async function startExternalPlaybackAt(fileId: string, currentPlayback: PlaybackControllerLike, position: number): Promise<boolean> {
-  lastExternalPlaybackPositionForE2E = position;
-  await awaitServiceWorkerReady();
-  let continuation!: PlaybackContinuation;
-  continuation = playbackContinuations.register({
-    fileId,
-    generation: currentPlayback.currentGeneration() + 1,
-    resume: async (resumePosition) => startExternalPlaybackAt(fileId, currentPlayback, resumePosition),
-  });
-  const playPromise = currentPlayback.play(fileId, position);
-  continuation.generation = continuationGeneration(continuation.generation, currentPlayback.currentStreamGeneration());
-  await playPromise;
-  if (!playbackContinuations.isCurrent(continuation) || continuation.generation !== currentPlayback.currentGeneration()) return false;
+  if (!continuation || !playbackContinuations.isCurrent(continuation) || isStreamSuperseded?.()) return false;
   queue?.notifyExternalPlaybackStarted();
   lastExternalFileId = fileId;
   return true;
@@ -1754,10 +1751,19 @@ function awaitServiceWorkerReady(): Promise<void> {
   );
 }
 
-function registerQueuePlaybackContinuation(fileId: string, currentPlayback: PlaybackControllerLike, suppressTransitionCancel: boolean): void {
-  // PlaybackQueue invokes this immediately before PlaybackController.play().
-  // Do not wait for the queue to commit currentFileId: a Drive 401 can arrive
-  // while native play() is still pending.
+// streamId（2026-09-14〜、PR2）：PlaybackQueueが`onBeforePlay`（BeforeQueuePlay型）として渡す
+// 際、PlaybackController.play()がstream-idを実際に確定した瞬間（audio.src設定より前）に
+// 呼ばれ、その正確な値がそのまま届く。以前は呼び出し元がplayer.play()を呼ぶ直前に
+// `currentGeneration()+1`で次の値を予測していたが、共有stream-idアロケータ（A/B2つの
+// コントローラが同じ採番カウンタを使う）下ではこの予測が成立しないため廃止した。この
+// 継続自体の「まだ有効か」の判定は、PlaybackQueue自身のgeneration（playAndCommit()の
+// `if (generation !== this.generation) return false;`）が既に担っており、こちらは
+// stream-idベースのルーティング（401がどの継続に属するか）専用のため、PlaybackController
+// 側のisSuperseded確認は不要。
+function registerQueuePlaybackContinuation(fileId: string, streamId: number, suppressTransitionCancel: boolean): void {
+  // PlaybackQueue invokes this immediately before PlaybackController commits
+  // audio.src. Do not wait for the queue to commit currentFileId: a Drive 401
+  // can arrive while native play() is still pending.
   // suppressTransitionCancelを引き継ぐ（2026-09-10、Codexレビュー指摘：P1）。クロスフェードの
   // ハンドオフ（advanceToPreviewedFile()経由）はsuppressTransitionCancel:trueでplayer.play()を
   // 呼ぶが、この401継続のresume()自身がそれを引き継がないと、resume()自身のplayer.play()が
@@ -1768,7 +1774,7 @@ function registerQueuePlaybackContinuation(fileId: string, currentPlayback: Play
   let continuation!: PlaybackContinuation;
   continuation = playbackContinuations.register({
     fileId,
-    generation: currentPlayback.currentGeneration() + 1,
+    streamId,
     resume: async (position) => {
       const started = await (queue?.resume(fileId, position, suppressTransitionCancel) ?? false);
       // クロスフェードのハンドオフ自身のplay()が401後にこの認証継続経由で解決した場合、
@@ -1800,7 +1806,7 @@ function registerQueuePlaybackContinuation(fileId: string, currentPlayback: Play
           // しないようにする。
           playback?.cancelPendingTransition();
           queue?.invalidatePendingMove();
-          if (playbackContinuations.isCurrent(continuation)) playbackContinuations.clear();
+          if (playbackContinuations.isCurrent(continuation)) playbackContinuations.clearStreamId(continuation.streamId);
         }
       }
       return started;
@@ -1869,14 +1875,17 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
   }
 }
 
-function handleStreamTokenIssued(fileId: string, requestId: string, token: string | null, generation: number): void {
-  playbackContinuations.recordTokenRequest(requestId, fileId, generation, token);
+// StreamTokenIssuedHandlerの4番目の引数（streamAuth.tsの命名上は`playbackGeneration`）は、
+// SWがURLのクエリパラメータからそのまま読み取った値で、実体はstream-id（playback.tsの
+// streamUrl()参照）そのもの。ここではstreamIdという名前で受ける。
+function handleStreamTokenIssued(fileId: string, requestId: string, token: string | null, streamId: number): void {
+  playbackContinuations.recordTokenRequest(requestId, fileId, streamId, token);
 }
 
 function handleStreamTokenRejected(fileId: string, requestId: string): void {
   const continuation = playbackContinuations.acceptTokenRejection(requestId, fileId, auth.getAccessToken());
   if (!continuation || !playback || !playbackAuthGate) return;
-  const position = playback.markStreamTokenRejected(fileId, continuation.generation);
+  const position = playback.markStreamTokenRejected(fileId, continuation.streamId);
   if (position === null) return;
   // A Drive-side revocation can happen before expiresAt. Clear only the token
   // that was actually used by this still-current stream request.
@@ -2761,7 +2770,7 @@ function init(): void {
         }
         void handleQueuePlayback(() => queue?.advanceOnEnded());
       },
-      (fileId, suppressTransitionCancel) => registerQueuePlaybackContinuation(fileId, playback!, suppressTransitionCancel)
+      (fileId, streamId, suppressTransitionCancel) => registerQueuePlaybackContinuation(fileId, streamId, suppressTransitionCancel)
     );
     audioPlayer.addEventListener("playing", () => handleNativePlaybackStatus(audioPlayer, "playing"));
     audioPlayer.addEventListener("pause", () => handleNativePlaybackStatus(audioPlayer, "pause"));
