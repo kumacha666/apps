@@ -119,6 +119,7 @@ Vite + TypeScript構成（`7metch`/`enblo`と同様）。
 - `Member.seerReveal`（`SeerReveal`型、`src/types.ts`）に見た瞬間の役職をスナップショットとして保存する（`recordSeerReveal()`、`src/roomSync.ts`）。対象がその後きつねに交換されても表示が変わらないよう、対象IDへの参照ではなく見た瞬間の役職名そのものを保存する
 - `mySeerRevealBanner()`（`src/ui/context.ts`）が本人にだけ表示するバナーで、night（ふくろう自身の番以外のステップ）・discuss・vote・resultの各画面に表示する。`startGame()`/`resetToLobby()`で他の一時フィールドと同様にクリアする
 - `night.ts`の`renderSeer()`/`renderReadOnly()`はローカルの`uiState`を優先しつつ、無ければ`seerReveal`にフォールバックする（同じ夜フェーズ中のリロードにも対応するため）
+- **`recordSeerReveal()`は`submitVote()`と同様、単純な`update()`ではなく部屋ルートのトランザクションでフェーズ・roundNumberを検証してから書き込む**（2026-09-14、ChatGPTレビュー指摘）。書き込みが遅延している間にホストが「強制的にロビーへ戻す」を押すと、`resetToLobby()`が消したはずの`seerReveal`を遅延書き込みが後から復活させ、次のゲームへ前ゲームの記憶が混入しうるため
 
 ## 議論フェーズの画面かくし機能（2026-09-14追加）
 

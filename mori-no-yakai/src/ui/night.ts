@@ -312,7 +312,7 @@ function wireActions(container: HTMLElement, roleId: RoleId, ctx: AppContext): v
         const target = ctx.members[targetId];
         // ふくろうは夜順で先に行動するため、この時点のcurrentRoleはoriginalRoleと一致する
         // （night.ts上部のrenderSeerと同じ前提。CLAUDE.md「knownRoleとcurrentRoleの区別」参照）
-        void recordSeerReveal(ctx.roomId, ctx.memberId, {
+        void recordSeerReveal(ctx.roomId, ctx.memberId, ctx.state.roundNumber, {
           kind: "player",
           targetId,
           targetName: target.name,
@@ -325,7 +325,7 @@ function wireActions(container: HTMLElement, roleId: RoleId, ctx: AppContext): v
       uiState.seerChoice = "center";
       render(container, ctx);
       const centerCards = uiState.centerCardsSnapshot ?? ctx.centerCards;
-      void recordSeerReveal(ctx.roomId, ctx.memberId, {
+      void recordSeerReveal(ctx.roomId, ctx.memberId, ctx.state.roundNumber, {
         kind: "center",
         roles: centerCards.slice(0, 2),
       });
@@ -334,7 +334,7 @@ function wireActions(container: HTMLElement, roleId: RoleId, ctx: AppContext): v
       if (uiState.seerChoice) return;
       uiState.seerChoice = "skip";
       render(container, ctx);
-      void recordSeerReveal(ctx.roomId, ctx.memberId, { kind: "skip" });
+      void recordSeerReveal(ctx.roomId, ctx.memberId, ctx.state.roundNumber, { kind: "skip" });
     });
   }
 

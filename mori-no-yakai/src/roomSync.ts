@@ -264,13 +264,27 @@ export async function robberSwap(
  * もちろん同じ夜フェーズ内でもリロードすると消えてしまう。見た瞬間の役職をスナップショットで
  * 保存し、以後の画面でも本人にだけ表示し続けられるようにする
  * （2026-09-14、実プレイで「自分が何を見たか忘れる」ケースが報告されたための追加）。
+ *
+ * submitVote()と同様、部屋ルートのトランザクションでフェーズ・roundNumberを検証してから
+ * 書き込む。単純なupdate()だと、書き込みが遅延している間にホストが「強制的にロビーへ戻す」
+ * (resetToLobby、seerRevealを含む一時フィールドを削除する)を押した場合に、遅延していた
+ * 書き込みが後から到着してseerRevealを復活させてしまい、次のゲームへ前ゲームのふくろうの
+ * 記憶が混入しうる（2026-09-14、レビュー指摘）。
  */
 export async function recordSeerReveal(
   roomId: string,
   memberId: string,
+  roundNumber: number,
   reveal: SeerReveal
 ): Promise<void> {
-  await update(ref(db, `rooms/${roomId}/members/${memberId}`), { seerReveal: reveal });
+  await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
+    if (!room?.state || room.state.phase !== "night" || room.state.roundNumber !== roundNumber) {
+      return room;
+    }
+    if (!room.members?.[memberId]) return room;
+    room.members[memberId].seerReveal = reveal;
+    return room;
+  });
 }
 
 /**
