@@ -5,18 +5,23 @@ import { markDiscussReady } from "../roomSync";
 import { renderForceResetButton, wireForceResetButton } from "./hostControls";
 
 interface DiscussUiState {
+  roomId: string;
+  memberId: string;
   round: number;
   readyTapped?: boolean;
   /** 「画面をかくす」トグルの状態。ラウンドが変わるたびに表示状態へ戻す。 */
   hidden?: boolean;
 }
 
-let uiState: DiscussUiState = { round: -1 };
+let uiState: DiscussUiState = { roomId: "", memberId: "", round: -1 };
 
 export function render(container: HTMLElement, ctx: AppContext): void {
   const roundNumber = ctx.state.roundNumber;
-  if (uiState.round !== roundNumber) {
-    uiState = { round: roundNumber };
+  // roomId/memberIdも比較する。「トップに戻る」で別の部屋（または同じ部屋への入り直しで
+  // 新しいmemberId）へ移った際に、たまたまroundNumberが一致していると前の部屋の
+  // readyTapped/hiddenを引き継いでしまうため（2026-09-14、レビュー指摘）。
+  if (uiState.roomId !== ctx.roomId || uiState.memberId !== ctx.memberId || uiState.round !== roundNumber) {
+    uiState = { roomId: ctx.roomId, memberId: ctx.memberId, round: roundNumber };
   }
 
   const self = ctx.members[ctx.memberId];

@@ -6,6 +6,8 @@ import { renderForceResetButton, wireForceResetButton } from "./hostControls";
 import type { RoleId } from "../types";
 
 interface NightUiState {
+  roomId: string;
+  memberId: string;
   step: number;
   round: number;
   readyTapped?: boolean;
@@ -21,7 +23,7 @@ interface NightUiState {
   centerCardsSnapshot?: RoleId[];
 }
 
-let uiState: NightUiState = { step: -1, round: -1 };
+let uiState: NightUiState = { roomId: "", memberId: "", step: -1, round: -1 };
 
 export function render(container: HTMLElement, ctx: AppContext): void {
   const stepIndex = ctx.state.nightStepIndex;
@@ -29,9 +31,18 @@ export function render(container: HTMLElement, ctx: AppContext): void {
   // stepIndexだけを見て比較すると、対局を跨いで両方とも最初のステップが0の場合に
   // リセットされず、前回の対局でタップ済みのローカル状態が残ってしまう（サーバー側は
   // startGame()でnightReadyStepを消しているのにボタンが押せないままになる）ため、
-  // roundNumberも合わせて比較する。
-  if (uiState.step !== stepIndex || uiState.round !== roundNumber) {
-    uiState = { step: stepIndex, round: roundNumber };
+  // roundNumberも合わせて比較する。加えてroomId/memberIdも比較する。night/discuss/vote
+  // 画面に「トップに戻る」を追加したことで、ページをリロードせず別の部屋（または
+  // 同じ部屋への入り直しで新しいmemberId）へ移れるようになったため、roundNumber等が
+  // たまたま一致する別の部屋のuiStateを引き継いでしまうと、centerCardsSnapshotに
+  // 前の部屋の中央カードが残るなど誤表示の原因になる（2026-09-14、レビュー指摘）。
+  if (
+    uiState.roomId !== ctx.roomId ||
+    uiState.memberId !== ctx.memberId ||
+    uiState.step !== stepIndex ||
+    uiState.round !== roundNumber
+  ) {
+    uiState = { roomId: ctx.roomId, memberId: ctx.memberId, step: stepIndex, round: roundNumber };
   }
   // 一度受信できたcenterCardsはラウンド中は不変なので、初回受信時点でスナップショットを
   // 固定する。以降の描画では常にこのスナップショットを使い、centerCardsリスナーの
