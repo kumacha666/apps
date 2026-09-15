@@ -49,6 +49,7 @@ import {
   isCrossfadeDurationSec,
 } from "./crossfade";
 import { registerStreamAuthResponder, notifyServiceWorkerTokenRotated } from "./streamAuth";
+import { appendDiagLogEntry, formatDiagLog, parseDiagLog, type DiagLogEntry } from "./backgroundDiag";
 import {
   createChangesListFn,
   createDriveCapabilitiesGetFn,
@@ -197,6 +198,29 @@ let loadedPlaylistsSpreadsheetId: string | null = null;
 // loadPlaylists()の複数呼び出しが重なった場合の整合性は、下記reservePlaylistsLoadTarget/
 // loadPlaylists本体のコメント参照。
 
+// バックグラウンド再生の不安定さ（2026-09-14、実機フィードバック）を実機で切り分けるための
+// 調査用診断ログ（backgroundDiag.ts参照）。localStorageへ都度書き込み、ページが凍結
+// （Page Lifecycleのfreeze）される直前までのイベントもできるだけ残す。
+const DIAG_LOG_STORAGE_KEY = "dusty-jukebox-diag-log-v1";
+let diagLog: DiagLogEntry[] = loadDiagLog();
+
+function loadDiagLog(): DiagLogEntry[] {
+  try {
+    return parseDiagLog(localStorage.getItem(DIAG_LOG_STORAGE_KEY));
+  } catch {
+    return [];
+  }
+}
+
+function logDiag(event: string, detail?: string): void {
+  diagLog = appendDiagLogEntry(diagLog, { t: Date.now(), event, detail });
+  try {
+    localStorage.setItem(DIAG_LOG_STORAGE_KEY, JSON.stringify(diagLog));
+  } catch {
+    // ストレージ不可・上限超過等でも、以後のメモリ上の記録自体は継続する。
+  }
+}
+
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
   if (!found) throw new Error(`#${id} not found`);
@@ -320,6 +344,13 @@ function render(): void {
         <ul id="playlist-list" class="result-list"></ul>
       </section>
       <ul id="result-list" class="result-list"></ul>
+      <section class="diagnostics">
+        <h2>バックグラウンド再生 診断ログ（調査用）</h2>
+        <p>再生が止まる操作（スマホをバックグラウンドにする・Bluetoothの再生ボタン等）を再現した後、下のボタンでログを表示し、内容をコピーして共有してください。</p>
+        <button id="diag-log-show-btn" type="button">診断ログを表示</button>
+        <button id="diag-log-clear-btn" type="button">診断ログをクリア</button>
+        <textarea id="diag-log-output" class="diag-log-output" readonly rows="10" hidden></textarea>
+      </section>
     `
         : `<p class="status error">VITE_GOOGLE_CLIENT_ID が未設定です。.env に設定してください。</p>`
     }
@@ -1241,6 +1272,7 @@ function handleNativePlaybackStatus(audio: HTMLAudioElement, eventType: Playback
 async function handlePlaybackAction(action: () => Promise<boolean>): Promise<void> {
   try {
     const started = await action();
+    logDiag("playbackAction:result", String(started));
     if (started) {
       // A newer real playback supersedes any deferred operation. This also
       // removes its notice, so a later click cannot restore an older song.
@@ -1258,11 +1290,13 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
     }
   } catch (err) {
     if (err instanceof PlaybackAuthenticationRequiredError && playbackAuthGate) {
+      logDiag("playbackAction:authRequired");
       playbackAuthGate.defer(() => handlePlaybackAction(action));
       setPlaybackAuthNotice(true);
       setStatus("認証の更新が必要です。下のボタンをクリックして続行してください。", true);
       return;
     }
+    logDiag("playbackAction:error", err instanceof Error ? err.message : String(err));
     setStatus(err instanceof Error ? err.message : String(err), true);
   }
 }
@@ -1275,6 +1309,7 @@ function handleStreamTokenIssued(fileId: string, requestId: string, token: strin
 }
 
 function handleStreamTokenRejected(fileId: string, requestId: string): void {
+  logDiag("sw:401", fileId);
   const continuation = playbackContinuations.acceptTokenRejection(requestId, fileId, auth.getAccessToken());
   if (!continuation || !playback || !playbackAuthGate) return;
   // クロスフェードの先読み（まだpromotionされていない）自身のstreamへの401は、通常の認証継続
@@ -2087,6 +2122,13 @@ function whenPageLoaded(cb: () => void): void {
 function init(): void {
   render();
   observeNowPlayingBarHeight();
+  // バックグラウンド再生の不安定さの調査（実機フィードバック、2026-09-14）：ページの
+  // 表示状態変化・OSによるページ凍結（Page Lifecycle API、Chrome系のみ・未対応環境では
+  // 単に発火しない）を診断ログへ記録する。CLIENT_ID未設定でも意味のある記録のため
+  // 早期returnより前に登録する。
+  document.addEventListener("visibilitychange", () => logDiag("visibilitychange", document.visibilityState));
+  document.addEventListener("freeze", () => logDiag("freeze"));
+  document.addEventListener("resume", () => logDiag("resume"));
   if (!CLIENT_ID) return;
 
   if ("serviceWorker" in navigator) {
@@ -2126,6 +2168,7 @@ function init(): void {
       audioPlayerB,
       () => auth.getAccessToken(),
       (error) => {
+        logDiag("playback:error", error instanceof Error ? error.message : String(error));
         // The SW message has already converted a confirmed Drive 401 into the
         // explicit continuation UI. Do not overwrite it with media's generic
         // error event, which carries no HTTP status.
@@ -2160,6 +2203,7 @@ function init(): void {
       playback,
       (error) => setStatus(error instanceof Error ? error.message : String(error), true),
       () => {
+        logDiag("queue:ended", document.visibilityState);
         // クロスフェードが進行中の間は、この自然終了（'ended'）は既にクロスフェード自身が
         // 引き継いでいる遷移の一部のため無視する（2026-09-10、Codexレビュー指摘：P1）。
         // ここで無条件にadvanceOnEnded()すると、クロスフェードのランプ・先読み再生とは別に
@@ -2254,7 +2298,13 @@ function init(): void {
     // PlaybackController.pause()はアプリの「一時停止」ボタンと同じ完全停止のため、
     // Bluetoothの一時停止ボタンを押すたびに二度と同じボタンで再開できなくなってしまう）。
     registerActionHandlers(navigator.mediaSession, {
-      play: () => { void playback?.activeAudioElement().play(); },
+      play: () => {
+        logDiag("mediaSession:play", document.visibilityState);
+        void playback?.activeAudioElement().play().then(
+          () => logDiag("mediaSession:play:resolved"),
+          (err) => logDiag("mediaSession:play:rejected", err instanceof Error ? err.message : String(err))
+        );
+      },
       // playback.activeAudioElement().pause()はPlaybackController.pause()を経由しない
       // ネイティブ直接呼び出しのため、PlaybackController側のonTransitionStartフック
       // （play/pause/cancelPendingTransitionの先頭で発火）は通らない。クロスフェード中に
@@ -2264,11 +2314,32 @@ function init(): void {
       // src/currentTime/play/pauseに一切触れないため、旧設計にあった「退場側の曲への
       // 復元」は構造的に不要になった）。
       pause: () => {
+        logDiag("mediaSession:pause", document.visibilityState);
         crossfadeOrchestrator?.cancel();
         playback?.activeAudioElement().pause();
       },
-      previoustrack: () => void handleQueuePlayback(() => queue?.previous(fadeOutEnabled())),
-      nexttrack: () => void handleQueuePlayback(() => queue?.next(fadeOutEnabled())),
+      previoustrack: () => {
+        logDiag("mediaSession:previoustrack", document.visibilityState);
+        void handleQueuePlayback(() => queue?.previous(fadeOutEnabled()));
+      },
+      nexttrack: () => {
+        logDiag("mediaSession:nexttrack", document.visibilityState);
+        void handleQueuePlayback(() => queue?.next(fadeOutEnabled()));
+      },
+    });
+    el<HTMLButtonElement>("diag-log-show-btn").addEventListener("click", () => {
+      const output = el<HTMLTextAreaElement>("diag-log-output");
+      output.value = formatDiagLog(diagLog);
+      output.hidden = false;
+    });
+    el<HTMLButtonElement>("diag-log-clear-btn").addEventListener("click", () => {
+      diagLog = [];
+      try {
+        localStorage.removeItem(DIAG_LOG_STORAGE_KEY);
+      } catch {
+        // ストレージ不可でもメモリ上のログはクリアできているため無視する。
+      }
+      el<HTMLTextAreaElement>("diag-log-output").value = "";
     });
     el<HTMLButtonElement>("login-btn").addEventListener("click", () => void handleLogin());
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
