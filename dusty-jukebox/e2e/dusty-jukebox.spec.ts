@@ -1475,9 +1475,14 @@ test("自然終了に伴う次曲への遷移が未解決のまま固まって�
 
   // song-1の自然終了を模擬する。PlaybackControllerはネイティブplay()を待つ前にaudio.srcを
   // 次の曲（song-2）へ既に差し替えているが、queue.currentPlayingFileId()はplay()が解決する
-  // （＝コミットする）までsong-1を指したままになる。
+  // （＝コミットする）までsong-1を指したままになる。この最初の遷移自体のplay()呼び出しが
+  // queue.pendingMoveに未解決のまま残り続ける（2026-09-15、Codexレビュー再指摘：P1続き）。
   await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("ended")));
+  // この時点のsrcは最初の（未解決の）遷移自身が既に設定したものであり、後続の検証がこれを
+  // 「再試行が成功した証拠」と誤認しないよう、実際に曲一覧の再生中ハイライトがまだsong-2へ
+  // 更新されていない（＝queue側はまだコミットしていない）ことも確認しておく。
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("First song");
 
   // documentをhidden→visibleにしてバックグラウンド復帰を発火させる。
   await page.evaluate(() => {
@@ -1489,9 +1494,13 @@ test("自然終了に伴う次曲への遷移が未解決のまま固まって�
     document.dispatchEvent(new Event("visibilitychange"));
   });
 
-  // song-1へ巻き戻さず、song-2への遷移を再試行して実際にコミットすることを検証する
-  // （修正前はqueue.currentPlayingFileId()が指す直前の曲＝song-1をresume()してしまい、
-  // 次の曲へ進む代わりに直前の曲を再生し直していた）。
+  // song-1へ巻き戻さず、song-2への遷移を再試行して実際にコミットすることを検証する。
+  // audio.srcの一致だけでは、未解決の最初の遷移が既に設定した値と区別がつかず「再試行が
+  // 実際に何もしていない」偽陽性を検出できないため（2026-09-15、Codexレビュー再指摘：
+  // 未解決のqueue.pendingMoveへ直列に連結されるだけの素朴な再試行では、実際にはコミット
+  // されないままsrcだけが偶然一致し続けることが判明した）、queue側の「現在の曲」を反映する
+  // 再生中ハイライトがsong-2へ実際に切り替わることまで確認する。
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Second song");
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
 });
 

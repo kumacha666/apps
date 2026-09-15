@@ -1361,7 +1361,10 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
 // と、次の曲へ進む代わりに直前の（既に終わった）曲を最初から再生し直してしまう。この関数は
 // 「直前のキュー由来の遷移が自然終了に伴うadvanceOnEnded()で、まだコミットされていない」場合を
 // pendingNaturalEndAdvanceフラグ（onEnded時に立て、実際の再生成功時にhandlePlaybackAction()の
-// 成功分岐でのみ解除する）で検知し、その場合はresume()ではなくadvanceOnEnded()自体を再試行する。
+// 成功分岐でのみ解除する）で検知する。この場合、単純にadvanceOnEnded()自体を再試行しても、
+// 元の遷移のネイティブplay()がqueue.pendingMoveに未解決のまま残っている限り、replacePendingを
+// 指定しない通常のnext()はその後ろへ直列に連結されるだけで実行されないため、下記の分岐で
+// resume()（replacePending方式）へ正しい遷移先を明示的に渡す形で迂回する。
 function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
   if (!playback || !queue) return null;
   const audio = playback.activeAudioElement();
@@ -1373,8 +1376,18 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
   });
   if (!shouldRecover) return null;
   if (pendingNaturalEndAdvance) {
+    // 直前の自然終了に伴う遷移（advanceOnEnded()）自体を素朴に再試行しても、その遷移の
+    // ネイティブplay()がまだ未解決のままqueue.pendingMoveに残っている限り、次の曲への
+    // move()はreplacePendingを指定しない通常のnext()経由のため、その未解決のpendingMoveの
+    // 後ろへ直列に連結されるだけで実行されない（2026-09-15、Codexレビュー指摘：P1続き。
+    // queue.ts:214-229のmove()参照）。resume()と同じreplacePending方式で直列化チェーンの
+    // 詰まりを迂回しつつ、正しい遷移先（現在のcurrentFileIdの次の曲）をpeekNextFileId()で
+    // 先読みしてresume()へ明示的に渡す（resume()自体はfindNext()を使わないため、この
+    // 先読みが必須）。
+    const nextFileId = queue.peekNextFileId();
+    if (!nextFileId) return null;
     logDiag("backgroundRecovery:attempt", `${document.visibilityState} advance`);
-    return handleNaturalEndAdvance();
+    return handleQueuePlayback(() => queue?.resume(nextFileId, 0));
   }
   const fileId = queue.currentPlayingFileId();
   if (!fileId) return null;
