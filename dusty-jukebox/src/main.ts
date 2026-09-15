@@ -184,6 +184,17 @@ let userPausedPlayback = false;
 // でtrueにし、実際に何らかの再生が成功する（handlePlaybackAction()の成功分岐）たびにfalseへ
 // 戻す。userPausedPlaybackと同じく、main.ts内の一部の呼び出し元だけがtrue/falseを操作する。
 let pendingNaturalEndAdvance = false;
+// PlaybackQueueが実際にaudio.srcをコミットしようとした瞬間（registerQueuePlaybackContinuation()、
+// onBeforePlayコールバック経由）に更新される「最後に開始された遷移が狙っている曲」（2026-09-15、
+// Codexレビュー指摘：P1「Preserve targets of pending manual navigation」）。pendingNaturalEndAdvance
+// は自然終了専用のため、次へ/前へ/曲名クリック/「再生」ボタン等ユーザー起因のキュー由来
+// ナビゲーションが未コミットのまま固まった場合を見逃す。トリガーの種類を問わず、PlaybackQueue内の
+// playAndCommit()が実際にplayer.play()を呼ぶたびに（＝onStreamIdAllocated経由でaudio.srcの
+// コミット直前に）更新されるため、この値がqueue.currentPlayingFileId()と異なっていれば、その
+// ナビゲーションはまだコミットされていない（＝進行中）ことを意味する。実際に何らかの再生が
+// 成功する（handlePlaybackAction()の成功分岐、またはクロスフェードのonPromoted——こちらは
+// handlePlaybackAction()を経由しないコミット経路のため個別の解除が必要）たびにnullへ戻す。
+let pendingQueueTransitionTarget: string | null = null;
 const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
 // catalogSessionへ最後に読み込んだ（有効な）曲一覧の出所スプレッドシートID。プレイリストの
@@ -1267,6 +1278,11 @@ function registerQueuePlaybackContinuation(fileId: string, streamId: number): vo
   // PlaybackQueue invokes this immediately before PlaybackController commits
   // audio.src. Do not wait for the queue to commit currentFileId: a Drive 401
   // can arrive while native play() is still pending.
+  // pendingQueueTransitionTargetの定義コメント参照（2026-09-15、Codexレビュー指摘：P1）。
+  // ここはPlaybackQueueが起こすあらゆるplayAndCommit()呼び出し（自然終了・次へ/前へ/
+  // 曲名クリック/「再生」ボタン等）が共通して通る唯一の場所のため、トリガーの種類を問わず
+  // 「今まさにコミットしようとしている曲」を捕捉できる。
+  pendingQueueTransitionTarget = fileId;
   playbackContinuations.register({
     fileId,
     streamId,
@@ -1312,6 +1328,9 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
       // 解決済み（成功にせよ、この再生自体が別の理由〈手動操作等〉によるものにせよ、もはや
       // 「まだコミットされていない自然終了遷移」を代表しない）。
       pendingNaturalEndAdvance = false;
+      // 同じ理由でpendingQueueTransitionTargetも解除する（2026-09-15、Codexレビュー指摘：P1）：
+      // 何らかの再生が実際にコミットした以上、もはや「未コミットの遷移」を代表しない。
+      pendingQueueTransitionTarget = null;
       // キュー表示（再生中のハイライト・「再生中」ラベル）の更新は、この関数が実際の
       // 再生開始経路の唯一の合流点であるここで行う。handleQueuePlayback()（クリック・次へ/前へ・
       // 曲の自然終了）だけでなく、handleStreamTokenRejected()の認証継続再開
@@ -1405,11 +1424,28 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
     queue.invalidatePendingMove();
     return handleQueuePlayback(() => queue?.resume(nextFileId, 0));
   }
-  const fileId = queue.currentPlayingFileId();
-  if (!fileId) return null;
+  const currentFileId = queue.currentPlayingFileId();
+  // pendingQueueTransitionTargetの定義コメント参照（2026-09-15、Codexレビュー指摘：P1
+  // 「Preserve targets of pending manual navigation」）。自然終了以外の、ユーザー起因の
+  // キュー由来ナビゲーション（次へ/前へ/曲名クリック/「再生」ボタン等）も、
+  // PlaybackControllerがaudio.srcを新しい曲へ既に差し替えた後でnative play()を待つため、
+  // その遷移がまだコミットされていない間はcurrentPlayingFileId()が依然として遷移前の
+  // （outgoingの）曲を指す。pendingNaturalEndAdvanceは自然終了専用のため、この場合は上の
+  // 分岐へ落ちず、下記のcurrentPlayingFileId()を無条件にresume()する素朴な実装のままだと、
+  // 進行中のナビゲーションを（queue.invalidatePendingMove()で）無効化した上で誤った
+  // （古い）曲を再生してしまう。pendingQueueTransitionTargetがcurrentFileIdと異なる場合、
+  // そのナビゲーションはまだコミットされていないことを意味するため、pendingNaturalEndAdvance
+  // 分岐と同じreplacePending方式でその正しい遷移先へ迂回する。
+  if (pendingQueueTransitionTarget !== null && pendingQueueTransitionTarget !== currentFileId) {
+    logDiag("backgroundRecovery:attempt", `${document.visibilityState} pendingTarget`);
+    const target = pendingQueueTransitionTarget;
+    queue.invalidatePendingMove();
+    return handleQueuePlayback(() => queue?.resume(target, 0));
+  }
+  if (!currentFileId) return null;
   logDiag("backgroundRecovery:attempt", `${document.visibilityState} resume`);
   queue.invalidatePendingMove();
-  return handleQueuePlayback(() => queue?.resume(fileId, audio.currentTime));
+  return handleQueuePlayback(() => queue?.resume(currentFileId, audio.currentTime));
 }
 
 // バックグラウンドのままでの定期リトライ（2026-09-15、実機フィードバック「PCは良いがスマホの
@@ -2420,6 +2456,15 @@ function init(): void {
           // 担うpendingNaturalEndAdvanceの解除もここで行う（2026-09-15、Codexレビュー指摘：P1
           // への対応。この昇格自体、直前の自然終了に伴う遷移を代表する成功のため）。
           pendingNaturalEndAdvance = false;
+          // pendingQueueTransitionTargetも同じ理由で解除する（2026-09-15、Codexレビュー指摘：
+          // P1続き）：クロスフェードの先読み再生はPlaybackQueue.playAndCommit()を経由しない
+          // （非アクティブ側のPlaybackControllerを直接play()する）ため、この昇格自体は
+          // registerQueuePlaybackContinuation()を発火させずpendingQueueTransitionTargetを
+          // 更新しない。昇格前に発生した未解決の手動ナビゲーション（例：スタックしたまま
+          // 放置された「次へ」クリック）が残したstaleな値が、この後の（無関係になった）
+          // バックグラウンド復帰判定へ誤って使われないよう、実際に何らかの再生がコミットした
+          // このタイミングで明示的に解除する。
+          pendingQueueTransitionTarget = null;
           if (!playback) return;
           updateSeekDuration(playback.activeAudioElement().duration);
           updateSeekPosition(playback.activeAudioElement().currentTime);

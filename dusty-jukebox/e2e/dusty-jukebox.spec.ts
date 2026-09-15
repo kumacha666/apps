@@ -1621,3 +1621,51 @@ test("バックグラウンド復帰が自然終了に伴う遷移をreplacePend
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Finale");
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-3(\?|$)/);
 });
+
+test("バックグラウンドで手動の「次へ」が未解決のまま固まっても、復帰は直前の（既に進行中の）曲を再生し直さず正しい遷移先へ迂回する（2026-09-15、Codexレビュー指摘：P1「Preserve targets of pending manual navigation」の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  // song-1の再生開始（1回目のplay()呼び出し）は既に完了済みのため、このスタブに差し替えて
+  // からの最初の呼び出し（song-2への手動「次へ」）だけを未解決のまま固まらせる。
+  await page.evaluate(() => {
+    let callCount = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function () {
+        callCount += 1;
+        if (callCount === 1) return new Promise<void>(() => {});
+        return Promise.resolve();
+      },
+    });
+  });
+
+  // 手動で「次へ」を押す（Bluetooth/OSメディアキーのnexttrackハンドラも同じ
+  // handleQueuePlayback(() => queue?.next(...))経路のため、可視の「次へ」ボタンで代表させる）。
+  // このplay()呼び出しがqueue.pendingMoveに未解決のまま残り続ける。
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+  // queue.currentPlayingFileId()はまだコミットされていないためsong-1のまま。
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("First song");
+
+  // documentをhidden→visibleにしてバックグラウンド復帰を発火させる。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  // 修正前は、pendingNaturalEndAdvanceがfalse（自然終了ではなく手動操作のため）のため
+  // plain分岐がqueue.currentPlayingFileId()（song-1、まだコミット前の古い曲）を
+  // queue.invalidatePendingMove()で進行中の「次へ」ごと無効化した上でresume()してしまい、
+  // song-1が再生し直されていた。修正後はpendingQueueTransitionTarget（song-2、
+  // registerQueuePlaybackContinuation()経由で既に記録済み）へ正しく迂回し、song-2が
+  // 実際にコミットされる。
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Second song");
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+});
