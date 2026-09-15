@@ -593,6 +593,39 @@ describe("PlaybackController", () => {
     expect(audio.src).toContain("B");
   });
 
+  test("invalidatePendingRecoveryOnNativePause()は、audio要素のネイティブpause()を直接呼ぶだけの経路（Media Session）でも進行中のplay()を無効化する（2026-09-15、Codexレビュー指摘：P1「Invalidate recovery on Media Session pause」。この経路はPlaybackController.pause()を経由しないためgenerationが一切変化せず、後から解決した古いplay()が『成功』として扱われてしまっていた）", async () => {
+    let resolvePlay!: () => void;
+    class SlowPlayAudio extends FakeAudio {
+      override async play(): Promise<void> {
+        await new Promise<void>((resolve) => { resolvePlay = resolve; });
+        return super.play();
+      }
+    }
+    const audio = new SlowPlayAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    const playPromise = playback.play("A").catch((err: unknown) => err); // フェードなし、audio.play()が未解決のまま保留
+    await vi.waitFor(() => expect(resolvePlay).toBeDefined());
+
+    // Media Sessionのpauseハンドラと同じ経路：audio要素のネイティブpause()を直接呼ぶだけで、
+    // PlaybackController.pause()は経由しない。
+    audio.pause();
+    // このメソッドを呼ばなければgenerationが変化せずisSuperseded()がfalseのままになる
+    // ことを、以下のdisable-and-verifyで確認する。
+    playback.invalidatePendingRecoveryOnNativePause();
+    resolvePlay(); // ネイティブplay()自体は今になって解決する
+
+    const error = await playPromise;
+    expect(error).toBeInstanceOf(PlaybackPausedError);
+    // 実際の音声も一時停止のまま（呼び出し元が既にネイティブpause()を済ませている）。
+    expect(audio.paused).toBe(true);
+    // currentFileId/streamGenerationは温存される（同じボタンでの再開を壊さないため）：
+    // markStreamTokenRejected()がこの曲のstream世代と一致して認識できることで間接的に確認する
+    // （streamGeneration自体はinvalidatePendingRecoveryOnNativePause()が触れない内部generation
+    // とは別物のため、currentStreamGeneration()で照合する）。
+    expect(playback.markStreamTokenRejected("A", playback.currentStreamGeneration() ?? -1)).not.toBeNull();
+  });
+
   test("pause(true)指定時は現在再生中の音声をフェードアウトしてから実際に一時停止し、フェード開始前のvolumeへ戻す（開発体制#45、2026-09-09、ユーザー要望：手動スキップ時のフェードアウト設定を一時停止にも適用してほしい）", async () => {
     vi.useFakeTimers();
     const audio = new FakeAudio();

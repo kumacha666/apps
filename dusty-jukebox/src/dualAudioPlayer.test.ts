@@ -1,5 +1,5 @@
-import { describe, expect, test } from "vitest";
-import { streamUrl, type AudioElementLike } from "./playback";
+import { describe, expect, test, vi } from "vitest";
+import { streamUrl, PlaybackPausedError, type AudioElementLike } from "./playback";
 import { DualAudioPlayer, createSharedStreamIdAllocator } from "./dualAudioPlayer";
 import { PlaybackContinuationRegistry } from "./playbackContinuation";
 
@@ -104,6 +104,31 @@ describe("DualAudioPlayer", () => {
 
     player.cancelPendingTransition();
     expect(player.currentGeneration()).toBe(3); // play + loadPaused + cancelPendingTransition
+  });
+
+  test("invalidatePendingRecoveryOnNativePause()はactive側だけを無効化する（2026-09-15、Codexレビュー指摘：P1「Invalidate recovery on Media Session pause」）", async () => {
+    let resolvePlay!: () => void;
+    class SlowPlayAudio extends FakeAudio {
+      override async play(): Promise<void> {
+        await new Promise<void>((resolve) => { resolvePlay = resolve; });
+        return super.play();
+      }
+    }
+    const audioA = new SlowPlayAudio();
+    const audioB = new FakeAudio();
+    const player = new DualAudioPlayer(audioA, audioB, () => "valid-token");
+
+    const playPromise = player.play("A").catch((err: unknown) => err);
+    await vi.waitFor(() => expect(resolvePlay).toBeDefined());
+    const generationBefore = player.currentGeneration();
+
+    audioA.pause(); // Media Sessionのpauseハンドラと同じ、ネイティブpause()の直接呼び出し
+    player.invalidatePendingRecoveryOnNativePause();
+    expect(player.currentGeneration()).toBe(generationBefore + 1); // active側（スロット0）が進む
+
+    resolvePlay();
+    const error = await playPromise;
+    expect(error).toBeInstanceOf(PlaybackPausedError);
   });
 
   test("コンストラクタに渡した採番関数を両コントローラで共有する（別々の既定カウンタを作らない）", async () => {

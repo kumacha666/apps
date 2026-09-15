@@ -385,6 +385,24 @@ export class PlaybackController {
     this.generationReasons.set(this.generation, "cancel");
   }
 
+  // Bluetooth/OSのMedia Session一時停止（main.ts）はaudio要素のネイティブpause()を直接
+  // 呼ぶだけで、PlaybackController.pause()は経由しない（同じボタンでの再開を壊さないため、
+  // currentFileId/streamGenerationは温存する設計。上のpause()コメント・mediaSession pause
+  // ハンドラのコメント参照）。この経路だけを通ると、進行中のバックグラウンド復帰リトライ
+  // （resume()）のネイティブplay()が未解決のまま固まっている間はgenerationも一切変化しない
+  // ため`isSuperseded()`がfalseのままとなり、後から解決したその古いplay()呼び出しが
+  // 「成功」として扱われ、PlaybackQueue側の状態が誤って書き換わってしまう（2026-09-15、
+  // Codexレビュー指摘：P1「Invalidate recovery on Media Session pause」）。pause()と同じ
+  // generation/generationReasonsの更新だけを行い、audio.pause()の呼び出し・currentFileId/
+  // streamGeneration/rejectedGenerationのクリアは行わない（呼び出し元が既にネイティブ
+  // pause()を済ませており、かつ「同じボタンでの再開」を保つため）。
+  invalidatePendingRecoveryOnNativePause(): void {
+    this.reclaimPendingFadeVolume();
+    this.onTransitionStart();
+    this.generation += 1;
+    this.generationReasons.set(this.generation, "pause");
+  }
+
   // クロスフェードのハンドオフが既にaudio.srcを次曲へコミット済みの状態で一時停止された場合、
   // 退場側の曲へ音を鳴らさずに（native play()を一切呼ばずに）復元する（2026-09-10、ChatGPT
   // レビュー指摘：P1「Pause後にaudio sourceとqueue currentが食い違ったまま残ります」）。

@@ -1776,3 +1776,49 @@ test("バックグラウンドの定期リトライがネイティブplay()の�
   await page.waitForTimeout(300);
   expect(await page.evaluate(() => (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount)).toBe(1);
 });
+
+test("新規に作成した再生リストの最初の曲（playAt(0)）がネイティブplay()の未解決のまま固まっても、バックグラウンド復帰はその最初の曲を再試行する（2026-09-15、Codexレビュー指摘：P1「Recover the first pending queue track」の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context);
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  // 索引読み込み・再生リスト作成直後はまだ何も再生していない（queue.currentPlayingFileId()は
+  // null、isQueuePlaybackもfalseのまま）。最初のplay()呼び出し（「再生」ボタン→
+  // queue.playAt(0)）だけを未解決のまま固まらせる。
+  await page.evaluate(() => {
+    let callCount = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function () {
+        callCount += 1;
+        if (callCount === 1) return new Promise<void>(() => {});
+        return Promise.resolve();
+      },
+    });
+  });
+
+  await page.getByRole("button", { name: "再生", exact: true }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  // queue.currentPlayingFileId()はまだnullのまま（isQueuePlaybackもfalse）のため
+  // ハイライトはまだ付いていない。
+  await expect(page.locator("#catalog-list li.now-playing")).toHaveCount(0);
+
+  // documentをhidden→visibleにしてバックグラウンド復帰を発火させる。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  // 修正前は、canResumeCurrent()（isQueuePlaybackがまだfalse）がfalseのままのため
+  // shouldAttemptBackgroundPlaybackRecovery()自体がfalseを返し、関数全体がここで早期return
+  // していた。pendingQueueTransitionTarget（song-1、既に記録済み）は一切参照されず、固まった
+  // 最初の曲は定期リトライでもフォアグラウンド復帰でも永久にリトライされなかった。修正後は
+  // userPausedPlaybackだけを先に確認し、pendingQueueTransitionTarget分岐へ到達してsong-1を
+  // 再試行し、実際にコミットされる。
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("First song");
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+});
+
