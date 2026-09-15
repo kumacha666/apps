@@ -1563,3 +1563,61 @@ test("バックグラウンドで復帰済みトークンが古いリトライ�
   await page.waitForTimeout(300);
   expect(await page.evaluate(() => (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount)).toBe(countAfterCycle);
 });
+
+test("バックグラウンド復帰が自然終了に伴う遷移をreplacePendingで迂回した後、元の遷移が遅れて解決してもさらに先へ進んだ再生状態を巻き戻さない（2026-09-15、Codexレビュー指摘：P2「Invalidate the bypassed natural-end operation」の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  // 最初のplay()呼び出し（Opening→Scherzoへの自然終了に伴う遷移）だけを未解決のまま固まらせ、
+  // 呼び出し側から明示的に解放できるようにする。以降の呼び出しは即座に解決する。
+  await page.evaluate(() => {
+    let callCount = 0;
+    let releaseFirst: (() => void) | null = null;
+    (window as unknown as { __e2eReleaseFirstNaturalEndPlay: () => void }).__e2eReleaseFirstNaturalEndPlay = () => releaseFirst?.();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function () {
+        callCount += 1;
+        if (callCount === 1) return new Promise<void>((resolve) => { releaseFirst = resolve; });
+        return Promise.resolve();
+      },
+    });
+  });
+
+  // Opening（album-track-1）の自然終了を模擬する。この最初の遷移（Scherzoへ）のplay()呼び出しが
+  // queue.pendingMoveに未解決のまま残り続ける。
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("ended")));
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+
+  // バックグラウンド復帰でreplacePending方式の迂回（queue.resume(nextFileId, 0)）を発生させ、
+  // 実際にScherzoへコミットさせる。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
+
+  // さらに正当な自然終了でFinale（album-track-3）へ進める（迂回とは無関係の、通常の自然終了）。
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("ended")));
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Finale");
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-3(\?|$)/);
+
+  // ここで初めて、最初の（迂回で追い越された）Scherzoへの遷移を遅れて解決させる。
+  // queue.invalidatePendingMove()でgenerationを進めていなければ、この遅延解決が
+  // currentFileIdをScherzoへ誤って巻き戻してしまう（2026-09-15、Codexレビュー指摘：P2）。
+  await page.evaluate(() => (window as unknown as { __e2eReleaseFirstNaturalEndPlay: () => void }).__e2eReleaseFirstNaturalEndPlay());
+  await page.waitForTimeout(100);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Finale");
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-3(\?|$)/);
+});

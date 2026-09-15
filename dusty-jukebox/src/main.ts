@@ -1365,6 +1365,21 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
 // 元の遷移のネイティブplay()がqueue.pendingMoveに未解決のまま残っている限り、replacePendingを
 // 指定しない通常のnext()はその後ろへ直列に連結されるだけで実行されないため、下記の分岐で
 // resume()（replacePending方式）へ正しい遷移先を明示的に渡す形で迂回する。
+//
+// queue.invalidatePendingMove()の呼び出し（2026-09-15、Codexレビュー指摘：P2「Invalidate the
+// bypassed natural-end operation」）：resume(..., replacePending=true)はqueue.pendingMoveの
+// 直列化チェーンだけを置き換え、PlaybackQueue.generationは一切進めない（queue.tsのmove()参照）。
+// このため、バイパスした元の（まだ未解決のまま残っている）自然終了の遷移が持つ古いgenerationは、
+// バイパス後も現在のgenerationと一致したままになる。この元の遷移のネイティブplay()が後から
+// （このバイパスが成功しコミットした後、さらに次の曲へ自然進行した後ですら）遅れて解決すると、
+// playAndCommit()のgeneration一致チェックをそのまま通過し、currentFileIdを（既に古くなった）
+// 曲2へ巻き戻してしまう——ハイライト表示が古いまま固定され、次の自然終了が曲2を再び選んで
+// しまう。invalidatePendingMove()でgenerationを明示的に進めてから迂回することで、バイパスされた
+// 元の遷移が後から解決してもgeneration不一致でfalseに収束し、新しい状態を巻き戻せなくする。
+// 下記の（自然終了に伴わない）通常のresume()分岐にも同じ理由で適用する：定期リトライ・
+// フォアグラウンド復帰の両トリガーが無制限にこの関数を呼びうるため、先に発行された
+// resume()呼び出し（同じくreplacePending方式でネイティブplay()の解決が保証されない）が
+// 未解決のまま残っている間に後続の呼び出しがバイパスする、という同型のレースが起こりうる。
 function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
   if (!playback || !queue) return null;
   const audio = playback.activeAudioElement();
@@ -1387,11 +1402,13 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
     const nextFileId = queue.peekNextFileId();
     if (!nextFileId) return null;
     logDiag("backgroundRecovery:attempt", `${document.visibilityState} advance`);
+    queue.invalidatePendingMove();
     return handleQueuePlayback(() => queue?.resume(nextFileId, 0));
   }
   const fileId = queue.currentPlayingFileId();
   if (!fileId) return null;
   logDiag("backgroundRecovery:attempt", `${document.visibilityState} resume`);
+  queue.invalidatePendingMove();
   return handleQueuePlayback(() => queue?.resume(fileId, audio.currentTime));
 }
 
