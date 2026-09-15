@@ -45,7 +45,7 @@ export function parseDiagLog(raw: string | null): DiagLogEntry[] {
       (item): item is DiagLogEntry =>
         typeof item === "object" &&
         item !== null &&
-        typeof (item as { t?: unknown }).t === "number" &&
+        Number.isFinite((item as { t?: unknown }).t) &&
         typeof (item as { event?: unknown }).event === "string"
     );
   } catch {

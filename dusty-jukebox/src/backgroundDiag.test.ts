@@ -62,4 +62,14 @@ describe("parseDiagLog", () => {
     const entries = appendDiagLogEntry([], { t: 5, event: "x", detail: "y" });
     expect(parseDiagLog(JSON.stringify(entries))).toEqual(entries);
   });
+
+  it("filters out entries whose t is not finite (NaN/Infinity pass typeof but break formatting)", () => {
+    const raw = JSON.stringify([
+      { t: 1, event: "a" },
+      { t: NaN, event: "b" },
+      { t: Infinity, event: "c" },
+      { t: -Infinity, event: "d" },
+    ]);
+    expect(parseDiagLog(raw)).toEqual([{ t: 1, event: "a" }]);
+  });
 });
