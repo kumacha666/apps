@@ -35,8 +35,21 @@
 - ユニットテスト：`backgroundPlaybackRecovery.test.ts`（5ケース：復帰すべき場合、ユーザー自身の一時停止では上書きしない、再開できる状態にない場合、既に再生中の場合、曲が自然終了済みの場合）。該当コードを一時的に無効化して実際に失敗することを確認済み。
 - E2E（`e2e/dusty-jukebox.spec.ts`）：①「バックグラウンドで`<audio>`が黙って一時停止しても、フォアグラウンド復帰（`visibilitychange`）で自動的に再開を試みる」（アプリの一時停止ボタンを経由せず`<audio>`要素へ直接`pause`イベントを発火させてバックグラウンドでの不意の停止を模擬し、`visibilitychange`ディスパッチ後に診断ログ（`#diag-log-output`）へ`backgroundRecovery:attempt`が記録され、`#audio-player`のsrcが再要求されることを検証）、②「ユーザー自身が一時停止した曲は、フォアグラウンド復帰では自動的に再開しない」（「一時停止」ボタンを押してから同じ手順を踏んでも自動復帰しないことを検証）。いずれも該当コード（`visibilitychange`リスナーからの`attemptBackgroundPlaybackRecovery()`呼び出し）を一時的に無効化して①が実際に失敗することを確認済み。**診断ログ用の`<textarea id="diag-log-output">`は値を`.value`へJSで設定するため、`toContainText()`（`textContent`を見る）ではなく`toHaveValue()`を使う必要がある点に注意**（既存のE2Eには前例が無かったため、このPRで初めて踏んだ落とし穴）。
 - **既知のE2E制限**：Bluetooth/OSメディアキーの実際の押下・Page Lifecycleの`freeze`/`resume`自体の実ブラウザ挙動はE2Eで再現できない（既存の「Media Session対応」節と同じ制約）。MediaSessionの`play`ハンドラのネイティブ`play()`失敗時フォールバックも、E2Eモック環境では`play()`が常に解決するようスタブされているため直接検証できない（既存の複数の類似箇所と同じ理由でコードレビューでの確認にとどめた）。
-- 710 unit（705+5）+ 63 E2E（61+2）、全green。`npx tsc --noEmit`クリーン。`npm run deploy`実行済み（`app.js` 288.98kB、SW v0.1.136→v0.1.137）。
-- **実機での動作確認はまだ**（次セッションでの確認事項。特に「Bluetoothの再生ボタンを押しても再開しない」「バックグラウンドで次曲が再生されない」の両方が実際に改善されたかどうかは実機でなければ確認できない）。
+- 710 unit（705+5）+ 63 E2E（61+2）、全green。`npx tsc --noEmit`クリーン。`npm run deploy`実行済み（`app.js` 288.98kB、SW v0.1.136→v0.1.137）。PR #456としてマージ済み（`main` `44d350d`）。
+- **2026-09-15、実機フィードバック（診断ログ付き）を受け、フォアグラウンド復帰時の自動復帰自体は正しく動作していることを確認したが、根本的な問題（スマホロック中は無音のまま）は解決しておらず「致命的」と評価された**。ログの時系列解析で新たな知見が判明：①`freeze`イベントが一度も発生していない（＝ページは完全凍結していない）状態でも、曲の自然終了直後の次曲への接続（Service Worker経由のRange取得）自体が失敗するケースがある（"Failed to load because no supported source was found"）。②同じ「hidden」状態でも、バックグラウンド直後はMediaSessionのpause/playハンドラが実際に成功することを確認した（07:41:15〜07:41:22）が、その約3分後（07:44:44）の次曲接続は失敗している——バックグラウンド継続時間に応じてブラウザの抑制が強まっている可能性がある。ユーザーと相談し、「まずクロスフェードを試す（曲間の無音ギャップを無くせば抑制を回避できるかもしれないという仮説、実機での検証待ち）」＋「バックグラウンドのまま定期リトライを追加実装する」の2本立てで対応することに合意。詳細は下記「バックグラウンド再生の定期リトライ」節参照。
+
+## バックグラウンド再生の定期リトライ（2026-09-15）
+
+上記の自動復帰は`visibilitychange`/Page Lifecycleの`resume`イベント（＝フォアグラウンドに戻った時）にしか発火しないため、ロックしたまま放置される限り自動では復帰しなかった。実機ログで、documentが`hidden`のまま（`freeze`はしていない状態）でも曲の自然終了直後の次曲接続が失敗するケースを確認したため、フォアグラウンド復帰を待たず、バックグラウンドのままでも一定間隔で自動復帰を試みるようにした。
+
+- **`attemptBackgroundPlaybackRecovery()`に再入防止ガード（`backgroundRecoveryInFlight`）を追加**：`visibilitychange`と`resume`がほぼ同時に発火する実機ログ上の実例（例：`visible`→`resume`が数十ms差で連続発火）があり、また下記の定期リトライループとも同じ関数を共有するため、前回の`queue.resume()`呼び出しがまだ解決していない間に重ねて呼ばれても二重に発行しないようにした（`queue.resume()`は`replacePending`で直列化チェーンを迂回する設計のため、無条件に重ねて呼ぶと同じストリームへの要求が重複しうる）。
+- **`startBackgroundRetryLoop()`/`stopBackgroundRetryLoop()`（`main.ts`）**：`document`が`hidden`になった時点で`setInterval`（`BACKGROUND_RETRY_INTERVAL_MS`、本番10秒・`VITE_E2E`時50ms）を開始し、`attemptBackgroundPlaybackRecovery()`を定期的に呼ぶ。`visible`に戻った時点で停止する（既存の`visibilitychange`リスナーへ追加）。**独自のバックオフスケジュールは持たない**：ブラウザ自身がバックグラウンドタブのタイマー間隔を経過時間に応じて自動的に間引く仕様のため、固定間隔の`setInterval`のみで、長時間バックグラウンドが続くほど実際の発火間隔は自然に伸びる（Chromeの仕様に委ねる設計）。
+- **既知の限界（対応見送り）**：ページが完全に`freeze`された後はタイマー自体も止まるため、この定期リトライも効かなくなる（診断済みの制約、PWAでは構造的に回避不能）。この場合も、次にユーザーがアプリを開いた（フォアグラウンドに戻した）瞬間には既存の`visibilitychange`/`resume`経由の自動復帰が効く。
+- ユニットテストは追加していない（`main.ts`のタイマー結線のみで、新しい判定ロジック自体は既存の`shouldAttemptBackgroundPlaybackRecovery()`をそのまま再利用しているため）。
+- E2E（`e2e/dusty-jukebox.spec.ts`「バックグラウンドのまま曲間の接続に失敗しても、フォアグラウンド復帰を待たずに定期的にリトライして復帰する」）：`document.visibilityState`を`Object.defineProperty`で`"hidden"`へ上書きしてから`visibilitychange`を発火させ（既存のテストで前例が無かったため、このPRで初めて`document.visibilityState`のE2Eモック手法を確立した）、`<audio>`要素へ直接`pause`イベントを発火させてバックグラウンドでの不意の停止を模擬。**`visibilitychange`を一切追加発火させないまま**、定期リトライだけで`#audio-player`のsrcが再要求されることを検証する。該当コード（`visibilitychange`リスナーからの`startBackgroundRetryLoop()`呼び出し）を一時的に無効化して実際に失敗することを確認済み。
+- **既知のE2E制限**：実際のバックグラウンドタブのタイマー抑制自体（ブラウザが間隔を自動的に間引く挙動）はE2Eで再現できない。
+- 710 unit（不変）+ 64 E2E（63+1）、全green。`npx tsc --noEmit`クリーン。`npm run deploy`実行済み（`app.js` 289.16kB、SW v0.1.137→v0.1.138）。
+- **実機での動作確認はまだ**（次セッションでの確認事項。特に「スマホロック中でも定期リトライで復帰するか」「クロスフェードを有効にすることで曲間の無音ギャップ自体を避けられるか」の両方は実機でなければ確認できない）。
 
 ## 表記ゆれ統一（大文字小文字、開発体制#41→dusty-jukebox-toolsへ移設）
 

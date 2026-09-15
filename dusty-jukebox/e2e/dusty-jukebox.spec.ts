@@ -1383,3 +1383,27 @@ test("ユーザー自身が一時停止した曲は、フォアグラウンド�
   await expect(page.locator("#diag-log-output")).not.toHaveValue(/backgroundRecovery:attempt/);
   await expect(page.locator("#audio-player")).toHaveAttribute("src", srcBefore!);
 });
+
+test("バックグラウンドのまま曲間の接続に失敗しても、フォアグラウンド復帰を待たずに定期的にリトライして復帰する", async ({ context, page }) => {
+  await installGoogleMocks(context);
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  const srcBefore = await page.locator("#audio-player").getAttribute("src");
+
+  // documentをhidden状態にしてvisibilitychangeを発火させ、定期リトライループを開始させる
+  // （実際のタブ切り替え・画面ロックの代わりに、document.visibilityStateを直接上書きする）。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  // OS/ブラウザ側が<audio>要素を内部的に一時停止した状態（バックグラウンドでの不意の停止）を模擬する。
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("pause")));
+
+  // visibilitychange（フォアグラウンド復帰）を一切発火させないまま、定期リトライ（VITE_E2Eでは
+  // 50ms間隔）だけで再開することを検証する。
+  await expect(page.locator("#audio-player")).not.toHaveAttribute("src", srcBefore!, { timeout: 5000 });
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+});

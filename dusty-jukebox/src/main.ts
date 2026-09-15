@@ -1322,7 +1322,15 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
 // Drive 401の認証継続と同じ経路（queue.resume()、replacePendingで直列化チェーンの詰まりを
 // 迂回する既存の設計）で再開を試みる。新しい並行処理上のリスクを持ち込まず、既存の
 // 実績あるパスを再利用する。
+//
+// 実行中は再入しない（2026-09-15追記）：visibilitychange/resumeがほぼ同時に発火することが
+// 実機ログで確認されており（例：visible→resumeが数十ms差で連続発火）、また下記の定期リトライ
+// ループとも同じ関数を共有するため、前回のqueue.resume()呼び出しがまだ解決していない間に
+// 重ねて呼ばれても、二重に発行しない（queue.resume()はreplacePendingで直列化チェーンを
+// 迂回する設計のため、無条件に重ねて呼ぶと同じストリームへの要求が重複しうる）。
+let backgroundRecoveryInFlight = false;
 function attemptBackgroundPlaybackRecovery(): void {
+  if (backgroundRecoveryInFlight) return;
   if (!playback || !queue) return;
   const audio = playback.activeAudioElement();
   const shouldRecover = shouldAttemptBackgroundPlaybackRecovery({
@@ -1335,7 +1343,33 @@ function attemptBackgroundPlaybackRecovery(): void {
   const fileId = queue.currentPlayingFileId();
   if (!fileId) return;
   logDiag("backgroundRecovery:attempt", document.visibilityState);
-  void handleQueuePlayback(() => queue?.resume(fileId, audio.currentTime));
+  backgroundRecoveryInFlight = true;
+  void handleQueuePlayback(() => queue?.resume(fileId, audio.currentTime)).finally(() => {
+    backgroundRecoveryInFlight = false;
+  });
+}
+
+// バックグラウンドのままでの定期リトライ（2026-09-15、実機フィードバック「PCは良いがスマホの
+// ロック中に再生できないのは致命的」を受けて追加）。上記のattemptBackgroundPlaybackRecovery()は
+// フォアグラウンド復帰（visibilitychange/resume）でのみ発火するため、ロックしたまま放置される
+// 限り自動では復帰しなかった。実機ログで、曲の自然終了直後（documentがhiddenのまま、まだ
+// freezeはしていない状態）に次曲への接続自体が失敗するケースを確認しており（Chromeが
+// バックグラウンドタブの音声出力の有無でネットワーク/タイマーの抑制度合いを変えている可能性が
+// ある。曲間の一瞬の無音の間に次の接続を試みて失敗している）、少し待ってから再試行すれば
+// 接続し直せることを期待する。ブラウザ自身がバックグラウンドタブのタイマー間隔を経過時間に
+// 応じて自動的に間引く（タブが長時間隠れているほど間隔を伸ばす）ため、ここでは固定間隔の
+// setIntervalのみとし、独自のバックオフスケジュールは持たない。
+const BACKGROUND_RETRY_INTERVAL_MS = import.meta.env.VITE_E2E === "true" ? 50 : 10_000;
+let backgroundRetryTimer: ReturnType<typeof setInterval> | null = null;
+function startBackgroundRetryLoop(): void {
+  if (backgroundRetryTimer !== null) return;
+  backgroundRetryTimer = setInterval(() => attemptBackgroundPlaybackRecovery(), BACKGROUND_RETRY_INTERVAL_MS);
+}
+function stopBackgroundRetryLoop(): void {
+  if (backgroundRetryTimer !== null) {
+    clearInterval(backgroundRetryTimer);
+    backgroundRetryTimer = null;
+  }
 }
 
 // StreamTokenIssuedHandlerの4番目の引数（streamAuth.tsの命名上は`playbackGeneration`）は、
@@ -2165,7 +2199,12 @@ function init(): void {
   // 早期returnより前に登録する。
   document.addEventListener("visibilitychange", () => {
     logDiag("visibilitychange", document.visibilityState);
-    if (document.visibilityState === "visible") attemptBackgroundPlaybackRecovery();
+    if (document.visibilityState === "visible") {
+      stopBackgroundRetryLoop();
+      attemptBackgroundPlaybackRecovery();
+    } else {
+      startBackgroundRetryLoop();
+    }
   });
   document.addEventListener("freeze", () => logDiag("freeze"));
   // Page Lifecycle の resume（freezeからの復帰）。visibilitychangeより先に、あるいは
