@@ -500,6 +500,58 @@ describe("PlaybackController", () => {
     expect(audio.src).toContain("B");
   });
 
+  test("フェード無しのplay()がネイティブaudio.play()の解決待ち中にpause()で中断された場合も、再生成功として誤commitされないようPlaybackPausedErrorを投げる（2026-09-15、Codexレビュー指摘：P1「Cancel pending recovery when the user pauses」。フェード無しのこの経路〈バックグラウンド復帰のresume()等が主に使う〉は、audio.pause()で実際の音声こそ正しく止めていたが、それ以外は単に正常returnしていたため、PlaybackQueue.playAndCommit()が『再生成功』とみなしてcommitしてしまい、ユーザーが明示的に一時停止した直後にキュー側の状態だけが再生中に戻ってしまっていた）", async () => {
+    let resolvePlay!: () => void;
+    class SlowPlayAudio extends FakeAudio {
+      override async play(): Promise<void> {
+        await new Promise<void>((resolve) => { resolvePlay = resolve; });
+        return super.play();
+      }
+    }
+    const audio = new SlowPlayAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    const playPromise = playback.play("A").catch((err: unknown) => err); // フェードなし、audio.play()が未解決のまま保留
+    await vi.waitFor(() => expect(resolvePlay).toBeDefined());
+
+    // ネイティブaudio.play()がまだ解決していない間に、アプリ内の「一時停止」ボタンが押される。
+    playback.pause();
+    resolvePlay(); // ネイティブplay()自体は今になって解決する
+
+    const error = await playPromise;
+    expect(error).toBeInstanceOf(PlaybackPausedError);
+    // 実際の音声は正しく止まっている（従来から動いていた安全網）。
+    expect(audio.paused).toBe(true);
+  });
+
+  test("フェード無しのplay()がネイティブaudio.play()の解決待ち中に別のplay()（一時停止ではなく正当な追い越し）に追い越された場合はPlaybackPausedErrorを投げない（2026-09-15、Codexレビュー指摘：P1の回帰防止。一時停止によるものと誤判定すると、PlaybackQueue側が追い越し成功後の新しい操作まで巻き込んで無効化してしまう）", async () => {
+    let resolveOldPlay!: () => void;
+    class SlowPlayAudio extends FakeAudio {
+      private isFirstPlay = true;
+      override async play(): Promise<void> {
+        if (this.isFirstPlay) {
+          this.isFirstPlay = false;
+          await new Promise<void>((resolve) => { resolveOldPlay = resolve; });
+        }
+        return super.play();
+      }
+    }
+    const audio = new SlowPlayAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    const oldPlay = playback.play("A").catch((err: unknown) => err); // audio.play()が未解決のまま保留
+    await vi.waitFor(() => expect(resolveOldPlay).toBeDefined());
+
+    // 別の正当な新しいplay()（一時停止ではない）が先に完了し、audio.srcを"B"へ上書きする。
+    await playback.play("B");
+    resolveOldPlay(); // 孤立していた古い要求("A")のネイティブplay()が今になって解決する。
+
+    const error = await oldPlay;
+    expect(error).toBeUndefined(); // 一時停止ではないためPlaybackPausedErrorを投げない
+    expect(audio.paused).toBe(false);
+    expect(audio.src).toContain("B");
+  });
+
   test("pause(true)指定時は現在再生中の音声をフェードアウトしてから実際に一時停止し、フェード開始前のvolumeへ戻す（開発体制#45、2026-09-09、ユーザー要望：手動スキップ時のフェードアウト設定を一時停止にも適用してほしい）", async () => {
     vi.useFakeTimers();
     const audio = new FakeAudio();

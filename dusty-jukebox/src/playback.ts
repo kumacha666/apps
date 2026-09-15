@@ -302,8 +302,27 @@ export class PlaybackController {
     // からまだ誰も上書きしていない場合に限る：既に別の（より新しい）play()呼び出しがsrcを
     // 差し替えて再生を開始している場合、ここで無条件にpause()するとその正当な新しい再生まで
     // 誤って止めてしまうため、audio.srcが依然として自分の設定したものと一致する場合だけ止める。
-    if (isSuperseded() && this.audio.src === thisRequestSrc) {
-      this.audio.pause();
+    if (isSuperseded()) {
+      if (this.audio.src === thisRequestSrc) {
+        this.audio.pause();
+      }
+      // 追い越しの原因がユーザーのpause()自身だった場合は、フェード有りパス（上記）と同じく
+      // PlaybackPausedErrorを投げてPlaybackQueue.playAndCommit()に「成功扱いでcommitしては
+      // ならない」ことを伝える（2026-09-15、Codexレビュー指摘：P1「Cancel pending recovery
+      // when the user pauses」）。fadeOut無しのこの経路（バックグラウンド復帰のresume()等が
+      // 主に使う）は、上のaudio.pause()で実際の音声こそ正しく止めるものの、それ以外は
+      // このメソッド自体が単に正常return（void）していたため、PlaybackQueue.playAndCommit()
+      // は「再生成功」とみなし、キュー自身のgeneration確認（pause()はPlaybackController側の
+      // generationしか進めず、PlaybackQueue側のgenerationには一切触れない）をそのまま通過して
+      // currentFileId/isQueuePlaybackをcommitしてしまっていた——バックグラウンド復帰の
+      // resume()呼び出しがネイティブplay()未解決のまま固まっている間にユーザーが明示的に
+      // 一時停止すると、後からその古いresume()が「成功」としてキューへcommitし、
+      // handlePlaybackAction()の成功分岐がuserPausedPlaybackまで解除してしまうため、次の
+      // 定期リトライがユーザーの一時停止と再び衝突していた。他の理由（別の正当なplay()に
+      // 追い越されただけ）ではこれまで通り黙ってreturnし、PlaybackQueue側のgeneration確認に
+      // 判定を委ねる（そちらは既存の複数ラウンドで固められた既存の設計のため変更しない）。
+      const supersededByReason = this.generationReasons.get(playGeneration + 1);
+      if (supersededByReason === "pause") throw new PlaybackPausedError();
     }
   }
 

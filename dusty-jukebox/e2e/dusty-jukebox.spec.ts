@@ -1728,3 +1728,51 @@ test("自然終了の遷移が未解決のまま固まるのではなく実際�
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Finale");
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-3(\?|$)/);
 });
+
+test("バックグラウンドの定期リトライがネイティブplay()の未解決のまま固まっている間にユーザーが明示的に一時停止すると、そのリトライが後から解決しても以後の定期リトライが再開を試みない（2026-09-15、Codexレビュー指摘：P1「Cancel pending recovery when the user pauses」の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context);
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  // 以降のplay()呼び出しはすべて、呼び出しごとに個別に解放できるまで未解決のまま固まる。
+  await page.evaluate(() => {
+    const resolvers: (() => void)[] = [];
+    (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount = 0;
+    (window as unknown as { __e2eReleasePlayCallAt: (i: number) => void }).__e2eReleasePlayCallAt = (i: number) => resolvers[i]?.();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function () {
+        const idx = (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount;
+        (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount += 1;
+        return new Promise<void>((resolve) => { resolvers[idx] = resolve; });
+      },
+    });
+  });
+
+  // OS/ブラウザ側の不意の一時停止を模擬し、documentをhiddenにして定期リトライを開始させる。
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("pause")));
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  // 定期リトライ自身のresume()呼び出し（play()呼び出し#0）が未解決のまま固まるまで待つ。
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount)).toBe(1);
+
+  // この呼び出しがまだ固まっている間に、ユーザーがアプリ内の「一時停止」ボタンを押す。
+  await page.getByRole("button", { name: "一時停止" }).click();
+
+  // ここで初めて、定期リトライ自身の（未解決のまま固まっていた）play()呼び出しを解放する。
+  await page.evaluate(() => (window as unknown as { __e2eReleasePlayCallAt: (i: number) => void }).__e2eReleasePlayCallAt(0));
+  await page.waitForTimeout(100);
+
+  // 修正前は、この遅れて解決したplay()呼び出しが（一時停止による中断として扱われず）
+  // そのままqueue側へ「再生成功」としてcommitされ、handlePlaybackAction()の成功分岐が
+  // userPausedPlaybackまで解除してしまっていた。その結果、以降の定期リトライ（VITE_E2Eでは
+  // 50ms間隔）がユーザーの一時停止と衝突して再び再開を試みてしまう。複数回分の定期リトライ
+  // 間隔が経過しても新しいplay()呼び出し（#1以降）が発行されないことを確認する。
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount)).toBe(1);
+});
