@@ -196,6 +196,13 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
     this.activePlaybackController.invalidatePendingRecoveryOnNativePause();
   }
 
+  // Media Session一時停止と対になる、ネイティブ再開の確認（2026-09-15、Codexレビュー
+  // 指摘：P1「Supersede pause ownership on Media Session play」）。呼び出し元
+  // （main.ts）が既にactiveAudioElement()へネイティブplay()を直接呼んだ直後に呼ぶ想定。
+  acknowledgeNativeResume(): void {
+    this.activePlaybackController.acknowledgeNativeResume();
+  }
+
   loadPaused(fileId: string, position = 0): void {
     this.activePlaybackController.loadPaused(fileId, position);
   }

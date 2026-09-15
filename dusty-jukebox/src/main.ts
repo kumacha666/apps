@@ -184,6 +184,15 @@ let userPausedPlayback = false;
 // でtrueにし、実際に何らかの再生が成功する（handlePlaybackAction()の成功分岐）たびにfalseへ
 // 戻す。userPausedPlaybackと同じく、main.ts内の一部の呼び出し元だけがtrue/falseを操作する。
 let pendingNaturalEndAdvance = false;
+// pendingNaturalEndAdvanceがtrueになった時点のqueue.generationId()（2026-09-15、Codexレビュー
+// 指摘：P1「Discard recovery targets when replacing the queue」）。queue.setList()（絞り込み
+// による新規再生リスト作成・プレイリスト読み込み等）はこの変数（main.ts側にありPlaybackQueue内部
+// ではない）に一切触れないため、pendingNaturalEndAdvanceがtrueのまま別の（無関係な）キューへ
+// 差し替えられると、attemptBackgroundPlaybackRecovery()が差し替え後の新しいキューに対して
+// peekNextFileId()を呼び、ユーザーが再生を要求していない新しいキューの曲を自動的に再生し始めて
+// しまう。setList()のたびに進むqueue.generationId()と突き合わせ、不一致（＝記録後にキューが
+// 差し替えられた）ならこのフラグ自体を無効なものとして扱う。
+let pendingNaturalEndAdvanceGeneration: number | null = null;
 // PlaybackQueueが実際にaudio.srcをコミットしようとした瞬間（registerQueuePlaybackContinuation()、
 // onBeforePlayコールバック経由）に更新される「最後に開始された遷移が狙っている曲」（2026-09-15、
 // Codexレビュー指摘：P1「Preserve targets of pending manual navigation」）。pendingNaturalEndAdvance
@@ -195,6 +204,10 @@ let pendingNaturalEndAdvance = false;
 // 成功する（handlePlaybackAction()の成功分岐、またはクロスフェードのonPromoted——こちらは
 // handlePlaybackAction()を経由しないコミット経路のため個別の解除が必要）たびにnullへ戻す。
 let pendingQueueTransitionTarget: string | null = null;
+// pendingNaturalEndAdvanceGenerationと同じ理由・同じ仕組み（2026-09-15、Codexレビュー指摘：P1
+// 「Discard recovery targets when replacing the queue」）。pendingQueueTransitionTarget記録時点の
+// queue.generationId()を保持し、その後queue.setList()が呼ばれていないかを確認する。
+let pendingQueueTransitionTargetGeneration: number | null = null;
 const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
 // catalogSessionへ最後に読み込んだ（有効な）曲一覧の出所スプレッドシートID。プレイリストの
@@ -1266,9 +1279,10 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined, o
 // 失敗でこのフラグが誤って解除される心配は無い。
 function handleNaturalEndAdvance(): Promise<void> {
   pendingNaturalEndAdvance = true;
+  pendingNaturalEndAdvanceGeneration = queue?.generationId() ?? null;
   return handleQueuePlayback(
     () => queue?.advanceOnEnded(),
-    () => { pendingNaturalEndAdvance = false; }
+    () => { pendingNaturalEndAdvance = false; pendingNaturalEndAdvanceGeneration = null; }
   );
 }
 
@@ -1306,6 +1320,7 @@ function registerQueuePlaybackContinuation(fileId: string, streamId: number): vo
   // 曲名クリック/「再生」ボタン等）が共通して通る唯一の場所のため、トリガーの種類を問わず
   // 「今まさにコミットしようとしている曲」を捕捉できる。
   pendingQueueTransitionTarget = fileId;
+  pendingQueueTransitionTargetGeneration = queue?.generationId() ?? null;
   playbackContinuations.register({
     fileId,
     streamId,
@@ -1351,9 +1366,11 @@ async function handlePlaybackAction(action: () => Promise<boolean>, onFinalFailu
       // 解決済み（成功にせよ、この再生自体が別の理由〈手動操作等〉によるものにせよ、もはや
       // 「まだコミットされていない自然終了遷移」を代表しない）。
       pendingNaturalEndAdvance = false;
+      pendingNaturalEndAdvanceGeneration = null;
       // 同じ理由でpendingQueueTransitionTargetも解除する（2026-09-15、Codexレビュー指摘：P1）：
       // 何らかの再生が実際にコミットした以上、もはや「未コミットの遷移」を代表しない。
       pendingQueueTransitionTarget = null;
+      pendingQueueTransitionTargetGeneration = null;
       // キュー表示（再生中のハイライト・「再生中」ラベル）の更新は、この関数が実際の
       // 再生開始経路の唯一の合流点であるここで行う。handleQueuePlayback()（クリック・次へ/前へ・
       // 曲の自然終了）だけでなく、handleStreamTokenRejected()の認証継続再開
@@ -1362,6 +1379,19 @@ async function handlePlaybackAction(action: () => Promise<boolean>, onFinalFailu
       // 置いていた再描画呼び出しでは、Drive 401→認証継続で再開したキュー曲の表示が
       // 更新されないまま残っていた（2026-09-03、レビュー指摘）。
       renderQueue();
+    } else {
+      // actionが例外を投げずに`false`を返した場合（例：advanceOnEnded()がキューの末尾に
+      // 達し次の曲が無いことを検知した、next()が有効な次の曲を見つけられなかった等）も、
+      // 「この操作全体は再生を開始しないまま終わった」という点では例外による最終失敗と
+      // 同じ結果のため、onFinalFailureを呼ぶ（2026-09-15、Codexレビュー指摘：P2「Clear
+      // natural-end state when no next track starts」）。以前はこの分岐に何も無かったため、
+      // handleNaturalEndAdvance()がキューの最後の曲の自然終了（advanceOnEnded()が次の曲
+      // 無しでfalseを返す、正当な「キュー終了」）を処理した後もpendingNaturalEndAdvanceが
+      // trueのまま取り残されていた。後で除外していた曲を再度有効化してからページを
+      // バックグラウンドにすると、attemptBackgroundPlaybackRecovery()のpendingNaturalEndAdvance
+      // 分岐がpeekNextFileId()でその曲を見つけてしまい、ユーザーが再生を要求していないのに
+      // 自動的に再生を開始してしまっていた。
+      onFinalFailure();
     }
   } catch (err) {
     if (err instanceof PlaybackAuthenticationRequiredError && playbackAuthGate) {
@@ -1441,6 +1471,22 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
   // バック分岐だけに限定する。
   if (userPausedPlayback) return null;
   const audio = playback.activeAudioElement();
+  // キューがsetList()（絞り込みによる新規再生リスト作成・プレイリスト読み込み等）で
+  // 丸ごと差し替えられた後は、その差し替え前に記録されたpendingNaturalEndAdvance/
+  // pendingQueueTransitionTargetはもはや無関係（2026-09-15、Codexレビュー指摘：P1
+  // 「Discard recovery targets when replacing the queue」）。setList()自体はこれら
+  // main.ts側の変数に一切触れないため、記録時点のqueue.generationId()と現在値を
+  // 突き合わせて不一致なら静かに破棄する（記録時点のpendingNaturalEndAdvanceGeneration
+  // コメント参照）。
+  const currentQueueGeneration = queue.generationId();
+  if (pendingNaturalEndAdvance && pendingNaturalEndAdvanceGeneration !== currentQueueGeneration) {
+    pendingNaturalEndAdvance = false;
+    pendingNaturalEndAdvanceGeneration = null;
+  }
+  if (pendingQueueTransitionTarget !== null && pendingQueueTransitionTargetGeneration !== currentQueueGeneration) {
+    pendingQueueTransitionTarget = null;
+    pendingQueueTransitionTargetGeneration = null;
+  }
   if (pendingNaturalEndAdvance) {
     // 直前の自然終了に伴う遷移（advanceOnEnded()）自体を素朴に再試行しても、その遷移の
     // ネイティブplay()がまだ未解決のままqueue.pendingMoveに残っている限り、次の曲への
@@ -2500,6 +2546,7 @@ function init(): void {
           // 担うpendingNaturalEndAdvanceの解除もここで行う（2026-09-15、Codexレビュー指摘：P1
           // への対応。この昇格自体、直前の自然終了に伴う遷移を代表する成功のため）。
           pendingNaturalEndAdvance = false;
+          pendingNaturalEndAdvanceGeneration = null;
           // pendingQueueTransitionTargetも同じ理由で解除する（2026-09-15、Codexレビュー指摘：
           // P1続き）：クロスフェードの先読み再生はPlaybackQueue.playAndCommit()を経由しない
           // （非アクティブ側のPlaybackControllerを直接play()する）ため、この昇格自体は
@@ -2509,6 +2556,7 @@ function init(): void {
           // バックグラウンド復帰判定へ誤って使われないよう、実際に何らかの再生がコミットした
           // このタイミングで明示的に解除する。
           pendingQueueTransitionTarget = null;
+          pendingQueueTransitionTargetGeneration = null;
           if (!playback) return;
           updateSeekDuration(playback.activeAudioElement().duration);
           updateSeekPosition(playback.activeAudioElement().currentTime);
@@ -2589,6 +2637,12 @@ function init(): void {
         // Bluetooth/OSのメディアキーによる明示的な再開のため、直前の一時停止状態は解除する
         // （2026-09-15、バックグラウンド再生の不安定さ対策）。
         userPausedPlayback = false;
+        // 進行中のバックグラウンド復帰リトライがネイティブplay()未解決のまま固まっている間に
+        // このネイティブ再開が起きた場合、その一時停止は既に取り消されたことを
+        // PlaybackControllerへ伝える（2026-09-15、Codexレビュー指摘：P1「Supersede pause
+        // ownership on Media Session play」）。これを呼ばないと、後から解決した古いplay()が
+        // audio.srcの一致だけを根拠に再度audio.pause()し、この再開を打ち消してしまう。
+        playback?.acknowledgeNativeResume();
         void playback?.activeAudioElement().play().then(
           () => logDiag("mediaSession:play:resolved"),
           (err) => {

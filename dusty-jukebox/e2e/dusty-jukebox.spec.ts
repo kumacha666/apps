@@ -1822,3 +1822,94 @@ test("新規に作成した再生リストの最初の曲（playAt(0)）がネ�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 });
 
+test("最後の曲が自然終了し次の曲が無くキューが正当に終了した後、除外していた曲を再度有効化してからバックグラウンドにしても、自動的に再生を開始しない（2026-09-15、Codexレビュー指摘：P2「Clear natural-end state when no next track starts」の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  // Finale（3曲目）を除外し、実質的な最後の曲をScherzo（2曲目）にする。
+  await page.locator("#catalog-list li").nth(2).locator("input[type=checkbox]").uncheck();
+
+  // Scherzoへ手動で進める。
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+
+  // Scherzoが自然終了する。Finaleが除外中のため次の曲が無く、advanceOnEnded()はfalseで
+  // 正当に終了する（キューの最後まで再生し終えた状態）。
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("ended")));
+
+  // 除外していたFinaleを再度有効化する（キューを再生する意図は無い、ただのチェック操作）。
+  await page.locator("#catalog-list li").nth(2).locator("input[type=checkbox]").check();
+
+  // documentをhidden→visibleにしてバックグラウンド復帰を発火させる。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  // 修正前は、pendingNaturalEndAdvanceがtrueのまま取り残されており、この時点で
+  // peekNextFileId()が再有効化されたFinaleを見つけてしまい、ユーザーが再生を要求して
+  // いないのに自動的に再生を開始してしまっていた。
+  await page.waitForTimeout(200);
+  await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /album-track-3(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).not.toContainText("Finale");
+});
+
+test("手動の「次へ」が未解決のまま固まっている間にキューをsetList()で丸ごと差し替えても、差し替え後の新しいキューが自動再生を開始しない（2026-09-15、Codexレビュー指摘：P1「Discard recovery targets when replacing the queue」の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context);
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.getByRole("button", { name: "再生", exact: true }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  // 2回目以降のplay()呼び出し（「次へ」）だけを未解決のまま固まらせる。
+  await page.evaluate(() => {
+    let callCount = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function () {
+        callCount += 1;
+        if (callCount === 1) return new Promise<void>(() => {});
+        return Promise.resolve();
+      },
+    });
+  });
+
+  // 「次へ」でsong-2への遷移だけを未解決のまま固める（pendingQueueTransitionTarget=song-2）。
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("First song");
+
+  // この固まった遷移を解決させないまま、同じ条件で再生リストを作り直す（setList()で丸ごと
+  // 差し替え。新しいリストにも偶然song-2が含まれる）。この新しい再生リストは絞り込みで
+  // 作った直後の既存仕様通り自動再生しない。
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(2);
+  await expect(page.locator("#catalog-list li.now-playing")).toHaveCount(0);
+
+  // documentをhidden→visibleにしてバックグラウンド復帰を発火させる。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  // 修正前は、setList()がpendingQueueTransitionTargetに一切触れないため、差し替え後の
+  // 新しいキュー（song-2を含む）へ古いsong-2ターゲットがそのまま適用され、ユーザーが
+  // 「再生」ボタンを押していないのに自動的に再生が始まってしまっていた。
+  await page.waitForTimeout(200);
+  await expect(page.locator("#catalog-list li.now-playing")).toHaveCount(0);
+});
+

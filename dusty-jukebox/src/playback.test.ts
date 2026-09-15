@@ -626,6 +626,42 @@ describe("PlaybackController", () => {
     expect(playback.markStreamTokenRejected("A", playback.currentStreamGeneration() ?? -1)).not.toBeNull();
   });
 
+  test("acknowledgeNativeResume()は、ネイティブ一時停止の後にネイティブ再開（Media Sessionのplayハンドラ）が起きた場合、後から解決した古いplay()がaudio.pause()を再度呼んだりPlaybackPausedErrorを投げたりしないようにする（2026-09-15、Codexレビュー指摘：P1「Supersede pause ownership on Media Session play」。generation単独ではネイティブ再開を検知できず、後から解決した古いplay()がaudio.srcの一致だけを根拠に再度pause()してしまい、ユーザーのBluetooth/OS再開操作を打ち消していた）", async () => {
+    let resolvePlay!: () => void;
+    class SlowPlayAudio extends FakeAudio {
+      override async play(): Promise<void> {
+        await new Promise<void>((resolve) => { resolvePlay = resolve; });
+        return super.play();
+      }
+    }
+    const audio = new SlowPlayAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    const playPromise = playback.play("A").catch((err: unknown) => err); // フェードなし、audio.play()が未解決のまま保留
+    await vi.waitFor(() => expect(resolvePlay).toBeDefined());
+
+    // Media Sessionのpauseハンドラと同じ経路：ネイティブpause()を直接呼ぶ。
+    audio.pause();
+    playback.invalidatePendingRecoveryOnNativePause();
+    expect(audio.pauseCount).toBe(1);
+
+    // 続けてMedia Sessionのplayハンドラと同じ経路：ネイティブ再開（audio.play()の直接呼び出し
+    // 自体はここでは検証対象ではないため、実際に成功した状態〈paused=false〉だけを模擬する）＋
+    // acknowledgeNativeResume()。
+    audio.paused = false;
+    playback.acknowledgeNativeResume();
+
+    // 孤立していたA自身のネイティブplay()が今になって解決する。
+    resolvePlay();
+    const error = await playPromise;
+
+    // ネイティブ再開によりこの一時停止は既に取り消し済みのため、PlaybackPausedErrorを
+    // 投げず、audio.pause()も再度呼ばれない（ネイティブ再開の結果を巻き戻さない）。
+    expect(error).toBeUndefined();
+    expect(audio.pauseCount).toBe(1);
+    expect(audio.paused).toBe(false);
+  });
+
   test("pause(true)指定時は現在再生中の音声をフェードアウトしてから実際に一時停止し、フェード開始前のvolumeへ戻す（開発体制#45、2026-09-09、ユーザー要望：手動スキップ時のフェードアウト設定を一時停止にも適用してほしい）", async () => {
     vi.useFakeTimers();
     const audio = new FakeAudio();

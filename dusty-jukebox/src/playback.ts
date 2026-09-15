@@ -250,8 +250,10 @@ export class PlaybackController {
         // 誤って無効化してしまっていた。`this.generation === playGeneration + 1`
         // （自分のplayGeneration+1からgenerationが一切進んでいない＝pauseが今もなお
         // 最新の出来事）を追加で確認することで、既にpauseを追い越した後続の正当な
-        // play()を巻き込まなくなる。
-        if (supersededByReason === "pause" && this.generation === playGeneration + 1) {
+        // play()を巻き込まなくなる。ネイティブ再開（Media Sessionのplayハンドラ）による
+        // 取り消しも同様に確認する（lastNativeResumeAckGenerationコメント参照）。
+        const pauseSupersededByNativeResume = supersededByReason === "pause" && this.lastNativeResumeAckGeneration === playGeneration + 1;
+        if (supersededByReason === "pause" && this.generation === playGeneration + 1 && !pauseSupersededByNativeResume) {
           throw new PlaybackPausedError();
         }
         throw new PlaybackInterruptedError();
@@ -319,7 +321,15 @@ export class PlaybackController {
     // 差し替えて再生を開始している場合、ここで無条件にpause()するとその正当な新しい再生まで
     // 誤って止めてしまうため、audio.srcが依然として自分の設定したものと一致する場合だけ止める。
     if (isSuperseded()) {
-      if (this.audio.src === thisRequestSrc) {
+      const supersededByReason = this.generationReasons.get(playGeneration + 1);
+      // ネイティブ一時停止（app-button/native）の直後に、ネイティブ再開（Media Sessionの
+      // playハンドラ）が確認されている場合、その一時停止は既にユーザー自身によって取り消
+      // されている（2026-09-15、Codexレビュー指摘：P1「Supersede pause ownership on Media
+      // Session play」。lastNativeResumeAckGenerationコメント参照）。この場合はaudio.src
+      // が一致していても再度audio.pause()しない：既にaudio要素はネイティブ再開により
+      // 鳴っているはずで、ここで無条件にpause()すると再開を打ち消してしまう。
+      const pauseSupersededByNativeResume = supersededByReason === "pause" && this.lastNativeResumeAckGeneration === playGeneration + 1;
+      if (this.audio.src === thisRequestSrc && !pauseSupersededByNativeResume) {
         this.audio.pause();
       }
       // 追い越しの原因がユーザーのpause()自身だった場合は、フェード有りパス（上記）と同じく
@@ -350,8 +360,7 @@ export class PlaybackController {
       // （自分のplayGeneration+1からgenerationが一切進んでいない＝pauseが今もなお
       // 最新の出来事）を追加で確認することで、既にpauseを追い越した後続の正当な
       // play()を巻き込まなくなる（この場合は従来通り何も投げず黙って完了する）。
-      const supersededByReason = this.generationReasons.get(playGeneration + 1);
-      if (supersededByReason === "pause" && this.generation === playGeneration + 1) {
+      if (supersededByReason === "pause" && this.generation === playGeneration + 1 && !pauseSupersededByNativeResume) {
         throw new PlaybackPausedError();
       }
     }
@@ -401,6 +410,27 @@ export class PlaybackController {
     this.onTransitionStart();
     this.generation += 1;
     this.generationReasons.set(this.generation, "pause");
+  }
+
+  // ネイティブ一時停止（invalidatePendingRecoveryOnNativePause()経由・アプリの「一時停止」
+  // ボタン=pause()経由のいずれも）の直後に、audio要素のネイティブ再開（Media Sessionの
+  // playハンドラがPlaybackControllerを経由せずaudio.play()を直接呼ぶ経路）が発生した場合、
+  // その一時停止は既にユーザー自身によって明示的に取り消されている（2026-09-15、Codexレビュー
+  // 指摘：P1「Supersede pause ownership on Media Session play」）。generation単独ではこれを
+  // 検知できない：ネイティブ再開はPlaybackController側のgenerationを一切進めないため、
+  // `this.generation === playGeneration + 1`という既存の厳密一致は「pauseの後、何も起きて
+  // いない」と誤認したままになる——古い（未解決のまま固まっていた）play()呼び出しが後から
+  // 解決すると、依然としてaudio.srcが一致するという理由でaudio.pause()を再度呼んでしまい、
+  // ユーザーがBluetooth/OSの再生ボタンで明示的に再開した直後の音声を勝手に止めてしまう。
+  // 「最後にネイティブ再開を確認した時点のgeneration」を記録し、これが追い越し判定対象の
+  // generation（playGeneration + 1）と一致する場合、その一時停止は既に無効化されたものとして
+  // 扱う（audio.pause()の再呼び出し・PlaybackPausedErrorのいずれも行わない）。
+  private lastNativeResumeAckGeneration: number | null = null;
+
+  // Media Sessionのplayハンドラ（main.ts）がaudio要素のネイティブplay()を直接呼んだ直後に
+  // 呼ぶ。
+  acknowledgeNativeResume(): void {
+    this.lastNativeResumeAckGeneration = this.generation;
   }
 
   // クロスフェードのハンドオフが既にaudio.srcを次曲へコミット済みの状態で一時停止された場合、
