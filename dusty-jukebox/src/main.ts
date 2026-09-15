@@ -1244,9 +1244,30 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined): 
 // バックグラウンド自動復帰のいずれからも呼ばれる共通の入口、2026-09-15、Codexレビュー指摘：
 // P1）。pendingNaturalEndAdvanceを、この遷移がまだコミットされていない間trueにする
 // （queue.currentPlayingFileId()の定義コメント参照）。
+//
+// queue?.advanceOnEnded()自体がreject（未解決のままハングするのではなく、実際に失敗して
+// 終了）した場合はpendingNaturalEndAdvanceをここで明示的に解除する（2026-09-15、Codexレビュー
+// 指摘：P2「Prefer a later manual transition over stale natural-end state」）。
+// handlePlaybackAction()はhandled分岐（if (started) {...}）でのみこのフラグを解除するため、
+// advanceOnEnded()がPlaybackAuthenticationRequiredError等で実際にrejectした場合（PlaybackQueue.
+// move()自身はresult.catch(() => false)でpendingMoveを解決済み状態へ戻すため、以後の
+// ナビゲーションは通常通り実行できる）に、この失敗した遷移のフラグだけが永久にtrueのまま
+// 取り残されていた。その状態で後から開始された別のナビゲーション（例：MediaSessionの
+// previoustrack）がonBeforePlayまで到達しpendingQueueTransitionTargetを正しく更新しても、
+// attemptBackgroundPlaybackRecovery()はpendingNaturalEndAdvance分岐を優先するため、この
+// 古い（既に失敗して意味を失った）自然終了の遷移先（peekNextFileId()の再評価結果）で
+// ユーザーの新しいナビゲーション要求を上書きしてしまう。ここで（handlePlaybackAction()の
+// 汎用catch分岐ではなく、この自然終了専用の呼び出しに限定して）rejectを検知し次第
+// 即座に解除することで、他の無関係な操作の失敗でこのフラグが誤って解除される心配なく
+// 修正できる。
 function handleNaturalEndAdvance(): Promise<void> {
   pendingNaturalEndAdvance = true;
-  return handleQueuePlayback(() => queue?.advanceOnEnded());
+  return handleQueuePlayback(() =>
+    queue?.advanceOnEnded().catch((err) => {
+      pendingNaturalEndAdvance = false;
+      throw err;
+    })
+  );
 }
 
 // serviceWorkerReady自体はタイムアウトでラップしない生のpromise（init()参照）：もしここで

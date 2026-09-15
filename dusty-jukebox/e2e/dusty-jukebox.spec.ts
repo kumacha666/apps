@@ -1669,3 +1669,62 @@ test("バックグラウンドで手動の「次へ」が未解決のまま固�
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Second song");
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
 });
+
+test("自然終了の遷移が未解決のまま固まるのではなく実際に失敗した後、別の曲へのユーザー操作が固まっても、復帰は失敗済みの自然終了先ではなくユーザーの最新の選択へ迂回する（2026-09-15、Codexレビュー指摘：P2「Prefer a later manual transition over stale natural-end state」の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  // 1回目のplay()呼び出し（Opening→Scherzoへの自然終了に伴う遷移）は未解決のまま固まらせず、
+  // 実際にreject（失敗）させる。2回目（ユーザーが後からFinaleへ手動遷移する呼び出し）は
+  // バックグラウンド復帰が発火するまで未解決のまま固まらせる。3回目以降（バックグラウンド
+  // 復帰自身がpendingQueueTransitionTarget経由で発行するresume()呼び出し）は通常通り
+  // 即座に解決させ、実際にコミットされることを確認できるようにする。
+  await page.evaluate(() => {
+    let callCount = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function () {
+        callCount += 1;
+        if (callCount === 1) return Promise.reject(new Error("boom"));
+        if (callCount === 2) return new Promise<void>(() => {});
+        return Promise.resolve();
+      },
+    });
+  });
+
+  // Openingの自然終了を模擬する。Scherzoへの遷移はネイティブplay()が実際にreject（未解決の
+  // まま固まるのではなく失敗して終了）するため、PlaybackQueue.pendingMove自体は解決済みの
+  // 状態へ戻り、後続のナビゲーションは通常通り実行できる。
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("ended")));
+  await expect(page.locator("#status")).toContainText("boom");
+
+  // ユーザーが（Bluetooth/OSメディアキーではなく曲名クリックで代表させる）Finaleへ手動で
+  // 遷移する。この遷移のplay()呼び出しが未解決のまま固まり続ける。
+  await page.locator("#catalog-list li").nth(2).locator(".song-link").click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-3(\?|$)/);
+  // まだコミットされていないためOpeningのまま。
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+
+  // documentをhidden→visibleにしてバックグラウンド復帰を発火させる。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  // 修正前は、失敗済みの自然終了遷移のpendingNaturalEndAdvanceフラグが解除されないまま残り、
+  // 復帰がpeekNextFileId()（Scherzo、自然終了の本来の遷移先）を優先してしまい、ユーザーが
+  // 実際に選んだFinaleへの手動遷移を無効化・上書きしていた。修正後はpendingNaturalEndAdvance
+  // が失敗時点で解除されるため、pendingQueueTransitionTarget（Finale）が正しく優先される。
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Finale");
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-3(\?|$)/);
+});
