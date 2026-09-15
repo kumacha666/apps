@@ -2289,9 +2289,24 @@ function init(): void {
         },
       }
     );
+    // バックグラウンド再生の不安定さの調査（2026-09-15、実機ログで「queue:ended後の
+    // playbackAction:result trueまでは成功しているのに、戻ると一時停止中で止まっている」
+    // ことが判明した）：JS側のplay()呼び出しが成功した後に何が起きているかを切り分けるため、
+    // <audio>要素自身のネイティブイベント（playing/pause/stalled/waiting/error）を
+    // スロット（A/B）付きで記録する。
     for (const el2 of [audioPlayer, audioPlayerB]) {
-      el2.addEventListener("playing", () => { if (playback?.activeAudioElement() === el2) handleNativePlaybackStatus(el2, "playing"); });
-      el2.addEventListener("pause", () => { if (playback?.activeAudioElement() === el2) handleNativePlaybackStatus(el2, "pause"); });
+      const slotLabel = el2 === audioPlayer ? "A" : "B";
+      el2.addEventListener("playing", () => {
+        logDiag(`audio:playing:${slotLabel}`, document.visibilityState);
+        if (playback?.activeAudioElement() === el2) handleNativePlaybackStatus(el2, "playing");
+      });
+      el2.addEventListener("pause", () => {
+        logDiag(`audio:pause:${slotLabel}`, `${document.visibilityState} readyState=${el2.readyState} ended=${el2.ended}`);
+        if (playback?.activeAudioElement() === el2) handleNativePlaybackStatus(el2, "pause");
+      });
+      el2.addEventListener("stalled", () => logDiag(`audio:stalled:${slotLabel}`, document.visibilityState));
+      el2.addEventListener("waiting", () => logDiag(`audio:waiting:${slotLabel}`, document.visibilityState));
+      el2.addEventListener("error", () => logDiag(`audio:error:${slotLabel}`, `code=${el2.error?.code ?? "?"} ${document.visibilityState}`));
     }
     // Bluetoothスピーカー・OSのメディアキー対応（2026-09-05、実機利用フィードバック）。
     // play/pauseは<audio>要素のネイティブ再生・一時停止に委ねる（mediaSession.ts参照：
