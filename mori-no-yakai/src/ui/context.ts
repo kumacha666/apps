@@ -105,6 +105,19 @@ export function mySeerRevealBanner(ctx: AppContext): string {
   return "";
 }
 
+/**
+ * 一匹狼が夜に見た中央カード1枚を、discuss/vote/result画面や夜フェーズの以後の
+ * ステップでも本人にだけ表示し続けるためのバナー。mySeerRevealBanner()と同じ理由
+ * （見た内容を忘れてしまう）で追加した（2026-09-15）。Member.wolfRevealが未設定
+ * （＝一匹狼でない、またはまだ見ていない）なら空文字を返す。
+ */
+export function myWolfRevealBanner(ctx: AppContext): string {
+  const reveal = ctx.members[ctx.memberId]?.wolfReveal;
+  if (!reveal) return "";
+  const meta = ROLE_META[reveal.role];
+  return `<p class="hint-text seer-memo">🐺 見たもの: 中央カード${reveal.centerIndex + 1}は ${meta.emoji} ${meta.name}</p>`;
+}
+
 function escapeHtml(text: string): string {
   const div = document.createElement("div");
   div.textContent = text;

@@ -121,6 +121,15 @@ Vite + TypeScript構成（`7metch`/`enblo`と同様）。
 - `night.ts`の`renderSeer()`/`renderReadOnly()`はローカルの`uiState`を優先しつつ、無ければ`seerReveal`にフォールバックする（同じ夜フェーズ中のリロードにも対応するため）
 - **`recordSeerReveal()`は`submitVote()`と同様、単純な`update()`ではなく部屋ルートのトランザクションでフェーズ・roundNumberを検証してから書き込む**（2026-09-14、ChatGPTレビュー指摘）。書き込みが遅延している間にホストが「強制的にロビーへ戻す」を押すと、`resetToLobby()`が消したはずの`seerReveal`を遅延書き込みが後から復活させ、次のゲームへ前ゲームの記憶が混入しうるため
 
+## 一匹狼（おおかみ1人時）の記憶（2026-09-15追加）
+
+ふくろうの記憶と同じ要望で、一匹狼が中央カード1枚を見た内容も忘れてしまう・画面上に残らないという指摘があったための追加。設計・実装ともふくろうのSeerRevealと対称。
+
+- `Member.wolfReveal`（`WolfCenterReveal`型、`src/types.ts`、`{ centerIndex, role }`）に見た瞬間の役職をスナップショットとして保存する（`recordWolfReveal()`、`src/roomSync.ts`。`recordSeerReveal()`と同様、部屋ルートのトランザクションで`phase==="night"`かつ`roundNumber`一致を確認してから書き込む）
+- `myWolfRevealBanner()`（`src/ui/context.ts`）が本人にだけ表示するバナーで、night（一匹狼自身の番以外のステップ）・discuss・vote・resultの各画面に表示する。`startGame()`/`resetToLobby()`で`seerReveal`と同様にクリアする
+- `night.ts`の`renderWerewolf()`/`renderReadOnly()`はローカルの`uiState.wolfPeekIndex`を優先しつつ、無ければ`wolfReveal`にフォールバックする
+- おおかみが2人以上（一匹狼でない）の場合は中央カードを見る行為自体が無いため、`wolfReveal`は設定されない
+
 ## 議論フェーズの画面かくし機能（2026-09-14追加）
 
 議論フェーズは端末を持って話すため、画面を他人に覗かれると役職がバレてしまうという指摘を受けて追加。`src/ui/discuss.ts`にローカルのみのトグル状態（`uiState.hidden`、RTDBには書き込まない）を持たせ、「🙈 画面をかくす」ボタンで役職バナー・役職説明文だけを非表示にする（タイマー・準備完了ボタン・退室ボタン等は役職を明かさないため隠さず、かくした状態のままでも操作を続けられる）。ラウンドが変わると自動的に表示状態に戻る。

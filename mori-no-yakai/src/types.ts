@@ -44,6 +44,16 @@ export interface SeerReveal {
   roles?: RoleId[];
 }
 
+/**
+ * 一匹狼（おおかみが1人だけの場合）が夜に見た中央カード1枚のスナップショット。
+ * ふくろうのSeerRevealと同じ理由（見た内容を忘れてしまう）で、見た瞬間の役職を
+ * 保存し、以後discuss/vote/resultでも本人にだけ表示し続けられるようにする（2026-09-15）。
+ */
+export interface WolfCenterReveal {
+  centerIndex: number;
+  role: RoleId;
+}
+
 export interface Member {
   id: string;
   name: string;
@@ -73,6 +83,8 @@ export interface Member {
   discussReadyRound?: number;
   /** ふくろうが夜に見た内容のスナップショット。SeerReveal参照。 */
   seerReveal?: SeerReveal;
+  /** 一匹狼が夜に見た中央カード1枚のスナップショット。WolfCenterReveal参照。 */
+  wolfReveal?: WolfCenterReveal;
 }
 
 export interface RoomState {

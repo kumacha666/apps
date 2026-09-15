@@ -1,7 +1,7 @@
 import type { AppContext } from "./context";
-import { participants, myKnownRoleBanner, mySeerRevealBanner } from "./context";
+import { participants, myKnownRoleBanner, mySeerRevealBanner, myWolfRevealBanner } from "./context";
 import { ROLE_META } from "../roles";
-import { robberSwap, markNightReady, recordSeerReveal } from "../roomSync";
+import { robberSwap, markNightReady, recordSeerReveal, recordWolfReveal } from "../roomSync";
 import { renderForceResetButton, wireForceResetButton } from "./hostControls";
 import type { RoleId } from "../types";
 
@@ -61,16 +61,19 @@ export function render(container: HTMLElement, ctx: AppContext): void {
   // 議論開始後に役職が変わってしまう恐れがあるため、交換の完了まではボタンを無効化する。
   const readyDisabled = alreadyReady || uiState.robberPending === true;
 
-  // ふくろう自身の番（currentRoleId==="seer"）は本文側で同じ内容を表示するため、
-  // 二重表示を避けてここでは出さない。それ以外のステップ（自分の番の後）では
-  // 「自分が何を見たか忘れる」ことがないよう常に見えるようにする（2026-09-14）。
+  // ふくろう・一匹狼、それぞれ自身の番（currentRoleId==="seer"/"werewolf"）は
+  // 本文側で同じ内容を表示するため、二重表示を避けてここでは出さない。それ以外の
+  // ステップ（自分の番の後）では「自分が何を見たか忘れる」ことがないよう常に
+  // 見えるようにする（2026-09-14、一匹狼の記憶は2026-09-15追加）。
   const seerMemo = currentRoleId === "seer" ? "" : mySeerRevealBanner(ctx);
+  const wolfMemo = currentRoleId === "werewolf" ? "" : myWolfRevealBanner(ctx);
 
   const header = `
     <h2>🌙 夜がふけていく…</h2>
     <button id="btn-leave-room" class="btn-link">← トップに戻る</button>
     ${myKnownRoleBanner(ctx)}
     ${seerMemo}
+    ${wolfMemo}
     <div class="night-timer">${remainingSec}秒</div>
   `;
 
@@ -122,7 +125,12 @@ function renderReadOnly(roleId: RoleId, ctx: AppContext): string {
   switch (roleId) {
     case "werewolf": {
       const wolves = participants(ctx).filter((m) => m.originalRole === "werewolf");
-      if (wolves.length >= 2 || uiState.wolfPeekIndex !== undefined) return renderWerewolf(ctx);
+      // ローカルのuiStateはこの夜フェーズ中にリロードすると消えてしまうため、
+      // RTDBに保存済みのwolfRevealもフォールバックとして参照する（2026-09-15）。
+      const persistedWolfReveal = ctx.members[ctx.memberId]?.wolfReveal;
+      if (wolves.length >= 2 || uiState.wolfPeekIndex !== undefined || persistedWolfReveal) {
+        return renderWerewolf(ctx);
+      }
       return `<p>${ROLE_META.werewolf.emoji} 中央カードは見ませんでした。</p>`;
     }
     case "minion":
@@ -171,11 +179,21 @@ function renderWerewolf(ctx: AppContext): string {
     `;
   }
   const centerCards = uiState.centerCardsSnapshot ?? ctx.centerCards;
+  // RTDBに保存済みのwolfRevealをフォールバックにする（ローカルuiStateはこの夜フェーズ中に
+  // リロードすると消えてしまうため、2026-09-15）。ローカルの選択が残っていればそちらを優先する。
+  const persistedWolfReveal = ctx.members[ctx.memberId]?.wolfReveal;
   if (uiState.wolfPeekIndex !== undefined) {
     const role = centerCards[uiState.wolfPeekIndex];
     return `
       <p>${ROLE_META.werewolf.emoji} あなたは一匹狼。仲間はいません。</p>
       <p>中央カード${uiState.wolfPeekIndex + 1}は ${ROLE_META[role].emoji} ${ROLE_META[role].name}</p>
+      ${description}
+    `;
+  }
+  if (persistedWolfReveal) {
+    return `
+      <p>${ROLE_META.werewolf.emoji} あなたは一匹狼。仲間はいません。</p>
+      <p>中央カード${persistedWolfReveal.centerIndex + 1}は ${ROLE_META[persistedWolfReveal.role].emoji} ${ROLE_META[persistedWolfReveal.role].name}</p>
       ${description}
     `;
   }
@@ -295,8 +313,12 @@ function wireActions(container: HTMLElement, roleId: RoleId, ctx: AppContext): v
     container.querySelectorAll<HTMLButtonElement>("[data-center-peek]").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (uiState.wolfPeekIndex !== undefined) return; // 1枚だけ
-        uiState.wolfPeekIndex = Number(btn.dataset.centerPeek);
+        const centerIndex = Number(btn.dataset.centerPeek);
+        uiState.wolfPeekIndex = centerIndex;
         render(container, ctx);
+        const centerCards = uiState.centerCardsSnapshot ?? ctx.centerCards;
+        const role = centerCards[centerIndex];
+        void recordWolfReveal(ctx.roomId, ctx.memberId, ctx.state.roundNumber, { centerIndex, role });
       });
     });
   }

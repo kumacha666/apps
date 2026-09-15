@@ -1,5 +1,5 @@
 import type { AppContext } from "./context";
-import { participants, myKnownRoleBanner, mySeerRevealBanner } from "./context";
+import { participants, myKnownRoleBanner, mySeerRevealBanner, myWolfRevealBanner } from "./context";
 import { submitVote, maybeCloseVoteEarly } from "../roomSync";
 import { renderForceResetButton, wireForceResetButton } from "./hostControls";
 
@@ -29,6 +29,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     <button id="btn-leave-room" class="btn-link">← トップに戻る</button>
     ${myKnownRoleBanner(ctx)}
     ${mySeerRevealBanner(ctx)}
+    ${myWolfRevealBanner(ctx)}
     <div class="vote-timer">${remainingSec}秒</div>
     <p class="hint-text">あやしいと思う相手に1人投票しよう（${votedCount}/${dealt.length}人 投票済み）</p>
     <p class="hint-text">誰も2票以上を集めなければ、誰も脱落しません。</p>
