@@ -178,6 +178,12 @@ let lastExternalPlaybackPositionForE2E: number | null = null;
 // このフラグを立てない。実際に新しい再生が成功する（handlePlaybackAction()の成功分岐、
 // またはmediaSessionのplayハンドラ呼び出し時）たびにfalseへ戻す。
 let userPausedPlayback = false;
+// キュー曲の自然終了に伴う遷移（advanceOnEnded()）が、まだコミットされていない（次の曲への
+// 再生成功がまだ確定していない）ことを示すフラグ（2026-09-15、Codexレビュー指摘：P1。
+// attemptBackgroundPlaybackRecovery()参照）。曲の自然終了を検知した時点（onEndedコールバック）
+// でtrueにし、実際に何らかの再生が成功する（handlePlaybackAction()の成功分岐）たびにfalseへ
+// 戻す。userPausedPlaybackと同じく、main.ts内の一部の呼び出し元だけがtrue/falseを操作する。
+let pendingNaturalEndAdvance = false;
 const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
 // catalogSessionへ最後に読み込んだ（有効な）曲一覧の出所スプレッドシートID。プレイリストの
@@ -1223,6 +1229,15 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined): 
   });
 }
 
+// キュー曲の自然終了に伴う次曲への遷移（onEndedコールバック・クロスフェードのフォールバック・
+// バックグラウンド自動復帰のいずれからも呼ばれる共通の入口、2026-09-15、Codexレビュー指摘：
+// P1）。pendingNaturalEndAdvanceを、この遷移がまだコミットされていない間trueにする
+// （queue.currentPlayingFileId()の定義コメント参照）。
+function handleNaturalEndAdvance(): Promise<void> {
+  pendingNaturalEndAdvance = true;
+  return handleQueuePlayback(() => queue?.advanceOnEnded());
+}
+
 // serviceWorkerReady自体はタイムアウトでラップしない生のpromise（init()参照）：もしここで
 // ラップした結果をserviceWorkerReadyへ保存してしまうと、一度タイムアウトした時点でreject済みの
 // まま固定され、その後Service Workerが実際に制御を取得できても以後の再生が永久に失敗し続ける
@@ -1293,6 +1308,10 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
       // 実際に再生が始まった以上、ユーザーは（直前に一時停止していたとしても）再生を
       // 望んでいる。次にバックグラウンドで止まった場合の自動復帰対象に含めるため解除する。
       userPausedPlayback = false;
+      // 何らかの再生が実際にコミットした以上、直前の自然終了に伴う遷移（もしあれば）は
+      // 解決済み（成功にせよ、この再生自体が別の理由〈手動操作等〉によるものにせよ、もはや
+      // 「まだコミットされていない自然終了遷移」を代表しない）。
+      pendingNaturalEndAdvance = false;
       // キュー表示（再生中のハイライト・「再生中」ラベル）の更新は、この関数が実際の
       // 再生開始経路の唯一の合流点であるここで行う。handleQueuePlayback()（クリック・次へ/前へ・
       // 曲の自然終了）だけでなく、handleStreamTokenRejected()の認証継続再開
@@ -1332,6 +1351,17 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
 // だったフォアグラウンド復帰自体の回帰）。「重ねて呼ばない」責務は、無制限に呼び出しうる
 // 下記の定期リトライループ側だけが持つ（そちらは呼び出し元を1箇所に限定できるため安全に管理
 // できる）。
+//
+// pendingNaturalEndAdvance（2026-09-15、Codexレビュー指摘：P1続き）：queue.currentPlayingFileId()
+// は、次の曲へのadvanceOnEnded()が実際にコミットする（成功してcurrentFileIdが更新される）まで、
+// 直前に自然終了した（既に鳴り終えた）曲のfileIdを指したまま残る——PlaybackControllerは
+// audio.srcを次の曲へ既に差し替えた後でnative play()を待つため、audio.currentTimeも次の曲の
+// （リセットされた）位置を指しているにも関わらず、queue側の「現在の曲」はまだ直前の曲のまま
+// という食い違いが生じる。この状態で無条件にqueue.resume(currentFileId, audio.currentTime)する
+// と、次の曲へ進む代わりに直前の（既に終わった）曲を最初から再生し直してしまう。この関数は
+// 「直前のキュー由来の遷移が自然終了に伴うadvanceOnEnded()で、まだコミットされていない」場合を
+// pendingNaturalEndAdvanceフラグ（onEnded時に立て、実際の再生成功時にhandlePlaybackAction()の
+// 成功分岐でのみ解除する）で検知し、その場合はresume()ではなくadvanceOnEnded()自体を再試行する。
 function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
   if (!playback || !queue) return null;
   const audio = playback.activeAudioElement();
@@ -1342,9 +1372,13 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
     audioEnded: audio.ended,
   });
   if (!shouldRecover) return null;
+  if (pendingNaturalEndAdvance) {
+    logDiag("backgroundRecovery:attempt", `${document.visibilityState} advance`);
+    return handleNaturalEndAdvance();
+  }
   const fileId = queue.currentPlayingFileId();
   if (!fileId) return null;
-  logDiag("backgroundRecovery:attempt", document.visibilityState);
+  logDiag("backgroundRecovery:attempt", `${document.visibilityState} resume`);
   return handleQueuePlayback(() => queue?.resume(fileId, audio.currentTime));
 }
 
@@ -1361,22 +1395,34 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
 //
 // 前回の試行がまだ解決していない間は重ねて発行しない（queue.resume()はreplacePendingで
 // 直列化チェーンの詰まりを迂回する設計のため、無条件に重ねて呼ぶと同じストリームへの要求が
-// 重複しうる）。このガードはこのループ専用（backgroundRetryAttemptInFlight）で、呼び出し元が
-// このsetInterval1箇所に限定されるため安全に管理できる——フォアグラウンド復帰トリガー側の
-// attemptBackgroundPlaybackRecovery()呼び出しはこのガードの影響を受けず、常に独立して試行できる
-// （上記コメント参照）。
+// 重複しうる）。このガードはこのループ専用で、呼び出し元がこのsetInterval1箇所に限定される
+// ため安全に管理できる——フォアグラウンド復帰トリガー側のattemptBackgroundPlaybackRecovery()
+// 呼び出しはこのガードの影響を受けず、常に独立して試行できる（上記コメント参照）。
+//
+// 単純なbooleanではなく採番トークンで管理する（2026-09-15、Codexレビュー指摘：P2。
+// queue.tsのactiveFadeTokenと同じ方針）：hidden→visible→hiddenと短時間で往復すると、
+// visible化時にstopBackgroundRetryLoop()がタイマーを止めても、その時点で進行中だった試行
+// （A）自体はバックグラウンドで解決し続ける。その後再度hiddenになり新しい試行（B）が始まった
+// 後にAが遅れて解決すると、単純なbooleanではAのfinallyが無条件にfalseへ戻してしまいBの
+// 「in-flight」状態を誤って解除し、次のtickがBとは別のCを並行して開始してしまう
+// （C自身のqueue.resume(..., replacePending=true)がBを横取りし、正常に進行していたはずの
+// Bの復帰を妨げる）。採番トークンなら、Aのfinallyは「自分がまだ現在のトークンか」を確認して
+// からのみクリアするため、この誤ったクリアが起きない。
 const BACKGROUND_RETRY_INTERVAL_MS = import.meta.env.VITE_E2E === "true" ? 50 : 10_000;
 let backgroundRetryTimer: ReturnType<typeof setInterval> | null = null;
-let backgroundRetryAttemptInFlight = false;
+let backgroundRetryAttemptToken: number | null = null;
+let backgroundRetryTokenCounter = 0;
 function startBackgroundRetryLoop(): void {
   if (backgroundRetryTimer !== null) return;
   backgroundRetryTimer = setInterval(() => {
-    if (backgroundRetryAttemptInFlight) return;
+    if (backgroundRetryAttemptToken !== null) return;
     const attempt = attemptBackgroundPlaybackRecovery();
     if (!attempt) return;
-    backgroundRetryAttemptInFlight = true;
+    backgroundRetryTokenCounter += 1;
+    const myToken = backgroundRetryTokenCounter;
+    backgroundRetryAttemptToken = myToken;
     void attempt.finally(() => {
-      backgroundRetryAttemptInFlight = false;
+      if (backgroundRetryAttemptToken === myToken) backgroundRetryAttemptToken = null;
     });
   }, BACKGROUND_RETRY_INTERVAL_MS);
 }
@@ -1385,7 +1431,9 @@ function stopBackgroundRetryLoop(): void {
     clearInterval(backgroundRetryTimer);
     backgroundRetryTimer = null;
   }
-  backgroundRetryAttemptInFlight = false;
+  // 進行中だった試行の追跡自体を手放す（次回startBackgroundRetryLoop()が新しいトークンを
+  // 発行するため、後から解決するこの試行のfinallyは自身のトークンと一致せず無害になる）。
+  backgroundRetryAttemptToken = null;
 }
 
 // StreamTokenIssuedHandlerの4番目の引数（streamAuth.tsの命名上は`playbackGeneration`）は、
@@ -2318,11 +2366,11 @@ function init(): void {
         // （クロスフェードが無効化された等）通常のフォールバックへ進む。
         if (crossfadeOrchestrator?.isPreparing()) {
           void crossfadeOrchestrator.tryBeginRamp(crossfadeStartParams()).then((began) => {
-            if (!began) void handleQueuePlayback(() => queue?.advanceOnEnded());
+            if (!began) void handleNaturalEndAdvance();
           });
           return;
         }
-        void handleQueuePlayback(() => queue?.advanceOnEnded());
+        void handleNaturalEndAdvance();
       },
       (fileId, streamId) => registerQueuePlaybackContinuation(fileId, streamId)
     );
@@ -2338,12 +2386,16 @@ function init(): void {
         // （handleQueuePlayback()由来の通常のコミットはhandlePlaybackAction()の成功分岐が
         // 担うが、クロスフェードのコミットはそれを経由しないため）。
         onPromoted: () => {
+          // クロスフェードのコミットはhandlePlaybackAction()を経由しないため、その成功分岐が
+          // 担うpendingNaturalEndAdvanceの解除もここで行う（2026-09-15、Codexレビュー指摘：P1
+          // への対応。この昇格自体、直前の自然終了に伴う遷移を代表する成功のため）。
+          pendingNaturalEndAdvance = false;
           if (!playback) return;
           updateSeekDuration(playback.activeAudioElement().duration);
           updateSeekPosition(playback.activeAudioElement().currentTime);
           renderQueue();
         },
-        onFallbackToNaturalEnd: () => { void handleQueuePlayback(() => queue?.advanceOnEnded()); },
+        onFallbackToNaturalEnd: () => void handleNaturalEndAdvance(),
         // 先読みの実際のstream-idが確定した時点で継続を登録する（2026-09-14〜、ChatGPTレビュー
         // 指摘：P1「preview側streamに認証Continuationが無いため、promotion後の401を回復できません」）。
         // この継続はpromotion後も（同じstreamIdがそのままactiveストリームとして使われ続けるため）

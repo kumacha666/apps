@@ -1451,3 +1451,106 @@ test("バックグラウンドの定期リトライがネイティブplay()の�
   // 検証する（修正前は共有の再入防止ガードにより、この2回目の呼び出し自体が起きなかった）。
   await expect.poll(() => page.evaluate(() => (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount)).toBeGreaterThan(callsBeforeForeground);
 });
+
+test("自然終了に伴う次曲への遷移が未解決のまま固まっても、バックグラウンド復帰は次の曲を再試行し、直前の曲を再生し直さない（2026-09-15、Codexレビュー指摘：P1の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context);
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  // 自然終了に伴う次曲（song-2）への最初の遷移だけを未解決のまま固まらせ、以降の呼び出しは
+  // 通常通り即座に解決するスタブへ差し替える。
+  await page.evaluate(() => {
+    let callCount = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function () {
+        callCount += 1;
+        if (callCount === 1) return new Promise<void>(() => {});
+        return Promise.resolve();
+      },
+    });
+  });
+
+  // song-1の自然終了を模擬する。PlaybackControllerはネイティブplay()を待つ前にaudio.srcを
+  // 次の曲（song-2）へ既に差し替えているが、queue.currentPlayingFileId()はplay()が解決する
+  // （＝コミットする）までsong-1を指したままになる。
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("ended")));
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+
+  // documentをhidden→visibleにしてバックグラウンド復帰を発火させる。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  // song-1へ巻き戻さず、song-2への遷移を再試行して実際にコミットすることを検証する
+  // （修正前はqueue.currentPlayingFileId()が指す直前の曲＝song-1をresume()してしまい、
+  // 次の曲へ進む代わりに直前の曲を再生し直していた）。
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+});
+
+test("バックグラウンドで復帰済みトークンが古いリトライの遅延解決によって誤って解除されない（2026-09-15、Codexレビュー指摘：P2の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context);
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  // ネイティブplay()を、呼び出し順にインデックスを振り、個別に解放できるスタブへ差し替える。
+  await page.evaluate(() => {
+    const resolvers: (() => void)[] = [];
+    (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount = 0;
+    (window as unknown as { __e2eReleasePlayCallAt: (i: number) => void }).__e2eReleasePlayCallAt = (i: number) => resolvers[i]?.();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function () {
+        const idx = (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount;
+        (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount += 1;
+        return new Promise<void>((resolve) => { resolvers[idx] = resolve; });
+      },
+    });
+  });
+
+  // OS/ブラウザ側の不意の一時停止を模擬し、documentをhiddenにして定期リトライを開始させる。
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("pause")));
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  // 最初のリトライ（A）が未解決のまま固まるまで待つ。
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount)).toBe(1);
+
+  // Aを解放しないまま、いったんフォアグラウンドへ復帰してから再びバックグラウンドへ戻る
+  // （定期リトライループの停止・再開を挟む。フォアグラウンド復帰トリガー自身も独立した
+  // play()呼び出しを発行するため、以降は絶対的な呼び出し回数ではなく相対的な増分で確認する）。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  // フォアグラウンド復帰トリガー自身の呼び出し・新しい定期リトライ（B）の呼び出しが両方とも
+  // 発行され、いずれも未解決のまま固まるまで待つ（合計2回以上に増えるまで）。
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount)).toBeGreaterThanOrEqual(3);
+  const countAfterCycle = await page.evaluate(() => (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount);
+
+  // ここでAを遅れて解放する。Bはまだ解放していないため、Bの追跡トークンが誤って解除され
+  // 3件目（C）が並行して発行されないことを検証する。
+  await page.evaluate(() => (window as unknown as { __e2eReleasePlayCallAt: (i: number) => void }).__e2eReleasePlayCallAt(0));
+
+  // 複数回分の定期リトライ間隔（VITE_E2Eでは50ms）が経過しても、呼び出し回数が増えないことを
+  // 確認する（修正前は、Aの解決がBの追跡トークンを誤って解除し、次のtickで新しい呼び出しが
+  // 発行されてしまっていた）。
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount)).toBe(countAfterCycle);
+});
