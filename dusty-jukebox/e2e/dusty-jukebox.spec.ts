@@ -1407,3 +1407,47 @@ test("バックグラウンドのまま曲間の接続に失敗しても、フ�
   await expect(page.locator("#audio-player")).not.toHaveAttribute("src", srcBefore!, { timeout: 5000 });
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 });
+
+test("バックグラウンドの定期リトライがネイティブplay()の未解決のまま固まっても、フォアグラウンド復帰時の復帰は妨げられない（2026-09-15、Codexレビュー指摘：P1の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context);
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  // ネイティブplay()を、呼び出し回数を記録しつつ呼び出しのたびに「解決しない新しいPromise」を
+  // 返すスタブへ差し替える（本アプリの複数箇所が警告している「ネイティブplay()は解決が保証
+  // されない」ケースを再現する）。
+  await page.evaluate(() => {
+    (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount += 1;
+        return new Promise<void>(() => {});
+      },
+    });
+  });
+
+  // documentをhiddenにして定期リトライを開始させ、OS/ブラウザ側の不意の一時停止を模擬する。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("pause")));
+
+  // 定期リトライ（VITE_E2Eでは50ms間隔）が、未解決のまま固まるplay()を少なくとも1回呼ぶまで待つ。
+  // 以後このPromiseは永久に解決しないため、リトライ自身は「解決しないまま固まっている」状態になる。
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount)).toBeGreaterThanOrEqual(1);
+  const callsBeforeForeground = await page.evaluate(() => (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount);
+
+  // 固まったリトライを解放しないまま、フォアグラウンドへ復帰する。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  // フォアグラウンド復帰トリガーは、固まったリトライとは独立に新しいplay()呼び出しを行うことを
+  // 検証する（修正前は共有の再入防止ガードにより、この2回目の呼び出し自体が起きなかった）。
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount)).toBeGreaterThan(callsBeforeForeground);
+});

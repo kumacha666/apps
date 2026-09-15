@@ -1323,15 +1323,17 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
 // 迂回する既存の設計）で再開を試みる。新しい並行処理上のリスクを持ち込まず、既存の
 // 実績あるパスを再利用する。
 //
-// 実行中は再入しない（2026-09-15追記）：visibilitychange/resumeがほぼ同時に発火することが
-// 実機ログで確認されており（例：visible→resumeが数十ms差で連続発火）、また下記の定期リトライ
-// ループとも同じ関数を共有するため、前回のqueue.resume()呼び出しがまだ解決していない間に
-// 重ねて呼ばれても、二重に発行しない（queue.resume()はreplacePendingで直列化チェーンを
-// 迂回する設計のため、無条件に重ねて呼ぶと同じストリームへの要求が重複しうる）。
-let backgroundRecoveryInFlight = false;
-function attemptBackgroundPlaybackRecovery(): void {
-  if (backgroundRecoveryInFlight) return;
-  if (!playback || !queue) return;
+// この関数自体は実行中かどうかに関わらず常に呼び出し可能（2026-09-15、Codexレビュー指摘：P1）。
+// 一度「再入しない」ガードを実装したが、queue.resume()が最終的に呼ぶネイティブaudio.play()は
+// 本アプリの他の複数箇所のコメントが警告している通り解決が保証されない（長時間pendingのまま
+// 残りうる）。このガードを本関数自体に持たせると、下記の定期リトライがそうした保留中の試行を
+// 起こした直後にフォアグラウンド復帰しても、視認性復帰トリガーの1回きりの呼び出しがこの
+// ガードで無条件にスキップされ、以後何も再試行しないまま復帰不能になる（PR #456で実機確認済み
+// だったフォアグラウンド復帰自体の回帰）。「重ねて呼ばない」責務は、無制限に呼び出しうる
+// 下記の定期リトライループ側だけが持つ（そちらは呼び出し元を1箇所に限定できるため安全に管理
+// できる）。
+function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
+  if (!playback || !queue) return null;
   const audio = playback.activeAudioElement();
   const shouldRecover = shouldAttemptBackgroundPlaybackRecovery({
     userPausedPlayback,
@@ -1339,14 +1341,11 @@ function attemptBackgroundPlaybackRecovery(): void {
     audioPaused: audio.paused,
     audioEnded: audio.ended,
   });
-  if (!shouldRecover) return;
+  if (!shouldRecover) return null;
   const fileId = queue.currentPlayingFileId();
-  if (!fileId) return;
+  if (!fileId) return null;
   logDiag("backgroundRecovery:attempt", document.visibilityState);
-  backgroundRecoveryInFlight = true;
-  void handleQueuePlayback(() => queue?.resume(fileId, audio.currentTime)).finally(() => {
-    backgroundRecoveryInFlight = false;
-  });
+  return handleQueuePlayback(() => queue?.resume(fileId, audio.currentTime));
 }
 
 // バックグラウンドのままでの定期リトライ（2026-09-15、実機フィードバック「PCは良いがスマホの
@@ -1359,17 +1358,34 @@ function attemptBackgroundPlaybackRecovery(): void {
 // 接続し直せることを期待する。ブラウザ自身がバックグラウンドタブのタイマー間隔を経過時間に
 // 応じて自動的に間引く（タブが長時間隠れているほど間隔を伸ばす）ため、ここでは固定間隔の
 // setIntervalのみとし、独自のバックオフスケジュールは持たない。
+//
+// 前回の試行がまだ解決していない間は重ねて発行しない（queue.resume()はreplacePendingで
+// 直列化チェーンの詰まりを迂回する設計のため、無条件に重ねて呼ぶと同じストリームへの要求が
+// 重複しうる）。このガードはこのループ専用（backgroundRetryAttemptInFlight）で、呼び出し元が
+// このsetInterval1箇所に限定されるため安全に管理できる——フォアグラウンド復帰トリガー側の
+// attemptBackgroundPlaybackRecovery()呼び出しはこのガードの影響を受けず、常に独立して試行できる
+// （上記コメント参照）。
 const BACKGROUND_RETRY_INTERVAL_MS = import.meta.env.VITE_E2E === "true" ? 50 : 10_000;
 let backgroundRetryTimer: ReturnType<typeof setInterval> | null = null;
+let backgroundRetryAttemptInFlight = false;
 function startBackgroundRetryLoop(): void {
   if (backgroundRetryTimer !== null) return;
-  backgroundRetryTimer = setInterval(() => attemptBackgroundPlaybackRecovery(), BACKGROUND_RETRY_INTERVAL_MS);
+  backgroundRetryTimer = setInterval(() => {
+    if (backgroundRetryAttemptInFlight) return;
+    const attempt = attemptBackgroundPlaybackRecovery();
+    if (!attempt) return;
+    backgroundRetryAttemptInFlight = true;
+    void attempt.finally(() => {
+      backgroundRetryAttemptInFlight = false;
+    });
+  }, BACKGROUND_RETRY_INTERVAL_MS);
 }
 function stopBackgroundRetryLoop(): void {
   if (backgroundRetryTimer !== null) {
     clearInterval(backgroundRetryTimer);
     backgroundRetryTimer = null;
   }
+  backgroundRetryAttemptInFlight = false;
 }
 
 // StreamTokenIssuedHandlerの4番目の引数（streamAuth.tsの命名上は`playbackGeneration`）は、
@@ -2201,7 +2217,7 @@ function init(): void {
     logDiag("visibilitychange", document.visibilityState);
     if (document.visibilityState === "visible") {
       stopBackgroundRetryLoop();
-      attemptBackgroundPlaybackRecovery();
+      void attemptBackgroundPlaybackRecovery();
     } else {
       startBackgroundRetryLoop();
     }
@@ -2211,7 +2227,7 @@ function init(): void {
   // 単独で発火する場合があるため、こちらでも同じ復帰を試みる。
   document.addEventListener("resume", () => {
     logDiag("resume");
-    attemptBackgroundPlaybackRecovery();
+    void attemptBackgroundPlaybackRecovery();
   });
   if (!CLIENT_ID) return;
 
@@ -2408,7 +2424,7 @@ function init(): void {
             logDiag("mediaSession:play:rejected", err instanceof Error ? err.message : String(err));
             // 素のネイティブplay()が失敗した場合（失効したトークンのままsrcが古い等）は、
             // 「再生」ボタンと同じ認証継続込みの経路（queue.resume()）で再試行する。
-            attemptBackgroundPlaybackRecovery();
+            void attemptBackgroundPlaybackRecovery();
           }
         );
       },
