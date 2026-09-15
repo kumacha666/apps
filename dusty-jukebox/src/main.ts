@@ -41,6 +41,7 @@ const QUEUE_SORT_FIELD_LABELS: Record<QueueSortField, string> = {
 import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState } from "./mediaSession";
 import { formatSeekTime, isSeekableDuration } from "./seekBar";
 import { shouldResumeExternalPlayback } from "./externalPlayback";
+import { shouldAttemptBackgroundPlaybackRecovery } from "./backgroundPlaybackRecovery";
 import {
   CROSSFADE_DURATION_OPTIONS_SEC,
   DEFAULT_CROSSFADE_DURATION_SEC,
@@ -167,6 +168,16 @@ let lastExternalFileId: string | null = null;
 // 挙動と一致するとは限らないため、shouldResumeExternalPlayback()の判定結果が実際に正しい
 // 引数でstartExternalPlaybackAt()へ渡ったこと自体を直接検証する（__e2eフック経由）。
 let lastExternalPlaybackPositionForE2E: number | null = null;
+// ユーザー自身が明示的に一時停止した（アプリの「一時停止」ボタン、またはBluetooth/OSの
+// メディアキーのpause）かどうか（2026-09-15、バックグラウンド再生の不安定さ対策）。
+// queue.isPlayingFromQueue()はユーザー操作による一時停止でもtrueのまま残るため、これ単独では
+// 「キュー曲の再生が止まっているのは意図的な一時停止か、それともバックグラウンドでの
+// フリーズ・デコード停止等でJS側が気づかないまま止まったものか」を区別できない。この
+// フラグをtrueにするのは上記2つの明示的な一時停止操作の呼び出し元のみに限定し、それ以外の
+// 理由（OS/ブラウザ側が<audio>を内部的にpause()した場合を含む）で発生した`pause`イベントは
+// このフラグを立てない。実際に新しい再生が成功する（handlePlaybackAction()の成功分岐、
+// またはmediaSessionのplayハンドラ呼び出し時）たびにfalseへ戻す。
+let userPausedPlayback = false;
 const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
 // catalogSessionへ最後に読み込んだ（有効な）曲一覧の出所スプレッドシートID。プレイリストの
@@ -1279,6 +1290,9 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
       playbackAuthGate?.clear();
       setPlaybackAuthNotice(false);
       setStatus("再生中");
+      // 実際に再生が始まった以上、ユーザーは（直前に一時停止していたとしても）再生を
+      // 望んでいる。次にバックグラウンドで止まった場合の自動復帰対象に含めるため解除する。
+      userPausedPlayback = false;
       // キュー表示（再生中のハイライト・「再生中」ラベル）の更新は、この関数が実際の
       // 再生開始経路の唯一の合流点であるここで行う。handleQueuePlayback()（クリック・次へ/前へ・
       // 曲の自然終了）だけでなく、handleStreamTokenRejected()の認証継続再開
@@ -1299,6 +1313,29 @@ async function handlePlaybackAction(action: () => Promise<boolean>): Promise<voi
     logDiag("playbackAction:error", err instanceof Error ? err.message : String(err));
     setStatus(err instanceof Error ? err.message : String(err), true);
   }
+}
+
+// バックグラウンド再生の自動復帰（2026-09-15、ユーザー要望「バックグラウンド再生時に次曲が
+// 再生されない問題も解決してほしい」）：ページが再びvisible/resumeになった時点で、「キュー曲を
+// 再生中のはずなのに、ユーザー自身が明示的に一時停止したわけではなく、実際の<audio>要素は
+// 一時停止・未終了のまま止まっている」場合にのみ、既存の「再生」ボタン（queue-play-btn）・
+// Drive 401の認証継続と同じ経路（queue.resume()、replacePendingで直列化チェーンの詰まりを
+// 迂回する既存の設計）で再開を試みる。新しい並行処理上のリスクを持ち込まず、既存の
+// 実績あるパスを再利用する。
+function attemptBackgroundPlaybackRecovery(): void {
+  if (!playback || !queue) return;
+  const audio = playback.activeAudioElement();
+  const shouldRecover = shouldAttemptBackgroundPlaybackRecovery({
+    userPausedPlayback,
+    canResumeCurrent: queue.canResumeCurrent(),
+    audioPaused: audio.paused,
+    audioEnded: audio.ended,
+  });
+  if (!shouldRecover) return;
+  const fileId = queue.currentPlayingFileId();
+  if (!fileId) return;
+  logDiag("backgroundRecovery:attempt", document.visibilityState);
+  void handleQueuePlayback(() => queue?.resume(fileId, audio.currentTime));
 }
 
 // StreamTokenIssuedHandlerの4番目の引数（streamAuth.tsの命名上は`playbackGeneration`）は、
@@ -2126,9 +2163,17 @@ function init(): void {
   // 表示状態変化・OSによるページ凍結（Page Lifecycle API、Chrome系のみ・未対応環境では
   // 単に発火しない）を診断ログへ記録する。CLIENT_ID未設定でも意味のある記録のため
   // 早期returnより前に登録する。
-  document.addEventListener("visibilitychange", () => logDiag("visibilitychange", document.visibilityState));
+  document.addEventListener("visibilitychange", () => {
+    logDiag("visibilitychange", document.visibilityState);
+    if (document.visibilityState === "visible") attemptBackgroundPlaybackRecovery();
+  });
   document.addEventListener("freeze", () => logDiag("freeze"));
-  document.addEventListener("resume", () => logDiag("resume"));
+  // Page Lifecycle の resume（freezeからの復帰）。visibilitychangeより先に、あるいは
+  // 単独で発火する場合があるため、こちらでも同じ復帰を試みる。
+  document.addEventListener("resume", () => {
+    logDiag("resume");
+    attemptBackgroundPlaybackRecovery();
+  });
   if (!CLIENT_ID) return;
 
   if ("serviceWorker" in navigator) {
@@ -2315,9 +2360,17 @@ function init(): void {
     registerActionHandlers(navigator.mediaSession, {
       play: () => {
         logDiag("mediaSession:play", document.visibilityState);
+        // Bluetooth/OSのメディアキーによる明示的な再開のため、直前の一時停止状態は解除する
+        // （2026-09-15、バックグラウンド再生の不安定さ対策）。
+        userPausedPlayback = false;
         void playback?.activeAudioElement().play().then(
           () => logDiag("mediaSession:play:resolved"),
-          (err) => logDiag("mediaSession:play:rejected", err instanceof Error ? err.message : String(err))
+          (err) => {
+            logDiag("mediaSession:play:rejected", err instanceof Error ? err.message : String(err));
+            // 素のネイティブplay()が失敗した場合（失効したトークンのままsrcが古い等）は、
+            // 「再生」ボタンと同じ認証継続込みの経路（queue.resume()）で再試行する。
+            attemptBackgroundPlaybackRecovery();
+          }
         );
       },
       // playback.activeAudioElement().pause()はPlaybackController.pause()を経由しない
@@ -2330,6 +2383,7 @@ function init(): void {
       // 復元」は構造的に不要になった）。
       pause: () => {
         logDiag("mediaSession:pause", document.visibilityState);
+        userPausedPlayback = true;
         crossfadeOrchestrator?.cancel();
         playback?.activeAudioElement().pause();
       },
@@ -2361,6 +2415,9 @@ function init(): void {
     el<HTMLButtonElement>("retry-extraction-btn").addEventListener("click", () => void handleRetryExtraction());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
     el<HTMLButtonElement>("pause-btn").addEventListener("click", () => {
+      // ユーザー自身の明示的な一時停止のため、バックグラウンド復帰時の自動再開の対象から
+      // 外す（2026-09-15、userPausedPlaybackの定義コメント参照）。
+      userPausedPlayback = true;
       // role-swapでは、打ち切り自体は非アクティブ側だけを後始末しアクティブ側の
       // src/currentTime/play/pauseに一切触れない（不変条件）ため、旧設計にあった「退場側の
       // 曲への復元」（loadPaused()・pendingPauseOutgoingRestoreの連打時引き継ぎ等）は

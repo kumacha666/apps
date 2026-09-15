@@ -1343,3 +1343,43 @@ test("先読み再生の開始待ち中に主audio要素が自然終了しても
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Scherzo");
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
 });
+
+test("バックグラウンドで<audio>が黙って一時停止しても、フォアグラウンド復帰（visibilitychange）で自動的に再開を試みる", async ({ context, page }) => {
+  await installGoogleMocks(context);
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  const srcBefore = await page.locator("#audio-player").getAttribute("src");
+
+  // アプリの「一時停止」ボタン・Bluetooth/OSのpauseを経由せず、OS/ブラウザ側が<audio>要素を
+  // 内部的に一時停止した状態（バックグラウンドでの停止を想定）を模擬する。
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("pause")));
+
+  // フォアグラウンド復帰（visibilitychange）で自動的に再開を試みる。
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  // #diag-log-outputはtextareaで、値はJSからoutput.value = ...で設定される（textContentには
+  // 反映されない）ため、toContainText()ではなくtoHaveValue()で検証する。
+  await page.getByRole("button", { name: "診断ログを表示" }).click();
+  await expect(page.locator("#diag-log-output")).toHaveValue(/backgroundRecovery:attempt/);
+  await expect(page.locator("#audio-player")).not.toHaveAttribute("src", srcBefore!);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+});
+
+test("ユーザー自身が一時停止した曲は、フォアグラウンド復帰では自動的に再開しない", async ({ context, page }) => {
+  await installGoogleMocks(context);
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  const srcBefore = await page.locator("#audio-player").getAttribute("src");
+
+  await page.getByRole("button", { name: "一時停止" }).click();
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("pause")));
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  await page.getByRole("button", { name: "診断ログを表示" }).click();
+  await expect(page.locator("#diag-log-output")).not.toHaveValue(/backgroundRecovery:attempt/);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", srcBefore!);
+});
