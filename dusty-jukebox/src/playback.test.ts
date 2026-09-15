@@ -552,6 +552,47 @@ describe("PlaybackController", () => {
     expect(audio.src).toContain("B");
   });
 
+  test("フェード無しのplay()（A）がネイティブaudio.play()の解決待ち中に一時停止で追い越された後、その解決を待たずにユーザーが別の正当な再開（B）を行い完了していた場合、Aが後から解決してもPlaybackPausedErrorを投げずBの状態を巻き込まない（2026-09-15、Codexレビュー指摘：P1「Avoid invalidating playback resumed after the pause」。直接の追い越し理由〈generationReasons〉だけを見てPlaybackPausedErrorを投げると、既にpauseを追い越し済みの後続の正当な再生をPlaybackQueue側が誤って無効化してしまっていた）", async () => {
+    let resolveOldPlay!: () => void;
+    class SlowPlayAudio extends FakeAudio {
+      private isFirstPlay = true;
+      override async play(): Promise<void> {
+        if (this.isFirstPlay) {
+          this.isFirstPlay = false;
+          await new Promise<void>((resolve) => { resolveOldPlay = resolve; });
+        }
+        return super.play();
+      }
+    }
+    const audio = new SlowPlayAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    const oldPlay = playback.play("A").catch((err: unknown) => err); // audio.play()が未解決のまま保留
+    await vi.waitFor(() => expect(resolveOldPlay).toBeDefined());
+
+    // ネイティブaudio.play()がまだ解決していない間に一時停止される。
+    playback.pause();
+
+    // Aの解決を待たず、ユーザーが別の正当な再開（B）を行い、完全に完了する
+    // （既にpauseを追い越し済み）。
+    await playback.play("B");
+    expect(audio.src).toContain("B");
+    expect(audio.paused).toBe(false);
+
+    // 孤立していた古い要求("A")のネイティブplay()が今になって解決する。
+    resolveOldPlay();
+    const error = await oldPlay;
+
+    // Aは既に追い越し済みのpauseを直接の理由として持つが、その後さらにBが正当に
+    // 追い越し済みのため、PlaybackPausedErrorは投げない（投げるとPlaybackQueue側が
+    // 既に成功しているBの状態を巻き込んで無効化してしまう）。
+    expect(error).toBeUndefined();
+    expect(error).not.toBeInstanceOf(PlaybackPausedError);
+    // Bの再生状態はAの遅延解決によって一切書き換えられていない。
+    expect(audio.paused).toBe(false);
+    expect(audio.src).toContain("B");
+  });
+
   test("pause(true)指定時は現在再生中の音声をフェードアウトしてから実際に一時停止し、フェード開始前のvolumeへ戻す（開発体制#45、2026-09-09、ユーザー要望：手動スキップ時のフェードアウト設定を一時停止にも適用してほしい）", async () => {
     vi.useFakeTimers();
     const audio = new FakeAudio();

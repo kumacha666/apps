@@ -237,7 +237,23 @@ export class PlaybackController {
         // 投げる（そうでなければ、別の正当なplay()に追い越されただけなので、区別しない
         // PlaybackInterruptedErrorを投げる）。
         const supersededByReason = this.generationReasons.get(playGeneration + 1);
-        if (supersededByReason === "pause") throw new PlaybackPausedError();
+        // 「直接の追い越し理由がpauseで、かつそれが今もなお最新の状態」の場合だけ
+        // PlaybackPausedErrorとして扱う（2026-09-15、Codexレビュー指摘：P1「Avoid
+        // invalidating playback resumed after the pause」）。generationReasonsは
+        // 「自分を直接追い越したのが誰か（playGeneration+1）」を正確に答えるが、その後
+        // さらに別の正当なplay()（ユーザーの明示的な再開）が既に発生している可能性までは
+        // 考慮しない。古いplay()がpause()に一度追い越された後、その解決を待たずに別の
+        // 正当なplay()（既にpauseを追い越し済み）が発生・完了していた場合でも、この古い
+        // play()が後から解決するとPlaybackPausedErrorを投げてしまい、
+        // PlaybackQueue.playAndCommit()がその後続の再生（進行中ならcommit失敗・完了済み
+        // ならさらに後続のナビゲーション）をqueue.generationの巻き込みインクリメントで
+        // 誤って無効化してしまっていた。`this.generation === playGeneration + 1`
+        // （自分のplayGeneration+1からgenerationが一切進んでいない＝pauseが今もなお
+        // 最新の出来事）を追加で確認することで、既にpauseを追い越した後続の正当な
+        // play()を巻き込まなくなる。
+        if (supersededByReason === "pause" && this.generation === playGeneration + 1) {
+          throw new PlaybackPausedError();
+        }
         throw new PlaybackInterruptedError();
       }
       // フェード中にネイティブ操作（<audio controls>・Media Session）で明示的に一時停止された
@@ -321,8 +337,23 @@ export class PlaybackController {
       // 定期リトライがユーザーの一時停止と再び衝突していた。他の理由（別の正当なplay()に
       // 追い越されただけ）ではこれまで通り黙ってreturnし、PlaybackQueue側のgeneration確認に
       // 判定を委ねる（そちらは既存の複数ラウンドで固められた既存の設計のため変更しない）。
+      // 「直接の追い越し理由がpauseで、かつそれが今もなお最新の状態」の場合だけ
+      // PlaybackPausedErrorとして扱う（2026-09-15、Codexレビュー指摘：P1「Avoid
+      // invalidating playback resumed after the pause」）。バックグラウンド復帰の
+      // resume()（A）がネイティブaudio.play()の解決待ちで固まっている間にユーザーが
+      // 明示的に一時停止し、その後（Aの解決を待たず）ユーザー自身が別の明示的な再開
+      // （B、既にpauseを追い越し済み）を行っていた場合でも、Aが後から解決すると
+      // 単純な`supersededByReason === "pause"`判定はPlaybackPausedErrorを投げてしまい、
+      // PlaybackQueue.playAndCommit()がBの再生（進行中ならcommit失敗・完了済みなら
+      // さらに後続のナビゲーション）をqueue.generationの巻き込みインクリメントで
+      // 誤って無効化してしまっていた。`this.generation === playGeneration + 1`
+      // （自分のplayGeneration+1からgenerationが一切進んでいない＝pauseが今もなお
+      // 最新の出来事）を追加で確認することで、既にpauseを追い越した後続の正当な
+      // play()を巻き込まなくなる（この場合は従来通り何も投げず黙って完了する）。
       const supersededByReason = this.generationReasons.get(playGeneration + 1);
-      if (supersededByReason === "pause") throw new PlaybackPausedError();
+      if (supersededByReason === "pause" && this.generation === playGeneration + 1) {
+        throw new PlaybackPausedError();
+      }
     }
   }
 
