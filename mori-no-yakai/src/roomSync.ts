@@ -10,7 +10,7 @@ import {
 } from "firebase/database";
 import { db } from "./firebase";
 import { isHostUnlocked } from "./hostAuth";
-import type { Member, RoomState, RoleConfig, RoleId, CenterCardsData, SeerReveal } from "./types";
+import type { Member, RoomState, RoleConfig, RoleId, CenterCardsData, SeerReveal, WolfCenterReveal } from "./types";
 import { buildRoleDeck, buildNightOrderFromConfig, shuffle, defaultRoleConfig } from "./roles";
 import {
   DEFAULT_NIGHT_STEP_DURATION_MS,
@@ -193,6 +193,7 @@ export async function startGame(roomId: string): Promise<void> {
       delete members[id].nightReadyStep;
       delete members[id].discussReadyRound;
       delete members[id].seerReveal;
+      delete members[id].wolfReveal;
     }
     memberIds.forEach((id, i) => {
       members[id].originalRole = dealt[i];
@@ -283,6 +284,28 @@ export async function recordSeerReveal(
     }
     if (!room.members?.[memberId]) return room;
     room.members[memberId].seerReveal = reveal;
+    return room;
+  });
+}
+
+/**
+ * 一匹狼（おおかみが1人だけの場合）が夜に見た中央カード1枚をRTDBへ記録する。
+ * recordSeerReveal()と同じ理由（ローカルUI状態だけだと忘れる・遅延書き込みで
+ * resetToLobby()後に復活しうる）で、同じくトランザクションでフェーズ・roundNumberを
+ * 検証してから書き込む（2026-09-15、実プレイで一匹狼のケースも同様の要望があったための追加）。
+ */
+export async function recordWolfReveal(
+  roomId: string,
+  memberId: string,
+  roundNumber: number,
+  reveal: WolfCenterReveal
+): Promise<void> {
+  await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
+    if (!room?.state || room.state.phase !== "night" || room.state.roundNumber !== roundNumber) {
+      return room;
+    }
+    if (!room.members?.[memberId]) return room;
+    room.members[memberId].wolfReveal = reveal;
     return room;
   });
 }
@@ -473,6 +496,7 @@ export async function resetToLobby(roomId: string): Promise<void> {
       delete members[id].nightReadyStep;
       delete members[id].discussReadyRound;
       delete members[id].seerReveal;
+      delete members[id].wolfReveal;
     }
     room.members = members;
     room.centerCards = null;

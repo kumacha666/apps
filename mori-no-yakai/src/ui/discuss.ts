@@ -1,5 +1,5 @@
 import type { AppContext } from "./context";
-import { participants, myKnownRoleBanner, mySeerRevealBanner } from "./context";
+import { participants, myKnownRoleBanner, mySeerRevealBanner, myWolfRevealBanner } from "./context";
 import { ROLE_META } from "../roles";
 import { markDiscussReady } from "../roomSync";
 import { renderForceResetButton, wireForceResetButton } from "./hostControls";
@@ -45,6 +45,7 @@ export function render(container: HTMLElement, ctx: AppContext): void {
     : `
       ${myKnownRoleBanner(ctx)}
       ${mySeerRevealBanner(ctx)}
+      ${myWolfRevealBanner(ctx)}
       ${role ? `<p class="role-description">${ROLE_META[role].description}</p>` : ""}
     `;
 
