@@ -1087,6 +1087,77 @@ describe("PlaybackQueue", () => {
   });
 });
 
+// resume()の第3引数onRegistered（2026-09-16、Codexレビュー指摘：P2「Bind each capture to its
+// own registration」）：main.ts側の単一の共有スロットへ「次の登録を当てにいく」という予約方式
+// （旧設計）は、複数のresume()呼び出しが並行して進行しうる場合に、別の呼び出しの登録を誤って
+// 自分のものと取り違えるバグを持っていた。onRegisteredはこの呼び出し自身のplayAndCommit()が
+// 実際に登録した時にだけ、その呼び出し自身のstreamIdを直接渡す（共有スロット・所有権の考慮が
+// 構造的に不要になったことの検証）。
+describe("PlaybackQueue.resume() onRegistered", () => {
+  test("resume()自身の登録が起きた時、この呼び出し専用のonRegisteredへその呼び出し自身のstreamIdが渡る", async () => {
+    const audio = new Audio();
+    let nextStreamId = 0;
+    const play = (_fileId: string, _position?: number, options?: { onStreamIdAllocated?: (streamId: number, isSuperseded: () => boolean) => void }) => {
+      nextStreamId += 1;
+      options?.onStreamIdAllocated?.(nextStreamId, () => false);
+      return Promise.resolve();
+    };
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a")]);
+
+    let observedStreamId: number | null = null;
+    await queue.resume("a", 0, (streamId) => { observedStreamId = streamId; });
+    expect(observedStreamId).toBe(1);
+  });
+
+  test("対象が除外済みでplayer.play()自体が一度も呼ばれない場合、onRegisteredも呼ばれない", async () => {
+    const audio = new Audio();
+    const play = vi.fn();
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a")]);
+    queue.exclude("a", true);
+
+    const onRegistered = vi.fn();
+    const result = await queue.resume("a", 0, onRegistered);
+    expect(result).toBe(false);
+    expect(play).not.toHaveBeenCalled();
+    expect(onRegistered).not.toHaveBeenCalled();
+  });
+
+  // このPRが直した回帰の核心：2つのresume()呼び出しが並行して進行する場合（例：
+  // attemptBackgroundPlaybackRecovery()の同じ分岐が短時間に複数回呼ばれるケース）、片方の
+  // 登録がもう片方のonRegisteredへ誤って配信されてはならない。
+  test("2つのresume()呼び出しが並行して進行しても、互いのonRegisteredが相手のstreamIdを受け取らない", async () => {
+    const audio = new Audio();
+    let nextStreamId = 0;
+    const resolvers: (() => void)[] = [];
+    const play = (_fileId: string, _position?: number, options?: { onStreamIdAllocated?: (streamId: number, isSuperseded: () => boolean) => void }) => {
+      nextStreamId += 1;
+      const myStreamId = nextStreamId;
+      // 登録（onStreamIdAllocated）はnative play()の解決より前に起きる、という既存の
+      // 契約通り、Promiseを返す前に同期的に呼ぶ。
+      options?.onStreamIdAllocated?.(myStreamId, () => false);
+      return new Promise<void>((resolve) => { resolvers.push(resolve); });
+    };
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a"), song("b")]);
+
+    let streamIdA: number | null = null;
+    let streamIdB: number | null = null;
+    const moveA = queue.resume("a", 0, (streamId) => { streamIdA = streamId; });
+    const moveB = queue.resume("b", 0, (streamId) => { streamIdB = streamId; });
+
+    await vi.waitFor(() => {
+      expect(streamIdA).not.toBeNull();
+      expect(streamIdB).not.toBeNull();
+    });
+    expect(streamIdA).not.toBe(streamIdB);
+
+    resolvers.forEach((resolve) => resolve());
+    await Promise.all([moveA, moveB]);
+  });
+});
+
 describe("queueRowViews", () => {
   test("除外されていない曲だけがlistIndexを持ち、list()と同じ順序で採番される", () => {
     const songs = [song("a"), song("b"), song("c")];

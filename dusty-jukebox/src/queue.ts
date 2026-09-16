@@ -161,7 +161,13 @@ export class PlaybackQueue {
   peekNextFileId(): string | null {
     return this.findNext()?.fileId ?? null;
   }
-  private async playAndCommit(fileId: string, generation: number, position?: number, fadeOut = false): Promise<boolean> {
+  private async playAndCommit(
+    fileId: string,
+    generation: number,
+    position?: number,
+    fadeOut = false,
+    onRegistered?: (streamId: number) => void
+  ): Promise<boolean> {
     // このフェード操作自身のトークンを発行する（2026-09-08、Codexレビュー指摘：P1）。
     let myFadeToken: number | null = null;
     if (fadeOut) {
@@ -175,7 +181,19 @@ export class PlaybackQueue {
         // stream-idが実際に確定した瞬間（native play promiseの解決より前）に呼ばれるため、
         // Register a continuation before the native play promise settles: the
         // initial stream request can receive a 401 while that promise is pending.
-        onStreamIdAllocated: (streamId) => this.onBeforePlay(fileId, streamId),
+        onStreamIdAllocated: (streamId) => {
+          this.onBeforePlay(fileId, streamId);
+          // onRegisteredはresume()呼び出し元自身が指定する専用コールバック（2026-09-16、
+          // Codexレビュー指摘：P2「Bind each capture to its own registration」）。
+          // this.onBeforePlay（キュー全体で共有される単一のコールバック）とは別に、この
+          // playAndCommit()呼び出し自身の登録が実際に起きたことを、呼び出し元へ直接・
+          // 一意に通知する。複数のresume()呼び出しが並行して進行しうる場合、共有スロットへ
+          // 「次の登録を捕捉してほしい」と予約する方式（旧設計）では、別の呼び出しの登録が
+          // 先に発生した場合にその通知を誤って受け取ってしまう（own registrationとの
+          // 相関が無い）。streamIdはPlaybackController.allocateStreamId()で発行される、
+          // この呼び出し自身に一意な値のため、直接引き渡すだけで相関が成立する。
+          onRegistered?.(streamId);
+        },
       });
     } catch (err) {
       // フェード中にユーザーが明示的に一時停止した場合（2026-09-08、Codexレビュー指摘：P1）。
@@ -384,10 +402,14 @@ export class PlaybackQueue {
       return true;
     });
   }
-  resume(fileId: string, position: number): Promise<boolean> {
+  // onRegisteredの定義コメント参照（playAndCommit()側）。attemptBackgroundPlaybackRecovery()の
+  // ように同じ対象へ短時間に複数回resume()する呼び出し元が、自分自身の呼び出しがもたらした
+  // 登録（streamId）を、他の同時進行中の呼び出しの登録と取り違えずに知るための専用の相関
+  // 手段。省略時は既存の挙動と完全に同じ（this.onBeforePlayによる共有の登録のみ行う）。
+  resume(fileId: string, position: number, onRegistered?: (streamId: number) => void): Promise<boolean> {
     return this.move(async (generation) =>
       this.songs.some((song) => song.fileId === fileId) && !this.isExcluded(fileId)
-        ? this.playAndCommit(fileId, generation, position)
+        ? this.playAndCommit(fileId, generation, position, false, onRegistered)
         : false,
       true
     );
