@@ -61,6 +61,7 @@
   - **Windows環境で`npm run deploy`する際の互換性修正（PR #396, #397）**：①Node.jsのCVE-2024-27980対応により、Windowsで`.cmd`ファイル（`npx.cmd`/`npm.cmd`）を`execFileSync`で直接呼ぶ際は`shell: true`が必須になった（`scripts/test-e2e-if-chromium.mjs`で対応済み）。②Windows標準のcmd/PowerShellには`cp`コマンドが無いため、`scripts/copy-dist-app.mjs`（Node標準の`fs.copyFileSync`）に置き換えた。**他の6アプリ（7metch, 7metch2, enblo, enblo-classic, combrawl, mori-no-yakai）のdeployスクリプトも同じ`cp`依存を持ちWindows非対応のままなので、それらをWindows環境でデプロイする必要が生じた際は同様の対応が必要**
   - 詳細は`dusty-jukebox/CLAUDE.md`（アプリ固有CLAUDE.md）および`dusty-jukebox/AGENTS.md`（Codex向け実行手順）参照
 - 詳細なテスト方針・難易度パラメータ・変更時チェックリストはアプリごとの `CLAUDE.md`（例: `7metch/CLAUDE.md`, `7metch2/CLAUDE.md`, `enblo/CLAUDE.md`, `enblo-classic/CLAUDE.md`, `combrawl/CLAUDE.md`）を参照
+- **`vitest`は全B系アプリ（本節記載の6アプリ＋`dusty-jukebox-tools`）で`^3.2.7`を使う（2026-09-16、緊急修正）**。`^4.1.9`はnpm（Arborist）側のバグで`npm install`が高確率でクラッシュする（`Cannot read properties of null (reading 'edgesOut')`、vitest 4.1.x固有のピア依存解決に起因、`vite`のバージョンが要件を満たしていても発生する）。`package-lock.json`はリポジトリ全体でgitignore対象（固定していない）ため、この種の依存関係ドリフトは今後も起こりうる。新しいB系アプリを作る際・既存アプリの`vitest`を更新する際は、着手前にクリーンな`npm install`が通ることを確認すること（詳細な経緯は`dusty-jukebox/CLAUDE.md`「2026-09-16、緊急修正」参照。PR #460〈dusty-jukebox/dusty-jukebox-tools〉・PR #461〈7metch/7metch2/enblo/enblo-classic/combrawl/mori-no-yakai〉）
 
 ### C. 補助ツール
 `7metch-tools`（7metch用）、`enblo-tools`（enblo用、音確認ツール等）は本体アプリのデバッグ・プレビュー用に単独で動作するHTMLファイル群。ビルド不要、ブラウザで直接開いて使う。
