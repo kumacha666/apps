@@ -26,7 +26,7 @@ import {
   upsertFolderCacheEntries,
   type FolderCacheEntry,
 } from "./folderCache";
-import { PlaybackQueue, queueRowViews, songDisplayLabel, nowPlayingLabel } from "./queue";
+import { PlaybackQueue, REPEAT_MODES, REPEAT_MODE_LABELS, queueRowViews, songDisplayLabel, nowPlayingLabel } from "./queue";
 import { QUEUE_SORT_FIELDS, type QueueSortField } from "./queueSort";
 
 // union型の分岐をRecordの網羅性チェックに使う（AI開発ルール4）：QUEUE_SORT_FIELDSに
@@ -397,7 +397,7 @@ function render(): void {
         <datalist id="filter-release-type-options"></datalist>
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
-        <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="pause-btn" type="button" disabled>一時停止</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button> <button id="clear-queue-btn" type="button" disabled>再生リストをクリア</button></div>
+        <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="pause-btn" type="button" disabled>一時停止</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button> <button id="repeat-btn" type="button" disabled>リピート: オフ</button> <button id="clear-queue-btn" type="button" disabled>再生リストをクリア</button></div>
         <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトする</label>
         <label><input id="crossfade-toggle" type="checkbox" /> 曲間をクロスフェードする</label>
         <label>長さ
@@ -612,6 +612,7 @@ function setQueueNavEnabled(enabled: boolean): void {
   el<HTMLButtonElement>("next-btn").disabled = !enabled;
   el<HTMLButtonElement>("previous-btn").disabled = !enabled;
   el<HTMLButtonElement>("shuffle-btn").disabled = !enabled;
+  el<HTMLButtonElement>("repeat-btn").disabled = !enabled;
   el<HTMLButtonElement>("clear-queue-btn").disabled = !enabled;
   el<HTMLSelectElement>("sort-field").disabled = !enabled;
   el<HTMLSelectElement>("sort-direction").disabled = !enabled;
@@ -1591,10 +1592,10 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
     // move()はreplacePendingを指定しない通常のnext()経由のため、その未解決のpendingMoveの
     // 後ろへ直列に連結されるだけで実行されない（2026-09-15、Codexレビュー指摘：P1続き。
     // queue.ts:214-229のmove()参照）。resume()と同じreplacePending方式で直列化チェーンの
-    // 詰まりを迂回しつつ、正しい遷移先（現在のcurrentFileIdの次の曲）をpeekNextFileId()で
+    // 詰まりを迂回しつつ、正しい遷移先（リピート設定を反映した自然終了先）をpeekAdvanceTarget()で
     // 先読みしてresume()へ明示的に渡す（resume()自体はfindNext()を使わないため、この
     // 先読みが必須）。
-    const nextFileId = queue.peekNextFileId();
+    const nextFileId = queue.peekAdvanceTarget();
     // 次の曲が無い（キューの残り全曲が除外済みになった等）場合、単に何もしないだけでは
     // 済まない（2026-09-16、Codexレビュー指摘：P2「Invalidate a natural-end move when its
     // target is excluded」）。この早期returnがpendingNaturalEndAdvanceを解除せず、かつ元の
@@ -2928,6 +2929,36 @@ function init(): void {
     // シャッフルと同じ理由（並び順を変えるだけで再生を開始する操作ではない）でhandleQueuePlayback()は
     // 経由しない。完了を待ってから表示を更新する。
     el<HTMLButtonElement>("unshuffle-btn").addEventListener("click", () => { if (queue) void queue.unshuffle().then(() => { renderQueue(); updateUnshuffleEnabled(); }); });
+    el<HTMLButtonElement>("repeat-btn").addEventListener("click", () => {
+      if (!queue) return;
+      const currentIndex = REPEAT_MODES.indexOf(queue.repeatMode());
+      const mode = REPEAT_MODES[(currentIndex + 1) % REPEAT_MODES.length];
+      const currentQueueGeneration = queue.generationId();
+      if (pendingNaturalEndAdvance && pendingNaturalEndAdvanceGeneration !== currentQueueGeneration) {
+        pendingNaturalEndAdvance = false;
+        pendingNaturalEndAdvanceGeneration = null;
+      }
+      const shouldRerouteNaturalEndAdvance = pendingNaturalEndAdvance;
+      const outgoingEndedDuringCrossfade = crossfadeOrchestrator?.isCrossfading() === true
+        && playback?.activeAudioElement().ended === true;
+      crossfadeOrchestrator?.cancel();
+      queue.setRepeatMode(mode);
+      el<HTMLButtonElement>("repeat-btn").textContent = `リピート: ${REPEAT_MODE_LABELS[mode]}`;
+      if (shouldRerouteNaturalEndAdvance) {
+        const nextFileId = queue.peekAdvanceTarget();
+        if (!nextFileId) {
+          queue.invalidatePendingMove();
+          playback?.cancelPendingTransition();
+          pendingNaturalEndAdvance = false;
+          pendingNaturalEndAdvanceGeneration = null;
+        } else {
+          queue.invalidatePendingMove();
+          void handleQueuePlayback(() => queue?.resume(nextFileId, 0));
+        }
+      } else if (outgoingEndedDuringCrossfade) {
+        void handleNaturalEndAdvance();
+      }
+    });
     el<HTMLButtonElement>("clear-queue-btn").addEventListener("click", () => handleClearQueue());
     // 並び替えもシャッフルと同じ理由（並び順を変えるだけで再生を開始する操作ではない）で
     // handleQueuePlayback()は経由しない。手動並び替えはシャッフル履歴を無効化するため

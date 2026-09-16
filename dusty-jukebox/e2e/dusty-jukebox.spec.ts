@@ -13,6 +13,163 @@ async function openCatalog(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
 }
 
+async function openSymphonyQueue(page: import("@playwright/test").Page) {
+  await page.locator("#folder-id").fill("root");
+  await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+}
+
+async function endActiveAudio(page: import("@playwright/test").Page) {
+  await page.evaluate(() => {
+    const id = (window as unknown as { __e2e: { activeAudioElementId(): string } }).__e2e.activeAudioElementId();
+    document.getElementById(id)!.dispatchEvent(new Event("ended"));
+  });
+}
+
+test("リピートボタンはオフ→1曲→リスト全曲→オフと巡回する", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
+  const repeat = page.locator("#repeat-btn");
+  await expect(repeat).toHaveText("リピート: オフ");
+  await repeat.click(); await expect(repeat).toHaveText("リピート: 1曲");
+  await repeat.click(); await expect(repeat).toHaveText("リピート: リスト全曲");
+  await repeat.click(); await expect(repeat).toHaveText("リピート: オフ");
+});
+
+test("通常の自然終了遷移がplay()未解決の間にリピートモードを変更すると新しいモードの遷移先へ迂回する", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
+
+  // Openingの自然終了が選んだScherzoへのplay()だけを保留し、
+  // リピート変更後のOpeningへの迂回play()は即座に解決させる。
+  await page.evaluate(() => {
+    let releaseHeldPlay: (() => void) | null = null;
+    (window as unknown as { __e2eReleaseHeldNaturalEndPlay: () => void }).__e2eReleaseHeldNaturalEndPlay = () => releaseHeldPlay?.();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.getAttribute("src")?.includes("album-track-2")) {
+          return new Promise<void>((resolve) => { releaseHeldPlay = resolve; });
+        }
+        return Promise.resolve();
+      },
+    });
+  });
+
+  await endActiveAudio(page);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+
+  await page.locator("#repeat-btn").click();
+  await expect(page.locator("#repeat-btn")).toHaveText("リピート: 1曲");
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+
+  // 古いモードで選ばれたScherzoのplay()が遅れて解決しても、
+  // invalidatePendingMove()により現在曲も実際の再生先も巻き戻されない。
+  await page.evaluate(() => (window as unknown as { __e2eReleaseHeldNaturalEndPlay: () => void }).__e2eReleaseHeldNaturalEndPlay());
+  await page.waitForTimeout(100);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+});
+
+test("1曲リピートの自然終了は同じ曲を再要求し、手動の次へでは表示を維持して次曲へ進む", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
+  await page.locator("#repeat-btn").click();
+  const requestsBefore = mock.streamRequests.filter((request) => request.includes("album-track-1")).length;
+  await endActiveAudio(page);
+  await expect.poll(() => mock.streamRequests.filter((request) => request.includes("album-track-1")).length).toBeGreaterThan(requestsBefore);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect(page.locator("#repeat-btn")).toHaveText("リピート: 1曲");
+});
+
+test("リスト全曲リピートの最後の曲の自然終了は先頭へループする", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
+  await page.locator("#repeat-btn").click(); await page.locator("#repeat-btn").click();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-3(\?|$)/);
+  await endActiveAudio(page);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+});
+
+test("クロスフェードONでも1曲リピート中は次曲を先読みしない", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+  await page.locator("#repeat-btn").click();
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-b")).not.toHaveAttribute("src");
+});
+
+test("クロスフェードのランプ中にリピートモードを切り替えると#audio-player-bがリセットされる", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+  await page.clock.install();
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-b")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(true);
+
+  await page.locator("#repeat-btn").click();
+
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(false);
+  await expect(page.locator("#audio-player-b")).not.toHaveAttribute("src");
+  await expect(page.locator("#repeat-btn")).toHaveText("リピート: 1曲");
+});
+
+test("クロスフェードのランプ中に退場側が自然終了してからリピートモードを切り替えても次曲へ進む", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
+  await page.locator("#repeat-btn").click();
+  await page.locator("#repeat-btn").click();
+  await expect(page.locator("#repeat-btn")).toHaveText("リピート: リスト全曲");
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+  await page.clock.install();
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-b")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(true);
+
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    let firstRead = true;
+    Object.defineProperty(audio, "ended", {
+      get: () => {
+        if (!firstRead) return false;
+        firstRead = false;
+        return true;
+      },
+      configurable: true,
+    });
+    audio.dispatchEvent(new Event("ended"));
+  });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(true);
+
+  await page.locator("#repeat-btn").click();
+
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect(page.locator("#repeat-btn")).toHaveText("リピート: オフ");
+});
+
 test("ログインからスキャンして索引を書き込める", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { initialScanCompleted: false });
   await page.goto("/"); await login(page);
@@ -2273,5 +2430,3 @@ test("バックグラウンド復帰の対象（B）が未解決のまま2回連
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
   await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /song-1(\?|$)/);
 });
-
-

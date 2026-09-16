@@ -876,3 +876,9 @@ CONCEPT.md 4.3節「絞り込み→除外→保存という操作フローで作
     - （P1、修正済み）上記の`isSyncStateCurrent`への`scanRunId`追加は`reconcileIndexAgainstRoot`の`isStillCurrent`コールバック等には伝播したが、`markInitialScanCompleted`・`persistShortcutRootFolderIds`は独自の照合ロジック（`isSyncStateCurrent`を使わずroot/tokenのみを直接比較）を持っており、`scanRunId`の概念自体が無いままだった。特に`reconcileIndexAgainstRoot`は空欄化対象が0件の場合`isStillCurrent`コールバック自体を呼ばない（`updateRowsInBatches`のループが1回も回らないため）ため、同一ルートの初期化未完了中に2台のデバイスがほぼ同時にフルスキャンを開始し、かつリコンサイル対象が偶然0件だった場合、この完了記録がroot/tokenの一致だけで進んでしまい、まだ未処理のファイルが残っている別デバイスの実行を誤って「完了」扱いにしうる問題があった。`markInitialScanCompleted`・`persistShortcutRootFolderIds`の両方に`clearScanRunId`と同じ方式で省略可能な`scanRunId`照合を追加し、`runFullScan`の呼び出しに自分自身の`scanRunId`を渡すよう修正
     - （見送り、誤検知と判断）「差分同期の直接ファイル変更イベントが`folderPath: ""`で`extractAndBuildIndexEntries`を呼ぶため、初回スキャンで記録した階層情報を上書きして失ってしまう」という指摘があったが、実際に`INDEX_SHEET_HEADER`（本体のスプレッドシート列定義）・`buildIndexRow`・`extractAndBuildIndexEntries`のいずれにも`folderPath`という列・パラメータは存在しない。`AudioFileEntry.folderPath`（`drive.ts`）は移植元`catalog-script`の`lib.ts`（旧`SHEET_HEADER`、本体未使用と既に文書化済み）が使うフィールドで、本体の索引書き込み経路では一切参照されない死んだフィールドのため、この指摘は現在のコードには当てはまらない
     - ユニットテスト：`sync.test.ts`（`markInitialScanCompleted`・`persistShortcutRootFolderIds`それぞれの`scanRunId`一致/不一致/省略時の書き込み可否）
+## リピート再生（2026-09-16）
+
+- リピートモードはプレイヤー設定として扱い、再生リストを作り直す `PlaybackQueue.setList()` ではリセットしない。
+- 「1曲」リピートの自然終了は現在曲を先頭から再生し直す一方、手動の「次へ」「前へ」は通常の曲移動を維持する。
+- 「1曲」リピート中は同じ曲同士のクロスフェードを行わず、先読み準備・音量ランプの両方を抑止する。
+- バックグラウンドで自然終了遷移が固まった場合も `peekAdvanceTarget()` を使い、「1曲」なら現在曲、「リスト全曲」ならラップ後の曲へ復帰する。

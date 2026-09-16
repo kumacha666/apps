@@ -9,6 +9,91 @@ const song = (fileId: string): Song => ({ fileId, parentId: "p", title: fileId, 
 const indexRow = (values: Record<string, string>): string[] => INDEX_SHEET_HEADER.map((header) => values[header] ?? "");
 class Audio { listener: (() => void) | undefined; addEventListener(_: "ended", listener: () => void) { this.listener = listener; } }
 describe("PlaybackQueue", () => {
+  test("リピートモードはoffから設定でき、setListでも維持される", () => {
+    const queue = new PlaybackQueue({ play: async () => {} }, new Audio());
+    expect(queue.repeatMode()).toBe("off");
+    queue.setRepeatMode("single");
+    expect(queue.repeatMode()).toBe("single");
+    expect(queue.isSingleRepeat()).toBe(true);
+    queue.setList([song("a")]);
+    expect(queue.repeatMode()).toBe("single");
+  });
+
+  test("offとsingleでは末尾からラップせず、allでは除外曲を飛ばして先頭へラップする", async () => {
+    const played: string[] = [];
+    const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, new Audio());
+    queue.setList([song("a"), song("b"), song("c")]);
+    queue.exclude("a", true);
+    await queue.playAt(1); // c
+    expect(queue.peekNextFileId()).toBeNull();
+    expect(await queue.next()).toBe(false);
+    queue.setRepeatMode("single");
+    expect(queue.peekNextFileId()).toBeNull();
+    queue.setRepeatMode("all");
+    expect(queue.peekNextFileId()).toBe("b");
+    expect(await queue.next()).toBe(true);
+    expect(played).toEqual(["c", "b"]);
+  });
+
+  test("allで再生可能曲が1曲だけなら次も前も自分自身へラップする", async () => {
+    const played: string[] = [];
+    const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, new Audio());
+    queue.setList([song("a"), song("b")]);
+    queue.exclude("b", true);
+    queue.setRepeatMode("all");
+    await queue.playAt(0);
+    expect(queue.peekNextFileId()).toBe("a");
+    await queue.next();
+    await queue.previous();
+    expect(played).toEqual(["a", "a", "a"]);
+  });
+
+  test("allのpreviousは先頭から除外曲を飛ばして末尾へラップする", async () => {
+    const played: string[] = [];
+    const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, new Audio());
+    queue.setList([song("a"), song("b"), song("c")]);
+    queue.exclude("c", true);
+    queue.setRepeatMode("all");
+    await queue.playAt(0);
+    await queue.previous();
+    expect(played).toEqual(["a", "b"]);
+  });
+
+  test("peekAdvanceTargetはsingleの非除外現在曲だけ自己リピートし、除外時と他モードは次曲を返す", async () => {
+    const queue = new PlaybackQueue({ play: async () => {} }, new Audio());
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0);
+    queue.setRepeatMode("single");
+    expect(queue.peekAdvanceTarget()).toBe("a");
+    queue.exclude("a", true);
+    expect(queue.peekAdvanceTarget()).toBe("b");
+    queue.exclude("a", false);
+    queue.setRepeatMode("off");
+    expect(queue.peekAdvanceTarget()).toBe("b");
+  });
+
+  test("自然終了はsingleなら同じ曲を先頭から再生し、除外済みなら次曲へフォールバックする", async () => {
+    const played: Array<[string, number | undefined]> = [];
+    const queue = new PlaybackQueue({ play: async (id, position) => { played.push([id, position]); } }, new Audio());
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0);
+    queue.setRepeatMode("single");
+    await queue.advanceOnEnded();
+    queue.exclude("a", true);
+    await queue.advanceOnEnded(7);
+    expect(played).toEqual([["a", undefined], ["a", 0], ["b", 7]]);
+  });
+
+  test("自然終了はoffでは従来通り停止し、allでは末尾から先頭へ進む", async () => {
+    const played: string[] = [];
+    const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, new Audio());
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(1);
+    expect(await queue.advanceOnEnded()).toBe(false);
+    queue.setRepeatMode("all");
+    expect(await queue.advanceOnEnded()).toBe(true);
+    expect(played).toEqual(["b", "a"]);
+  });
   test("除外、新しいリストでのリセット、next/previous/ended、最後で停止を扱う", async () => {
     const played: string[] = []; const audio = new Audio(); const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, audio);
     queue.setList([song("a"), song("b"), song("c")]); queue.exclude("b", true); expect(queue.list().map((s) => s.fileId)).toEqual(["a", "c"]);
