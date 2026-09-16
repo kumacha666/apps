@@ -231,6 +231,29 @@ let pendingExternalPlaybackFileId: string | null = null;
 // `backgroundRetryAttemptToken`と同じ採番トークン方式で解消する既存の類似バグと同型）。
 let pendingExternalPlaybackToken: number | null = null;
 let externalPlaybackTokenCounter = 0;
+// pendingQueueTransitionTargetの所有権確認もfileId比較ではなく採番トークンで行う（2026-09-16、
+// Codexレビュー指摘：P2「Use a token when clearing a failed recovery target」、
+// pendingExternalPlaybackTokenと同型のバグ）。registerQueuePlaybackContinuation()はPlaybackQueueが
+// 起こすあらゆるplayAndCommit()呼び出しから共通して呼ばれる唯一のsetterのため、ここで毎回
+// トークンを発行する。この対象（B）への復帰（attemptBackgroundPlaybackRecovery()の
+// pendingQueueTransitionTarget分岐）が未解決のまま固まっている間に、ユーザーが同じBへの
+// 別のナビゲーションを開始すると、そのナビゲーションのregisterQueuePlaybackContinuation()呼び出し
+// がpendingQueueTransitionTargetを同じBで（新しいトークンで）再登録する。この後で復帰側の
+// resume()が失敗して解決すると、fileId比較だけの所有権確認ではこの新しいナビゲーションの
+// マーカーを誤って自分のものとみなして消してしまう。
+//
+// registerQueuePlaybackContinuation()の呼び出しはPlaybackQueue.move()の直列化チェーン内で
+// 非同期に（少なくとも1回のマイクロタスク経由で）発生するため（queue.tsのmove()参照）、呼び出し元
+// （attemptBackgroundPlaybackRecovery()）はqueue.resume()を呼んだ直後にその戻り値から自分自身の
+// トークンを同期的に読み取ることができない。pendingQueueTransitionCapture（下記）へ「次回の
+// registerQueuePlaybackContinuation()呼び出しで発行されたトークンを教えてほしい」というコール
+// バックを、queue.resume()を呼ぶ直前（＝Service Worker準備待ち等の非同期区間を挟んだ後、この
+// 呼び出し専用のクロージャの中）にセットすることで、他のDOM操作（クリック・タイマー）由来の
+// 競合する登録が別のマクロタスクとしてしか発生し得ない以上、次に発火する登録は必ず自分自身の
+// ものであることを保証する。
+let pendingQueueTransitionTargetToken: number | null = null;
+let queueTransitionTokenCounter = 0;
+let pendingQueueTransitionCapture: ((token: number) => void) | null = null;
 const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
 // catalogSessionへ最後に読み込んだ（有効な）曲一覧の出所スプレッドシートID。プレイリストの
@@ -1381,6 +1404,16 @@ function registerQueuePlaybackContinuation(fileId: string, streamId: number): vo
   // 「今まさにコミットしようとしている曲」を捕捉できる。
   pendingQueueTransitionTarget = fileId;
   pendingQueueTransitionTargetGeneration = queue?.generationId() ?? null;
+  // pendingQueueTransitionTargetTokenの定義コメント参照。呼び出しごとに必ず新しいトークンを
+  // 発行し、直前に登録されたcapture待ちのコールバックがあれば消費して通知する（無ければ何も
+  // しない：手動ナビゲーション全般が毎回ここを通るため、captureが無いのが通常のケース）。
+  queueTransitionTokenCounter += 1;
+  pendingQueueTransitionTargetToken = queueTransitionTokenCounter;
+  if (pendingQueueTransitionCapture) {
+    const capture = pendingQueueTransitionCapture;
+    pendingQueueTransitionCapture = null;
+    capture(pendingQueueTransitionTargetToken);
+  }
   playbackContinuations.register({
     fileId,
     streamId,
@@ -1611,14 +1644,43 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
     // pendingQueueTransitionTargetがこの無効な値のまま取り残され、以後のあらゆるリトライ
     // （定期リトライ・フォアグラウンド復帰の両方）がこの同じ失敗するresume()を無期限に
     // 繰り返し、下の「既にコミット済みの現在曲をそのまま再開する」フォールバック分岐へ
-    // 一切到達できなくなる——復帰機能そのものが恒久的に機能しなくなる回帰。失敗時、この時点で
-    // まだpendingQueueTransitionTargetが自分（target）を指している場合のみ解除する
-    // （待機中に別の新しいナビゲーションがonBeforePlay経由で既に上書きしていた場合、その
-    // 新しい値を誤って消さないため）。
+    // 一切到達できなくなる——復帰機能そのものが恒久的に機能しなくなる回帰。
+    //
+    // 続けて2026-09-16、この解除自体をpendingQueueTransitionTargetToken（定義コメント参照）で
+    // 所有権確認するよう修正（Codexレビュー指摘：P2「Use a token when clearing a failed
+    // recovery target」）。fileId比較だけ（===target）では、このresume()が失敗して解決する
+    // 前に、ユーザーが同じBへの別のナビゲーションを開始しonBeforePlay経由でpendingQueue
+    // TransitionTargetを（新しいトークンで）B自身へ再登録していた場合、そのより新しい
+    // マーカーを自分自身のものと誤認して消してしまう。myQueueTransitionTokenは
+    // queue.resume()を呼ぶ直前（Service Worker準備待ち等の非同期区間を挟んだ後）にセットする
+    // ことで、この特定の呼び出し自身が引き起こす登録だけを正確に捕捉する。
+    //
+    // originalTokenはこの分岐へ入った時点（invalidatePendingMove()より前）のトークンを保持する。
+    // resume(target, 0)が対象の除外等でregisterQueuePlaybackContinuation()に一度も到達しない
+    // 場合（上記コメント参照）、myQueueTransitionTokenはnullのまま残る——この場合に「自分自身の
+    // トークンとの一致」だけを条件にすると、この試行が何も新しく登録していないにも関わらず、
+    // 元々登録されていた（この分岐へ入った理由そのものである）トークンとの一致を検出できず、
+    // 誰も上書きしていないのに解除できなくなってしまう（このPRが直そうとした「Discard
+    // excluded recovery targets」の回帰）。resume()が一度も登録に到達しなかった場合は、
+    // 代わりにoriginalTokenとの一致（＝この試行が始まってから誰も新しく登録していないこと）
+    // で判定する。
+    const originalToken = pendingQueueTransitionTargetToken;
+    let myQueueTransitionToken: number | null = null;
     return handleQueuePlayback(
-      () => queue?.resume(target, 0),
       () => {
-        if (pendingQueueTransitionTarget === target) {
+        pendingQueueTransitionCapture = (token) => { myQueueTransitionToken = token; };
+        return queue?.resume(target, 0);
+      },
+      () => {
+        // resume()が対象の除外等でplayer.play()自体を一度も呼ばなかった場合、captureが
+        // 消費されずに残ったままになる。次の（無関係な）登録を誤って自分のものと捕捉して
+        // しまわないよう、ここで無条件に破棄する。
+        pendingQueueTransitionCapture = null;
+        const expectedToken = myQueueTransitionToken ?? originalToken;
+        if (
+          pendingQueueTransitionTarget === target &&
+          pendingQueueTransitionTargetToken === expectedToken
+        ) {
           pendingQueueTransitionTarget = null;
           pendingQueueTransitionTargetGeneration = null;
         }

@@ -2207,3 +2207,70 @@ test("同一fileIdへの「この曲を再生」を連打すると、先に開�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /external-track(\?|$)/);
 });
 
+test("バックグラウンド復帰の対象（B）が未解決のまま2回連続で迂回されても、先発の試行（A）の失敗が後発の試行（B）の保留状態を誤って解除しない（2026-09-16、Codexレビュー指摘：P2「Use a token when clearing a failed recovery target」の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+
+  // 1回目の「次へ」でsong-1を通常通り再生開始する（デフォルトのplay()モックで即座に解決し、
+  // queue.canResumeCurrent()がtrueになる。修正前のバグが表面化した際に横取りされる対象を作る）。
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  // この後のplay()呼び出しを、呼び出し順にインデックスを振り個別に解放できるスタブへ
+  // 差し替える（既存の複数のテストと同じ方式）。
+  await page.evaluate(() => {
+    const resolvers: (() => void)[] = [];
+    (window as unknown as { __e2eReleasePlayCallAt: (i: number) => void }).__e2eReleasePlayCallAt = (i: number) => resolvers[i]?.();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function () {
+        return new Promise<void>((resolve) => { resolvers.push(resolve); });
+      },
+    });
+  });
+
+  // 2回目の「次へ」でsong-2への手動遷移だけを未解決のまま固める（pendingQueueTransitionTarget=
+  // song-2、queue.currentPlayingFileId()はまだ更新前のsong-1のまま）。これが「元の（まだ未解決の
+  // まま固まっている）自然終了ではない手動遷移」に相当する（呼び出し#0）。
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("First song");
+
+  // バックグラウンド復帰（Attempt A）を1回発火させる。pendingQueueTransitionTarget=song-2は
+  // currentFileId=song-1と異なるためこの分岐へ入り、invalidatePendingMove()で呼び出し#0を
+  // 無効化した上で、resume(song-2, 0)を呼ぶ（呼び出し#1、未解決のまま固まる）。この呼び出し
+  // 自身のregisterQueuePlaybackContinuation()がpendingQueueTransitionTargetToken（Attempt A自身の
+  // トークン）を新しく発行する。
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  // 続けてバックグラウンド復帰（Attempt B、「queued B」に相当）をもう1回発火させる。
+  // pendingQueueTransitionTargetは依然としてsong-2のままのため同じ分岐へ再度入り、
+  // invalidatePendingMove()でAttempt A（呼び出し#1）を無効化した上で、resume(song-2, 0)を
+  // 再度呼ぶ（呼び出し#2、未解決のまま固まる）。このregisterQueuePlaybackContinuation()呼び出しが
+  // pendingQueueTransitionTargetTokenをAttempt Bのものへ上書きする——「PlaybackQueue.pendingMoveが
+  // 拒否を先に処理し、より新しい操作がonBeforePlayへ到達してBを再度記録する」という指摘のタイミング
+  // を、periodic retry相当の2連続呼び出しで確定的に再現する。
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  // Attempt A（呼び出し#1）を解放する。invalidatePendingMove()で既にgenerationが2回
+  // 進められているため（Attempt B自身の呼び出しも含む）、playAndCommit()の
+  // `generation !== this.generation`チェックにより例外を投げずfalseで解決し、
+  // handlePlaybackAction()のonFinalFailure()が呼ばれる。
+  await page.evaluate(() => (window as unknown as { __e2eReleasePlayCallAt: (i: number) => void }).__e2eReleasePlayCallAt(1));
+  await page.waitForTimeout(20);
+
+  // ここでもう一度バックグラウンド復帰を発火させる。修正前は、Attempt Aのonfinal
+  // failureがfileId比較（pendingQueueTransitionTarget === target）だけで所有権確認していたため、
+  // Attempt B（呼び出し#2）がまだ保留中で同じfileId（song-2）を記録していても、Attempt Aの
+  // 失敗がそれを誤って解除してしまい、pendingQueueTransitionTargetがnullへ戻っていた。この
+  // 状態でこの3回目の復帰は、queue.canResumeCurrent()がtrue（song-1が既にコミット済み）の
+  // ままキュー側の古い曲（song-1）を誤ってresume()し、Attempt Bの正しい対象（song-2）を
+  // 横取りしてしまっていた（audio-playerのsrcがsong-1へ戻る）。修正後は、
+  // pendingQueueTransitionTargetTokenがAttempt B自身のトークンのまま保たれているため、
+  // pendingQueueTransitionTarget分岐（song-2）へ正しく迂回し続け、song-1への横取りは起きない。
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await page.waitForTimeout(20);
+
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+  await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /song-1(\?|$)/);
+});
+
