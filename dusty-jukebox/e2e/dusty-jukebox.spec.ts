@@ -75,6 +75,27 @@ test("クロスフェードONでも1曲リピート中は次曲を先読みし�
   await expect(page.locator("#audio-player-b")).not.toHaveAttribute("src");
 });
 
+test("クロスフェードのランプ中にリピートモードを切り替えると#audio-player-bがリセットされる", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+  await page.clock.install();
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-b")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(true);
+
+  await page.locator("#repeat-btn").click();
+
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(false);
+  await expect(page.locator("#audio-player-b")).not.toHaveAttribute("src");
+  await expect(page.locator("#repeat-btn")).toHaveText("リピート: 1曲");
+});
+
 test("ログインからスキャンして索引を書き込める", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { initialScanCompleted: false });
   await page.goto("/"); await login(page);

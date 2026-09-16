@@ -2933,6 +2933,7 @@ function init(): void {
       if (!queue) return;
       const currentIndex = REPEAT_MODES.indexOf(queue.repeatMode());
       const mode = REPEAT_MODES[(currentIndex + 1) % REPEAT_MODES.length];
+      crossfadeOrchestrator?.cancel();
       queue.setRepeatMode(mode);
       el<HTMLButtonElement>("repeat-btn").textContent = `リピート: ${REPEAT_MODE_LABELS[mode]}`;
     });
