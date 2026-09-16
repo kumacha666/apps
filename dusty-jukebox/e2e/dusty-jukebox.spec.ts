@@ -2274,3 +2274,4 @@ test("バックグラウンド復帰の対象（B）が未解決のまま2回連
   await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /song-1(\?|$)/);
 });
 
+

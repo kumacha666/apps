@@ -42,6 +42,7 @@ import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState }
 import { formatSeekTime, isSeekableDuration } from "./seekBar";
 import { shouldResumeExternalPlayback } from "./externalPlayback";
 import { shouldAttemptBackgroundPlaybackRecovery } from "./backgroundPlaybackRecovery";
+import { PendingCapture } from "./pendingCapture";
 import {
   CROSSFADE_DURATION_OPTIONS_SEC,
   DEFAULT_CROSSFADE_DURATION_SEC,
@@ -248,12 +249,23 @@ let externalPlaybackTokenCounter = 0;
 // トークンを同期的に読み取ることができない。pendingQueueTransitionCapture（下記）へ「次回の
 // registerQueuePlaybackContinuation()呼び出しで発行されたトークンを教えてほしい」というコール
 // バックを、queue.resume()を呼ぶ直前（＝Service Worker準備待ち等の非同期区間を挟んだ後、この
-// 呼び出し専用のクロージャの中）にセットすることで、他のDOM操作（クリック・タイマー）由来の
-// 競合する登録が別のマクロタスクとしてしか発生し得ない以上、次に発火する登録は必ず自分自身の
-// ものであることを保証する。
+// 呼び出し専用のクロージャの中）にセットする。
+//
+// 続けて2026-09-16、Codexレビュー指摘：P2「Clear only the capture owned by this recovery」。
+// 「他のDOM操作由来の競合する登録は別のマクロタスクとしてしか発生し得ない」という当初の想定は
+// 誤りだった：この分岐自体がバックグラウンド復帰（visibilitychange等）から短時間に複数回
+// 呼ばれうるため、先発の呼び出し（A）がServiceWorker準備待ち・トークン確認等の非同期区間を
+// 経てqueue.resume()を呼ぶより前に、後発の呼び出し（B）が同じ分岐へ入り自分自身の
+// コールバックでこのスロットを上書きすることがある。Aが（登録に一度も到達しないまま）先に
+// 失敗すると、Aの後始末がBのまだ消費されていないコールバックを誤って解放してしまい、Bの
+// 登録がその捕捉を受け取れなくなる（このPRが直した「Discard excluded recovery targets」と
+// 同型の恒久的な復帰不能に陥る）。単一のコールバックスロットへの「まだ自分が所有している
+// ものだけを解放する」という操作自体を`PendingCapture`（`pendingCapture.ts`）へ切り出し、
+// ユニットテストで直接検証できるようにした（main.ts自体はDOM結線のみを担う薄い層のため
+// ユニットテスト対象外という既存方針に沿う）。
 let pendingQueueTransitionTargetToken: number | null = null;
 let queueTransitionTokenCounter = 0;
-let pendingQueueTransitionCapture: ((token: number) => void) | null = null;
+const pendingQueueTransitionCapture = new PendingCapture<number>();
 const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
 // catalogSessionへ最後に読み込んだ（有効な）曲一覧の出所スプレッドシートID。プレイリストの
@@ -1409,11 +1421,7 @@ function registerQueuePlaybackContinuation(fileId: string, streamId: number): vo
   // しない：手動ナビゲーション全般が毎回ここを通るため、captureが無いのが通常のケース）。
   queueTransitionTokenCounter += 1;
   pendingQueueTransitionTargetToken = queueTransitionTokenCounter;
-  if (pendingQueueTransitionCapture) {
-    const capture = pendingQueueTransitionCapture;
-    pendingQueueTransitionCapture = null;
-    capture(pendingQueueTransitionTargetToken);
-  }
+  pendingQueueTransitionCapture.consume(pendingQueueTransitionTargetToken);
   playbackContinuations.register({
     fileId,
     streamId,
@@ -1664,18 +1672,35 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
     // excluded recovery targets」の回帰）。resume()が一度も登録に到達しなかった場合は、
     // 代わりにoriginalTokenとの一致（＝この試行が始まってから誰も新しく登録していないこと）
     // で判定する。
+    //
+    // 続けて2026-09-16、captureの破棄自体もこの呼び出し自身が設置したものか確認するよう修正
+    // （Codexレビュー指摘：P2「Clear only the capture owned by this recovery」）。
+    // PlaybackController.play()はonStreamIdAllocated（registerQueuePlaybackContinuation()）を
+    // 呼ぶ前にトークン確保等を待つため、Attempt A（この呼び出し自身）がまだ登録に到達していない
+    // 間に、より新しいAttempt B（別のバックグラウンド復帰等）が同じ分岐へ入りpendingQueue
+    // TransitionCaptureを自分自身のコールバックへ上書きすることがある。この状態でAttempt Aが
+    // （resume()が対象除外等で登録に一度も到達せず）先に失敗すると、上記の無条件破棄が
+    // Attempt B自身がまだ消費していないコールバックを誤って消してしまい、BのmyQueueTransition
+    // Tokenがnullのまま残ったまま登録に到達し、Bが後で失敗した際にoriginalToken（Bが分岐へ
+    // 入った古い時点の値）との比較に失敗し、以後恒久的に解除できなくなる（このPRが直した
+    // 「Discard excluded recovery targets」と同型の回帰）。PendingCapture.releaseIfOwnedBy()
+    // （`pendingCapture.ts`参照）が「現在の設置物が依然として自分自身のコールバックである
+    // 場合のみ」解放する不変条件を担う（他の呼び出しのコールバックへ既に差し替わっていれば、
+    // それはその呼び出し自身の責任で後始末されるため触れない）。
     const originalToken = pendingQueueTransitionTargetToken;
     let myQueueTransitionToken: number | null = null;
+    const captureCallback = (token: number) => { myQueueTransitionToken = token; };
     return handleQueuePlayback(
       () => {
-        pendingQueueTransitionCapture = (token) => { myQueueTransitionToken = token; };
+        pendingQueueTransitionCapture.install(captureCallback);
         return queue?.resume(target, 0);
       },
       () => {
         // resume()が対象の除外等でplayer.play()自体を一度も呼ばなかった場合、captureが
         // 消費されずに残ったままになる。次の（無関係な）登録を誤って自分のものと捕捉して
-        // しまわないよう、ここで無条件に破棄する。
-        pendingQueueTransitionCapture = null;
+        // しまわないよう破棄するが、既に別の呼び出しのコールバックへ差し替わっている場合は
+        // 触れない（上記コメント参照）。
+        pendingQueueTransitionCapture.releaseIfOwnedBy(captureCallback);
         const expectedToken = myQueueTransitionToken ?? originalToken;
         if (
           pendingQueueTransitionTarget === target &&
