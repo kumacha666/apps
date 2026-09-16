@@ -232,12 +232,14 @@ export class PlaybackController {
         // volumeを復元・pendingFadeOriginalVolumeをクリア済みのため、ここでは一切触れない
         // （このplay()呼び出し自身のpendingFadeOriginalVolumeは既に追い越した側に消費・
         // クリアされている）。PlaybackPausedError/PlaybackInterruptedErrorの区別のみ行う：
-        // このgenerationの変化がpause()自身によるものであれば（＝pause()以降まだ他のplay()
-        // が呼ばれていなければ）ネイティブ一時停止と同じくPlaybackPausedErrorとして区別して
-        // 投げる（そうでなければ、別の正当なplay()に追い越されただけなので、区別しない
+        // このgenerationの変化が一時停止（ネイティブ・アプリ内いずれも）の連鎖だけで説明でき、
+        // かつ今もなお一時停止のままであれば（＝pauseChainStatus()参照）ネイティブ一時停止と
+        // 同じくPlaybackPausedErrorとして区別して投げる（そうでなければ、別の正当なplay()に
+        // 追い越された・既にネイティブ再開で取り消し済み、のいずれかなので、区別しない
         // PlaybackInterruptedErrorを投げる）。
-        const supersededByReason = this.generationReasons.get(playGeneration + 1);
-        if (supersededByReason === "pause") throw new PlaybackPausedError();
+        if (this.pauseChainStatus(playGeneration) === "paused") {
+          throw new PlaybackPausedError();
+        }
         throw new PlaybackInterruptedError();
       }
       // フェード中にネイティブ操作（<audio controls>・Media Session）で明示的に一時停止された
@@ -302,8 +304,35 @@ export class PlaybackController {
     // からまだ誰も上書きしていない場合に限る：既に別の（より新しい）play()呼び出しがsrcを
     // 差し替えて再生を開始している場合、ここで無条件にpause()するとその正当な新しい再生まで
     // 誤って止めてしまうため、audio.srcが依然として自分の設定したものと一致する場合だけ止める。
-    if (isSuperseded() && this.audio.src === thisRequestSrc) {
-      this.audio.pause();
+    if (isSuperseded()) {
+      // 一時停止（ネイティブ・アプリ内いずれも）の連鎖だけで説明でき、かつ今もなお一時停止の
+      // ままである場合だけ"paused"を返す（pauseChainStatus()コメント参照。2026-09-16、Codexレ
+      // ビュー指摘：P1「Revoke the resume acknowledgement on a later pause」を踏まえた再設計。
+      // 旧実装は「自分を直接追い越した理由がpauseで、かつネイティブ再開の確認がその直後の
+      // generationと一致するか」だけを見ていたため、pause→ネイティブ再開→さらにもう一度pause
+      // という3イベントの順序で、2回目のpauseを見逃していた）。ネイティブ再開で既に取り消し
+      // 済みの場合（"resumed"）はaudio.srcが一致していても再度audio.pause()しない：既にaudio
+      // 要素はネイティブ再開により鳴っているはずで、ここで無条件にpause()すると再開を
+      // 打ち消してしまう。
+      const status = this.pauseChainStatus(playGeneration);
+      if (this.audio.src === thisRequestSrc && status !== "resumed") {
+        this.audio.pause();
+      }
+      // 一時停止の連鎖の結果、今もなお一時停止のままである場合だけPlaybackPausedErrorを投げて
+      // PlaybackQueue.playAndCommit()に「成功扱いでcommitしてはならない」ことを伝える
+      // （2026-09-15、Codexレビュー指摘：P1「Cancel pending recovery when the user pauses」）。
+      // fadeOut無しのこの経路（バックグラウンド復帰のresume()等が主に使う）は、上のaudio.
+      // pause()で実際の音声こそ正しく止めるものの、それ以外はこのメソッド自体が単に正常
+      // return（void）していたため、PlaybackQueue.playAndCommit()は「再生成功」とみなし、
+      // キュー自身のgeneration確認（pause()はPlaybackController側のgenerationしか進めず、
+      // PlaybackQueue側のgenerationには一切触れない）をそのまま通過してcurrentFileId/
+      // isQueuePlaybackをcommitしてしまっていた。他の理由（別の正当なplay()に追い越された
+      // だけ、または既にネイティブ再開で取り消し済み）ではこれまで通り黙ってreturnし、
+      // PlaybackQueue側のgeneration確認に判定を委ねる（そちらは既存の複数ラウンドで
+      // 固められた既存の設計のため変更しない）。
+      if (status === "paused") {
+        throw new PlaybackPausedError();
+      }
     }
   }
 
@@ -333,6 +362,65 @@ export class PlaybackController {
     this.onTransitionStart();
     this.generation += 1;
     this.generationReasons.set(this.generation, "cancel");
+  }
+
+  // Bluetooth/OSのMedia Session一時停止（main.ts）はaudio要素のネイティブpause()を直接
+  // 呼ぶだけで、PlaybackController.pause()は経由しない（同じボタンでの再開を壊さないため、
+  // currentFileId/streamGenerationは温存する設計。上のpause()コメント・mediaSession pause
+  // ハンドラのコメント参照）。この経路だけを通ると、進行中のバックグラウンド復帰リトライ
+  // （resume()）のネイティブplay()が未解決のまま固まっている間はgenerationも一切変化しない
+  // ため`isSuperseded()`がfalseのままとなり、後から解決したその古いplay()呼び出しが
+  // 「成功」として扱われ、PlaybackQueue側の状態が誤って書き換わってしまう（2026-09-15、
+  // Codexレビュー指摘：P1「Invalidate recovery on Media Session pause」）。pause()と同じ
+  // generation/generationReasonsの更新だけを行い、audio.pause()の呼び出し・currentFileId/
+  // streamGeneration/rejectedGenerationのクリアは行わない（呼び出し元が既にネイティブ
+  // pause()を済ませており、かつ「同じボタンでの再開」を保つため）。
+  invalidatePendingRecoveryOnNativePause(): void {
+    this.reclaimPendingFadeVolume();
+    this.onTransitionStart();
+    this.generation += 1;
+    this.generationReasons.set(this.generation, "pause");
+  }
+
+  // ネイティブ一時停止（invalidatePendingRecoveryOnNativePause()経由・アプリの「一時停止」
+  // ボタン=pause()経由のいずれも）の直後に、audio要素のネイティブ再開（Media Sessionの
+  // playハンドラがPlaybackControllerを経由せずaudio.play()を直接呼ぶ経路）が発生した場合、
+  // その一時停止は既にユーザー自身によって明示的に取り消されている（2026-09-15、Codexレビュー
+  // 指摘：P1「Supersede pause ownership on Media Session play」）。generation単独ではこれを
+  // 検知できない：ネイティブ再開はPlaybackController側のgenerationを一切進めないため、
+  // `this.generation === playGeneration + 1`という既存の厳密一致は「pauseの後、何も起きて
+  // いない」と誤認したままになる——古い（未解決のまま固まっていた）play()呼び出しが後から
+  // 解決すると、依然としてaudio.srcが一致するという理由でaudio.pause()を再度呼んでしまい、
+  // ユーザーがBluetooth/OSの再生ボタンで明示的に再開した直後の音声を勝手に止めてしまう。
+  // 「最後にネイティブ再開を確認した時点のgeneration」を記録し、pauseChainStatus()がこれを
+  // 参照する。
+  private lastNativeResumeAckGeneration: number | null = null;
+
+  // Media Sessionのplayハンドラ（main.ts）がaudio要素のネイティブplay()を直接呼んだ直後に
+  // 呼ぶ。
+  acknowledgeNativeResume(): void {
+    this.lastNativeResumeAckGeneration = this.generation;
+  }
+
+  // 自分（playGeneration）を追い越したのが一時停止（ネイティブ・アプリ内いずれも）で、かつ
+  // その一時停止が今もなお有効かどうかを判定する（2026-09-16、Codexレビュー指摘：P1「Revoke
+  // the resume acknowledgement on a later pause」を踏まえた再設計）。旧実装は「自分を直接
+  // 追い越した理由（playGeneration+1）がpauseで、かつそれがlastNativeResumeAckGenerationと
+  // 一致するか」だけを見ていたため、pause→ネイティブ再開→さらにもう一度pauseという3イベントの
+  // 順序（Bluetooth/OSの再生ボタンを一時停止→再生→一時停止と素早く操作する等）で、2回目の
+  // pauseがlastNativeResumeAckGenerationを更新しないまま`this.generation`だけを進めてしまい、
+  // 「まだ最初のpauseの直後で何も起きていない」という判定を古いまま維持してしまっていた
+  // （実際には既に取り消し済みの再開状態を根拠に、より新しい2回目のpauseを見逃していた）。
+  // playGeneration+1からthis.generationまでの間に発生した全ての世代進行が一時停止（ネイティブ・
+  // アプリ内いずれも、generationReasonsが"pause"を記録する経路）だけで説明できるかを1件ずつ
+  // 確認し（無関係な正当なplay()やcancelPendingTransition()を1件でも挟んでいれば"pause以外"
+  // として扱う）、説明できる場合に限り、その一時停止の連鎖の最後がacknowledgeNativeResume()で
+  // 取り消されているかどうかで最終的な状態（"paused"/"resumed"）を決める。
+  private pauseChainStatus(playGeneration: number): "not-a-pause-chain" | "paused" | "resumed" {
+    for (let generation = playGeneration + 1; generation <= this.generation; generation += 1) {
+      if (this.generationReasons.get(generation) !== "pause") return "not-a-pause-chain";
+    }
+    return this.lastNativeResumeAckGeneration === this.generation ? "resumed" : "paused";
   }
 
   // クロスフェードのハンドオフが既にaudio.srcを次曲へコミット済みの状態で一時停止された場合、
