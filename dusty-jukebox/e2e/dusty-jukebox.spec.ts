@@ -38,6 +38,42 @@ test("リピートボタンはオフ→1曲→リスト全曲→オフと巡回�
   await repeat.click(); await expect(repeat).toHaveText("リピート: オフ");
 });
 
+test("通常の自然終了遷移がplay()未解決の間にリピートモードを変更すると新しいモードの遷移先へ迂回する", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
+
+  // Openingの自然終了が選んだScherzoへのplay()だけを保留し、
+  // リピート変更後のOpeningへの迂回play()は即座に解決させる。
+  await page.evaluate(() => {
+    let releaseHeldPlay: (() => void) | null = null;
+    (window as unknown as { __e2eReleaseHeldNaturalEndPlay: () => void }).__e2eReleaseHeldNaturalEndPlay = () => releaseHeldPlay?.();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function (this: HTMLMediaElement) {
+        if (this.getAttribute("src")?.includes("album-track-2")) {
+          return new Promise<void>((resolve) => { releaseHeldPlay = resolve; });
+        }
+        return Promise.resolve();
+      },
+    });
+  });
+
+  await endActiveAudio(page);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+
+  await page.locator("#repeat-btn").click();
+  await expect(page.locator("#repeat-btn")).toHaveText("リピート: 1曲");
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+
+  // 古いモードで選ばれたScherzoのplay()が遅れて解決しても、
+  // invalidatePendingMove()により現在曲も実際の再生先も巻き戻されない。
+  await page.evaluate(() => (window as unknown as { __e2eReleaseHeldNaturalEndPlay: () => void }).__e2eReleaseHeldNaturalEndPlay());
+  await page.waitForTimeout(100);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+});
+
 test("1曲リピートの自然終了は同じ曲を再要求し、手動の次へでは表示を維持して次曲へ進む", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
   await page.locator("#repeat-btn").click();

@@ -2933,12 +2933,31 @@ function init(): void {
       if (!queue) return;
       const currentIndex = REPEAT_MODES.indexOf(queue.repeatMode());
       const mode = REPEAT_MODES[(currentIndex + 1) % REPEAT_MODES.length];
+      const currentQueueGeneration = queue.generationId();
+      if (pendingNaturalEndAdvance && pendingNaturalEndAdvanceGeneration !== currentQueueGeneration) {
+        pendingNaturalEndAdvance = false;
+        pendingNaturalEndAdvanceGeneration = null;
+      }
+      const shouldRerouteNaturalEndAdvance = pendingNaturalEndAdvance;
       const outgoingEndedDuringCrossfade = crossfadeOrchestrator?.isCrossfading() === true
         && playback?.activeAudioElement().ended === true;
       crossfadeOrchestrator?.cancel();
       queue.setRepeatMode(mode);
       el<HTMLButtonElement>("repeat-btn").textContent = `リピート: ${REPEAT_MODE_LABELS[mode]}`;
-      if (outgoingEndedDuringCrossfade) void handleNaturalEndAdvance();
+      if (shouldRerouteNaturalEndAdvance) {
+        const nextFileId = queue.peekAdvanceTarget();
+        if (!nextFileId) {
+          queue.invalidatePendingMove();
+          playback?.cancelPendingTransition();
+          pendingNaturalEndAdvance = false;
+          pendingNaturalEndAdvanceGeneration = null;
+        } else {
+          queue.invalidatePendingMove();
+          void handleQueuePlayback(() => queue?.resume(nextFileId, 0));
+        }
+      } else if (outgoingEndedDuringCrossfade) {
+        void handleNaturalEndAdvance();
+      }
     });
     el<HTMLButtonElement>("clear-queue-btn").addEventListener("click", () => handleClearQueue());
     // 並び替えもシャッフルと同じ理由（並び順を変えるだけで再生を開始する操作ではない）で
