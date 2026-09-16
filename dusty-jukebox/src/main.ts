@@ -376,6 +376,12 @@ function render(): void {
           <input id="seek-slider" type="range" min="0" max="0" step="0.1" value="0" disabled />
           <span id="seek-duration" class="seek-time">0:00</span>
         </div>
+        <div class="mini-player-controls">
+          <button id="shuffle-btn" type="button" aria-label="シャッフル" disabled>🔀</button>
+          <button id="previous-btn" type="button" aria-label="前へ" disabled>⏮</button>
+          <button id="next-btn" type="button" aria-label="次へ" disabled>⏭</button>
+          <button id="repeat-btn" class="repeat-off" type="button" aria-label="リピート: オフ" disabled>🔁</button>
+        </div>
         <p id="now-playing" class="status"></p>
         <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
         <p id="status" class="status"></p>
@@ -397,7 +403,7 @@ function render(): void {
         <datalist id="filter-release-type-options"></datalist>
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
-        <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="pause-btn" type="button" disabled>一時停止</button> <button id="previous-btn" type="button" disabled>前へ</button> <button id="next-btn" type="button" disabled>次へ</button> <button id="shuffle-btn" type="button" disabled>シャッフル</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button> <button id="repeat-btn" type="button" disabled>リピート: オフ</button> <button id="clear-queue-btn" type="button" disabled>再生リストをクリア</button></div>
+        <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="pause-btn" type="button" disabled>一時停止</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button> <button id="clear-queue-btn" type="button" disabled>再生リストをクリア</button></div>
         <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトする</label>
         <label><input id="crossfade-toggle" type="checkbox" /> 曲間をクロスフェードする</label>
         <label>長さ
@@ -2943,7 +2949,10 @@ function init(): void {
         && playback?.activeAudioElement().ended === true;
       crossfadeOrchestrator?.cancel();
       queue.setRepeatMode(mode);
-      el<HTMLButtonElement>("repeat-btn").textContent = `リピート: ${REPEAT_MODE_LABELS[mode]}`;
+      const repeatButton = el<HTMLButtonElement>("repeat-btn");
+      repeatButton.textContent = mode === "single" ? "🔂" : "🔁";
+      repeatButton.setAttribute("aria-label", `リピート: ${REPEAT_MODE_LABELS[mode]}`);
+      repeatButton.classList.toggle("repeat-off", mode === "off");
       if (shouldRerouteNaturalEndAdvance) {
         const nextFileId = queue.peekAdvanceTarget();
         if (!nextFileId) {
