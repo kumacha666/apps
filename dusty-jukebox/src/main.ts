@@ -208,6 +208,21 @@ let pendingQueueTransitionTarget: string | null = null;
 // 「Discard recovery targets when replacing the queue」）。pendingQueueTransitionTarget記録時点の
 // queue.generationId()を保持し、その後queue.setList()が呼ばれていないかを確認する。
 let pendingQueueTransitionTargetGeneration: number | null = null;
+// 「この曲を再生」（handlePlay()）が開始した外部単曲試聴のうち、まだ成否が確定していない
+// もの（2026-09-16、Codexレビュー指摘：P2「Preserve a pending external playback request」）。
+// キュー側の曲が既にコミット済み（canResumeCurrent()がtrue）の状態でこの外部再生を開始すると、
+// その成功はnotifyExternalPlaybackStarted()（play()成功後）でのみ反映されるため、native
+// play()の解決待ち中はisQueuePlayback/currentFileIdがキュー側の古い曲を指したまま残る
+// （handlePlay()の冒頭でpendingNaturalEndAdvance/pendingQueueTransitionTargetを破棄しても、
+// これらはキュー由来の未コミット遷移専用でこの状況を捉えられない）。この間に
+// attemptBackgroundPlaybackRecovery()が発火すると、pendingNaturalEndAdvance/
+// pendingQueueTransitionTargetのどちらも該当しないため最後のフォールバック分岐（既にコミット
+// 済みの現在曲をそのまま再開する）へ到達し、canResumeCurrent()がtrueのままなのでキュー側の
+// 古い曲を誤ってresume()し、ユーザーのより新しい外部再生要求を横取りしてしまう。fileIdを
+// 記録することで、フォールバック分岐がこの間だけ自分自身を差し控えられるようにする。
+// handleQueuePlayback()先頭のlastExternalFileId破棄と対称に、キュー由来の操作が開始したら
+// 即座に破棄する（新しい操作が古い保留状態を無条件に上書きする既存の不変条件と同じ）。
+let pendingExternalPlaybackFileId: string | null = null;
 const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
 // catalogSessionへ最後に読み込んだ（有効な）曲一覧の出所スプレッドシートID。プレイリストの
@@ -1187,6 +1202,11 @@ async function handlePlay(): Promise<void> {
   // 残っていた（PR仕様「外部単曲試聴はクロスフェード対象外」に反する）。
   await handlePlaybackAction(async () => {
     manualTransitionCount += 1;
+    // この外部再生の試行が未解決の間、attemptBackgroundPlaybackRecovery()のフォールバック分岐が
+    // キュー側の古い「現在の曲」を誤ってresume()しないよう記録する（pendingExternalPlaybackFileId
+    // の定義コメント参照）。認証継続で同じクロージャが再試行される場合も、再試行のたびに
+    // 同じfileIdで立て直される。
+    pendingExternalPlaybackFileId = fileId;
     try {
       setStatus("Service Worker経由で再生を開始しています...");
       return canResumeExternal
@@ -1194,6 +1214,9 @@ async function handlePlay(): Promise<void> {
         : await startExternalPlayback(fileId, currentPlayback);
     } finally {
       manualTransitionCount -= 1;
+      // 待機中に別のこの曲を再生要求（別fileId）が既に上書きしていた場合、その新しい値を
+      // 誤って消さない（pendingQueueTransitionTargetのonFinalFailureと同じ所有権確認）。
+      if (pendingExternalPlaybackFileId === fileId) pendingExternalPlaybackFileId = null;
     }
   });
 }
@@ -1241,6 +1264,10 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined, o
   // 差し替わる（失敗時に据え置いても実害は無い：単曲試聴の「resume」機会を1回逃すだけで、
   // 次回「この曲を再生」が先頭から再生し直すフォールバックへ倒れるだけのため安全側）。
   lastExternalFileId = null;
+  // pendingExternalPlaybackFileIdの定義コメント参照：キュー由来の操作を開始する時点で、
+  // まだ未解決の外部再生試行があっても「最新の操作が古い保留状態を無条件に上書きする」
+  // 既存の不変条件に従い破棄する（handlePlay()側の対称な破棄と同じ考え方）。
+  pendingExternalPlaybackFileId = null;
   // 進行中のクロスフェードがあれば、この明示的なナビゲーション操作を優先して打ち切る
   // （crossfadeOrchestrator.cancel()は非アクティブ側だけを後始末し、アクティブ側の
   // src/currentTime/play/pauseには一切触れない不変条件のため、旧設計にあった「退場曲の
@@ -1525,8 +1552,19 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
     // generation一致チェックをそのまま通過し、今除外したはずの曲をcurrentFileIdへcommitして
     // 実際に再生してしまう。invalidatePendingMove()で元の遷移を無効化し、
     // pendingNaturalEndAdvanceも解除して次回以降このデッドエンドの分岐へ入らないようにする。
+    // queue.invalidatePendingMove()はqueue自身のgenerationしか進めず、PlaybackController側の
+    // generationには一切触れない（2026-09-16、Codexレビュー指摘：P2「Cancel the native
+    // transition when abandoning an excluded target」）。他の分岐（後続で必ずqueue.resume()を
+    // 呼ぶ＝新しいplayer.play()呼び出しが自然にisSuperseded()経由で元の遷移を追い越す）とは
+    // 異なり、この分岐はここで諦めるだけで新しいplay()を呼ばないため、元の（除外済みの曲を
+    // 対象とした）ネイティブplay()自体はplayer側では何も無効化されないまま残る。それが後から
+    // 遅れて解決すると、queue側のcommitはgeneration不一致で拒否される一方、audio要素は実際に
+    // その除外済みの曲を鳴らし始めてしまう。playback.cancelPendingTransition()で
+    // PlaybackController側のgenerationも進め、既存のisSuperseded()安全網（audio.srcが
+    // 一致する場合にaudio自身をpause()する）を発火させる。
     if (!nextFileId) {
       queue.invalidatePendingMove();
+      playback.cancelPendingTransition();
       pendingNaturalEndAdvance = false;
       pendingNaturalEndAdvanceGeneration = null;
       return null;
@@ -1573,7 +1611,19 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
   }
   // ここまで到達するのは、pendingNaturalEndAdvance/pendingQueueTransitionTargetのいずれも
   // 該当しない場合——つまり「既にコミット済みの現在曲をそのまま再開する」フォールバックの
-  // ケースに限られる。このケースだけ、既に再生中（audioPaused===false）・自然終了直後
+  // ケースに限られる。
+  //
+  // pendingExternalPlaybackFileIdの定義コメント参照（2026-09-16、Codexレビュー指摘：P2
+  // 「Preserve a pending external playback request」）。キュー側の曲が既にコミット済み
+  // （canResumeCurrent()がtrue）の状態で「この曲を再生」を開始すると、その外部再生の
+  // native play()が未解決の間はqueue.isQueuePlayback/currentFileIdがキュー側の古い曲を
+  // 指したまま残る（notifyExternalPlaybackStarted()は成功後にしか呼ばれないため）。この
+  // 外部再生はpendingNaturalEndAdvance/pendingQueueTransitionTargetのどちらにも一切触れない
+  // （queueのplayAndCommit()を経由しないため）ため、上の2分岐はどちらも該当せずここへ
+  // 到達してしまう。この間にこのフォールバックがcanResumeCurrent()==trueのまま古い曲を
+  // resume()してしまうと、ユーザーのより新しい外部再生要求を横取りする。
+  if (pendingExternalPlaybackFileId !== null) return null;
+  // このケースだけ、既に再生中（audioPaused===false）・自然終了直後
   // （audioEnded===true、次の'ended'処理に委ねる）・再開できる状態にない
   // （canResumeCurrent===false）場合に不要な再開を試みないようshouldAttemptBackground
   // PlaybackRecovery()で確認する。
