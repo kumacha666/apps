@@ -96,6 +96,44 @@ test("クロスフェードのランプ中にリピートモードを切り替�
   await expect(page.locator("#repeat-btn")).toHaveText("リピート: 1曲");
 });
 
+test("クロスフェードのランプ中に退場側が自然終了してからリピートモードを切り替えても次曲へ進む", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
+  await page.locator("#repeat-btn").click();
+  await page.locator("#repeat-btn").click();
+  await expect(page.locator("#repeat-btn")).toHaveText("リピート: リスト全曲");
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+  await page.clock.install();
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-b")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(true);
+
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    let firstRead = true;
+    Object.defineProperty(audio, "ended", {
+      get: () => {
+        if (!firstRead) return false;
+        firstRead = false;
+        return true;
+      },
+      configurable: true,
+    });
+    audio.dispatchEvent(new Event("ended"));
+  });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(true);
+
+  await page.locator("#repeat-btn").click();
+
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect(page.locator("#repeat-btn")).toHaveText("リピート: オフ");
+});
+
 test("ログインからスキャンして索引を書き込める", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { initialScanCompleted: false });
   await page.goto("/"); await login(page);
@@ -2356,4 +2394,3 @@ test("バックグラウンド復帰の対象（B）が未解決のまま2回連
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
   await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /song-1(\?|$)/);
 });
-

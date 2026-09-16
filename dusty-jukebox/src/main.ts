@@ -2933,9 +2933,12 @@ function init(): void {
       if (!queue) return;
       const currentIndex = REPEAT_MODES.indexOf(queue.repeatMode());
       const mode = REPEAT_MODES[(currentIndex + 1) % REPEAT_MODES.length];
+      const outgoingEndedDuringCrossfade = crossfadeOrchestrator?.isCrossfading() === true
+        && playback?.activeAudioElement().ended === true;
       crossfadeOrchestrator?.cancel();
       queue.setRepeatMode(mode);
       el<HTMLButtonElement>("repeat-btn").textContent = `リピート: ${REPEAT_MODE_LABELS[mode]}`;
+      if (outgoingEndedDuringCrossfade) void handleNaturalEndAdvance();
     });
     el<HTMLButtonElement>("clear-queue-btn").addEventListener("click", () => handleClearQueue());
     // 並び替えもシャッフルと同じ理由（並び順を変えるだけで再生を開始する操作ではない）で
