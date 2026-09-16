@@ -1961,3 +1961,99 @@ test("手動の「次へ」が未解決のまま固まっている間にその�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/, { timeout: 5000 });
 });
 
+test("自然終了に伴う遷移の先読み先が無くなった場合（残り全曲除外等）、元の未解決の遷移を無効化してから諦め、後から遅れて解決しても除外済みの曲を誤ってコミットしない（2026-09-16、Codexレビュー指摘：P2「Invalidate a natural-end move when its target is excluded」の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
+  await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+
+  // 最初のplay()呼び出し（Opening→Scherzoへの自然終了に伴う遷移）だけを未解決のまま固まらせ、
+  // 呼び出し側から明示的に解放できるようにする。以降の呼び出しは即座に解決する。
+  await page.evaluate(() => {
+    let callCount = 0;
+    let releaseFirst: (() => void) | null = null;
+    (window as unknown as { __e2eReleaseFirstNaturalEndPlay: () => void }).__e2eReleaseFirstNaturalEndPlay = () => releaseFirst?.();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function () {
+        callCount += 1;
+        if (callCount === 1) return new Promise<void>((resolve) => { releaseFirst = resolve; });
+        return Promise.resolve();
+      },
+    });
+  });
+
+  // Openingの自然終了→Scherzoへの遷移だけを未解決のまま固める。
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("ended")));
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+
+  // 残り全曲（Scherzo・Finale）を除外する。これでpeekNextFileId()は次に有効な曲を見つけられ
+  // なくなり、attemptBackgroundPlaybackRecovery()のpendingNaturalEndAdvance分岐は
+  // 「次の曲が無い」早期returnへ入る。
+  await page.locator("#catalog-list li").nth(1).locator("input[type=checkbox]").uncheck();
+  await page.locator("#catalog-list li").nth(2).locator("input[type=checkbox]").uncheck();
+
+  // documentをhiddenにして定期リトライループを開始させる（VITE_E2Eでは50ms間隔）。複数回分の
+  // 間隔が経過するまで待ち、「次の曲が無い」分岐へ複数回入らせる。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.waitForTimeout(150);
+
+  // ここで初めて、固まっていた（もう無効化されているはずの）Scherzoへの遷移を遅れて解決させる。
+  await page.evaluate(() => (window as unknown as { __e2eReleaseFirstNaturalEndPlay: () => void }).__e2eReleaseFirstNaturalEndPlay());
+  await page.waitForTimeout(100);
+
+  // 修正前は、pendingNaturalEndAdvanceがtrueのまま・元の遷移のgenerationも進んでいないまま
+  // 残るため、この遅延解決がplayAndCommit()のgeneration一致チェックをそのまま通過し、
+  // 除外したはずのScherzoをcurrentFileIdへcommitして実際に再生してしまっていた。
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
+  await expect(page.locator("#catalog-list li.now-playing")).not.toContainText("Scherzo");
+});
+
+test("キュー由来の手動ナビゲーションが未解決のまま固まっている間に「この曲を再生」で外部の単曲試聴へ切り替えると、以後のバックグラウンド復帰がその古いキュー側の対象で外部再生を横取りしない（2026-09-16、Codexレビュー指摘：P2「Preserve a newer external playback request」の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+
+  // 全てのplay()呼び出しを未解決のまま固まらせる（この曲を再生・次への両方とも実際には
+  // コミットされない状態を作るため）。
+  await page.evaluate(() => {
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function () { return new Promise<void>(() => {}); },
+    });
+  });
+
+  // 「次へ」でsong-1への遷移だけを未解決のまま固める（pendingQueueTransitionTarget=song-1、
+  // queue.currentFileIdはまだnullのまま=canResumeCurrent()はfalse）。
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toHaveCount(0);
+
+  // この固まった遷移を解決させないまま、「この曲を再生」で無関係な外部ファイルへ切り替える
+  // （それ自体もplay()未解決のまま固まる）。
+  await page.locator("#play-file-id").fill("external-track");
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /external-track(\?|$)/);
+
+  // documentをhiddenにして定期リトライループを開始させる（VITE_E2Eでは50ms間隔）。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  // 修正前は、handlePlay()がpendingQueueTransitionTarget（song-1）に一切触れないため、
+  // 定期リトライがこの古いキュー側の対象を優先してqueue.resume("song-1", 0)してしまい、
+  // audio-playerのsrcがユーザーのより新しい外部再生要求（external-track）を横取りして
+  // song-1へ戻ってしまっていた。修正後はhandlePlay()の先頭でこの対象を破棄するため、
+  // 定期リトライは（currentFileIdもnullのままでcanResumeCurrent()もfalseのため）
+  // 何もせず、audio-playerのsrcはexternal-trackのまま変化しない。
+  await page.waitForTimeout(200);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /external-track(\?|$)/);
+});
+

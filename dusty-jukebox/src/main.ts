@@ -1157,6 +1157,23 @@ async function handlePlay(): Promise<void> {
     audioPaused: currentPlayback.activeAudioElement().paused,
     audioEnded: currentPlayback.activeAudioElement().ended,
   });
+  // キュー由来の未コミット遷移（自然終了・手動ナビゲーションいずれも）が記録した復帰対象を
+  // ここで破棄する（2026-09-16、Codexレビュー指摘：P2「Preserve a newer external playback
+  // request」）。外部単曲試聴（startExternalPlayback/startExternalPlaybackAt）はキューの
+  // playAndCommit()を経由しないため、pendingNaturalEndAdvance/pendingQueueTransitionTargetに
+  // 一切触れない。このため、キュー側の遷移が未解決のまま固まっている間にユーザーが
+  // 「この曲を再生」で無関係な外部ファイルへ切り替え、それ自体も未解決のまま固まると、
+  // 後から発火したバックグラウンド復帰がこの古いキュー側の対象を優先してresume()してしまい、
+  // ユーザーのより新しい外部再生要求を横取りしてしまっていた。handleQueuePlayback()が
+  // 逆方向（キュー由来の操作が外部試聴の状態=lastExternalFileIdを破棄する）で既に行っている
+  // のと対称に、ここでもキュー側の状態を破棄する（この外部再生自体が成功するかどうかを
+  // 待たずに行う：「最新の操作が古い保留状態を無条件に上書きする」という既存の不変条件
+  // 〈handlePlaybackAction()の成功分岐・handleQueuePlayback()先頭のlastExternalFileId破棄〉
+  // と同じ考え方）。
+  pendingNaturalEndAdvance = false;
+  pendingNaturalEndAdvanceGeneration = null;
+  pendingQueueTransitionTarget = null;
+  pendingQueueTransitionTargetGeneration = null;
   // 進行中のクロスフェードがあれば打ち切る（role-swapでは非アクティブ側のリセットのみ、
   // アクティブ側には触れない不変条件のため、旧設計にあった「退場曲の復元情報」の管理は
   // 構造的に不要になった）。
@@ -1497,7 +1514,23 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
     // 先読みしてresume()へ明示的に渡す（resume()自体はfindNext()を使わないため、この
     // 先読みが必須）。
     const nextFileId = queue.peekNextFileId();
-    if (!nextFileId) return null;
+    // 次の曲が無い（キューの残り全曲が除外済みになった等）場合、単に何もしないだけでは
+    // 済まない（2026-09-16、Codexレビュー指摘：P2「Invalidate a natural-end move when its
+    // target is excluded」）。この早期returnがpendingNaturalEndAdvanceを解除せず、かつ元の
+    // （まだ未解決のまま固まっている）自然終了の遷移も無効化しないと、①この関数は以後の
+    // あらゆるリトライで同じ早期returnを繰り返すだけになり、`pendingQueueTransitionTarget`
+    // 分岐・最後のフォールバック分岐のどちらにも一切到達できなくなる、②exclude()は
+    // queue.generationを一切進めないため、元の遷移の古いgenerationは現在のgenerationと
+    // 一致したまま残り、そのネイティブplay()が後から遅れて解決すると、`playAndCommit()`の
+    // generation一致チェックをそのまま通過し、今除外したはずの曲をcurrentFileIdへcommitして
+    // 実際に再生してしまう。invalidatePendingMove()で元の遷移を無効化し、
+    // pendingNaturalEndAdvanceも解除して次回以降このデッドエンドの分岐へ入らないようにする。
+    if (!nextFileId) {
+      queue.invalidatePendingMove();
+      pendingNaturalEndAdvance = false;
+      pendingNaturalEndAdvanceGeneration = null;
+      return null;
+    }
     logDiag("backgroundRecovery:attempt", `${document.visibilityState} advance`);
     queue.invalidatePendingMove();
     return handleQueuePlayback(() => queue?.resume(nextFileId, 0));
