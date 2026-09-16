@@ -662,6 +662,40 @@ describe("PlaybackController", () => {
     expect(audio.paused).toBe(false);
   });
 
+  test("ネイティブ一時停止→ネイティブ再開→さらにもう一度ネイティブ一時停止の順で操作されると、その間に固まっていたplay()は再開済みではなく一時停止済みとして扱われる（2026-09-16、Codexレビュー指摘：P1「Revoke the resume acknowledgement on a later pause」。旧実装は最初の一時停止がacknowledgeNativeResume()で取り消し済みだと判定した後、2回目の一時停止がlastNativeResumeAckGenerationを更新しないまま`this.generation`だけを進めるため、その取り消し済み判定を古いまま維持してしまい、より新しい2回目の一時停止を見逃していた）", async () => {
+    let resolvePlay!: () => void;
+    class SlowPlayAudio extends FakeAudio {
+      override async play(): Promise<void> {
+        await new Promise<void>((resolve) => { resolvePlay = resolve; });
+        return super.play();
+      }
+    }
+    const audio = new SlowPlayAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    const playPromise = playback.play("A").catch((err: unknown) => err); // フェードなし、audio.play()が未解決のまま保留
+    await vi.waitFor(() => expect(resolvePlay).toBeDefined());
+
+    // 1回目のネイティブ一時停止。
+    audio.pause();
+    playback.invalidatePendingRecoveryOnNativePause();
+    // ネイティブ再開（Media Sessionのplayハンドラと同じ経路）。
+    audio.paused = false;
+    playback.acknowledgeNativeResume();
+    // 2回目のネイティブ一時停止（1回目の再開を打ち消す、より新しい操作）。
+    audio.pause();
+    playback.invalidatePendingRecoveryOnNativePause();
+
+    // 孤立していたA自身のネイティブplay()が今になって解決する。
+    resolvePlay();
+    const error = await playPromise;
+
+    // 2回目の一時停止が最新の状態のため、PlaybackPausedErrorを投げる（再生成功として
+    // 誤commitされてはならない）。
+    expect(error).toBeInstanceOf(PlaybackPausedError);
+    expect(audio.paused).toBe(true);
+  });
+
   test("pause(true)指定時は現在再生中の音声をフェードアウトしてから実際に一時停止し、フェード開始前のvolumeへ戻す（開発体制#45、2026-09-09、ユーザー要望：手動スキップ時のフェードアウト設定を一時停止にも適用してほしい）", async () => {
     vi.useFakeTimers();
     const audio = new FakeAudio();

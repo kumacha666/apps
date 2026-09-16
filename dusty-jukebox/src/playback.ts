@@ -232,28 +232,12 @@ export class PlaybackController {
         // volumeを復元・pendingFadeOriginalVolumeをクリア済みのため、ここでは一切触れない
         // （このplay()呼び出し自身のpendingFadeOriginalVolumeは既に追い越した側に消費・
         // クリアされている）。PlaybackPausedError/PlaybackInterruptedErrorの区別のみ行う：
-        // このgenerationの変化がpause()自身によるものであれば（＝pause()以降まだ他のplay()
-        // が呼ばれていなければ）ネイティブ一時停止と同じくPlaybackPausedErrorとして区別して
-        // 投げる（そうでなければ、別の正当なplay()に追い越されただけなので、区別しない
+        // このgenerationの変化が一時停止（ネイティブ・アプリ内いずれも）の連鎖だけで説明でき、
+        // かつ今もなお一時停止のままであれば（＝pauseChainStatus()参照）ネイティブ一時停止と
+        // 同じくPlaybackPausedErrorとして区別して投げる（そうでなければ、別の正当なplay()に
+        // 追い越された・既にネイティブ再開で取り消し済み、のいずれかなので、区別しない
         // PlaybackInterruptedErrorを投げる）。
-        const supersededByReason = this.generationReasons.get(playGeneration + 1);
-        // 「直接の追い越し理由がpauseで、かつそれが今もなお最新の状態」の場合だけ
-        // PlaybackPausedErrorとして扱う（2026-09-15、Codexレビュー指摘：P1「Avoid
-        // invalidating playback resumed after the pause」）。generationReasonsは
-        // 「自分を直接追い越したのが誰か（playGeneration+1）」を正確に答えるが、その後
-        // さらに別の正当なplay()（ユーザーの明示的な再開）が既に発生している可能性までは
-        // 考慮しない。古いplay()がpause()に一度追い越された後、その解決を待たずに別の
-        // 正当なplay()（既にpauseを追い越し済み）が発生・完了していた場合でも、この古い
-        // play()が後から解決するとPlaybackPausedErrorを投げてしまい、
-        // PlaybackQueue.playAndCommit()がその後続の再生（進行中ならcommit失敗・完了済み
-        // ならさらに後続のナビゲーション）をqueue.generationの巻き込みインクリメントで
-        // 誤って無効化してしまっていた。`this.generation === playGeneration + 1`
-        // （自分のplayGeneration+1からgenerationが一切進んでいない＝pauseが今もなお
-        // 最新の出来事）を追加で確認することで、既にpauseを追い越した後続の正当な
-        // play()を巻き込まなくなる。ネイティブ再開（Media Sessionのplayハンドラ）による
-        // 取り消しも同様に確認する（lastNativeResumeAckGenerationコメント参照）。
-        const pauseSupersededByNativeResume = supersededByReason === "pause" && this.lastNativeResumeAckGeneration === playGeneration + 1;
-        if (supersededByReason === "pause" && this.generation === playGeneration + 1 && !pauseSupersededByNativeResume) {
+        if (this.pauseChainStatus(playGeneration) === "paused") {
           throw new PlaybackPausedError();
         }
         throw new PlaybackInterruptedError();
@@ -321,46 +305,32 @@ export class PlaybackController {
     // 差し替えて再生を開始している場合、ここで無条件にpause()するとその正当な新しい再生まで
     // 誤って止めてしまうため、audio.srcが依然として自分の設定したものと一致する場合だけ止める。
     if (isSuperseded()) {
-      const supersededByReason = this.generationReasons.get(playGeneration + 1);
-      // ネイティブ一時停止（app-button/native）の直後に、ネイティブ再開（Media Sessionの
-      // playハンドラ）が確認されている場合、その一時停止は既にユーザー自身によって取り消
-      // されている（2026-09-15、Codexレビュー指摘：P1「Supersede pause ownership on Media
-      // Session play」。lastNativeResumeAckGenerationコメント参照）。この場合はaudio.src
-      // が一致していても再度audio.pause()しない：既にaudio要素はネイティブ再開により
-      // 鳴っているはずで、ここで無条件にpause()すると再開を打ち消してしまう。
-      const pauseSupersededByNativeResume = supersededByReason === "pause" && this.lastNativeResumeAckGeneration === playGeneration + 1;
-      if (this.audio.src === thisRequestSrc && !pauseSupersededByNativeResume) {
+      // 一時停止（ネイティブ・アプリ内いずれも）の連鎖だけで説明でき、かつ今もなお一時停止の
+      // ままである場合だけ"paused"を返す（pauseChainStatus()コメント参照。2026-09-16、Codexレ
+      // ビュー指摘：P1「Revoke the resume acknowledgement on a later pause」を踏まえた再設計。
+      // 旧実装は「自分を直接追い越した理由がpauseで、かつネイティブ再開の確認がその直後の
+      // generationと一致するか」だけを見ていたため、pause→ネイティブ再開→さらにもう一度pause
+      // という3イベントの順序で、2回目のpauseを見逃していた）。ネイティブ再開で既に取り消し
+      // 済みの場合（"resumed"）はaudio.srcが一致していても再度audio.pause()しない：既にaudio
+      // 要素はネイティブ再開により鳴っているはずで、ここで無条件にpause()すると再開を
+      // 打ち消してしまう。
+      const status = this.pauseChainStatus(playGeneration);
+      if (this.audio.src === thisRequestSrc && status !== "resumed") {
         this.audio.pause();
       }
-      // 追い越しの原因がユーザーのpause()自身だった場合は、フェード有りパス（上記）と同じく
-      // PlaybackPausedErrorを投げてPlaybackQueue.playAndCommit()に「成功扱いでcommitしては
-      // ならない」ことを伝える（2026-09-15、Codexレビュー指摘：P1「Cancel pending recovery
-      // when the user pauses」）。fadeOut無しのこの経路（バックグラウンド復帰のresume()等が
-      // 主に使う）は、上のaudio.pause()で実際の音声こそ正しく止めるものの、それ以外は
-      // このメソッド自体が単に正常return（void）していたため、PlaybackQueue.playAndCommit()
-      // は「再生成功」とみなし、キュー自身のgeneration確認（pause()はPlaybackController側の
-      // generationしか進めず、PlaybackQueue側のgenerationには一切触れない）をそのまま通過して
-      // currentFileId/isQueuePlaybackをcommitしてしまっていた——バックグラウンド復帰の
-      // resume()呼び出しがネイティブplay()未解決のまま固まっている間にユーザーが明示的に
-      // 一時停止すると、後からその古いresume()が「成功」としてキューへcommitし、
-      // handlePlaybackAction()の成功分岐がuserPausedPlaybackまで解除してしまうため、次の
-      // 定期リトライがユーザーの一時停止と再び衝突していた。他の理由（別の正当なplay()に
-      // 追い越されただけ）ではこれまで通り黙ってreturnし、PlaybackQueue側のgeneration確認に
-      // 判定を委ねる（そちらは既存の複数ラウンドで固められた既存の設計のため変更しない）。
-      // 「直接の追い越し理由がpauseで、かつそれが今もなお最新の状態」の場合だけ
-      // PlaybackPausedErrorとして扱う（2026-09-15、Codexレビュー指摘：P1「Avoid
-      // invalidating playback resumed after the pause」）。バックグラウンド復帰の
-      // resume()（A）がネイティブaudio.play()の解決待ちで固まっている間にユーザーが
-      // 明示的に一時停止し、その後（Aの解決を待たず）ユーザー自身が別の明示的な再開
-      // （B、既にpauseを追い越し済み）を行っていた場合でも、Aが後から解決すると
-      // 単純な`supersededByReason === "pause"`判定はPlaybackPausedErrorを投げてしまい、
-      // PlaybackQueue.playAndCommit()がBの再生（進行中ならcommit失敗・完了済みなら
-      // さらに後続のナビゲーション）をqueue.generationの巻き込みインクリメントで
-      // 誤って無効化してしまっていた。`this.generation === playGeneration + 1`
-      // （自分のplayGeneration+1からgenerationが一切進んでいない＝pauseが今もなお
-      // 最新の出来事）を追加で確認することで、既にpauseを追い越した後続の正当な
-      // play()を巻き込まなくなる（この場合は従来通り何も投げず黙って完了する）。
-      if (supersededByReason === "pause" && this.generation === playGeneration + 1 && !pauseSupersededByNativeResume) {
+      // 一時停止の連鎖の結果、今もなお一時停止のままである場合だけPlaybackPausedErrorを投げて
+      // PlaybackQueue.playAndCommit()に「成功扱いでcommitしてはならない」ことを伝える
+      // （2026-09-15、Codexレビュー指摘：P1「Cancel pending recovery when the user pauses」）。
+      // fadeOut無しのこの経路（バックグラウンド復帰のresume()等が主に使う）は、上のaudio.
+      // pause()で実際の音声こそ正しく止めるものの、それ以外はこのメソッド自体が単に正常
+      // return（void）していたため、PlaybackQueue.playAndCommit()は「再生成功」とみなし、
+      // キュー自身のgeneration確認（pause()はPlaybackController側のgenerationしか進めず、
+      // PlaybackQueue側のgenerationには一切触れない）をそのまま通過してcurrentFileId/
+      // isQueuePlaybackをcommitしてしまっていた。他の理由（別の正当なplay()に追い越された
+      // だけ、または既にネイティブ再開で取り消し済み）ではこれまで通り黙ってreturnし、
+      // PlaybackQueue側のgeneration確認に判定を委ねる（そちらは既存の複数ラウンドで
+      // 固められた既存の設計のため変更しない）。
+      if (status === "paused") {
         throw new PlaybackPausedError();
       }
     }
@@ -422,15 +392,35 @@ export class PlaybackController {
   // いない」と誤認したままになる——古い（未解決のまま固まっていた）play()呼び出しが後から
   // 解決すると、依然としてaudio.srcが一致するという理由でaudio.pause()を再度呼んでしまい、
   // ユーザーがBluetooth/OSの再生ボタンで明示的に再開した直後の音声を勝手に止めてしまう。
-  // 「最後にネイティブ再開を確認した時点のgeneration」を記録し、これが追い越し判定対象の
-  // generation（playGeneration + 1）と一致する場合、その一時停止は既に無効化されたものとして
-  // 扱う（audio.pause()の再呼び出し・PlaybackPausedErrorのいずれも行わない）。
+  // 「最後にネイティブ再開を確認した時点のgeneration」を記録し、pauseChainStatus()がこれを
+  // 参照する。
   private lastNativeResumeAckGeneration: number | null = null;
 
   // Media Sessionのplayハンドラ（main.ts）がaudio要素のネイティブplay()を直接呼んだ直後に
   // 呼ぶ。
   acknowledgeNativeResume(): void {
     this.lastNativeResumeAckGeneration = this.generation;
+  }
+
+  // 自分（playGeneration）を追い越したのが一時停止（ネイティブ・アプリ内いずれも）で、かつ
+  // その一時停止が今もなお有効かどうかを判定する（2026-09-16、Codexレビュー指摘：P1「Revoke
+  // the resume acknowledgement on a later pause」を踏まえた再設計）。旧実装は「自分を直接
+  // 追い越した理由（playGeneration+1）がpauseで、かつそれがlastNativeResumeAckGenerationと
+  // 一致するか」だけを見ていたため、pause→ネイティブ再開→さらにもう一度pauseという3イベントの
+  // 順序（Bluetooth/OSの再生ボタンを一時停止→再生→一時停止と素早く操作する等）で、2回目の
+  // pauseがlastNativeResumeAckGenerationを更新しないまま`this.generation`だけを進めてしまい、
+  // 「まだ最初のpauseの直後で何も起きていない」という判定を古いまま維持してしまっていた
+  // （実際には既に取り消し済みの再開状態を根拠に、より新しい2回目のpauseを見逃していた）。
+  // playGeneration+1からthis.generationまでの間に発生した全ての世代進行が一時停止（ネイティブ・
+  // アプリ内いずれも、generationReasonsが"pause"を記録する経路）だけで説明できるかを1件ずつ
+  // 確認し（無関係な正当なplay()やcancelPendingTransition()を1件でも挟んでいれば"pause以外"
+  // として扱う）、説明できる場合に限り、その一時停止の連鎖の最後がacknowledgeNativeResume()で
+  // 取り消されているかどうかで最終的な状態（"paused"/"resumed"）を決める。
+  private pauseChainStatus(playGeneration: number): "not-a-pause-chain" | "paused" | "resumed" {
+    for (let generation = playGeneration + 1; generation <= this.generation; generation += 1) {
+      if (this.generationReasons.get(generation) !== "pause") return "not-a-pause-chain";
+    }
+    return this.lastNativeResumeAckGeneration === this.generation ? "resumed" : "paused";
   }
 
   // クロスフェードのハンドオフが既にaudio.srcを次曲へコミット済みの状態で一時停止された場合、
