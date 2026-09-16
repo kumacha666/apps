@@ -1518,7 +1518,25 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
     logDiag("backgroundRecovery:attempt", `${document.visibilityState} pendingTarget`);
     const target = pendingQueueTransitionTarget;
     queue.invalidatePendingMove();
-    return handleQueuePlayback(() => queue?.resume(target, 0));
+    // resume(target, 0)は対象が除外済み等で無効な場合、例外を投げずfalseを返すだけで
+    // player.play()自体を一度も呼ばない（queue.tsのresume()参照）。この失敗をonFinalFailureで
+    // 拾わないと（2026-09-16、Codexレビュー指摘：P2「Discard excluded recovery targets」）、
+    // pendingQueueTransitionTargetがこの無効な値のまま取り残され、以後のあらゆるリトライ
+    // （定期リトライ・フォアグラウンド復帰の両方）がこの同じ失敗するresume()を無期限に
+    // 繰り返し、下の「既にコミット済みの現在曲をそのまま再開する」フォールバック分岐へ
+    // 一切到達できなくなる——復帰機能そのものが恒久的に機能しなくなる回帰。失敗時、この時点で
+    // まだpendingQueueTransitionTargetが自分（target）を指している場合のみ解除する
+    // （待機中に別の新しいナビゲーションがonBeforePlay経由で既に上書きしていた場合、その
+    // 新しい値を誤って消さないため）。
+    return handleQueuePlayback(
+      () => queue?.resume(target, 0),
+      () => {
+        if (pendingQueueTransitionTarget === target) {
+          pendingQueueTransitionTarget = null;
+          pendingQueueTransitionTargetGeneration = null;
+        }
+      }
+    );
   }
   // ここまで到達するのは、pendingNaturalEndAdvance/pendingQueueTransitionTargetのいずれも
   // 該当しない場合——つまり「既にコミット済みの現在曲をそのまま再開する」フォールバックの

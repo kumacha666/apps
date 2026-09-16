@@ -1913,3 +1913,51 @@ test("手動の「次へ」が未解決のまま固まっている間にキュ�
   await expect(page.locator("#catalog-list li.now-playing")).toHaveCount(0);
 });
 
+test("手動の「次へ」が未解決のまま固まっている間にその遷移先が除外されても、以後のリトライが失敗するresume()を無限に繰り返さず現在曲の復帰へフォールバックする（2026-09-16、Codexレビュー指摘：P2「Discard excluded recovery targets」の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+
+  // song-1を再生開始（1回目のplay()呼び出しは通常通り解決させる）。
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  // song-1の再生開始は既に完了済みのため、このスタブに差し替えてからの最初の呼び出し
+  // （song-2への手動「次へ」）だけを未解決のまま固まらせる。2回目以降（バックグラウンド
+  // 復帰自身が発行するresume()呼び出し）は通常通り即座に解決させる。
+  await page.evaluate(() => {
+    let callCount = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function () {
+        callCount += 1;
+        if (callCount === 1) return new Promise<void>(() => {});
+        return Promise.resolve();
+      },
+    });
+  });
+
+  // 手動で「次へ」を押す。song-2へのplay()呼び出しがqueue.pendingMoveに未解決のまま残り、
+  // pendingQueueTransitionTarget（main.ts側）がsong-2を指したまま残る。
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+  await expect(page.locator("#catalog-list li.now-playing")).toContainText("First song");
+
+  // song-2をチェックボックスで除外する（exclude()はgenerationId()を変えないため、
+  // pendingQueueTransitionTargetの登録時点との突き合わせでは検出できない）。
+  await page.locator("#catalog-list li").nth(1).locator("input[type=checkbox]").uncheck();
+
+  // documentをhiddenにして定期リトライループを開始させる（VITE_E2Eでは50ms間隔）。
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  // 修正前は、queue.resume("song-2", 0)が除外済みを理由にfalseを返すだけで
+  // player.play()を一度も呼ばないため、pendingQueueTransitionTargetが取り残され続け、
+  // 以後のあらゆるリトライがこの同じ失敗するresume()を無期限に繰り返し、
+  // audio-playerのsrcはsong-2のまま二度と変化しなかった（現在曲song-1への復帰フォール
+  // バックへ一切到達できない）。修正後は最初の失敗でpendingQueueTransitionTargetが
+  // 解除され、後続のリトライが現在曲（song-1）の復帰へフォールバックし、
+  // audio-playerのsrcが再びsong-1へ切り替わる。
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/, { timeout: 5000 });
+});
+
