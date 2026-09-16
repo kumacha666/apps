@@ -42,7 +42,6 @@ import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState }
 import { formatSeekTime, isSeekableDuration } from "./seekBar";
 import { shouldResumeExternalPlayback } from "./externalPlayback";
 import { shouldAttemptBackgroundPlaybackRecovery } from "./backgroundPlaybackRecovery";
-import { PendingCapture } from "./pendingCapture";
 import {
   CROSSFADE_DURATION_OPTIONS_SEC,
   DEFAULT_CROSSFADE_DURATION_SEC,
@@ -243,29 +242,29 @@ let externalPlaybackTokenCounter = 0;
 // resume()が失敗して解決すると、fileId比較だけの所有権確認ではこの新しいナビゲーションの
 // マーカーを誤って自分のものとみなして消してしまう。
 //
-// registerQueuePlaybackContinuation()の呼び出しはPlaybackQueue.move()の直列化チェーン内で
-// 非同期に（少なくとも1回のマイクロタスク経由で）発生するため（queue.tsのmove()参照）、呼び出し元
-// （attemptBackgroundPlaybackRecovery()）はqueue.resume()を呼んだ直後にその戻り値から自分自身の
-// トークンを同期的に読み取ることができない。pendingQueueTransitionCapture（下記）へ「次回の
-// registerQueuePlaybackContinuation()呼び出しで発行されたトークンを教えてほしい」というコール
-// バックを、queue.resume()を呼ぶ直前（＝Service Worker準備待ち等の非同期区間を挟んだ後、この
-// 呼び出し専用のクロージャの中）にセットする。
+// 続けて2026-09-16、Codexレビュー指摘：P2「Bind each capture to its own registration」を受けて
+// 設計自体を再考した。当初（18回目・19回目の修正）は、queue.resume()を呼ぶ直前に「次回の
+// registerQueuePlaybackContinuation()呼び出しで発行されたトークンを教えてほしい」という
+// コールバックを単一の共有スロットへ設置する方式（19回目でPendingCaptureへ切り出し、解放を
+// 所有者確認付きにした）を採っていたが、この方式そのものに根本的な欠陥があった：スロットは
+// 「次に発生する登録」を捕捉するだけで、それが本当に自分自身のqueue.resume()呼び出しが
+// もたらした登録かどうかを相関できない。Attempt Aがまだトークン確保待ちの間にAttempt Bが
+// 自分のコールバックを設置し（Bのqueue.resume()自身の内部move()操作はまだ次のマイクロタスク
+// まで走らない）、その後Aのトークン確保が先に解決してAの登録が先に発火すると、Aの登録が
+// （現在スロットに設置されているのがBのコールバックであるにも関わらず）Bのコールバックを
+// 誤って消費し、AのトークンをBのものとして伝えてしまう。releaseIfOwnedBy()による所有権確認は
+// 「解放」を保護するだけで「消費」（consume）には所有者確認が無いため、この誤消費を防げない。
 //
-// 続けて2026-09-16、Codexレビュー指摘：P2「Clear only the capture owned by this recovery」。
-// 「他のDOM操作由来の競合する登録は別のマクロタスクとしてしか発生し得ない」という当初の想定は
-// 誤りだった：この分岐自体がバックグラウンド復帰（visibilitychange等）から短時間に複数回
-// 呼ばれうるため、先発の呼び出し（A）がServiceWorker準備待ち・トークン確認等の非同期区間を
-// 経てqueue.resume()を呼ぶより前に、後発の呼び出し（B）が同じ分岐へ入り自分自身の
-// コールバックでこのスロットを上書きすることがある。Aが（登録に一度も到達しないまま）先に
-// 失敗すると、Aの後始末がBのまだ消費されていないコールバックを誤って解放してしまい、Bの
-// 登録がその捕捉を受け取れなくなる（このPRが直した「Discard excluded recovery targets」と
-// 同型の恒久的な復帰不能に陥る）。単一のコールバックスロットへの「まだ自分が所有している
-// ものだけを解放する」という操作自体を`PendingCapture`（`pendingCapture.ts`）へ切り出し、
-// ユニットテストで直接検証できるようにした（main.ts自体はDOM結線のみを担う薄い層のため
-// ユニットテスト対象外という既存方針に沿う）。
-let pendingQueueTransitionTargetToken: number | null = null;
-let queueTransitionTokenCounter = 0;
-const pendingQueueTransitionCapture = new PendingCapture<number>();
+// 根本的な解決として、単一の共有スロットへの「次の登録を当てにいく」という予約方式自体を
+// 廃止した。PlaybackQueue.resume()に第3引数`onRegistered`（`queue.ts`参照）を追加し、
+// playAndCommit()がonStreamIdAllocated経由で、キュー全体共有のonBeforePlayに加えて、この
+// 呼び出し自身専用のコールバックへ直接・確実にstreamIdを渡すようにした。streamIdは
+// PlaybackController.allocateStreamId()がこの呼び出し自身に対して発行する一意な値のため、
+// 呼び出し元（attemptBackgroundPlaybackRecovery()）はqueue.resume()の第3引数として渡した
+// コールバックが呼ばれるのを待つだけでよく、他の同時進行中の呼び出しの登録と取り違える余地が
+// 構造的に無い（共有スロットも、それに伴う所有権の考慮も不要になった）。これにより
+// `pendingCapture.ts`（`PendingCapture`）は不要になったため削除した。
+let pendingQueueTransitionTargetStreamId: number | null = null;
 const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
 // catalogSessionへ最後に読み込んだ（有効な）曲一覧の出所スプレッドシートID。プレイリストの
@@ -1416,12 +1415,10 @@ function registerQueuePlaybackContinuation(fileId: string, streamId: number): vo
   // 「今まさにコミットしようとしている曲」を捕捉できる。
   pendingQueueTransitionTarget = fileId;
   pendingQueueTransitionTargetGeneration = queue?.generationId() ?? null;
-  // pendingQueueTransitionTargetTokenの定義コメント参照。呼び出しごとに必ず新しいトークンを
-  // 発行し、直前に登録されたcapture待ちのコールバックがあれば消費して通知する（無ければ何も
-  // しない：手動ナビゲーション全般が毎回ここを通るため、captureが無いのが通常のケース）。
-  queueTransitionTokenCounter += 1;
-  pendingQueueTransitionTargetToken = queueTransitionTokenCounter;
-  pendingQueueTransitionCapture.consume(pendingQueueTransitionTargetToken);
+  // pendingQueueTransitionTargetStreamIdの定義コメント参照。streamId自体がこの呼び出しに
+  // 一意なため、追加のトークン発行・共有スロットは不要（onRegisteredコールバックの直接
+  // 相関で足りる）。
+  pendingQueueTransitionTargetStreamId = streamId;
   playbackContinuations.register({
     fileId,
     streamId,
@@ -1654,57 +1651,36 @@ function attemptBackgroundPlaybackRecovery(): Promise<void> | null {
     // 繰り返し、下の「既にコミット済みの現在曲をそのまま再開する」フォールバック分岐へ
     // 一切到達できなくなる——復帰機能そのものが恒久的に機能しなくなる回帰。
     //
-    // 続けて2026-09-16、この解除自体をpendingQueueTransitionTargetToken（定義コメント参照）で
+    // 続けて2026-09-16、この解除自体をpendingQueueTransitionTargetStreamId（定義コメント参照）で
     // 所有権確認するよう修正（Codexレビュー指摘：P2「Use a token when clearing a failed
-    // recovery target」）。fileId比較だけ（===target）では、このresume()が失敗して解決する
-    // 前に、ユーザーが同じBへの別のナビゲーションを開始しonBeforePlay経由でpendingQueue
-    // TransitionTargetを（新しいトークンで）B自身へ再登録していた場合、そのより新しい
-    // マーカーを自分自身のものと誤認して消してしまう。myQueueTransitionTokenは
-    // queue.resume()を呼ぶ直前（Service Worker準備待ち等の非同期区間を挟んだ後）にセットする
-    // ことで、この特定の呼び出し自身が引き起こす登録だけを正確に捕捉する。
+    // recovery target」→「Clear only the capture owned by this recovery」→「Bind each capture
+    // to its own registration」の3ラウンドを経て、単一の共有スロットへ「次の登録を当てにいく」
+    // という予約方式自体を廃止した最終形）。fileId比較だけ（===target）では、このresume()が
+    // 失敗して解決する前に、ユーザーが同じBへの別のナビゲーションを開始しonBeforePlay経由で
+    // pendingQueueTransitionTargetを（新しいstreamIdで）B自身へ再登録していた場合、そのより
+    // 新しいマーカーを自分自身のものと誤認して消してしまう。queue.resume()の第3引数
+    // `onRegistered`（queue.tsのplayAndCommit()参照）が、この呼び出し自身の登録が実際に起きた
+    // 時にstreamIdを直接渡してくれるため、他の同時進行中の呼び出しの登録と取り違える余地が
+    // 構造的に無い（共有スロットも所有権の考慮も不要）。
     //
-    // originalTokenはこの分岐へ入った時点（invalidatePendingMove()より前）のトークンを保持する。
+    // originalStreamIdはこの分岐へ入った時点（invalidatePendingMove()より前）の値を保持する。
     // resume(target, 0)が対象の除外等でregisterQueuePlaybackContinuation()に一度も到達しない
-    // 場合（上記コメント参照）、myQueueTransitionTokenはnullのまま残る——この場合に「自分自身の
-    // トークンとの一致」だけを条件にすると、この試行が何も新しく登録していないにも関わらず、
-    // 元々登録されていた（この分岐へ入った理由そのものである）トークンとの一致を検出できず、
-    // 誰も上書きしていないのに解除できなくなってしまう（このPRが直そうとした「Discard
-    // excluded recovery targets」の回帰）。resume()が一度も登録に到達しなかった場合は、
-    // 代わりにoriginalTokenとの一致（＝この試行が始まってから誰も新しく登録していないこと）
-    // で判定する。
-    //
-    // 続けて2026-09-16、captureの破棄自体もこの呼び出し自身が設置したものか確認するよう修正
-    // （Codexレビュー指摘：P2「Clear only the capture owned by this recovery」）。
-    // PlaybackController.play()はonStreamIdAllocated（registerQueuePlaybackContinuation()）を
-    // 呼ぶ前にトークン確保等を待つため、Attempt A（この呼び出し自身）がまだ登録に到達していない
-    // 間に、より新しいAttempt B（別のバックグラウンド復帰等）が同じ分岐へ入りpendingQueue
-    // TransitionCaptureを自分自身のコールバックへ上書きすることがある。この状態でAttempt Aが
-    // （resume()が対象除外等で登録に一度も到達せず）先に失敗すると、上記の無条件破棄が
-    // Attempt B自身がまだ消費していないコールバックを誤って消してしまい、BのmyQueueTransition
-    // Tokenがnullのまま残ったまま登録に到達し、Bが後で失敗した際にoriginalToken（Bが分岐へ
-    // 入った古い時点の値）との比較に失敗し、以後恒久的に解除できなくなる（このPRが直した
-    // 「Discard excluded recovery targets」と同型の回帰）。PendingCapture.releaseIfOwnedBy()
-    // （`pendingCapture.ts`参照）が「現在の設置物が依然として自分自身のコールバックである
-    // 場合のみ」解放する不変条件を担う（他の呼び出しのコールバックへ既に差し替わっていれば、
-    // それはその呼び出し自身の責任で後始末されるため触れない）。
-    const originalToken = pendingQueueTransitionTargetToken;
-    let myQueueTransitionToken: number | null = null;
-    const captureCallback = (token: number) => { myQueueTransitionToken = token; };
+    // 場合、onRegisteredも呼ばれずmyStreamIdはnullのまま残る——この場合に「自分自身のstreamId
+    // との一致」だけを条件にすると、この試行が何も新しく登録していないにも関わらず、元々
+    // 登録されていた（この分岐へ入った理由そのものである）値との一致を検出できず、誰も
+    // 上書きしていないのに解除できなくなってしまう（このPRが直そうとした「Discard excluded
+    // recovery targets」の回帰）。resume()が一度も登録に到達しなかった場合は、代わりに
+    // originalStreamIdとの一致（＝この試行が始まってから誰も新しく登録していないこと）で
+    // 判定する。
+    const originalStreamId = pendingQueueTransitionTargetStreamId;
+    let myStreamId: number | null = null;
     return handleQueuePlayback(
+      () => queue?.resume(target, 0, (streamId) => { myStreamId = streamId; }),
       () => {
-        pendingQueueTransitionCapture.install(captureCallback);
-        return queue?.resume(target, 0);
-      },
-      () => {
-        // resume()が対象の除外等でplayer.play()自体を一度も呼ばなかった場合、captureが
-        // 消費されずに残ったままになる。次の（無関係な）登録を誤って自分のものと捕捉して
-        // しまわないよう破棄するが、既に別の呼び出しのコールバックへ差し替わっている場合は
-        // 触れない（上記コメント参照）。
-        pendingQueueTransitionCapture.releaseIfOwnedBy(captureCallback);
-        const expectedToken = myQueueTransitionToken ?? originalToken;
+        const expectedStreamId = myStreamId ?? originalStreamId;
         if (
           pendingQueueTransitionTarget === target &&
-          pendingQueueTransitionTargetToken === expectedToken
+          pendingQueueTransitionTargetStreamId === expectedStreamId
         ) {
           pendingQueueTransitionTarget = null;
           pendingQueueTransitionTargetGeneration = null;
