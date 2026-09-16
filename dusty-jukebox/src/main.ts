@@ -223,6 +223,14 @@ let pendingQueueTransitionTargetGeneration: number | null = null;
 // handleQueuePlayback()先頭のlastExternalFileId破棄と対称に、キュー由来の操作が開始したら
 // 即座に破棄する（新しい操作が古い保留状態を無条件に上書きする既存の不変条件と同じ）。
 let pendingExternalPlaybackFileId: string | null = null;
+// pendingExternalPlaybackFileIdの所有権確認をfileId比較ではなく採番トークンで行う
+// （2026-09-16、Codexレビュー指摘：P2「Give pending external requests unique ownership」）。
+// 同一fileIdへ「この曲を再生」を連打すると（例：ダブルクリック、通信が遅い間の焦れた再クリック）、
+// 先発の試行（A）と後発の試行（B）が同じfileIdを記録するため、fileId比較の所有権確認では
+// Aの`finally`がBのものも自分自身のものと誤認して消してしまう（`activeFadeToken`/
+// `backgroundRetryAttemptToken`と同じ採番トークン方式で解消する既存の類似バグと同型）。
+let pendingExternalPlaybackToken: number | null = null;
+let externalPlaybackTokenCounter = 0;
 const playbackContinuations = new PlaybackContinuationRegistry();
 const catalogSession = new CatalogSession<Song>();
 // catalogSessionへ最後に読み込んだ（有効な）曲一覧の出所スプレッドシートID。プレイリストの
@@ -1205,8 +1213,11 @@ async function handlePlay(): Promise<void> {
     // この外部再生の試行が未解決の間、attemptBackgroundPlaybackRecovery()のフォールバック分岐が
     // キュー側の古い「現在の曲」を誤ってresume()しないよう記録する（pendingExternalPlaybackFileId
     // の定義コメント参照）。認証継続で同じクロージャが再試行される場合も、再試行のたびに
-    // 同じfileIdで立て直される。
+    // 同じfileId・新しいトークンで立て直される。
     pendingExternalPlaybackFileId = fileId;
+    externalPlaybackTokenCounter += 1;
+    const myExternalPlaybackToken = externalPlaybackTokenCounter;
+    pendingExternalPlaybackToken = myExternalPlaybackToken;
     try {
       setStatus("Service Worker経由で再生を開始しています...");
       return canResumeExternal
@@ -1214,9 +1225,13 @@ async function handlePlay(): Promise<void> {
         : await startExternalPlayback(fileId, currentPlayback);
     } finally {
       manualTransitionCount -= 1;
-      // 待機中に別のこの曲を再生要求（別fileId）が既に上書きしていた場合、その新しい値を
-      // 誤って消さない（pendingQueueTransitionTargetのonFinalFailureと同じ所有権確認）。
-      if (pendingExternalPlaybackFileId === fileId) pendingExternalPlaybackFileId = null;
+      // 同一fileIdへの別の試行（連打等）が既に自分を上書きしていた場合、その新しい試行を
+      // 誤って消さない（pendingExternalPlaybackTokenの定義コメント参照。fileId比較ではなく
+      // 採番トークンの一致で所有権を確認する）。
+      if (pendingExternalPlaybackToken === myExternalPlaybackToken) {
+        pendingExternalPlaybackFileId = null;
+        pendingExternalPlaybackToken = null;
+      }
     }
   });
 }
@@ -1268,6 +1283,7 @@ async function handleQueuePlayback(action: () => Promise<boolean> | undefined, o
   // まだ未解決の外部再生試行があっても「最新の操作が古い保留状態を無条件に上書きする」
   // 既存の不変条件に従い破棄する（handlePlay()側の対称な破棄と同じ考え方）。
   pendingExternalPlaybackFileId = null;
+  pendingExternalPlaybackToken = null;
   // 進行中のクロスフェードがあれば、この明示的なナビゲーション操作を優先して打ち切る
   // （crossfadeOrchestrator.cancel()は非アクティブ側だけを後始末し、アクティブ側の
   // src/currentTime/play/pauseには一切触れない不変条件のため、旧設計にあった「退場曲の

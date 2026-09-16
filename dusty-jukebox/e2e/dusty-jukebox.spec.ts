@@ -2164,3 +2164,46 @@ test("自然終了に伴う遷移の先読み先が無くなり諦めた際、�
   expect(pauseCountAfterRelease).toBeGreaterThan(pauseCountAfterAbandon);
 });
 
+test("同一fileIdへの「この曲を再生」を連打すると、先に開始した試行の完了が後発の試行の保留状態を誤って解除しない（2026-09-16、Codexレビュー指摘：P2「Give pending external requests unique ownership」の回帰防止）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+
+  // song-1をキューから通常通り再生開始する（デフォルトのplay()モックで即座に解決し、
+  // queue.canResumeCurrent()がtrueになる。フォールバック分岐が誤って横取りする対象を作る）。
+  await page.getByRole("button", { name: "再生", exact: true }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+
+  // この後のplay()呼び出しを、呼び出し順にインデックスを振り個別に解放できるスタブへ
+  // 差し替える（既存の複数のテストと同じ方式）。
+  await page.evaluate(() => {
+    const resolvers: (() => void)[] = [];
+    (window as unknown as { __e2eReleasePlayCallAt: (i: number) => void }).__e2eReleasePlayCallAt = (i: number) => resolvers[i]?.();
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true,
+      value: function () {
+        return new Promise<void>((resolve) => { resolvers.push(resolve); });
+      },
+    });
+  });
+
+  // 同一fileId（external-track）へ「この曲を再生」を連打する（A→B、いずれも未解決のまま
+  // 固まる。A=呼び出し#0、B=呼び出し#1）。
+  await page.locator("#play-file-id").fill("external-track");
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /external-track(\?|$)/);
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await page.waitForTimeout(20);
+
+  // 先発の試行（A、呼び出し#0）だけを解放する。後発の試行（B、呼び出し#1）はまだ未解決のまま。
+  await page.evaluate(() => (window as unknown as { __e2eReleasePlayCallAt: (i: number) => void }).__e2eReleasePlayCallAt(0));
+  await page.waitForTimeout(20);
+
+  // フォアグラウンド復帰トリガーを1回だけ発火させる。修正前は、Aのfinallyがpending
+  // ExternalPlaybackFileIdをfileId比較だけで所有権確認していたため、Bがまだ保留中で
+  // 同じfileId（external-track）を記録していても、Aの完了がそれを誤って解除してしまい、
+  // この復帰がキュー側の古い曲（song-1）を誤ってresume()しBの試行を横取りしていた。
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await page.waitForTimeout(20);
+
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /external-track(\?|$)/);
+});
+
