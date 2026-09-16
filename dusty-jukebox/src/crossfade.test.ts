@@ -129,6 +129,7 @@ describe("runCrossfade", () => {
 describe("shouldStartCrossfadePreparation", () => {
   const baseParams = {
     crossfadeEnabled: true,
+    repeatSingle: false,
     isPreparing: false,
     isCrossfading: false,
     hasNextSong: true,
@@ -149,6 +150,10 @@ describe("shouldStartCrossfadePreparation", () => {
 
   it("クロスフェードが無効ならfalse", () => {
     expect(shouldStartCrossfadePreparation({ ...baseParams, crossfadeEnabled: false })).toBe(false);
+  });
+
+  it("1曲リピート中は他の条件を満たしてもfalse", () => {
+    expect(shouldStartCrossfadePreparation({ ...baseParams, repeatSingle: true })).toBe(false);
   });
 
   it("既に準備中ならfalse（多重起動防止）", () => {
@@ -185,6 +190,7 @@ describe("shouldStartCrossfadePreparation", () => {
 describe("shouldBeginCrossfadeRamp", () => {
   const baseParams = {
     crossfadeEnabled: true,
+    repeatSingle: false,
     isPreparing: true,
     isCrossfading: false,
     hasNextSong: true,
@@ -199,6 +205,10 @@ describe("shouldBeginCrossfadeRamp", () => {
 
   it("残り時間がクロスフェード長以下ならtrue", () => {
     expect(shouldBeginCrossfadeRamp(baseParams)).toBe(true);
+  });
+
+  it("1曲リピート中は他の条件を満たしてもfalse", () => {
+    expect(shouldBeginCrossfadeRamp({ ...baseParams, repeatSingle: true })).toBe(false);
   });
 
   it("残り時間がクロスフェード長より長ければfalse（準備は完了済みだがまだランプは始めない）", () => {
@@ -361,7 +371,9 @@ class FakeQueue implements CrossfadeQueueLike {
   playingFromQueue = true;
   commitCalls: string[] = [];
   commitResult: boolean = true;
+  singleRepeat = false;
 
+  isSingleRepeat(): boolean { return this.singleRepeat; }
   peekNextFileId(): string | null { return this.nextFileId; }
   isPlayingFromQueue(): boolean { return this.playingFromQueue; }
   commitPreparedFile(fileId: string): Promise<boolean> {

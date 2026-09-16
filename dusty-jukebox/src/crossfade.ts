@@ -146,6 +146,7 @@ export async function runCrossfade(
 
 export interface CrossfadeGateParams {
   crossfadeEnabled: boolean;
+  repeatSingle: boolean;
   hasNextSong: boolean;
   duration: number;
   currentTime: number;
@@ -184,6 +185,7 @@ export interface ShouldStartCrossfadePreparationParams extends CrossfadeGatePara
 export function shouldStartCrossfadePreparation(params: ShouldStartCrossfadePreparationParams): boolean {
   if (
     !params.crossfadeEnabled ||
+    params.repeatSingle ||
     params.isPreparing ||
     params.isCrossfading ||
     !params.hasNextSong ||
@@ -218,6 +220,7 @@ export interface ShouldBeginCrossfadeRampParams extends CrossfadeGateParams {
 // タイミングかどうか。
 export function shouldBeginCrossfadeRamp(params: ShouldBeginCrossfadeRampParams): boolean {
   if (
+    params.repeatSingle ||
     !params.crossfadeEnabled ||
     !params.isPreparing ||
     params.isCrossfading ||
@@ -296,6 +299,7 @@ export interface CrossfadeDualPlayerLike {
 }
 
 export interface CrossfadeQueueLike {
+  isSingleRepeat(): boolean;
   peekNextFileId(): string | null;
   isPlayingFromQueue(): boolean;
   // 不変条件：prepared曲が除外済み・別リストへ変更済み・世代不一致ならfalseを返し
@@ -414,6 +418,7 @@ export class CrossfadeOrchestrator {
     return (
       shouldStartCrossfadePreparation({
         crossfadeEnabled: params.enabled,
+        repeatSingle: this.queue.isSingleRepeat(),
         isPreparing: this.preparing,
         isCrossfading: this.crossfading,
         hasNextSong: Boolean(this.queue.peekNextFileId()),
@@ -492,6 +497,7 @@ export class CrossfadeOrchestrator {
     const ok =
       shouldBeginCrossfadeRamp({
         crossfadeEnabled: params.enabled,
+        repeatSingle: this.queue.isSingleRepeat(),
         isPreparing: this.preparing,
         isCrossfading: this.crossfading,
         hasNextSong: Boolean(this.queue.peekNextFileId()),
