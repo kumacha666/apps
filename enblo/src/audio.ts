@@ -586,7 +586,7 @@ interface ChannelState {
 
 let currentTrack: BgmTrack | null = null;
 let bgmTimer: ReturnType<typeof setTimeout> | null = null;
-let channelStates: ChannelState[][] = [];
+let channelStates: ChannelState[] = [];
 let kickNextTime = 0;
 let kickIdx      = 0;
 
