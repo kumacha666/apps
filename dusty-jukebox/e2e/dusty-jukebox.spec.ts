@@ -38,6 +38,46 @@ test("リピートボタンはオフ→1曲→リスト全曲→オフと巡回�
   await repeat.click(); await expect(repeat).toHaveAttribute("aria-label", "リピート: オフ");
 });
 
+test("ミニプレイヤーの再生ボタンは初期状態から再生・一時停止に合わせて表示を切り替える", async ({ context, page }) => {
+  await installGoogleMocks(context);
+  await page.goto("/");
+  const toggle = page.locator("#play-pause-btn");
+  await expect(toggle).toBeDisabled();
+  await expect(toggle).toHaveAttribute("aria-label", "再生");
+  await expect(toggle).toHaveText("▶");
+
+  await login(page);
+  await expect(toggle).toBeEnabled();
+  await openCatalog(page);
+  await page.getByRole("button", { name: "再生", exact: true }).click();
+  await expect(toggle).toHaveAttribute("aria-label", "一時停止");
+  await expect(toggle).toHaveText("⏸");
+
+  await page.getByRole("button", { name: "一時停止" }).click();
+  await expect(toggle).toHaveAttribute("aria-label", "再生");
+  await expect(toggle).toHaveText("▶");
+});
+
+test("ミニプレイヤーの再生操作中はトグルを無効化し、連打を無視して完了後に再有効化する", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context, { delayFirstMediaPlay: true });
+  await page.goto("/");
+  await login(page);
+  await openCatalog(page);
+
+  const toggle = page.locator("#play-pause-btn");
+  await toggle.click();
+  await expect(toggle).toBeDisabled();
+  await expect.poll(() => mock.streamRequests.filter((request) => request.includes("song-1")).length).toBe(1);
+
+  // disabledな実ボタンに対する2回目のネイティブclick()はイベントを発火しない。
+  await page.evaluate(() => (document.querySelector("#play-pause-btn") as HTMLButtonElement).click());
+  await page.waitForTimeout(100);
+  expect(mock.streamRequests.filter((request) => request.includes("song-1"))).toHaveLength(1);
+
+  await page.evaluate(() => (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay());
+  await expect(toggle).toBeEnabled();
+});
+
 test("通常の自然終了遷移がplay()未解決の間にリピートモードを変更すると新しいモードの遷移先へ迂回する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
 
@@ -286,7 +326,7 @@ test("除外は再生キューへ反映され、戻して作り直すと復帰�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 });
 
-test("「再生リストをクリア」で再生リストを空にでき、リロードせず初期状態（各操作ボタン無効）に戻せる（2026-09-09、ユーザー要望）", async ({ context, page }) => {
+test("「再生リストをクリア」で再生リストを空にでき、キュー操作を無効に戻せる（2026-09-09、ユーザー要望）", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
   await expect(page.locator("#catalog-list li")).toHaveCount(2);
   await page.getByRole("button", { name: "次へ" }).click();
@@ -299,7 +339,8 @@ test("「再生リストをクリア」で再生リストを空にでき、リ�
   await expect(page.getByRole("button", { name: "次へ" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "前へ" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "シャッフル", exact: true })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "再生", exact: true })).toBeDisabled();
+  // 再生/一時停止トグルはキュー外の単曲試聴にも使うため、ログイン後は常に有効。
+  await expect(page.getByRole("button", { name: "再生", exact: true })).toBeEnabled();
 });
 
 test("認証更新待ち（「認証を更新して続行」表示中）の状態から「再生リストをクリア」を押すと、保留中の認証継続通知も消える（2026-09-09、ChatGPTレビュー指摘：P2。setList([])だけではキューとは別管理のPlaybackAuthenticationGateの保留操作・通知が残り、クリア済みなのに認証更新ボタンだけが残る矛盾した状態になっていた）", async ({ context, page }) => {
@@ -380,7 +421,7 @@ test("320px幅でも固定バーの再生リスト操作ボタンが画面内に
 
   const controls = page.locator(".mini-player-controls");
   await expect(controls).toBeVisible();
-  await expect(controls.locator("button")).toHaveCount(4);
+  await expect(controls.locator("button")).toHaveCount(5);
   const buttonBoxes = await controls.locator("button").evaluateAll((buttons) =>
     buttons.map((button) => {
       const rect = button.getBoundingClientRect();
@@ -834,6 +875,7 @@ test("キュー曲再生中に「この曲を再生」でキュー外の単曲�
 
   // 修正前は、外部試聴中の再生位置のままキューの古いcurrentFileId（song-2）をresume()して
   // しまっていた。修正後はcanResumeCurrent()がfalseになり、先頭（song-1）から再生し直す。
+  await page.getByRole("button", { name: "一時停止" }).click();
   await page.getByRole("button", { name: "再生", exact: true }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 });
@@ -859,6 +901,47 @@ test("単曲試聴中に一時停止した後、同じファイルIDでもう一
   expect(await page.evaluate(() => (window as unknown as { __e2e: { getLastExternalPlaybackPosition(): number | null } }).__e2e.getLastExternalPlaybackPosition())).toBe(30);
 });
 
+test("キュー作成後の単曲試聴をトグルで一時停止・再開しても、キュー曲へ切り替えず同じ位置から再開する", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.locator("#play-file-id").fill("external-track");
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/external-track(\?|$)/);
+  await page.evaluate(() => {
+    const e2e = (window as unknown as { __e2e: { activeAudioElementId(): string } }).__e2e;
+    (document.getElementById(e2e.activeAudioElementId()) as HTMLAudioElement).currentTime = 30;
+  });
+
+  const toggle = page.locator("#play-pause-btn");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-label", "再生");
+  await toggle.click();
+
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/external-track(\?|$)/);
+  expect(await page.evaluate(() => (window as unknown as { __e2e: { getLastExternalPlaybackPosition(): number | null } }).__e2e.getLastExternalPlaybackPosition())).toBe(30);
+});
+
+test("キュー作成後の単曲試聴が自然終了してからトグルで再生すると、キュー曲へ切り替えず同じ曲を先頭から再生する", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.locator("#play-file-id").fill("external-track");
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/external-track(\?|$)/);
+
+  await page.evaluate(() => {
+    const e2e = (window as unknown as { __e2e: { activeAudioElementId(): string } }).__e2e;
+    const audio = document.getElementById(e2e.activeAudioElementId()) as HTMLAudioElement;
+    Object.defineProperty(audio, "paused", { value: true, configurable: true });
+    Object.defineProperty(audio, "ended", { value: true, configurable: true });
+    audio.dispatchEvent(new Event("ended"));
+  });
+
+  await page.locator("#play-pause-btn").click();
+
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/external-track(\?|$)/);
+  expect(await page.evaluate(() => (window as unknown as { __e2e: { getLastExternalPlaybackPosition(): number | null } }).__e2e.getLastExternalPlaybackPosition())).toBe(0);
+});
+
 test("再生中の曲をチェック解除で除外してから「再生」ボタンを押すと、除外中の曲を再開しようとせず次の未除外曲から再生する（2026-09-06 PR #418 ChatGPTレビュー再々指摘）", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
   await page.getByRole("button", { name: "再生", exact: true }).click();
@@ -867,6 +950,7 @@ test("再生中の曲をチェック解除で除外してから「再生」ボ�
   // 再生中のsong-1自身を除外する。修正前はcanResumeCurrent()が除外状態を見ておらず、
   // resume()が除外を理由にfalseを返すため「再生」ボタンが何も再生できなくなっていた。
   await page.locator("#catalog-list input").first().uncheck();
+  await page.getByRole("button", { name: "一時停止" }).click();
   await page.getByRole("button", { name: "再生", exact: true }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
 });
@@ -1312,6 +1396,36 @@ test("キュー内自然終了に近づくとクロスフェードが発生し�
   const oldSlotVolume = await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume);
   expect(oldSlotVolume).toBeCloseTo(0, 5);
   await expect(page.locator("#audio-player-b")).toHaveAttribute("src", /album-track-2(\?|$)/);
+});
+
+test("クロスフェード中に退場側が自然終了してpauseイベントを発火しても再生中表示を維持する", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+  await page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#play-pause-btn")).toHaveAttribute("aria-label", "一時停止");
+
+  await page.clock.install();
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#audio-player-b")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(true);
+
+  // 自然終了時にブラウザが同時発火するpauseを、ended=trueの退場側スロットで再現する。
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "ended", { value: true, configurable: true });
+    audio.dispatchEvent(new Event("pause"));
+  });
+  await expect(page.locator("#play-pause-btn")).toHaveAttribute("aria-label", "一時停止");
+  await expect(page.locator("#play-pause-btn")).toHaveText("⏸");
 });
 
 test("手動で「次へ」を押すとクロスフェードが中断され、#audio-player-bがリセットされる", async ({ context, page }) => {
@@ -1942,7 +2056,9 @@ test("バックグラウンドの定期リトライがネイティブplay()の�
   // 定期リトライ自身のresume()呼び出し（play()呼び出し#0）が未解決のまま固まるまで待つ。
   await expect.poll(() => page.evaluate(() => (window as unknown as { __e2ePlayCallCount: number }).__e2ePlayCallCount)).toBe(1);
 
+  // play()のPromiseは未解決でも、ブラウザが再生を開始した状態をplayingイベントで再現する。
   // この呼び出しがまだ固まっている間に、ユーザーがアプリ内の「一時停止」ボタンを押す。
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("playing")));
   await page.getByRole("button", { name: "一時停止" }).click();
 
   // ここで初めて、定期リトライ自身の（未解決のまま固まっていた）play()呼び出しを解放する。
@@ -2125,6 +2241,8 @@ test("手動の「次へ」が未解決のまま固まっている間にその�
   // song-2をチェックボックスで除外する（exclude()はgenerationId()を変えないため、
   // pendingQueueTransitionTargetの登録時点との突き合わせでは検出できない）。
   await page.locator("#catalog-list li").nth(1).locator("input[type=checkbox]").uncheck();
+  // 未解決の遷移中にOS/ブラウザ側で音声が止まった状態を再現する。
+  await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("pause")));
 
   // documentをhiddenにして定期リトライループを開始させる（VITE_E2Eでは50ms間隔）。
   await page.evaluate(() => {

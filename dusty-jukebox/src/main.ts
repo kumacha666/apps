@@ -158,7 +158,7 @@ let playbackAuthGate: PlaybackAuthenticationGate | null = null;
 let crossfadeOrchestrator: CrossfadeOrchestrator | null = null;
 // 単曲試聴（「この曲を再生」、キュー外）で最後に再生を開始したfileId（2026-09-09、ChatGPT
 // レビュー指摘：P2。ネイティブ<audio controls>を廃止したことで、従来ネイティブの再生アイコンが
-// 担っていた「一時停止位置からの再開」が単曲試聴では失われていた——キュー曲は`queue-play-btn`が
+// 担っていた「一時停止位置からの再開」が単曲試聴では失われていた——キュー曲は`play-pause-btn`が
 // `queue.canResumeCurrent()`で同じことをするが、キュー外の単曲試聴には対応する仕組みが無かった）。
 // audio.srcがキュー側の再生に取って代わられると、audio.currentTimeがこのfileIdとは無関係な
 // 位置を指すため、キュー由来の再生を試みるたびに必ずnullへ戻す（handleQueuePlayback()参照）。
@@ -379,6 +379,7 @@ function render(): void {
         <div class="mini-player-controls">
           <button id="shuffle-btn" type="button" aria-label="シャッフル" disabled>🔀</button>
           <button id="previous-btn" type="button" aria-label="前へ" disabled>⏮</button>
+          <button id="play-pause-btn" type="button" aria-label="再生" disabled>▶</button>
           <button id="next-btn" type="button" aria-label="次へ" disabled>⏭</button>
           <button id="repeat-btn" class="repeat-off" type="button" aria-label="リピート: オフ" disabled>🔁</button>
         </div>
@@ -403,7 +404,7 @@ function render(): void {
         <datalist id="filter-release-type-options"></datalist>
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
-        <div><button id="queue-play-btn" type="button" disabled>再生</button> <button id="pause-btn" type="button" disabled>一時停止</button> <button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button> <button id="clear-queue-btn" type="button" disabled>再生リストをクリア</button></div>
+        <div><button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button> <button id="clear-queue-btn" type="button" disabled>再生リストをクリア</button></div>
         <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトする</label>
         <label><input id="crossfade-toggle" type="checkbox" /> 曲間をクロスフェードする</label>
         <label>長さ
@@ -611,10 +612,9 @@ function crossfadeStartParams(): { enabled: boolean; durationMs: number; manualT
 async function maybeStartCrossfade(): Promise<void> {
   await crossfadeOrchestrator?.maybeStart(crossfadeStartParams());
 }
-// 再生/前へ/次へ/シャッフルはいずれも「再生リストに曲がある間だけ使える」操作のため、有効/無効を
-// まとめて切り替える（開発体制#39④UI-4、シャッフル追加時に既存2ボタンと同じ条件のまま揃える）。
+// 前へ/次へ/シャッフル等は「再生リストに曲がある間だけ使える」操作のため、有効/無効を
+// まとめて切り替える。再生/一時停止トグルはキュー外の単曲試聴にも使うため対象外。
 function setQueueNavEnabled(enabled: boolean): void {
-  el<HTMLButtonElement>("queue-play-btn").disabled = !enabled;
   el<HTMLButtonElement>("next-btn").disabled = !enabled;
   el<HTMLButtonElement>("previous-btn").disabled = !enabled;
   el<HTMLButtonElement>("shuffle-btn").disabled = !enabled;
@@ -1195,7 +1195,7 @@ async function handleLogin(): Promise<void> {
     el<HTMLButtonElement>("scan-btn").disabled = false;
     el<HTMLButtonElement>("retry-extraction-btn").disabled = false;
     el<HTMLButtonElement>("play-btn").disabled = false;
-    el<HTMLButtonElement>("pause-btn").disabled = false;
+    el<HTMLButtonElement>("play-pause-btn").disabled = false;
     el<HTMLButtonElement>("load-catalog-btn").disabled = false;
   } catch (err) {
     setStatus(err instanceof AuthError ? err.message : String(err), true);
@@ -1221,6 +1221,12 @@ async function handlePlay(): Promise<void> {
     audioPaused: currentPlayback.activeAudioElement().paused,
     audioEnded: currentPlayback.activeAudioElement().ended,
   });
+  await resumeOrStartExternalPlayback(fileId, canResumeExternal);
+}
+
+async function resumeOrStartExternalPlayback(fileId: string, resumeFromCurrentPosition: boolean): Promise<void> {
+  const currentPlayback = playback;
+  if (!currentPlayback) return;
   // キュー由来の未コミット遷移（自然終了・手動ナビゲーションいずれも）が記録した復帰対象を
   // ここで破棄する（2026-09-16、Codexレビュー指摘：P2「Preserve a newer external playback
   // request」）。外部単曲試聴（startExternalPlayback/startExternalPlaybackAt）はキューの
@@ -1261,7 +1267,7 @@ async function handlePlay(): Promise<void> {
     pendingExternalPlaybackToken = myExternalPlaybackToken;
     try {
       setStatus("Service Worker経由で再生を開始しています...");
-      return canResumeExternal
+      return resumeFromCurrentPosition
         ? await startExternalPlaybackAt(fileId, currentPlayback, currentPlayback.activeAudioElement().currentTime)
         : await startExternalPlayback(fileId, currentPlayback);
     } finally {
@@ -1450,6 +1456,10 @@ function handleNativePlaybackStatus(audio: HTMLAudioElement, eventType: Playback
   // OS/ヘッドセット側の表示がPlayに切り替わり、それを押すと既に終了済みの主audio要素へ
   // 再生要求（registerActionHandlersのplayハンドラ）が飛んでしまう。
   if (eventType === "pause" && crossfadeOrchestrator?.isCrossfading()) return;
+  const playPauseButton = el<HTMLButtonElement>("play-pause-btn");
+  const isPlaying = eventType === "playing";
+  playPauseButton.textContent = isPlaying ? "⏸" : "▶";
+  playPauseButton.setAttribute("aria-label", isPlaying ? "一時停止" : "再生");
   // Bluetoothデバイス・OSのロック画面等に再生/一時停止アイコンの状態を反映する。
   updatePlaybackState(navigator.mediaSession, eventType === "playing" ? "playing" : "paused");
 }
@@ -1518,7 +1528,7 @@ async function handlePlaybackAction(action: () => Promise<boolean>, onFinalFailu
 // バックグラウンド再生の自動復帰（2026-09-15、ユーザー要望「バックグラウンド再生時に次曲が
 // 再生されない問題も解決してほしい」）：ページが再びvisible/resumeになった時点で、「キュー曲を
 // 再生中のはずなのに、ユーザー自身が明示的に一時停止したわけではなく、実際の<audio>要素は
-// 一時停止・未終了のまま止まっている」場合にのみ、既存の「再生」ボタン（queue-play-btn）・
+// 一時停止・未終了のまま止まっている」場合にのみ、既存の再生/一時停止トグルボタン・
 // Drive 401の認証継続と同じ経路（queue.resume()、replacePendingで直列化チェーンの詰まりを
 // 迂回する既存の設計）で再開を試みる。新しい並行処理上のリスクを持ち込まず、既存の
 // 実績あるパスを再利用する。
@@ -2886,7 +2896,29 @@ function init(): void {
     el<HTMLButtonElement>("scan-btn").addEventListener("click", () => void handleScan());
     el<HTMLButtonElement>("retry-extraction-btn").addEventListener("click", () => void handleRetryExtraction());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
-    el<HTMLButtonElement>("pause-btn").addEventListener("click", () => {
+    el<HTMLButtonElement>("play-pause-btn").addEventListener("click", () => {
+      const playPauseButton = el<HTMLButtonElement>("play-pause-btn");
+      playPauseButton.disabled = true;
+      if (playback?.activeAudioElement().paused !== false) {
+        const activeAudio = playback?.activeAudioElement();
+        if (lastExternalFileId !== null && activeAudio?.paused === true) {
+          void resumeOrStartExternalPlayback(lastExternalFileId, !activeAudio.ended)
+            .finally(() => { playPauseButton.disabled = false; });
+          return;
+        }
+        void handleQueuePlayback(() => {
+          if (!queue) return undefined;
+          // canResumeCurrent()が偽の場合（キュー曲を一度も再生していない、またはキュー外の
+          // 単曲試聴で上書きされている）は先頭から再生する。currentPlayingFileId()単独では
+          // 判定できない理由はcanResumeCurrent()のコメント参照（2026-09-06 レビュー指摘）。
+          // playback.activeAudioElement()（動的な現在のactiveスロット）から読む（2026-09-14〜、
+          // Codexレビュー指摘：P1）。以前は固定のaudioPlayer（スロットA）を直接参照していたため、
+          // クロスフェードでBへpromotionされた後に一時停止→再生ボタンを押すと、Bの一時停止位置
+          // ではなく固定のA（cleanup後は0のことが多い）の位置を渡してしまっていた。
+          return queue.canResumeCurrent() ? queue.resume(queue.currentPlayingFileId()!, playback?.activeAudioElement().currentTime ?? 0) : queue.playAt(0);
+        }).finally(() => { playPauseButton.disabled = false; });
+        return;
+      }
       // ユーザー自身の明示的な一時停止のため、バックグラウンド復帰時の自動再開の対象から
       // 外す（2026-09-15、userPausedPlaybackの定義コメント参照）。
       userPausedPlayback = true;
@@ -2901,7 +2933,10 @@ function init(): void {
       // `finally`が2回目のフェードがまだ進行中でもガードを解除してしまうため、booleanでは
       // なくカウンタで各クリックごとの完了待ちを独立させる）。
       manualTransitionCount += 1;
-      void playback?.pause(fadeOutEnabled()).finally(() => { manualTransitionCount -= 1; });
+      void playback?.pause(fadeOutEnabled()).finally(() => {
+        manualTransitionCount -= 1;
+        playPauseButton.disabled = false;
+      });
     });
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
     el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
@@ -2983,20 +3018,6 @@ function init(): void {
       const secondaryDirection = el<HTMLSelectElement>("sort-secondary-direction").value === "desc" ? "desc" : "asc";
       void queue.sortBy(field, direction, secondaryField, secondaryDirection).then(() => { renderQueue(); updateUnshuffleEnabled(); });
     });
-    // 「再生」ボタン：既に再生中の曲があればその位置から再開し（一時停止ボタンで止めた曲も
-    // currentPlayingFileId()は保持され続けるためここで再開できる）、無ければ先頭の曲から再生する。
-    // 絞り込みで再生リストを作った直後に必ず「次へ」を押す必要がある、という違和感への対応。
-    el<HTMLButtonElement>("queue-play-btn").addEventListener("click", () => void handleQueuePlayback(() => {
-      if (!queue) return undefined;
-      // canResumeCurrent()が偽の場合（キュー曲を一度も再生していない、またはキュー外の
-      // 単曲試聴で上書きされている）は先頭から再生する。currentPlayingFileId()単独では
-      // 判定できない理由はcanResumeCurrent()のコメント参照（2026-09-06 レビュー指摘）。
-      // playback.activeAudioElement()（動的な現在のactiveスロット）から読む（2026-09-14〜、
-      // Codexレビュー指摘：P1）。以前は固定のaudioPlayer（スロットA）を直接参照していたため、
-      // クロスフェードでBへpromotionされた後に一時停止→再生ボタンを押すと、Bの一時停止位置
-      // ではなく固定のA（cleanup後は0のことが多い）の位置を渡してしまっていた。
-      return queue.canResumeCurrent() ? queue.resume(queue.currentPlayingFileId()!, playback?.activeAudioElement().currentTime ?? 0) : queue.playAt(0);
-    }));
     el<HTMLButtonElement>("save-playlist-btn").addEventListener("click", () => void handleSavePlaylist());
     el<HTMLButtonElement>("refresh-playlists-btn").addEventListener("click", () => void handleRefreshPlaylists());
   });

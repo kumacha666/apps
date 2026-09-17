@@ -105,21 +105,35 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     : null;
   // The test data is deliberately not a decodable audio file. Keep native media
   // decoding outside this suite while still exercising the actual SW fetch path.
-  // play() is fully replaced (not wrapped), so the native `paused` flag never
-  // reflects app-driven playback here. Track pause() calls explicitly via
-  // window.__e2ePauseCalls so tests can verify a real pause was requested
-  // (e.g. stopping playback when a loaded playlist resolves to zero songs).
+  // The play/pause toggle reads the native paused flag and reacts to the native
+  // playing/pause events. The fixture is not decodable audio, so emulate those
+  // parts of HTMLMediaElement while keeping decoding outside this suite.
   await context.addInitScript((delayFirstPlay: boolean) => {
     let firstPlayHeld = false;
     let releaseFirstPlay: (() => void) | undefined;
     (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay = () => releaseFirstPlay?.();
+    const playingElements = new WeakSet<HTMLMediaElement>();
+    Object.defineProperty(HTMLMediaElement.prototype, "paused", {
+      configurable: true,
+      get: function (this: HTMLMediaElement) { return !playingElements.has(this); },
+    });
+    document.addEventListener("playing", (event) => playingElements.add(event.target as HTMLMediaElement), true);
+    document.addEventListener("pause", (event) => playingElements.delete(event.target as HTMLMediaElement), true);
     Object.defineProperty(HTMLMediaElement.prototype, "play", {
       configurable: true,
-      value: () => {
+      value: function (this: HTMLMediaElement) {
         if (delayFirstPlay && !firstPlayHeld) {
           firstPlayHeld = true;
-          return new Promise<void>((resolve) => { releaseFirstPlay = resolve; });
+          return new Promise<void>((resolve) => {
+            releaseFirstPlay = () => {
+              playingElements.add(this);
+              this.dispatchEvent(new Event("playing"));
+              resolve();
+            };
+          });
         }
+        playingElements.add(this);
+        this.dispatchEvent(new Event("playing"));
         return Promise.resolve();
       },
     });
@@ -129,7 +143,10 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       configurable: true,
       value: function (this: HTMLMediaElement, ...args: []) {
         (window as unknown as { __e2ePauseCalls: number }).__e2ePauseCalls += 1;
-        return originalPause.apply(this, args);
+        playingElements.delete(this);
+        const result = originalPause.apply(this, args);
+        this.dispatchEvent(new Event("pause"));
+        return result;
       },
     });
   }, options.delayFirstMediaPlay ?? false);
