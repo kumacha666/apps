@@ -1221,6 +1221,12 @@ async function handlePlay(): Promise<void> {
     audioPaused: currentPlayback.activeAudioElement().paused,
     audioEnded: currentPlayback.activeAudioElement().ended,
   });
+  await resumeOrStartExternalPlayback(fileId, canResumeExternal);
+}
+
+async function resumeOrStartExternalPlayback(fileId: string, resumeFromCurrentPosition: boolean): Promise<void> {
+  const currentPlayback = playback;
+  if (!currentPlayback) return;
   // キュー由来の未コミット遷移（自然終了・手動ナビゲーションいずれも）が記録した復帰対象を
   // ここで破棄する（2026-09-16、Codexレビュー指摘：P2「Preserve a newer external playback
   // request」）。外部単曲試聴（startExternalPlayback/startExternalPlaybackAt）はキューの
@@ -1261,7 +1267,7 @@ async function handlePlay(): Promise<void> {
     pendingExternalPlaybackToken = myExternalPlaybackToken;
     try {
       setStatus("Service Worker経由で再生を開始しています...");
-      return canResumeExternal
+      return resumeFromCurrentPosition
         ? await startExternalPlaybackAt(fileId, currentPlayback, currentPlayback.activeAudioElement().currentTime)
         : await startExternalPlayback(fileId, currentPlayback);
     } finally {
@@ -2892,6 +2898,11 @@ function init(): void {
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
     el<HTMLButtonElement>("play-pause-btn").addEventListener("click", () => {
       if (playback?.activeAudioElement().paused !== false) {
+        const activeAudio = playback?.activeAudioElement();
+        if (lastExternalFileId !== null && activeAudio?.paused === true && activeAudio.ended === false) {
+          void resumeOrStartExternalPlayback(lastExternalFileId, true);
+          return;
+        }
         void handleQueuePlayback(() => {
           if (!queue) return undefined;
           // canResumeCurrent()が偽の場合（キュー曲を一度も再生していない、またはキュー外の
