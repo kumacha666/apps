@@ -387,6 +387,21 @@ function render(): void {
         <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
         <p id="status" class="status"></p>
       </div>
+      <section class="playlists">
+        <h2>保存済みプレイリスト</h2>
+        <label class="field"><span>プレイリスト名</span><input id="playlist-name" type="text" placeholder="例: ドライブ用" /></label>
+        <button id="save-playlist-btn" type="button">現在の再生リストをプレイリストとして保存</button>
+        <button id="refresh-playlists-btn" type="button">プレイリスト一覧を更新</button>
+        <ul id="playlist-list" class="result-list"></ul>
+      </section>
+      <ul id="result-list" class="result-list"></ul>
+      <section class="diagnostics">
+        <h2>バックグラウンド再生 診断ログ（調査用）</h2>
+        <p>再生が止まる操作（スマホをバックグラウンドにする・Bluetoothの再生ボタン等）を再現した後、下のボタンでログを表示し、内容をコピーして共有してください。</p>
+        <button id="diag-log-show-btn" type="button">診断ログを表示</button>
+        <button id="diag-log-clear-btn" type="button">診断ログをクリア</button>
+        <textarea id="diag-log-output" class="diag-log-output" readonly rows="10" hidden></textarea>
+      </section>
       <section class="catalog">
         <h2>ライブラリ</h2>
         <button id="load-catalog-btn" type="button" disabled>索引から曲一覧を読み込む</button>
@@ -440,21 +455,6 @@ function render(): void {
         <h3>アルバム</h3>
         <label class="field"><span>アルバム検索</span><input id="album-search" type="search" placeholder="アルバム名・アーティスト名で検索" /></label>
         <ul id="album-list" class="result-list"></ul>
-      </section>
-      <section class="playlists">
-        <h2>保存済みプレイリスト</h2>
-        <label class="field"><span>プレイリスト名</span><input id="playlist-name" type="text" placeholder="例: ドライブ用" /></label>
-        <button id="save-playlist-btn" type="button">現在の再生リストをプレイリストとして保存</button>
-        <button id="refresh-playlists-btn" type="button">プレイリスト一覧を更新</button>
-        <ul id="playlist-list" class="result-list"></ul>
-      </section>
-      <ul id="result-list" class="result-list"></ul>
-      <section class="diagnostics">
-        <h2>バックグラウンド再生 診断ログ（調査用）</h2>
-        <p>再生が止まる操作（スマホをバックグラウンドにする・Bluetoothの再生ボタン等）を再現した後、下のボタンでログを表示し、内容をコピーして共有してください。</p>
-        <button id="diag-log-show-btn" type="button">診断ログを表示</button>
-        <button id="diag-log-clear-btn" type="button">診断ログをクリア</button>
-        <textarea id="diag-log-output" class="diag-log-output" readonly rows="10" hidden></textarea>
       </section>
     `
         : `<p class="status error">VITE_GOOGLE_CLIENT_ID が未設定です。.env に設定してください。</p>`
