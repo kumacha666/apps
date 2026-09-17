@@ -471,7 +471,7 @@ test("絞り込み欄同士が連動し、アーティストを選ぶとアル�
 
   // アーティスト欄自身の候補は、自分自身の入力では絞り込まれず全アーティストのまま出る
   // （ネイティブdatalistのprefixフィルタと二重に絞り込まれることを避けるため）。
-  await expect(page.locator("#filter-artist-options option")).toHaveText(["Quartet", "Soloist"]);
+  await expect(page.locator("#filter-artist-options option")).toHaveText(["Conductor", "Quartet", "Soloist"]);
 
   await page.locator("#filter-artist").fill("");
   // アーティスト条件を解除すると、アルバム候補も全アルバムに戻る。
@@ -972,6 +972,29 @@ test("アルバム一覧はアーティスト別に見出し付きで表示さ�
   await page.locator("#album-search").fill("symphony");
   await expect(albumList.locator(".album-artist-heading")).toHaveText(["Orchestra"]);
   await expect(albumList).toContainText("Symphony");
+});
+
+test("曲フィルタでアルバム一覧を絞っても再生時は全曲を保持し、リリース年順ではアーティスト付きフラット表示になる", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  // Symphonyの3曲中2曲だけがSoloistだが、アルバム単位では表示し、再生リストには全3曲を入れる。
+  await page.locator("#filter-artist").fill("Soloist");
+  await expect(page.locator("#album-list")).toContainText("Symphony（3曲）");
+  await expect(page.locator("#album-list")).not.toContainText("Blue Notes");
+  await page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await expect(page.locator("#catalog-list")).toContainText("Opening");
+
+  await page.locator("#filter-artist").fill("");
+  await page.locator("#album-sort").selectOption("year-asc");
+  await expect(page.locator("#album-list .album-artist-heading")).toHaveCount(0);
+  const albumRows = page.locator("#album-list > li");
+  await expect(albumRows).toHaveCount(2);
+  await expect(albumRows.nth(0)).toContainText("Blue Notes — Quartet");
+  await expect(albumRows.nth(1)).toContainText("Symphony — Orchestra");
 });
 
 test("再生リストをプレイリストとして保存し、一覧から読み込み直して再生でき、削除もできる", async ({ context, page }) => {

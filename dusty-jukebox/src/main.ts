@@ -13,7 +13,7 @@ import { DualAudioPlayer, createSharedStreamIdAllocator, type PlaybackController
 import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStatus";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
-import { parseIndexRows, filterSongs, groupSongsByAlbum, groupAlbumsByArtist, filterAlbumGroups, sortSongs, distinctFieldValuesForFilters, type AlbumGroup, type AutocompleteField, type Song, type SongFilters } from "./catalog";
+import { parseIndexRows, filterSongs, groupSongsByAlbum, groupAlbumsByArtist, filterAlbumGroups, filterAlbumGroupsBySongs, compareAlbumGroups, sortSongs, distinctFieldValuesForFilters, type AlbumGroup, type AlbumSort, type AutocompleteField, type Song, type SongFilters } from "./catalog";
 import { withTimeout } from "./withTimeout";
 import { CatalogOperationGate } from "./catalogOperationGate";
 import { CatalogSession } from "./catalogSession";
@@ -439,6 +439,7 @@ function render(): void {
         <ul id="catalog-list" class="result-list"></ul>
         <h3>アルバム</h3>
         <label class="field"><span>アルバム検索</span><input id="album-search" type="search" placeholder="アルバム名・アーティスト名で検索" /></label>
+        <label class="field"><span>並び順</span><select id="album-sort"><option value="artist">アーティスト名順</option><option value="album-asc">アルバム名順（昇順）</option><option value="album-desc">アルバム名順（降順）</option><option value="year-asc">リリース年順（古い順）</option><option value="year-desc">リリース年順（新しい順）</option></select></label>
         <ul id="album-list" class="result-list"></ul>
       </section>
       <section class="playlists">
@@ -742,34 +743,43 @@ function renderFilterSuggestions(songs: Song[]): void {
 // カタログ未読み込み（catalogSession.createQueue()がnullを返す）時は何もしない。
 function refreshFilterSuggestions(): void {
   const songs = catalogSession.createQueue((loadedSongs) => loadedSongs);
-  if (songs) renderFilterSuggestions(songs);
+  if (songs) { renderFilterSuggestions(songs); refreshAlbumGroups(); }
 }
 // アーティスト別の見出し付きで表示する（開発体制#39④UI-3、全アルバムがフラットに
 // 並んでいて探しにくい、という使いづらさへの対応）。
-function renderAlbumGroups(groups: AlbumGroup[]): void {
+function renderAlbumGroups(groups: AlbumGroup[], sort: AlbumSort): void {
   const list = el<HTMLUListElement>("album-list"); list.innerHTML = "";
-  for (const artistGroup of groupAlbumsByArtist(groups)) {
-    const heading = document.createElement("li"); heading.className = "album-artist-heading";
-    heading.textContent = artistGroup.albumArtist; list.append(heading);
-    for (const group of artistGroup.albums) {
+  const appendAlbum = (group: AlbumGroup, showArtist: boolean) => {
       const item = document.createElement("li");
-      const label = `${group.album}（${group.songs.length}曲） `;
+      const label = `${group.album}${showArtist ? ` — ${group.albumArtist}` : ""}（${group.songs.length}曲） `;
       const button = document.createElement("button"); button.type = "button"; button.textContent = "このアルバムを再生";
       button.addEventListener("click", () => {
         if (!queue) return;
         const songs = catalogSession.createQueue(() => group.songs);
-        if (!songs) {
-          setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストを作成してください。", true);
-          return;
-        }
-        queue.setList(songs); renderQueue();
-        setQueueNavEnabled(songs.length > 0);
+        if (!songs) { setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストを作成してください。", true); return; }
+        queue.setList(songs); renderQueue(); setQueueNavEnabled(songs.length > 0);
         setStatus(`${group.album}の${songs.length}曲を再生リストに設定しました。`);
         void handleQueuePlayback(() => queue?.playAt(0));
       });
       item.append(label, button); list.append(item);
+  };
+  if (sort !== "artist") {
+    for (const group of [...groups].sort(compareAlbumGroups(sort))) appendAlbum(group, true);
+    return;
+  }
+  for (const artistGroup of groupAlbumsByArtist(groups)) {
+    const heading = document.createElement("li"); heading.className = "album-artist-heading";
+    heading.textContent = artistGroup.albumArtist; list.append(heading);
+    for (const group of artistGroup.albums) {
+      appendAlbum(group, false);
     }
   }
+}
+function refreshAlbumGroups(): void {
+  // 曲名のフリーワード検索は曲一覧専用。アルバム一覧には指定された項目別フィルタだけを適用する。
+  const groups = filterAlbumGroupsBySongs(loadedAlbumGroups, { ...currentFilterValues(), query: undefined });
+  const searched = filterAlbumGroups(groups, el<HTMLInputElement>("album-search").value);
+  renderAlbumGroups(searched, el<HTMLSelectElement>("album-sort").value as AlbumSort);
 }
 function playlistsSpreadsheetIO(spreadsheetId: string): PlaylistsIO {
   return createPlaylistsIO(spreadsheetId, () => auth.ensureAccessToken());
@@ -1152,7 +1162,7 @@ async function loadCatalog(): Promise<void> {
     catalogSession.replace(songs);
     loadedCatalogSpreadsheetId = spreadsheetId;
     loadedAlbumGroups = groupSongsByAlbum(songs);
-    renderAlbumGroups(filterAlbumGroups(loadedAlbumGroups, el<HTMLInputElement>("album-search").value));
+    refreshAlbumGroups();
     renderFilterSuggestions(songs);
     el<HTMLButtonElement>("create-queue-btn").disabled = false;
     setStatus(`索引から${songs.length}曲を読み込みました${failedPathCount > 0 ? `（${failedPathCount}件はパス解決に失敗）` : ""}。条件を指定して再生リストを作れます。`);
@@ -2944,8 +2954,9 @@ function init(): void {
     // アルバム検索は曲の絞り込み（ボタン起点）とは別に、入力の都度その場で絞り込む
     // （アルバム件数は曲数よりずっと少なく、jankの懸念が無いためユーザーとの相談で確認済み）。
     el<HTMLInputElement>("album-search").addEventListener("input", () => {
-      renderAlbumGroups(filterAlbumGroups(loadedAlbumGroups, el<HTMLInputElement>("album-search").value));
+      refreshAlbumGroups();
     });
+    el<HTMLSelectElement>("album-sort").addEventListener("change", refreshAlbumGroups);
     // 絞り込み欄同士の連動（開発体制#43）：いずれかの欄が変わるたびに、他の欄の候補一覧を
     // 現在の絞り込み条件で絞り込み直す。年欄はtype=numberのため"input"に加え、スピナー
     // 操作やブラウザ差異を考慮し"change"でも拾う。
