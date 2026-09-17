@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { INDEX_SHEET_HEADER } from "./sheets";
-import { distinctFieldValues, distinctFieldValuesForFilters, filterAlbumGroups, filterSongs, groupAlbumsByArtist, groupSongsByAlbum, parseIndexRows, readOverride, sortSongs, type Song } from "./catalog";
+import { albumReleaseYear, compareAlbumGroups, distinctFieldValues, distinctFieldValuesForFilters, filterAlbumGroups, filterAlbumGroupsBySongs, filterSongs, groupAlbumsByArtist, groupSongsByAlbum, parseIndexRows, readOverride, sortSongs, type Song } from "./catalog";
 const row = (values: Record<string, string>): string[] => INDEX_SHEET_HEADER.map((header) => values[header] ?? "");
 describe("索引行の読み取り", () => {
   test("overrideの空欄/(none)/値とfileIdフォールバックを扱う", () => {
@@ -138,5 +138,29 @@ describe("アルバムのアーティスト別グルーピングと検索", () =
     expect(filterAlbumGroups(groups, "moon").map((g) => g.album)).toEqual(["Moonlight Sonata", "Symphony"]);
     expect(filterAlbumGroups(groups, "").map((g) => g.album)).toEqual(["Moonlight Sonata", "Other", "Symphony"]);
     expect(filterAlbumGroups(groups, "nothing-matches")).toEqual([]);
+  });
+});
+describe("アルバムの曲条件絞り込みとフラット並び替え", () => {
+  const groups = groupSongsByAlbum([
+    song({ fileId: "a1", parentId: "a", album: "Zulu", albumArtist: "Artist A", artist: "Match", releaseYear: "2001" }),
+    song({ fileId: "a2", parentId: "a", album: "Zulu", albumArtist: "Artist A", artist: "Other", releaseYear: "1999" }),
+    song({ fileId: "b", parentId: "b", album: "Alpha", albumArtist: "Artist B", artist: "No", releaseYear: "invalid" }),
+    song({ fileId: "c", parentId: "c", album: "Middle", albumArtist: "Artist C", artist: "No", releaseYear: "2010" }),
+  ]);
+  test("1曲でも一致するアルバムだけを、全収録曲を保持したまま返す", () => {
+    const filtered = filterAlbumGroupsBySongs(groups, { artist: "match", includeUnknownYear: true });
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].songs.map((item) => item.fileId)).toEqual(["a1", "a2"]);
+    expect(filterAlbumGroupsBySongs(groups, { artist: "missing", includeUnknownYear: true })).toEqual([]);
+  });
+  test("代表リリース年は有効値の最小値で、全曲不明ならundefined", () => {
+    expect(albumReleaseYear(groups[2])).toBe(1999);
+    expect(albumReleaseYear(groups[0])).toBeUndefined();
+  });
+  test("アルバム名と代表年で並べ、不明年は昇順・降順とも末尾にする", () => {
+    expect([...groups].sort(compareAlbumGroups("album-asc")).map((g) => g.album)).toEqual(["Alpha", "Middle", "Zulu"]);
+    expect([...groups].sort(compareAlbumGroups("album-desc")).map((g) => g.album)).toEqual(["Zulu", "Middle", "Alpha"]);
+    expect([...groups].sort(compareAlbumGroups("year-asc")).map((g) => g.album)).toEqual(["Zulu", "Middle", "Alpha"]);
+    expect([...groups].sort(compareAlbumGroups("year-desc")).map((g) => g.album)).toEqual(["Middle", "Zulu", "Alpha"]);
   });
 });

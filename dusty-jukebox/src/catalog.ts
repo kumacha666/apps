@@ -139,3 +139,26 @@ export function filterAlbumGroups(groups: AlbumGroup[], query: string): AlbumGro
   if (!q) return groups;
   return groups.filter((group) => group.album.toLocaleLowerCase().includes(q) || group.albumArtist.toLocaleLowerCase().includes(q));
 }
+
+// アルバム自体は分割せず、収録曲のいずれかが曲一覧と同じ条件を満たすものだけを残す。
+export function filterAlbumGroupsBySongs(groups: AlbumGroup[], filters: SongFilters): AlbumGroup[] {
+  return groups.filter((group) => filterSongs(group.songs, filters).length > 0);
+}
+
+export function albumReleaseYear(group: AlbumGroup): number | undefined {
+  const years = group.songs.map((song) => numeric(song.releaseYear)).filter(Number.isFinite);
+  return years.length > 0 ? Math.min(...years) : undefined;
+}
+
+export type AlbumSort = "artist" | "album-asc" | "album-desc" | "year-asc" | "year-desc";
+export function compareAlbumGroups(sort: Exclude<AlbumSort, "artist">): (a: AlbumGroup, b: AlbumGroup) => number {
+  const fallback = (a: AlbumGroup, b: AlbumGroup) => a.album.localeCompare(b.album) || a.albumArtist.localeCompare(b.albumArtist);
+  if (sort === "album-asc") return fallback;
+  if (sort === "album-desc") return (a, b) => b.album.localeCompare(a.album) || a.albumArtist.localeCompare(b.albumArtist);
+  return (a, b) => {
+    const aYear = albumReleaseYear(a); const bYear = albumReleaseYear(b);
+    if (aYear === undefined) return bYear === undefined ? fallback(a, b) : 1;
+    if (bYear === undefined) return -1;
+    return (sort === "year-asc" ? aYear - bYear : bYear - aYear) || fallback(a, b);
+  };
+}
