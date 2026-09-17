@@ -32,10 +32,10 @@ async function endActiveAudio(page: import("@playwright/test").Page) {
 test("リピートボタンはオフ→1曲→リスト全曲→オフと巡回する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
   const repeat = page.locator("#repeat-btn");
-  await expect(repeat).toHaveText("リピート: オフ");
-  await repeat.click(); await expect(repeat).toHaveText("リピート: 1曲");
-  await repeat.click(); await expect(repeat).toHaveText("リピート: リスト全曲");
-  await repeat.click(); await expect(repeat).toHaveText("リピート: オフ");
+  await expect(repeat).toHaveAttribute("aria-label", "リピート: オフ");
+  await repeat.click(); await expect(repeat).toHaveAttribute("aria-label", "リピート: 1曲");
+  await repeat.click(); await expect(repeat).toHaveAttribute("aria-label", "リピート: リスト全曲");
+  await repeat.click(); await expect(repeat).toHaveAttribute("aria-label", "リピート: オフ");
 });
 
 test("通常の自然終了遷移がplay()未解決の間にリピートモードを変更すると新しいモードの遷移先へ迂回する", async ({ context, page }) => {
@@ -62,7 +62,7 @@ test("通常の自然終了遷移がplay()未解決の間にリピートモー�
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
 
   await page.locator("#repeat-btn").click();
-  await expect(page.locator("#repeat-btn")).toHaveText("リピート: 1曲");
+  await expect(page.locator("#repeat-btn")).toHaveAttribute("aria-label", "リピート: 1曲");
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
 
@@ -83,7 +83,7 @@ test("1曲リピートの自然終了は同じ曲を再要求し、手動の次�
   await expect(page.locator("#catalog-list li.now-playing")).toContainText("Opening");
   await page.getByRole("button", { name: "次へ" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
-  await expect(page.locator("#repeat-btn")).toHaveText("リピート: 1曲");
+  await expect(page.locator("#repeat-btn")).toHaveAttribute("aria-label", "リピート: 1曲");
 });
 
 test("リスト全曲リピートの最後の曲の自然終了は先頭へループする", async ({ context, page }) => {
@@ -129,14 +129,14 @@ test("クロスフェードのランプ中にリピートモードを切り替�
 
   await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(false);
   await expect(page.locator("#audio-player-b")).not.toHaveAttribute("src");
-  await expect(page.locator("#repeat-btn")).toHaveText("リピート: 1曲");
+  await expect(page.locator("#repeat-btn")).toHaveAttribute("aria-label", "リピート: 1曲");
 });
 
 test("クロスフェードのランプ中に退場側が自然終了してからリピートモードを切り替えても次曲へ進む", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
   await page.locator("#repeat-btn").click();
   await page.locator("#repeat-btn").click();
-  await expect(page.locator("#repeat-btn")).toHaveText("リピート: リスト全曲");
+  await expect(page.locator("#repeat-btn")).toHaveAttribute("aria-label", "リピート: リスト全曲");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
   await page.clock.install();
   await page.evaluate(() => {
@@ -167,7 +167,7 @@ test("クロスフェードのランプ中に退場側が自然終了してか�
   await page.locator("#repeat-btn").click();
 
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
-  await expect(page.locator("#repeat-btn")).toHaveText("リピート: オフ");
+  await expect(page.locator("#repeat-btn")).toHaveAttribute("aria-label", "リピート: オフ");
 });
 
 test("ログインからスキャンして索引を書き込める", async ({ context, page }) => {
@@ -371,6 +371,29 @@ test("折り返し点の無い長い1単語（フォルダ名・曲名等）が�
   expect(barBox).not.toBeNull();
   expect(barBox!.x).toBeGreaterThanOrEqual(0);
   expect(barBox!.x + barBox!.width).toBeLessThanOrEqual(321); // 1px許容（サブピクセル丸め）
+});
+
+test("320px幅でも固定バーの再生リスト操作ボタンが画面内に収まり、横スクロールが発生しない", async ({ context, page }) => {
+  await installGoogleMocks(context);
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.goto("/"); await login(page); await openCatalog(page);
+
+  const controls = page.locator(".mini-player-controls");
+  await expect(controls).toBeVisible();
+  await expect(controls.locator("button")).toHaveCount(4);
+  const buttonBoxes = await controls.locator("button").evaluateAll((buttons) =>
+    buttons.map((button) => {
+      const rect = button.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, width: rect.width, height: rect.height };
+    })
+  );
+  for (const box of buttonBoxes) {
+    expect(box.left).toBeGreaterThanOrEqual(0);
+    expect(box.right).toBeLessThanOrEqual(321); // 1px許容（サブピクセル丸め）
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
 });
 
 test("再生中の曲名（#now-playing）に折り返し点の無い長い1単語が入っても、固定バー自身の外へはみ出さない（2026-09-09、ChatGPTレビュー指摘：P2。再生リスト側のoverflow-wrap対策だけでは、再生リスト外で表示される#now-playing自身は保護されず、画面外へクリップされて読めなくなりうる）", async ({ context, page }) => {
@@ -1313,18 +1336,19 @@ test("手動で「次へ」を押すとクロスフェードが中断され、#a
   await expect(page.locator("#audio-player-b")).toHaveAttribute("src", /album-track-2(\?|$)/);
   await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(true);
 
-  await page.getByRole("button", { name: "次へ" }).click();
   // 耐久性のため（他のクロスフェードE2Eと同じ既知の注意点）：#audio-playerへ固定したduration/
   // pausedのオーバーライドは、この「次へ」によるScherzoへの遷移後もDOM要素自身に残り続ける。
   // このモック環境ではsrc再代入がcurrentTimeを自然にリセットしない場合があるため、万一この後
   // 何らかのtimeupdateが実際に発火すると、遷移直後の新しい曲（Scherzo）に対しても再び
   // 「残り時間が閾値以内」を満たしてしまい、このテストの意図（「次へ」でクロスフェードが
   // 打ち切られること）とは無関係な新しいクロスフェード（Finale等）が誤って始まりうる。
-  // 遷移直後にオーバーライドを解除し、この干渉を防ぐ。
+  // ボタンが固定バーへ移動してクリック完了までの間にもtimeupdateが発火しうるため、クリック
+  // より先にオーバーライドを解除し、この干渉を防ぐ（開始済みのクロスフェード状態は維持される）。
   await page.evaluate(() => {
     const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
     Object.defineProperty(audio, "duration", { value: NaN, configurable: true });
   });
+  await page.getByRole("button", { name: "次へ" }).click();
 
   await expect.poll(() => page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(false);
   await expect(page.locator("#audio-player-b")).not.toHaveAttribute("src");
