@@ -58,6 +58,26 @@ test("ミニプレイヤーの再生ボタンは初期状態から再生・一�
   await expect(toggle).toHaveText("▶");
 });
 
+test("ミニプレイヤーの再生操作中はトグルを無効化し、連打を無視して完了後に再有効化する", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context, { delayFirstMediaPlay: true });
+  await page.goto("/");
+  await login(page);
+  await openCatalog(page);
+
+  const toggle = page.locator("#play-pause-btn");
+  await toggle.click();
+  await expect(toggle).toBeDisabled();
+  await expect.poll(() => mock.streamRequests.filter((request) => request.includes("song-1")).length).toBe(1);
+
+  // disabledな実ボタンに対する2回目のネイティブclick()はイベントを発火しない。
+  await page.evaluate(() => (document.querySelector("#play-pause-btn") as HTMLButtonElement).click());
+  await page.waitForTimeout(100);
+  expect(mock.streamRequests.filter((request) => request.includes("song-1"))).toHaveLength(1);
+
+  await page.evaluate(() => (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay());
+  await expect(toggle).toBeEnabled();
+});
+
 test("通常の自然終了遷移がplay()未解決の間にリピートモードを変更すると新しいモードの遷移先へ迂回する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
 

@@ -2897,10 +2897,13 @@ function init(): void {
     el<HTMLButtonElement>("retry-extraction-btn").addEventListener("click", () => void handleRetryExtraction());
     el<HTMLButtonElement>("play-btn").addEventListener("click", () => void handlePlay());
     el<HTMLButtonElement>("play-pause-btn").addEventListener("click", () => {
+      const playPauseButton = el<HTMLButtonElement>("play-pause-btn");
+      playPauseButton.disabled = true;
       if (playback?.activeAudioElement().paused !== false) {
         const activeAudio = playback?.activeAudioElement();
         if (lastExternalFileId !== null && activeAudio?.paused === true) {
-          void resumeOrStartExternalPlayback(lastExternalFileId, !activeAudio.ended);
+          void resumeOrStartExternalPlayback(lastExternalFileId, !activeAudio.ended)
+            .finally(() => { playPauseButton.disabled = false; });
           return;
         }
         void handleQueuePlayback(() => {
@@ -2913,7 +2916,7 @@ function init(): void {
           // クロスフェードでBへpromotionされた後に一時停止→再生ボタンを押すと、Bの一時停止位置
           // ではなく固定のA（cleanup後は0のことが多い）の位置を渡してしまっていた。
           return queue.canResumeCurrent() ? queue.resume(queue.currentPlayingFileId()!, playback?.activeAudioElement().currentTime ?? 0) : queue.playAt(0);
-        });
+        }).finally(() => { playPauseButton.disabled = false; });
         return;
       }
       // ユーザー自身の明示的な一時停止のため、バックグラウンド復帰時の自動再開の対象から
@@ -2930,7 +2933,10 @@ function init(): void {
       // `finally`が2回目のフェードがまだ進行中でもガードを解除してしまうため、booleanでは
       // なくカウンタで各クリックごとの完了待ちを独立させる）。
       manualTransitionCount += 1;
-      void playback?.pause(fadeOutEnabled()).finally(() => { manualTransitionCount -= 1; });
+      void playback?.pause(fadeOutEnabled()).finally(() => {
+        manualTransitionCount -= 1;
+        playPauseButton.disabled = false;
+      });
     });
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
     el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
