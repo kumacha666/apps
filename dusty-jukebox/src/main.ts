@@ -2899,8 +2899,8 @@ function init(): void {
     el<HTMLButtonElement>("play-pause-btn").addEventListener("click", () => {
       if (playback?.activeAudioElement().paused !== false) {
         const activeAudio = playback?.activeAudioElement();
-        if (lastExternalFileId !== null && activeAudio?.paused === true && activeAudio.ended === false) {
-          void resumeOrStartExternalPlayback(lastExternalFileId, true);
+        if (lastExternalFileId !== null && activeAudio?.paused === true) {
+          void resumeOrStartExternalPlayback(lastExternalFileId, !activeAudio.ended);
           return;
         }
         void handleQueuePlayback(() => {

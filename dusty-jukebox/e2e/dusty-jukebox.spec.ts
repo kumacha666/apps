@@ -901,6 +901,27 @@ test("キュー作成後の単曲試聴をトグルで一時停止・再開し�
   expect(await page.evaluate(() => (window as unknown as { __e2e: { getLastExternalPlaybackPosition(): number | null } }).__e2e.getLastExternalPlaybackPosition())).toBe(30);
 });
 
+test("キュー作成後の単曲試聴が自然終了してからトグルで再生すると、キュー曲へ切り替えず同じ曲を先頭から再生する", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+
+  await page.locator("#play-file-id").fill("external-track");
+  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/external-track(\?|$)/);
+
+  await page.evaluate(() => {
+    const e2e = (window as unknown as { __e2e: { activeAudioElementId(): string } }).__e2e;
+    const audio = document.getElementById(e2e.activeAudioElementId()) as HTMLAudioElement;
+    Object.defineProperty(audio, "paused", { value: true, configurable: true });
+    Object.defineProperty(audio, "ended", { value: true, configurable: true });
+    audio.dispatchEvent(new Event("ended"));
+  });
+
+  await page.locator("#play-pause-btn").click();
+
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/external-track(\?|$)/);
+  expect(await page.evaluate(() => (window as unknown as { __e2e: { getLastExternalPlaybackPosition(): number | null } }).__e2e.getLastExternalPlaybackPosition())).toBe(0);
+});
+
 test("再生中の曲をチェック解除で除外してから「再生」ボタンを押すと、除外中の曲を再開しようとせず次の未除外曲から再生する（2026-09-06 PR #418 ChatGPTレビュー再々指摘）", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
   await page.getByRole("button", { name: "再生", exact: true }).click();
