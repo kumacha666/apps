@@ -36,11 +36,15 @@ describe("findGarbledSuspects", () => {
     expect(findGarbledSuspects(rows)).toHaveLength(0);
   });
 
-  it("checks genre even though it has no override column", () => {
+  it("checks the effective genre override instead of a garbled extracted value", () => {
     // 実データで見つかった実例：「その他」がShift_JISのまま誤読された genre 列の値。
-    const rows = [makeRow({ fileId: "1", genre: "»Ì¼" })];
-    const suspects = findGarbledSuspects(rows);
-    expect(suspects.map((s) => s.field)).toContain("genre");
+    const rows = [makeRow({ fileId: "1", genre: "»Ì¼", genre_override: "その他" })];
+    expect(findGarbledSuspects(rows)).toHaveLength(0);
+  });
+
+  it("flags a garbled genre override even when the extracted genre is clean", () => {
+    const rows = [makeRow({ fileId: "1", genre: "Other", genre_override: "»Ì¼" })];
+    expect(findGarbledSuspects(rows)).toEqual([{ fileId: "1", field: "genre", value: "»Ì¼" }]);
   });
 });
 
@@ -54,6 +58,13 @@ describe("findMissingFields", () => {
   it("does not flag a field covered by an override", () => {
     const rows = [makeRow({ fileId: "1", title: "Song", artist_override: "手動入力", album: "Album", genre: "Pop" })];
     expect(findMissingFields(rows)).toHaveLength(0);
+  });
+
+  it("uses genre_override for missing-field detection", () => {
+    const filled = makeRow({ fileId: "1", title: "Song", artist: "Artist", album: "Album", genre: "", genre_override: "Rock" });
+    const explicitlyEmpty = makeRow({ fileId: "2", title: "Song", artist: "Artist", album: "Album", genre: "Rock", genre_override: "(none)" });
+    expect(findMissingFields([filled])).toHaveLength(0);
+    expect(findMissingFields([explicitlyEmpty])).toEqual([{ fileId: "2", field: "genre" }]);
   });
 });
 

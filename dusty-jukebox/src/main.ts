@@ -77,6 +77,7 @@ import {
   createSheetsIndexIO,
   indexRowsScanState,
   isValidIndexHeader,
+  isReadableIndexHeader,
   mergeDuplicateIndexRows,
   reconcileIndexAgainstRoot,
   removeIndexRows,
@@ -1086,7 +1087,7 @@ async function loadCatalog(): Promise<void> {
     const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
     // Unlike scanning, catalog loading must never create or migrate tabs. It
     // still has to verify the exact schema before positional row parsing.
-    if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
+    if (!isReadableIndexHeader(await sheetsIO.readHeaderRow())) {
       throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。スプレッドシートIDが正しいか、無関係な「index」タブが既に存在していないかご確認ください。");
     }
     const syncState = readCompletedSyncStateForCatalog(await syncIO.readHeaderRow(), await syncIO.readAllRows());

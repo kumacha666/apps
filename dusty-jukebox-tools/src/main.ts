@@ -4,7 +4,7 @@
 // スキャン・タグ抽出・再生機能は一切持たない：既存の索引スプレッドシート（indexタブ）を
 // 読み書きするだけの単機能ツール。
 import { AuthError, DriveAuth } from "./auth";
-import { createSheetsIndexIO, isValidIndexHeader, SheetsHttpError } from "./sheets";
+import { createSheetsIndexIO, isReadableIndexHeader, SheetsHttpError } from "./sheets";
 import {
   applyCasingWritesInChunks,
   casingGroupKey,
@@ -165,7 +165,7 @@ async function handleCheckCasing(): Promise<void> {
   }
   try {
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
+    if (!isReadableIndexHeader(await sheetsIO.readHeaderRow())) {
       throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。");
     }
     const rows = await sheetsIO.listExistingRows();
@@ -331,7 +331,7 @@ async function handleCheckGarbled(): Promise<void> {
   }
   try {
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
+    if (!isReadableIndexHeader(await sheetsIO.readHeaderRow())) {
       throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。");
     }
     const rows = await sheetsIO.listExistingRows();
@@ -499,7 +499,7 @@ async function handleHealthCheck(): Promise<void> {
   }
   try {
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
+    if (!isReadableIndexHeader(await sheetsIO.readHeaderRow())) {
       throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。");
     }
     const rows = await sheetsIO.listExistingRows();
@@ -567,7 +567,7 @@ async function handleCheckMissingFields(): Promise<void> {
   }
   try {
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
+    if (!isReadableIndexHeader(await sheetsIO.readHeaderRow())) {
       throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。");
     }
     const rows = await sheetsIO.listExistingRows();

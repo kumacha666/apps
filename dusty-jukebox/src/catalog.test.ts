@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { INDEX_SHEET_HEADER } from "./sheets";
+import { INDEX_SHEET_HEADER, LEGACY_INDEX_SHEET_HEADER_V3 } from "./sheets";
 import { albumReleaseYear, compareAlbumGroups, distinctFieldValues, distinctFieldValuesForFilters, filterAlbumGroups, filterAlbumGroupsBySongs, filterSongs, groupAlbumsByArtist, groupSongsByAlbum, parseIndexRows, readOverride, sortSongs, type Song } from "./catalog";
 const row = (values: Record<string, string>): string[] => INDEX_SHEET_HEADER.map((header) => values[header] ?? "");
 describe("索引行の読み取り", () => {
@@ -17,6 +17,11 @@ describe("索引行の読み取り", () => {
     expect(readOverride(row({ genre: "Extracted", genre_override: "(none)" }), "genre")).toBe("");
     expect(readOverride(row({ genre: "Extracted", genre_override: "Corrected" }), "genre")).toBe("Corrected");
     expect(parseIndexRows([row({ fileId: "genre-song", genre: "Extracted", genre_override: "Corrected" })])[0].genre).toBe("Corrected");
+  });
+  test("46列の旧行では範囲外のgenre_overrideを空欄として扱い、抽出値へフォールバックする", () => {
+    const legacyRow = LEGACY_INDEX_SHEET_HEADER_V3.map((header) => (header === "fileId" ? "legacy" : header === "genre" ? "Jazz" : ""));
+    expect(readOverride(legacyRow, "genre")).toBe("Jazz");
+    expect(parseIndexRows([legacyRow])[0].genre).toBe("Jazz");
   });
   test("releaseType_overrideは抽出値へのフォールバックが無く、空欄・(none)・値をそのまま扱う（開発体制#39④UI-5）", () => {
     expect(parseIndexRows([row({ fileId: "a" })])[0].releaseType).toBe("");

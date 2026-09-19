@@ -1,5 +1,5 @@
 import type { BrowserContext, Route } from "@playwright/test";
-import { INDEX_SHEET_HEADER } from "../src/sheets";
+import { INDEX_SHEET_HEADER, LEGACY_INDEX_SHEET_HEADER_V3 } from "../src/sheets";
 
 const TOKEN = "e2e-token";
 
@@ -22,7 +22,9 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     INDEX_SHEET_HEADER.map((h) => (h === "fileId" ? "song-2" : h === "title" ? "Second song" : h === "artist" ? "Artist" : "")),
   ];
   let indexRows: (string | number)[][] = options.rows ?? defaultRows;
-  const header: (string | number)[] = options.invalidHeader ? ["wrong", "header"] : [...INDEX_SHEET_HEADER];
+  // 実運用でスキャン前に残る直前の46列ヘッダーを既定にし、全機能が読み取り時に
+  // マイグレーションやヘッダー書き込みを要求しないことをブラウザ経路で検証する。
+  const header: (string | number)[] = options.invalidHeader ? ["wrong", "header"] : [...LEGACY_INDEX_SHEET_HEADER_V3];
 
   const authFailures: string[] = [];
   const sheetsWrites: { range: string; value: string | number }[] = [];

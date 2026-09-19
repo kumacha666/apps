@@ -23,7 +23,7 @@ function fileId(row: Row): string {
 // catalog.tsのreadOverride()と同じ規約。
 function effective(
   row: Row,
-  field: "title" | "artist" | "albumArtist" | "album" | "composer" | "releaseYear"
+  field: "title" | "artist" | "albumArtist" | "album" | "composer" | "releaseYear" | "genre"
 ): string {
   const override = cell(row, `${field}_override` as (typeof INDEX_SHEET_HEADER)[number]);
   if (override === "(none)") return "";
@@ -54,7 +54,7 @@ export interface GarbledSuspectEntry {
   value: string;
 }
 
-const GARBLED_CHECK_FIELDS = ["title", "artist", "albumArtist", "album", "composer"] as const;
+const GARBLED_CHECK_FIELDS = ["title", "artist", "albumArtist", "album", "composer", "genre"] as const;
 
 export function findGarbledSuspects(rows: Row[]): GarbledSuspectEntry[] {
   const results: GarbledSuspectEntry[] = [];
@@ -67,11 +67,6 @@ export function findGarbledSuspects(rows: Row[]): GarbledSuspectEntry[] {
         results.push({ fileId: id, field, value });
       }
     }
-    // genreはoverride列自体が無いため常に抽出値を見る。
-    const genre = cell(row, "genre");
-    if (genre && hasSuspiciousBytes(genre)) {
-      results.push({ fileId: id, field: "genre", value: genre });
-    }
   }
   return results;
 }
@@ -83,7 +78,7 @@ export interface MissingFieldEntry {
   field: "title" | "artist" | "album" | "genre";
 }
 
-const MISSING_CHECK_FIELDS = ["title", "artist", "album"] as const;
+const MISSING_CHECK_FIELDS = ["title", "artist", "album", "genre"] as const;
 
 export function findMissingFields(rows: Row[]): MissingFieldEntry[] {
   const results: MissingFieldEntry[] = [];
@@ -93,7 +88,6 @@ export function findMissingFields(rows: Row[]): MissingFieldEntry[] {
     for (const field of MISSING_CHECK_FIELDS) {
       if (effective(row, field) === "") results.push({ fileId: id, field });
     }
-    if (cell(row, "genre") === "") results.push({ fileId: id, field: "genre" });
   }
   return results;
 }
