@@ -153,12 +153,14 @@ export function createSheetsFetch(spreadsheetId: string, getAccessToken: () => P
 
 export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () => Promise<string>): SheetsIndexReadWriteIO {
   const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}`;
-  const lastCol = columnLetter(INDEX_SHEET_HEADER.length);
   const sheetsFetch = createSheetsFetch(spreadsheetId, getAccessToken);
 
   return {
     async listExistingRows() {
-      const range = sheetRange(INDEX_SHEET_NAME, `A2:${lastCol}`);
+      // 現行スキーマ幅の列範囲を指定すると、まだマイグレーションされていない旧46列グリッドでは
+      // Sheets APIが範囲超過を返す。行だけを指定して実グリッド幅へ自動クリップさせる。
+      // 100万行は実ライブラリ（約1万件）を十分に上回り、Sheetsの通常の行上限でもある。
+      const range = sheetRange(INDEX_SHEET_NAME, "2:1000000");
       const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range)}`);
       const data = (await res.json()) as { values?: (string | number)[][] };
       return data.values ?? [];

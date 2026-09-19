@@ -1,5 +1,5 @@
 import type { BrowserContext, Route } from "@playwright/test";
-import { INDEX_SHEET_HEADER } from "../src/sheets";
+import { INDEX_SHEET_HEADER, LEGACY_INDEX_SHEET_HEADER_V3 } from "../src/sheets";
 import { PLAYLISTS_SHEET_HEADER, PLAYLIST_TRACKS_SHEET_HEADER } from "../src/playlists";
 
 const TOKEN = "e2e-token";
@@ -17,6 +17,8 @@ export type MockOptions = {
   albumCatalog?: boolean;
   /** Give every Symphony track a manual Genre override for catalog/filter coverage. */
   genreOverride?: boolean;
+  /** Serve the pre-genre_override 46-column index grid. */
+  legacyIndexGrid?: boolean;
   extractionFailedCount?: number;
   spreadsheetCanEdit?: boolean;
   /** Pre-seed the playlists/playlist_tracks tabs (e.g. a playlist referencing fileIds no longer in the index). */
@@ -58,6 +60,12 @@ function columnLettersToIndex(letters: string): number {
   return index - 1;
 }
 
+function requestedColumnCount(range: string): number | undefined {
+  const a1 = range.split("!")[1];
+  const match = a1?.match(/^[A-Z]+\d*:\s*([A-Z]+)/);
+  return match ? columnLettersToIndex(match[1]) + 1 : undefined;
+}
+
 /** In-memory GIS, Drive and Sheets boundary. Every authenticated API request is
  * checked here, so a broken token hand-off cannot look like a successful E2E run. */
 export async function installGoogleMocks(context: BrowserContext, options: MockOptions = {}) {
@@ -84,7 +92,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const seededTrackRows = (options.seedPlaylists ?? []).flatMap((p) => p.fileIds.map((fileId, i) => [p.playlistId, `1000-${i}-e2e`, fileId]));
   const sheetData: Record<string, (string | number)[][]> = { index: indexRows, sync: syncRows, playlists: seededPlaylistRows, playlist_tracks: seededTrackRows };
   const sheetHeaders: Record<string, (string | number)[]> = {
-    index: [...INDEX_SHEET_HEADER],
+    index: [...(options.legacyIndexGrid ? LEGACY_INDEX_SHEET_HEADER_V3 : INDEX_SHEET_HEADER)],
     sync: options.invalidSyncHeader ? ["wrong", "header"] : ["key", "value"],
     playlists: [...PLAYLISTS_SHEET_HEADER],
     playlist_tracks: [...PLAYLIST_TRACKS_SHEET_HEADER],
@@ -248,10 +256,15 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       return json(route, { totalUpdatedRows: body.data?.length ?? 0 });
     }
     if (url.includes("values/")) {
-      const rangeSegment = url.split("values/")[1]?.split("?")[0].split(":")[0] ?? "";
+      const rangeSegment = url.split("values/")[1]?.split("?")[0] ?? "";
       const sheetName = sheetNameForRange(rangeSegment);
       const isHeader = url.includes("1:1") || url.includes("A1:");
       if (method === "GET") {
+        const requestedColumns = requestedColumnCount(rangeSegment);
+        const gridColumns = sheetHeaders[sheetName]?.length ?? 26;
+        if (requestedColumns !== undefined && requestedColumns > gridColumns) {
+          return json(route, { error: { message: `Range exceeds grid limits: ${requestedColumns} > ${gridColumns}` } }, 400);
+        }
         // loadPlaylists()のgenerationガード（main.ts）を検証するテスト専用のゲート。
         // playlists/playlist_tracksタブのA2:...読み取り（listPlaylists/listPlaylistTracks）だけを
         // 対象に、テストが明示的に解放するまで応答を保留する。解放順序を操作することで
@@ -259,7 +272,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
         if (options.gatePlaylistsListReads && (sheetName === "playlists" || sheetName === "playlist_tracks") && !isHeader) {
           await new Promise<void>((resolve) => pendingPlaylistsReads.push(resolve));
         }
-        return json(route, { values: isHeader ? [sheetHeaders[sheetName] ?? []] : (sheetData[sheetName] ?? []) });
+        return json(route, { values: isHeader ? [sheetHeaders[sheetName] ?? []] : (sheetData[sheetName] ?? []).map((row) => row.slice(0, gridColumns)) });
       }
       if (method === "PUT") {
         // writeHeaderRow（タブ初回自動作成のヘッダー書き込み）専用。

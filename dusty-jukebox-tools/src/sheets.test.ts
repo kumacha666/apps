@@ -104,6 +104,18 @@ describe("createSheetsIndexIO", () => {
     expect(decoded).not.toMatch(/![A-Z]+\d*:[A-Z]/);
   });
 
+  test("listExistingRowsは列幅を固定せず2行目以降を行範囲で読み取る", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(200, { values: [["f1"]] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createSheetsIndexIO("sheet1", async () => "token").listExistingRows();
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    const decoded = decodeURIComponent(url);
+    expect(decoded).toContain(`${INDEX_SHEET_NAME}'!2:1000000`);
+    expect(decoded).not.toContain(`A2:${columnLetter(INDEX_SHEET_HEADER.length)}`);
+    expect(decoded).not.toMatch(/![A-Z]+\d+:[A-Z]+/);
+  });
+
   test("readHeaderRowはヘッダー行が空の場合は空配列を返す", async () => {
     const fetchMock = vi.fn(async () => fakeResponse(200, { values: [] }));
     vi.stubGlobal("fetch", fetchMock);

@@ -54,7 +54,12 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       return json(route, { values: [header] });
     }
     if (url.includes("values/") && method === "GET") {
-      return json(route, { values: indexRows });
+      const range = url.split("values/")[1]?.split("?")[0] ?? "";
+      const requestedColumns = requestedColumnCount(range);
+      if (requestedColumns !== undefined && requestedColumns > header.length) {
+        return json(route, { error: { message: `Range exceeds grid limits: ${requestedColumns} > ${header.length}` } }, 400);
+      }
+      return json(route, { values: indexRows.map((row) => row.slice(0, header.length)) });
     }
     if (url.includes("values:batchUpdate") && method === "POST") {
       const body = JSON.parse(route.request().postData() ?? "{}") as {
@@ -89,4 +94,10 @@ function columnLettersToIndex(letters: string): number {
   let index = 0;
   for (const ch of letters) index = index * 26 + (ch.charCodeAt(0) - 64);
   return index - 1;
+}
+
+function requestedColumnCount(range: string): number | undefined {
+  const a1 = range.split("!")[1];
+  const match = a1?.match(/^[A-Z]+\d*:\s*([A-Z]+)/);
+  return match ? columnLettersToIndex(match[1]) + 1 : undefined;
 }

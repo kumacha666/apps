@@ -29,6 +29,14 @@ async function endActiveAudio(page: import("@playwright/test").Page) {
   });
 }
 
+test("46列のレガシーindexグリッドからカタログを読み込める", async ({ context, page }) => {
+  await installGoogleMocks(context, { legacyIndexGrid: true });
+  await page.goto("/");
+  await login(page);
+  await openCatalog(page);
+  await expect(page.locator("#catalog-list li")).toHaveCount(2);
+});
+
 test("リピートボタンはオフ→1曲→リスト全曲→オフと巡回する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
   const repeat = page.locator("#repeat-btn");
