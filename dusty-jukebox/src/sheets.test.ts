@@ -786,7 +786,7 @@ describe("isLegacyIndexHeaderV3", () => {
 });
 
 describe("isReadableIndexHeader", () => {
-  test("現行48列と直前の46列だけを読み取れる", () => {
+  test("現行ヘッダーと直前の46列だけを読み取れる", () => {
     expect(LEGACY_INDEX_SHEET_HEADER_V3).toHaveLength(46);
     expect(isReadableIndexHeader([...INDEX_SHEET_HEADER])).toBe(true);
     expect(isReadableIndexHeader([...LEGACY_INDEX_SHEET_HEADER_V3])).toBe(true);
