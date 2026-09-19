@@ -29,6 +29,24 @@ test("46列のレガシーindexグリッドから全データ行を読み取れ�
   expect(mocks.sheetsReadRanges).toContain("'index'");
 });
 
+test("46列のレガシーindexグリッドではGenre表記ゆれチェックを拒否する", async ({ page, context }) => {
+  const mocks = await installGoogleMocks(context, {
+    rows: [
+      makeRow({ fileId: "1", title: "A", genre: "rock" }),
+      makeRow({ fileId: "2", title: "B", genre: "Rock" }),
+    ],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+
+  await page.getByRole("button", { name: "Genre表記ゆれをチェック" }).click();
+
+  await expect(page.locator("#status")).toContainText("本体アプリ（dusty-jukebox）でスキャンを一度実行してから");
+  await expect(page.locator("#genre-results")).toBeEmpty();
+  await expect(page.getByRole("button", { name: "Genre統一を適用" })).toBeDisabled();
+  expect(mocks.sheetsWrites).toEqual([]);
+});
+
 test("表記ゆれをチェックして統一し、元に戻せる", async ({ page, context }) => {
   await installGoogleMocks(context, {
     rows: [

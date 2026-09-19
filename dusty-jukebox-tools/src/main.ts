@@ -4,7 +4,7 @@
 // スキャン・タグ抽出・再生機能は一切持たない：既存の索引スプレッドシート（indexタブ）を
 // 読み書きするだけの単機能ツール。
 import { AuthError, DriveAuth } from "./auth";
-import { createSheetsIndexIO, isReadableIndexHeader, SheetsHttpError } from "./sheets";
+import { createSheetsIndexIO, isReadableIndexHeader, isValidIndexHeader, SheetsHttpError } from "./sheets";
 import {
   applyCasingWritesInChunks,
   casingGroupKey,
@@ -334,7 +334,9 @@ async function handleCheckGenre(): Promise<void> {
   if (!tryAcquire()) return setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
   try {
     const io = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
-    if (!isReadableIndexHeader(await io.readHeaderRow())) throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。");
+    if (!isValidIndexHeader(await io.readHeaderRow())) {
+      throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。本体アプリ（dusty-jukebox）でスキャンを一度実行してから、もう一度お試しください。");
+    }
     const preserved = genreUiState.spreadsheetId === spreadsheetId ? genreUiState.lastApplied : [];
     genreUiState = { spreadsheetId, groups: findGenreCasingVariants(await io.listExistingRows()), canonicalByGroupKey: new Map(), lastApplied: preserved };
     renderGenreGroups();
