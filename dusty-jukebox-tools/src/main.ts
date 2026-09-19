@@ -4,7 +4,7 @@
 // スキャン・タグ抽出・再生機能は一切持たない：既存の索引スプレッドシート（indexタブ）を
 // 読み書きするだけの単機能ツール。
 import { AuthError, DriveAuth } from "./auth";
-import { createSheetsIndexIO, isReadableIndexHeader, SheetsHttpError } from "./sheets";
+import { createSheetsIndexIO, isReadableIndexHeader, isValidIndexHeader, SheetsHttpError } from "./sheets";
 import {
   applyCasingWritesInChunks,
   casingGroupKey,
@@ -15,6 +15,15 @@ import {
   type CaseNormalizationField,
   type CasingGroup,
 } from "./caseNormalization";
+import {
+  applyGenreWritesInChunks,
+  findGenreCasingVariants,
+  genreGroupKey,
+  planGenreNormalization,
+  revertGenreWritesInChunks,
+  type AppliedGenreWrite,
+  type GenreCasingGroup,
+} from "./genreNormalization";
 import {
   applyGarbledWritesInChunks,
   findGarbledCandidates,
@@ -86,6 +95,13 @@ function render(): void {
         <button id="check-casing-btn" type="button" disabled>表記ゆれをチェック</button>
         <div id="casing-results"></div>
         <div><button id="apply-casing-btn" type="button" disabled>統一を適用</button> <button id="revert-casing-btn" type="button" disabled>直前の統一を元に戻す</button></div>
+      </section>
+      <section class="section">
+        <h2>Genre表記ゆれ統一</h2>
+        <p>複数ジャンルが「 / 」区切りで入っている場合も、ジャンルのトークン単位で大文字小文字の表記ゆれを統一します。既にgenre_overrideが設定済み（明示的な空を含む）の曲は対象外です。</p>
+        <button id="check-genre-btn" type="button" disabled>Genre表記ゆれをチェック</button>
+        <div id="genre-results"></div>
+        <div><button id="apply-genre-btn" type="button" disabled>Genre統一を適用</button> <button id="revert-genre-btn" type="button" disabled>直前のGenre統一を元に戻す</button></div>
       </section>
       <section class="section">
         <h2>文字化け修復</h2>
@@ -277,6 +293,113 @@ async function handleRevertCasingNormalization(): Promise<void> {
   } finally {
     release();
   }
+}
+
+// ===== Genre表記ゆれ統一 =====
+
+interface GenreUiState {
+  spreadsheetId: string | null;
+  groups: GenreCasingGroup[];
+  canonicalByGroupKey: Map<string, string>;
+  lastApplied: AppliedGenreWrite[];
+}
+let genreUiState: GenreUiState = { spreadsheetId: null, groups: [], canonicalByGroupKey: new Map(), lastApplied: [] };
+
+function renderGenreGroups(): void {
+  const container = el<HTMLDivElement>("genre-results");
+  container.innerHTML = "";
+  for (const group of genreUiState.groups) {
+    const item = document.createElement("p");
+    item.append(`トークン: ${group.variants.map((variant) => `「${variant.value}」(${variant.fileIds.length}曲)`).join(" / ")} → `);
+    const select = document.createElement("select");
+    const chosen = genreUiState.canonicalByGroupKey.get(genreGroupKey(group)) ?? group.suggestedCanonical;
+    for (const variant of group.variants) {
+      const option = document.createElement("option");
+      option.value = variant.value;
+      option.textContent = variant.value;
+      option.selected = variant.value === chosen;
+      select.append(option);
+    }
+    select.addEventListener("change", () => genreUiState.canonicalByGroupKey.set(genreGroupKey(group), select.value));
+    item.append(select);
+    container.append(item);
+  }
+  el<HTMLButtonElement>("apply-genre-btn").disabled = genreUiState.groups.length === 0;
+  el<HTMLButtonElement>("revert-genre-btn").disabled = genreUiState.lastApplied.length === 0;
+}
+
+async function handleCheckGenre(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId) return setStatus("索引スプレッドシートIDを入力してください", true);
+  if (!tryAcquire()) return setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+  try {
+    const io = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    if (!isValidIndexHeader(await io.readHeaderRow())) {
+      throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。本体アプリ（dusty-jukebox）でスキャンを一度実行してから、もう一度お試しください。");
+    }
+    const preserved = genreUiState.spreadsheetId === spreadsheetId ? genreUiState.lastApplied : [];
+    genreUiState = { spreadsheetId, groups: findGenreCasingVariants(await io.listExistingRows()), canonicalByGroupKey: new Map(), lastApplied: preserved };
+    renderGenreGroups();
+    setStatus(genreUiState.groups.length ? `${genreUiState.groups.length}件のGenre表記ゆれ候補が見つかりました。内容を確認して適用してください。` : "Genre表記ゆれは見つかりませんでした。");
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `Genre表記ゆれのチェックに失敗しました: ${err.message}` : "Genre表記ゆれのチェックに失敗しました", true);
+  } finally { release(); }
+}
+
+async function handleApplyGenreNormalization(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId || !genreUiState.groups.length) return;
+  if (spreadsheetId !== genreUiState.spreadsheetId) return setStatus("チェック時と異なるスプレッドシートIDが入力されています。もう一度「Genre表記ゆれをチェック」を実行してください。", true);
+  if (!tryAcquire()) return setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+  try {
+    const writes = planGenreNormalization(genreUiState.groups, genreUiState.canonicalByGroupKey);
+    if (!writes.length) return setStatus("適用対象の変更はありません（選択済みの表記が既にすべての曲に反映されています）。");
+    const io = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    genreUiState.groups = [];
+    genreUiState.canonicalByGroupKey = new Map();
+    const newlyApplied: AppliedGenreWrite[] = [];
+    let switched = false;
+    let skipped = 0;
+    await applyGenreWritesInChunks(io, writes, ({ chunkApplied, chunkSkippedStaleCount }) => {
+      skipped += chunkSkippedStaleCount;
+      if (!chunkApplied.length) return;
+      newlyApplied.push(...chunkApplied);
+      if (!switched) { genreUiState.lastApplied = newlyApplied; switched = true; }
+      renderGenreGroups();
+    });
+    renderGenreGroups();
+    setStatus(`${newlyApplied.length}曲のGenre表記ゆれを統一しました${skipped ? `（${skipped}曲は他の変更と競合したためスキップ）` : ""}。`);
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `Genre表記ゆれの統一に失敗しました（一部は既に書き込まれている可能性があります。「直前のGenre統一を元に戻す」で確認できます）: ${err.message}` : "Genre表記ゆれの統一に失敗しました", true);
+    renderGenreGroups();
+  } finally { release(); }
+}
+
+async function handleRevertGenreNormalization(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId || !genreUiState.lastApplied.length) return;
+  if (spreadsheetId !== genreUiState.spreadsheetId) return setStatus("チェック時と異なるスプレッドシートIDが入力されています。もう一度「Genre表記ゆれをチェック」を実行してください。", true);
+  if (!tryAcquire()) return setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+  try {
+    const io = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
+    let reverted = 0;
+    let stale = 0;
+    await revertGenreWritesInChunks(io, genreUiState.lastApplied, ({ chunkReverted, chunkStale }) => {
+      reverted += chunkReverted.length;
+      stale += chunkStale.length;
+      const handled = new Set([...chunkReverted, ...chunkStale]);
+      genreUiState.lastApplied = genreUiState.lastApplied.filter((entry) => !handled.has(entry));
+      renderGenreGroups();
+    });
+    renderGenreGroups();
+    setStatus(`${reverted}曲のGenre表記ゆれ統一を元に戻しました${stale ? `（${stale}曲は既に他の変更があったためスキップ）` : ""}。`);
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `元に戻す処理に失敗しました（一部は既に元に戻っている可能性があります）: ${err.message}` : "元に戻す処理に失敗しました", true);
+    renderGenreGroups();
+  } finally { release(); }
 }
 
 // ===== 文字化け修復 =====
@@ -695,6 +818,7 @@ async function handleLogin(): Promise<void> {
     await auth.requestAccessToken({ prompt: "consent" });
     setStatus("ログイン済み。スプレッドシートIDを入力してチェックできます。");
     el<HTMLButtonElement>("check-casing-btn").disabled = false;
+    el<HTMLButtonElement>("check-genre-btn").disabled = false;
     el<HTMLButtonElement>("check-garbled-btn").disabled = false;
     el<HTMLButtonElement>("check-health-btn").disabled = false;
     el<HTMLButtonElement>("check-missing-btn").disabled = false;
@@ -720,6 +844,9 @@ function init(): void {
   el<HTMLButtonElement>("check-casing-btn").addEventListener("click", () => void handleCheckCasing());
   el<HTMLButtonElement>("apply-casing-btn").addEventListener("click", () => void handleApplyCasingNormalization());
   el<HTMLButtonElement>("revert-casing-btn").addEventListener("click", () => void handleRevertCasingNormalization());
+  el<HTMLButtonElement>("check-genre-btn").addEventListener("click", () => void handleCheckGenre());
+  el<HTMLButtonElement>("apply-genre-btn").addEventListener("click", () => void handleApplyGenreNormalization());
+  el<HTMLButtonElement>("revert-genre-btn").addEventListener("click", () => void handleRevertGenreNormalization());
   el<HTMLButtonElement>("check-garbled-btn").addEventListener("click", () => void handleCheckGarbled());
   el<HTMLButtonElement>("apply-garbled-btn").addEventListener("click", () => void handleApplyGarbledRepair());
   el<HTMLButtonElement>("revert-garbled-btn").addEventListener("click", () => void handleRevertGarbledRepair());
