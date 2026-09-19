@@ -891,3 +891,15 @@ CONCEPT.md 4.3節「絞り込み→除外→保存という操作フローで作
 - 「1曲」リピートの自然終了は現在曲を先頭から再生し直す一方、手動の「次へ」「前へ」は通常の曲移動を維持する。
 - 「1曲」リピート中は同じ曲同士のクロスフェードを行わず、先読み準備・音量ランプの両方を抑止する。
 - バックグラウンドで自然終了遷移が固まった場合も `peekAdvanceTarget()` を使い、「1曲」なら現在曲、「リスト全曲」ならラップ後の曲へ復帰する。
+
+## Genreのoverride対応（2026-09-19、PR #470）
+
+Title/Artist/Album/Composer/AlbumArtist/ReleaseYearと異なり、Genreだけ`<field>_override`列が無くユーザー補正ができない状態だった（`dusty-jukebox-tools`側のGenre表記ゆれ統一機能の受け皿として必要になった）。`INDEX_SHEET_HEADER`末尾に`genre_override`（さらにレビュー対応で`genre_conflictCandidate`/`genre_hasConflict`）を追加し、`readOverride()`のフィールドunionに`"genre"`を追加して他フィールドと同じoverride規約（空欄→抽出値、`"(none)"`→明示的な空、それ以外→補正値）を適用できるようにした。
+
+- **列追加の罠**：`mergeDuplicateIndexRows`の重複行マージ機構は、`OVERRIDE_FIELD_NAMES`（9フィールド）に対応する`_conflictCandidate`/`_hasConflict`列がヘッダー中の連続したブロックにあることを前提に、`buildIndexRow()`が`...OVERRIDE_FIELD_NAMES.flatMap(() => ["", "FALSE"])`という位置依存の配列展開で初期化している。単純に`"genre"`を`OVERRIDE_FIELD_NAMES`へ追加すると、`genre_conflictCandidate`/`genre_hasConflict`列がこの連続ブロックの外（ヘッダー末尾）にあるため配列の各列対応がそこから後ろ全部ずれる。正しい修正は、`buildIndexRow()`には末尾に個別の初期値を追記するだけに留め、`mergeTwoRows()`内で`mergeOverrideField(merged, a, b, "genre")`を`OVERRIDE_FIELD_NAMES`ループの外から個別に呼ぶこと（`mergeOverrideField`自体は`INDEX_SHEET_HEADER.indexOf()`で列名から都度解決するため、列がどこにあっても正しく動く）。
+- Codexレビュー3ラウンドで指摘された不具合（実装時は気づかず、レビューで発覚）：
+  1. **P1、データ損失**：上記の罠どおり`OVERRIDE_FIELD_NAMES`に`genre`を追加していなかったため、`mergeDuplicateIndexRows`が重複行をマージする際`genre_override`の値が常に失われていた。上記の個別呼び出し方式で修正。
+  2. **P1、既存ユーザーの機能停止**：`loadCatalog()`・`dusty-jukebox-tools`の読み取り専用パスは`isValidIndexHeader`（現行スキーマとの完全一致）でヘッダーを検証しており、まだスキャンしていない既存ユーザー（旧46列ヘッダーのまま）はマージ直後にこれらの機能が使えなくなる状態だった。`isReadableIndexHeader`（現行ヘッダーと直前世代の46列ヘッダーだけを許容、`cell()`の範囲外アクセスが`""`にフォールバックする性質を利用し書き込みは一切しない）を新設し、これらの読み取り専用パスだけに適用。スキャン・再抽出リトライ（マイグレーション経路）は変更していない。
+  3. **P1、再発**：上記2の対応後、`listExistingRows()`の範囲指定を列固定の`A2:${lastCol}`から列非指定の`"2:1000000"`（行番号のみ指定）に変えたところ、今度は行方向で同じ問題を再現させてしまった（Sheets APIがタブを新規作成する際`gridProperties.rowCount`を明示していないため既定の1000行のままで、`"2:1000000"`は事実上常にAPIエラーになる）。最終的に、`sheetsSetup.ts`の`isTabEmpty()`が既に使っていた実績のあるパターン（セル参照を一切付けずシート名だけを範囲指定、Sheets APIの仕様でそのタブの実データ範囲全体を行・列どちらの上限にも縛られず返す）へ変更し、返り値の先頭行（ヘッダー）を`slice(1)`で除外する形に落ち着いた。
+- **この一連の不具合はE2Eモックが列超過・行超過というSheets APIの実際の失敗モードを再現していなかったため、テストでは検出できずCodexレビューで初めて見つかった**（`dusty-jukebox`本体の実機ストリーミング不具合〈2026-09-01〉と同種の教訓：外部APIの失敗モードを明示的にモックしないと、その失敗を防ぐコード自体も検証できない）。`e2e/google-mocks.ts`に列数・行数超過の検証を追加し、修正前のコードに対して実際に失敗することを確認した上で最終修正を適用した。
+- Genreのトークン単位（`" / "`区切り）の表記ゆれ統一機能自体は本体ではなく`dusty-jukebox-tools`側（PR #471）に実装した。詳細は`dusty-jukebox-tools/CLAUDE.md`参照。
