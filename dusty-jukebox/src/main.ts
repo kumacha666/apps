@@ -77,6 +77,7 @@ import {
   createSheetsIndexIO,
   indexRowsScanState,
   isValidIndexHeader,
+  isReadableIndexHeader,
   mergeDuplicateIndexRows,
   reconcileIndexAgainstRoot,
   removeIndexRows,
@@ -95,6 +96,7 @@ import {
   createSpreadsheetSetupIO,
   migrateLegacyIndexHeaderV1,
   migrateLegacyIndexHeaderV2,
+  migrateLegacyIndexHeaderV3,
 } from "./sheetsSetup";
 import {
   createPlaylist,
@@ -1085,7 +1087,7 @@ async function loadCatalog(): Promise<void> {
     const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
     // Unlike scanning, catalog loading must never create or migrate tabs. It
     // still has to verify the exact schema before positional row parsing.
-    if (!isValidIndexHeader(await sheetsIO.readHeaderRow())) {
+    if (!isReadableIndexHeader(await sheetsIO.readHeaderRow())) {
       throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。スプレッドシートIDが正しいか、無関係な「index」タブが既に存在していないかご確認ください。");
     }
     const syncState = readCompletedSyncStateForCatalog(await syncIO.readHeaderRow(), await syncIO.readAllRows());
@@ -2368,7 +2370,7 @@ async function handleRetryExtraction(): Promise<void> {
       INDEX_SHEET_NAME,
       INDEX_SHEET_HEADER,
       isValidIndexHeader,
-      async (header) => (await migrateLegacyIndexHeaderV1(setupIO, header)) || (await migrateLegacyIndexHeaderV2(setupIO, header))
+      async (header) => (await migrateLegacyIndexHeaderV1(setupIO, header)) || (await migrateLegacyIndexHeaderV2(setupIO, header)) || (await migrateLegacyIndexHeaderV3(setupIO, header))
     );
     const existingRows = await sheetsIO.listExistingRows();
     const fileIds = listExtractionFailedFileIds(existingRows);
@@ -2549,9 +2551,10 @@ async function handleScan(): Promise<void> {
     // （タブが真に空なら書き直して再検証）・それでも無効な場合のエラーをまとめて行う
     // （index/syncで同じ検証ロジックが重複していたのを共通化、2026-08-20 /code-review指摘）
     // 旧バージョン（27列、2026-08-20の重複行マージ実装より前。またはその後の45列、
-    // 2026-08-21のscanRunId列追加より前）のindexタブヘッダーを使っている既存ユーザーは、
-    // 現行スキーマ（46列）とのisValidIndexHeader不一致でここに来る。migrateLegacyIndexHeaderV1/V2が
-    // それぞれの旧ヘッダーを検出した場合のみグリッド拡張＋ヘッダー書き換えを行う（2026-08-20/21
+    // 2026-08-21のscanRunId列追加より前、またはgenre_override追加前の46列）のindexタブヘッダーを
+    // 使っている既存ユーザーは、現行スキーマ（47列）とのisValidIndexHeader不一致でここに来る。
+    // migrateLegacyIndexHeaderV1/V2/V3がそれぞれの旧ヘッダーを検出した場合のみグリッド拡張＋
+    // ヘッダー書き換えを行う（2026-08-20/21
     // Codexレビュー指摘：この移行が無いと既存の旧indexタブが永久にヘッダー不一致エラーで
     // ブロックされ続けてしまっていた）。
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
@@ -2561,7 +2564,7 @@ async function handleScan(): Promise<void> {
       INDEX_SHEET_NAME,
       INDEX_SHEET_HEADER,
       isValidIndexHeader,
-      async (header) => (await migrateLegacyIndexHeaderV1(setupIO, header)) || (await migrateLegacyIndexHeaderV2(setupIO, header))
+      async (header) => (await migrateLegacyIndexHeaderV1(setupIO, header)) || (await migrateLegacyIndexHeaderV2(setupIO, header)) || (await migrateLegacyIndexHeaderV3(setupIO, header))
     );
 
     // syncタブについてもindexタブと同じ理由でヘッダー行を検証する（2026-08-20 Codexレビュー指摘）：

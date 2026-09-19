@@ -1,5 +1,5 @@
 import type { BrowserContext, Route } from "@playwright/test";
-import { INDEX_SHEET_HEADER } from "../src/sheets";
+import { INDEX_SHEET_HEADER, LEGACY_INDEX_SHEET_HEADER_V3 } from "../src/sheets";
 import { PLAYLISTS_SHEET_HEADER, PLAYLIST_TRACKS_SHEET_HEADER } from "../src/playlists";
 
 const TOKEN = "e2e-token";
@@ -15,6 +15,10 @@ export type MockOptions = {
   rejectFirstStreamToken?: boolean;
   /** Provide multiple albums and deliberately unordered disc/track rows. */
   albumCatalog?: boolean;
+  /** Give every Symphony track a manual Genre override for catalog/filter coverage. */
+  genreOverride?: boolean;
+  /** Serve the pre-genre_override 46-column index grid. */
+  legacyIndexGrid?: boolean;
   extractionFailedCount?: number;
   spreadsheetCanEdit?: boolean;
   /** Pre-seed the playlists/playlist_tracks tabs (e.g. a playlist referencing fileIds no longer in the index). */
@@ -45,7 +49,7 @@ type SheetWrite = {
 // 任意のタブ名を許容する（元々はindex/syncのみを想定していたが、playlists/playlist_tracks
 // タブ（保存済みプレイリスト機能）を実際に読み書きして検証するため汎用化した）。
 function sheetNameForRange(range: string | undefined): string {
-  const match = range?.match(/^'?([^'!]+)'?!/);
+  const match = range?.match(/^'?([^'!]+)'?(?:!|$)/);
   return match?.[1] ?? "unknown";
 }
 
@@ -56,6 +60,18 @@ function columnLettersToIndex(letters: string): number {
   return index - 1;
 }
 
+function requestedColumnCount(range: string): number | undefined {
+  const a1 = range.split("!")[1];
+  const match = a1?.match(/^[A-Z]+\d*:\s*([A-Z]+)/);
+  return match ? columnLettersToIndex(match[1]) + 1 : undefined;
+}
+
+function requestedRowCount(range: string): number | undefined {
+  const a1 = range.split("!")[1];
+  const rows = a1?.match(/\d+/g)?.map(Number);
+  return rows?.length ? Math.max(...rows) : undefined;
+}
+
 /** In-memory GIS, Drive and Sheets boundary. Every authenticated API request is
  * checked here, so a broken token hand-off cannot look like a successful E2E run. */
 export async function installGoogleMocks(context: BrowserContext, options: MockOptions = {}) {
@@ -63,10 +79,10 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const indexRows: string[][] = options.extractionFailedCount ? Array.from({ length: options.extractionFailedCount }, (_, index) =>
     indexRow({ fileId: `failed-${index}`, extension: "mp3", parentId: "root", extractionFailed: "TRUE" })
   ) : options.albumCatalog ? [
-    indexRow({ fileId: "album-track-3", extension: "mp3", parentId: "root", title: "Finale", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", discNumber: "2", trackNumber: "1", releaseYear: "2024", releaseType_override: "Album" }),
+    indexRow({ fileId: "album-track-3", extension: "mp3", parentId: "root", title: "Finale", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", genre_override: options.genreOverride ? "Neo Classical" : "", discNumber: "2", trackNumber: "1", releaseYear: "2024", releaseType_override: "Album" }),
     indexRow({ fileId: "other-album", extension: "mp3", parentId: "root", title: "Jazz Song", artist: "Quartet", album: "Blue Notes", composer: "Writer", genre: "Jazz", discNumber: "1", trackNumber: "1", releaseYear: "2020", releaseType_override: "Single" }),
-    indexRow({ fileId: "album-track-2", extension: "mp3", parentId: "root", title: "Scherzo", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", discNumber: "1", trackNumber: "2", releaseYear: "2024", releaseType_override: "Album" }),
-    indexRow({ fileId: "album-track-1", extension: "mp3", parentId: "root", title: "Opening", artist: "Conductor", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", discNumber: "1", trackNumber: "1", releaseYear: "2024", releaseType_override: "Album" }),
+    indexRow({ fileId: "album-track-2", extension: "mp3", parentId: "root", title: "Scherzo", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", genre_override: options.genreOverride ? "Neo Classical" : "", discNumber: "1", trackNumber: "2", releaseYear: "2024", releaseType_override: "Album" }),
+    indexRow({ fileId: "album-track-1", extension: "mp3", parentId: "root", title: "Opening", artist: "Conductor", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", genre_override: options.genreOverride ? "Neo Classical" : "", discNumber: "1", trackNumber: "1", releaseYear: "2024", releaseType_override: "Album" }),
   ] : [
     indexRow({ fileId: "song-1", extension: "mp3", parentId: "root", driveModifiedTime: "2026-01-01T00:00:00Z", title: "First song", artist: "Artist", genre: "Rock", releaseYear: "2024" }),
     indexRow({ fileId: "song-2", extension: "mp3", parentId: "root", driveModifiedTime: "2026-01-01T00:00:00Z", title: "Second song", artist: "Artist", genre: "Rock", releaseYear: "2024" }),
@@ -82,7 +98,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const seededTrackRows = (options.seedPlaylists ?? []).flatMap((p) => p.fileIds.map((fileId, i) => [p.playlistId, `1000-${i}-e2e`, fileId]));
   const sheetData: Record<string, (string | number)[][]> = { index: indexRows, sync: syncRows, playlists: seededPlaylistRows, playlist_tracks: seededTrackRows };
   const sheetHeaders: Record<string, (string | number)[]> = {
-    index: [...INDEX_SHEET_HEADER],
+    index: [...(options.legacyIndexGrid ? LEGACY_INDEX_SHEET_HEADER_V3 : INDEX_SHEET_HEADER)],
     sync: options.invalidSyncHeader ? ["wrong", "header"] : ["key", "value"],
     playlists: [...PLAYLISTS_SHEET_HEADER],
     playlist_tracks: [...PLAYLIST_TRACKS_SHEET_HEADER],
@@ -96,6 +112,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const driveMetadataRequests: string[] = [];
   let remainingStreamTokenRejections = options.rejectFirstStreamToken ? 1 : 0;
   const sheetsWrites: SheetWrite[] = [];
+  const sheetsReadRanges: string[] = [];
   const pendingPlaylistsReads: (() => void)[] = [];
   const pendingPlaylistsAppends: (() => void)[] = [];
   let playlistsAppendsReleased = false;
@@ -246,10 +263,21 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       return json(route, { totalUpdatedRows: body.data?.length ?? 0 });
     }
     if (url.includes("values/")) {
-      const rangeSegment = url.split("values/")[1]?.split("?")[0].split(":")[0] ?? "";
+      const rangeSegment = url.split("values/")[1]?.split("?")[0] ?? "";
       const sheetName = sheetNameForRange(rangeSegment);
       const isHeader = url.includes("1:1") || url.includes("A1:");
       if (method === "GET") {
+        sheetsReadRanges.push(rangeSegment);
+        const requestedColumns = requestedColumnCount(rangeSegment);
+        const gridColumns = sheetHeaders[sheetName]?.length ?? 26;
+        if (requestedColumns !== undefined && requestedColumns > gridColumns) {
+          return json(route, { error: { message: `Range exceeds grid limits: ${requestedColumns} > ${gridColumns}` } }, 400);
+        }
+        const requestedRows = requestedRowCount(rangeSegment);
+        const gridRows = Math.max(1000, (sheetData[sheetName]?.length ?? 0) + 1);
+        if (requestedRows !== undefined && requestedRows > gridRows) {
+          return json(route, { error: { message: `Range exceeds grid limits: ${requestedRows} > ${gridRows}` } }, 400);
+        }
         // loadPlaylists()のgenerationガード（main.ts）を検証するテスト専用のゲート。
         // playlists/playlist_tracksタブのA2:...読み取り（listPlaylists/listPlaylistTracks）だけを
         // 対象に、テストが明示的に解放するまで応答を保留する。解放順序を操作することで
@@ -257,7 +285,9 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
         if (options.gatePlaylistsListReads && (sheetName === "playlists" || sheetName === "playlist_tracks") && !isHeader) {
           await new Promise<void>((resolve) => pendingPlaylistsReads.push(resolve));
         }
-        return json(route, { values: isHeader ? [sheetHeaders[sheetName] ?? []] : (sheetData[sheetName] ?? []) });
+        const dataRows = (sheetData[sheetName] ?? []).map((row) => row.slice(0, gridColumns));
+        const isWholeSheet = !rangeSegment.includes("!");
+        return json(route, { values: isHeader ? [sheetHeaders[sheetName] ?? []] : isWholeSheet ? [sheetHeaders[sheetName] ?? [], ...dataRows] : dataRows });
       }
       if (method === "PUT") {
         // writeHeaderRow（タブ初回自動作成のヘッダー書き込み）専用。
@@ -303,6 +333,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     streamRequests,
     driveMetadataRequests,
     sheetsWrites,
+    sheetsReadRanges,
     releaseServiceWorker,
     pendingPlaylistsReadCount,
     releasePlaylistsReadsAt,

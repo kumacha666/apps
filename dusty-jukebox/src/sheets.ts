@@ -73,6 +73,9 @@ export const INDEX_SHEET_HEADER = [
   // ランダム文字列）にし、この列に「そのファイルを最後に処理したスキャン実行のID」を記録して
   // 完全一致でのみ「今回の実行で処理済み」と判定する（main.tsのpendingEntries参照）。
   "scanRunId",
+  "genre_override",
+  "genre_conflictCandidate",
+  "genre_hasConflict",
 ] as const;
 
 // mergeDuplicateIndexRowsが対象にする_override列のベース名（列名から末尾"_override"を除いたもの）。
@@ -91,7 +94,7 @@ const OVERRIDE_FIELD_NAMES = [
 
 // スキャナが絶対に書き換えてはならない列（4.2節）。upsert時、既存行に対してはこれらの列を
 // 常に温存し、新規行に対してのみ空欄（オーバーライド無し）で作成する。
-const OVERRIDE_COLUMN_INDEXES = new Set(
+export const OVERRIDE_COLUMN_INDEXES = new Set(
   INDEX_SHEET_HEADER.map((name, i) => (name.endsWith("_override") ? i : -1)).filter((i) => i >= 0)
 );
 
@@ -99,7 +102,7 @@ const OVERRIDE_COLUMN_INDEXES = new Set(
 // （通常のスキャン・再スキャン）では絶対に書き換えてはならない。ここに含めないと、成功した
 // 再スキャンのたびにbuildIndexRowの初期値（""/"FALSE"）で上書きされ、mergeDuplicateIndexRowsが
 // 記録した競合状態が毎回消えてしまう。
-const CONFLICT_META_COLUMN_INDEXES = new Set(
+export const CONFLICT_META_COLUMN_INDEXES = new Set(
   INDEX_SHEET_HEADER.map((name, i) => (name.endsWith("_conflictCandidate") || name.endsWith("_hasConflict") ? i : -1)).filter(
     (i) => i >= 0
   )
@@ -121,7 +124,7 @@ const NON_TAG_COLUMN_NAMES = new Set([
   "extractionFailed",
   "scanRunId",
 ]);
-const TAG_COLUMN_INDEXES = new Set(
+export const TAG_COLUMN_INDEXES = new Set(
   INDEX_SHEET_HEADER.map((name, i) =>
     !OVERRIDE_COLUMN_INDEXES.has(i) && !CONFLICT_META_COLUMN_INDEXES.has(i) && !NON_TAG_COLUMN_NAMES.has(name) ? i : -1
   ).filter((i) => i >= 0)
@@ -239,6 +242,9 @@ export function buildIndexRow({
     // 常に「競合なし」として新規行を作成する（これらの列を埋めるのはmergeDuplicateIndexRowsのみ）。
     ...OVERRIDE_FIELD_NAMES.flatMap(() => ["", "FALSE"]),
     scanRunId, // 2026-08-21追加：このファイルを処理したスキャン実行のID
+    "", // genre_override（スキャナは書き込まない）
+    "", // genre_conflictCandidate（スキャナは書き込まない）
+    "FALSE", // genre_hasConflict（スキャナは書き込まない）
   ];
 }
 
@@ -306,12 +312,27 @@ export function isLegacyIndexHeaderV1(header: (string | number)[]): boolean {
 // LEGACY_INDEX_SHEET_HEADER_V1と同じ理由：この列を追加する前から使っていた既存ユーザーの
 // indexタブがisValidIndexHeaderで弾かれ続けないよう、sheetsSetup.tsのmigrateLegacyIndexHeaderV2
 // がこの旧ヘッダーを検出してグリッド拡張＋ヘッダー書き換えのマイグレーションを行う。
-export const LEGACY_INDEX_SHEET_HEADER_V2 = INDEX_SHEET_HEADER.slice(0, INDEX_SHEET_HEADER.length - 1);
+export const LEGACY_INDEX_SHEET_HEADER_V2 = INDEX_SHEET_HEADER.slice(0, 45);
 
 export function isLegacyIndexHeaderV2(header: (string | number)[]): boolean {
   return (
     header.length === LEGACY_INDEX_SHEET_HEADER_V2.length && header.every((v, i) => v === LEGACY_INDEX_SHEET_HEADER_V2[i])
   );
+}
+
+// genre_override列追加前の現行ヘッダー（46列）。既存ユーザーのindexタブを
+// 次回スキャン時に新スキーマへ移行するため、今回追加した末尾3列を除いた形で保持する。
+export const LEGACY_INDEX_SHEET_HEADER_V3 = INDEX_SHEET_HEADER.slice(0, INDEX_SHEET_HEADER.length - 3);
+
+export function isLegacyIndexHeaderV3(header: (string | number)[]): boolean {
+  return (
+    header.length === LEGACY_INDEX_SHEET_HEADER_V3.length && header.every((v, i) => v === LEGACY_INDEX_SHEET_HEADER_V3[i])
+  );
+}
+
+// 読み取り専用経路はタブを変更せず、直前の46列スキーマも安全に読み取る。
+export function isReadableIndexHeader(header: (string | number)[]): boolean {
+  return isValidIndexHeader(header) || isLegacyIndexHeaderV3(header);
 }
 
 export interface UpsertIndexEntry {
@@ -432,7 +453,7 @@ function mergeOverrideField(
   merged: (string | number)[],
   a: (string | number)[],
   b: (string | number)[],
-  field: (typeof OVERRIDE_FIELD_NAMES)[number]
+  field: (typeof OVERRIDE_FIELD_NAMES)[number] | "genre"
 ): void {
   const overrideIdx = INDEX_SHEET_HEADER.indexOf(`${field}_override` as (typeof INDEX_SHEET_HEADER)[number]);
   const candidateIdx = INDEX_SHEET_HEADER.indexOf(`${field}_conflictCandidate` as (typeof INDEX_SHEET_HEADER)[number]);
@@ -489,6 +510,7 @@ function mergeTwoRows(a: (string | number)[], b: (string | number)[]): (string |
     merged[i] = winner[i] ?? "";
   });
   for (const field of OVERRIDE_FIELD_NAMES) mergeOverrideField(merged, a, b, field);
+  mergeOverrideField(merged, a, b, "genre");
   return merged;
 }
 
@@ -769,10 +791,11 @@ export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () =>
 
   return {
     async listExistingRows() {
-      const range = sheetRange(INDEX_SHEET_NAME, `A2:${lastCol}`);
+      // シート名だけの範囲なら、実グリッドの行数・列数を超える数値上限を指定せずに済む。
+      const range = `'${INDEX_SHEET_NAME.replace(/'/g, "''")}'`;
       const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range)}`);
       const data = (await res.json()) as { values?: (string | number)[][] };
-      return data.values ?? [];
+      return data.values?.slice(1) ?? [];
     },
     async readHeaderRow() {
       // 列範囲を現行ヘッダー幅（lastCol）に固定すると、旧バージョンが作成した27列のままの

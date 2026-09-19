@@ -5,12 +5,18 @@ import {
   indexRowsScanState,
   INDEX_SHEET_HEADER,
   INDEX_SHEET_NAME,
+  CONFLICT_META_COLUMN_INDEXES,
   isLegacyIndexHeaderV1,
   isLegacyIndexHeaderV2,
+  isLegacyIndexHeaderV3,
+  isReadableIndexHeader,
   isValidIndexHeader,
   listExtractionFailedFileIds,
   LEGACY_INDEX_SHEET_HEADER_V1,
   LEGACY_INDEX_SHEET_HEADER_V2,
+  LEGACY_INDEX_SHEET_HEADER_V3,
+  OVERRIDE_COLUMN_INDEXES,
+  TAG_COLUMN_INDEXES,
   mergeDuplicateIndexRows,
   reconcileIndexAgainstRoot,
   removeIndexRows,
@@ -72,6 +78,15 @@ describe("buildIndexRow", () => {
       extractionFailed: false,
     });
     expect(row).toHaveLength(INDEX_SHEET_HEADER.length);
+    expect(row.slice(-3)).toEqual(["", "", "FALSE"]);
+  });
+
+  test("genre列群をoverride・競合メタ・タグとして正しく分類する", () => {
+    expect(OVERRIDE_COLUMN_INDEXES.has(indexOf("genre_override"))).toBe(true);
+    expect(CONFLICT_META_COLUMN_INDEXES.has(indexOf("genre_conflictCandidate"))).toBe(true);
+    expect(CONFLICT_META_COLUMN_INDEXES.has(indexOf("genre_hasConflict"))).toBe(true);
+    expect(TAG_COLUMN_INDEXES.has(indexOf("genre"))).toBe(true);
+    expect(TAG_COLUMN_INDEXES.has(indexOf("genre_override"))).toBe(false);
   });
 
   test("抽出値を対応する列に書き込み、_override列は常に空欄で作成する（4.2節）", () => {
@@ -563,6 +578,29 @@ describe("mergeDuplicateIndexRows", () => {
     expect(candidateAndOverride).toContain("デバイスBの補正");
   });
 
+  test("異なるgenre_overrideを競合として両方保持する", async () => {
+    const rowA = buildIndexRow({ fileId: "f1", fileName: "a.mp3", parentId: "p", driveModifiedTime: "1", lastScannedAtIso: "1", tags: {}, extractionFailed: false });
+    const rowB = buildIndexRow({ fileId: "f1", fileName: "a.mp3", parentId: "p", driveModifiedTime: "2", lastScannedAtIso: "2", tags: {}, extractionFailed: false });
+    rowA[indexOf("genre_override")] = "Rock";
+    rowB[indexOf("genre_override")] = "Pop";
+    const io = makeFakeIO([rowA, rowB]);
+    await mergeDuplicateIndexRows(io);
+    const kept = io.updateCalls[0].find((u) => u.rowNumber === 2)!.row;
+    expect(new Set([kept[indexOf("genre_override")], kept[indexOf("genre_conflictCandidate")]])).toEqual(new Set(["Rock", "Pop"]));
+    expect(kept[indexOf("genre_hasConflict")]).toBe("TRUE");
+  });
+
+  test("片方だけのgenre_overrideを失わずに保持する", async () => {
+    const rowA = buildIndexRow({ fileId: "f1", fileName: "a.mp3", parentId: "p", driveModifiedTime: "1", lastScannedAtIso: "1", tags: {}, extractionFailed: false });
+    const rowB = buildIndexRow({ fileId: "f1", fileName: "a.mp3", parentId: "p", driveModifiedTime: "2", lastScannedAtIso: "2", tags: {}, extractionFailed: false });
+    rowA[indexOf("genre_override")] = "Jazz";
+    const io = makeFakeIO([rowA, rowB]);
+    await mergeDuplicateIndexRows(io);
+    const kept = io.updateCalls[0].find((u) => u.rowNumber === 2)!.row;
+    expect(kept[indexOf("genre_override")]).toBe("Jazz");
+    expect(kept[indexOf("genre_hasConflict")]).toBe("FALSE");
+  });
+
   test("同じ_override値なら競合とみなさない（両方とも同じ値を書いていた）", async () => {
     const rowA = buildIndexRow({
       fileId: "f1",
@@ -731,6 +769,33 @@ describe("isLegacyIndexHeaderV2", () => {
   });
 });
 
+describe("isLegacyIndexHeaderV3", () => {
+  test("genre_override列追加前の旧46列ヘッダーと完全一致する場合はtrue", () => {
+    expect(isLegacyIndexHeaderV3([...LEGACY_INDEX_SHEET_HEADER_V3])).toBe(true);
+  });
+
+  test("genre_override列追加後の現行ヘッダーはfalse", () => {
+    expect(isLegacyIndexHeaderV3([...INDEX_SHEET_HEADER])).toBe(false);
+  });
+
+  test("V1/V2旧ヘッダーと無関係なヘッダーはfalse", () => {
+    expect(isLegacyIndexHeaderV3([...LEGACY_INDEX_SHEET_HEADER_V1])).toBe(false);
+    expect(isLegacyIndexHeaderV3([...LEGACY_INDEX_SHEET_HEADER_V2])).toBe(false);
+    expect(isLegacyIndexHeaderV3(["foo", "bar"])).toBe(false);
+  });
+});
+
+describe("isReadableIndexHeader", () => {
+  test("現行ヘッダーと直前の46列だけを読み取れる", () => {
+    expect(LEGACY_INDEX_SHEET_HEADER_V3).toHaveLength(46);
+    expect(isReadableIndexHeader([...INDEX_SHEET_HEADER])).toBe(true);
+    expect(isReadableIndexHeader([...LEGACY_INDEX_SHEET_HEADER_V3])).toBe(true);
+    expect(isReadableIndexHeader([...LEGACY_INDEX_SHEET_HEADER_V1])).toBe(false);
+    expect(isReadableIndexHeader([...LEGACY_INDEX_SHEET_HEADER_V2])).toBe(false);
+    expect(isReadableIndexHeader(["foo"])).toBe(false);
+  });
+});
+
 function fakeResponse(status: number, body: unknown): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -752,7 +817,7 @@ describe("createSheetsIndexIO", () => {
     const fetchMock = vi.fn(async () => {
       call += 1;
       if (call === 1) throw new TypeError("Failed to fetch");
-      return fakeResponse(200, { values: [["f1"]] });
+      return fakeResponse(200, { values: [[...INDEX_SHEET_HEADER], ["f1"]] });
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -792,6 +857,18 @@ describe("createSheetsIndexIO", () => {
     const decoded = decodeURIComponent(url);
     expect(decoded).toContain(`${INDEX_SHEET_NAME}'!1:1`);
     expect(decoded).not.toMatch(/![A-Z]+\d*:[A-Z]/);
+  });
+
+  test("listExistingRowsは数値範囲なしでシート全体を読み、ヘッダーを除外する", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(200, { values: [[...INDEX_SHEET_HEADER], ["f1"], ["f2"]] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createSheetsIndexIO("sheet1", async () => "token").listExistingRows()).resolves.toEqual([["f1"], ["f2"]]);
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    const requestedRange = decodeURIComponent(url).split("/values/")[1];
+    expect(requestedRange).toBe(`'${INDEX_SHEET_NAME}'`);
+    expect(requestedRange).not.toMatch(/\d/);
+    expect(requestedRange).not.toContain("!");
   });
 
   test("readHeaderRowはヘッダー行が空の場合は空配列を返す（indexタブは存在するがヘッダー未作成のケース）", async () => {

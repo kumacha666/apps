@@ -1,5 +1,5 @@
 import type { BrowserContext, Route } from "@playwright/test";
-import { INDEX_SHEET_HEADER } from "../src/sheets";
+import { INDEX_SHEET_HEADER, LEGACY_INDEX_SHEET_HEADER_V3 } from "../src/sheets";
 
 const TOKEN = "e2e-token";
 
@@ -22,10 +22,13 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     INDEX_SHEET_HEADER.map((h) => (h === "fileId" ? "song-2" : h === "title" ? "Second song" : h === "artist" ? "Artist" : "")),
   ];
   let indexRows: (string | number)[][] = options.rows ?? defaultRows;
-  const header: (string | number)[] = options.invalidHeader ? ["wrong", "header"] : [...INDEX_SHEET_HEADER];
+  // 実運用でスキャン前に残る直前の46列ヘッダーを既定にし、全機能が読み取り時に
+  // マイグレーションやヘッダー書き込みを要求しないことをブラウザ経路で検証する。
+  const header: (string | number)[] = options.invalidHeader ? ["wrong", "header"] : [...LEGACY_INDEX_SHEET_HEADER_V3];
 
   const authFailures: string[] = [];
   const sheetsWrites: { range: string; value: string | number }[] = [];
+  const sheetsReadRanges: string[] = [];
 
   const json = (route: Route, value: unknown, status = 200) =>
     route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
@@ -52,7 +55,19 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       return json(route, { values: [header] });
     }
     if (url.includes("values/") && method === "GET") {
-      return json(route, { values: indexRows });
+      const range = url.split("values/")[1]?.split("?")[0] ?? "";
+      sheetsReadRanges.push(range);
+      const requestedColumns = requestedColumnCount(range);
+      if (requestedColumns !== undefined && requestedColumns > header.length) {
+        return json(route, { error: { message: `Range exceeds grid limits: ${requestedColumns} > ${header.length}` } }, 400);
+      }
+      const requestedRows = requestedRowCount(range);
+      const gridRows = Math.max(1000, indexRows.length + 1);
+      if (requestedRows !== undefined && requestedRows > gridRows) {
+        return json(route, { error: { message: `Range exceeds grid limits: ${requestedRows} > ${gridRows}` } }, 400);
+      }
+      const dataRows = indexRows.map((row) => row.slice(0, header.length));
+      return json(route, { values: range.includes("!") ? dataRows : [header, ...dataRows] });
     }
     if (url.includes("values:batchUpdate") && method === "POST") {
       const body = JSON.parse(route.request().postData() ?? "{}") as {
@@ -76,6 +91,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   return {
     authFailures,
     sheetsWrites,
+    sheetsReadRanges,
     getIndexRows: () => indexRows,
     setIndexRows: (rows: (string | number)[][]) => {
       indexRows = rows;
@@ -87,4 +103,16 @@ function columnLettersToIndex(letters: string): number {
   let index = 0;
   for (const ch of letters) index = index * 26 + (ch.charCodeAt(0) - 64);
   return index - 1;
+}
+
+function requestedColumnCount(range: string): number | undefined {
+  const a1 = range.split("!")[1];
+  const match = a1?.match(/^[A-Z]+\d*:\s*([A-Z]+)/);
+  return match ? columnLettersToIndex(match[1]) + 1 : undefined;
+}
+
+function requestedRowCount(range: string): number | undefined {
+  const a1 = range.split("!")[1];
+  const rows = a1?.match(/\d+/g)?.map(Number);
+  return rows?.length ? Math.max(...rows) : undefined;
 }

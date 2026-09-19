@@ -57,6 +57,9 @@ export const INDEX_SHEET_HEADER = [
   "providerNote_conflictCandidate",
   "providerNote_hasConflict",
   "scanRunId",
+  "genre_override",
+  "genre_conflictCandidate",
+  "genre_hasConflict",
 ] as const;
 
 export const WRITE_BATCH_SIZE = 200;
@@ -83,6 +86,19 @@ export interface SheetsIndexReadWriteIO {
 
 export function isValidIndexHeader(header: (string | number)[]): boolean {
   return header.length === INDEX_SHEET_HEADER.length && header.every((v, i) => v === INDEX_SHEET_HEADER[i]);
+}
+
+// 本体と同じ、genre_override追加前の46列スキーマ。読み取り時だけ許容する。
+export const LEGACY_INDEX_SHEET_HEADER_V3 = INDEX_SHEET_HEADER.slice(0, INDEX_SHEET_HEADER.length - 3);
+
+export function isLegacyIndexHeaderV3(header: (string | number)[]): boolean {
+  return (
+    header.length === LEGACY_INDEX_SHEET_HEADER_V3.length && header.every((v, i) => v === LEGACY_INDEX_SHEET_HEADER_V3[i])
+  );
+}
+
+export function isReadableIndexHeader(header: (string | number)[]): boolean {
+  return isValidIndexHeader(header) || isLegacyIndexHeaderV3(header);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -137,15 +153,15 @@ export function createSheetsFetch(spreadsheetId: string, getAccessToken: () => P
 
 export function createSheetsIndexIO(spreadsheetId: string, getAccessToken: () => Promise<string>): SheetsIndexReadWriteIO {
   const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}`;
-  const lastCol = columnLetter(INDEX_SHEET_HEADER.length);
   const sheetsFetch = createSheetsFetch(spreadsheetId, getAccessToken);
 
   return {
     async listExistingRows() {
-      const range = sheetRange(INDEX_SHEET_NAME, `A2:${lastCol}`);
+      // シート名だけの範囲なら、実グリッドの行数・列数を超える数値上限を指定せずに済む。
+      const range = `'${INDEX_SHEET_NAME.replace(/'/g, "''")}'`;
       const res = await sheetsFetch(`${base}/values/${encodeURIComponent(range)}`);
       const data = (await res.json()) as { values?: (string | number)[][] };
-      return data.values ?? [];
+      return data.values?.slice(1) ?? [];
     },
     async readHeaderRow() {
       const range = sheetRange(INDEX_SHEET_NAME, "1:1");

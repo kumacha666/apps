@@ -29,6 +29,23 @@ async function endActiveAudio(page: import("@playwright/test").Page) {
   });
 }
 
+test("46列のレガシーindexグリッドからカタログを読み込める", async ({ context, page }) => {
+  await installGoogleMocks(context, { legacyIndexGrid: true });
+  await page.goto("/");
+  await login(page);
+  await openCatalog(page);
+  await expect(page.locator("#catalog-list li")).toHaveCount(2);
+});
+
+test("1000行グリッドからシート名だけの範囲で全データ行を読み込める", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context);
+  await page.goto("/");
+  await login(page);
+  await openCatalog(page);
+  await expect(page.locator("#catalog-list li")).toHaveCount(2);
+  expect(mock.sheetsReadRanges).toContain("'index'");
+});
+
 test("リピートボタンはオフ→1曲→リスト全曲→オフと巡回する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
   const repeat = page.locator("#repeat-btn");
@@ -358,6 +375,20 @@ test("索引読み込み後、アーティスト/Genre欄の候補一覧（datal
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
   await expect(page.locator("#filter-artist-options option")).toHaveText(["Artist"]);
   await expect(page.locator("#filter-genre-options option")).toHaveText(["Rock"]);
+});
+
+test("genre_overrideを曲一覧・Genre絞り込み・アルバム一覧へ反映する", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true, genreOverride: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+
+  await expect(page.locator("#filter-genre-options option")).toHaveText(["Jazz", "Neo Classical"]);
+  await page.locator("#filter-genre").fill("Neo Classical");
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await expect(page.locator("#catalog-list li")).toHaveText([/Opening/, /Scherzo/, /Finale/]);
+  await expect(page.locator("#album-list")).toContainText("Symphony（3曲）");
+  await expect(page.locator("#album-list")).not.toContainText("Blue Notes");
 });
 
 test("再生バー（音声コントロール・再生中の曲名・ステータス/エラーメッセージ）は画面下に固定され、再生リストをスクロールしても隠れない（2026-09-09、ユーザー指摘：単曲試聴欄の直下にあると再生リスト操作中に見えなくなっていた。肝心なときに目に入らないステータス/エラーメッセージ〈#status〉も同様の理由で統合）", async ({ context, page }) => {

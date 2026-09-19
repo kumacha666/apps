@@ -4,6 +4,8 @@ import {
   createSheetsIndexIO,
   INDEX_SHEET_HEADER,
   INDEX_SHEET_NAME,
+  isReadableIndexHeader,
+  LEGACY_INDEX_SHEET_HEADER_V3,
   isValidIndexHeader,
   SheetsHttpError,
 } from "./sheets";
@@ -32,12 +34,23 @@ describe("isValidIndexHeader", () => {
   });
 });
 
+describe("isReadableIndexHeader", () => {
+  test("現行スキーマと直前の46列スキーマだけを許容する", () => {
+    expect(LEGACY_INDEX_SHEET_HEADER_V3).toHaveLength(46);
+    expect(isReadableIndexHeader([...INDEX_SHEET_HEADER])).toBe(true);
+    expect(isReadableIndexHeader([...LEGACY_INDEX_SHEET_HEADER_V3])).toBe(true);
+    expect(isReadableIndexHeader(INDEX_SHEET_HEADER.slice(0, 45))).toBe(false);
+    expect(isReadableIndexHeader(INDEX_SHEET_HEADER.slice(0, 27))).toBe(false);
+    expect(isReadableIndexHeader(["wrong"])).toBe(false);
+  });
+});
+
 describe("columnLetter", () => {
   test("1-indexed列番号をA1記法の列文字に変換する", () => {
     expect(columnLetter(1)).toBe("A");
     expect(columnLetter(26)).toBe("Z");
     expect(columnLetter(27)).toBe("AA");
-    expect(columnLetter(46)).toBe("AT"); // INDEX_SHEET_HEADER.length（46列目）
+    expect(columnLetter(INDEX_SHEET_HEADER.length)).toBe("AW");
   });
 });
 
@@ -53,7 +66,7 @@ describe("createSheetsIndexIO", () => {
     const fetchMock = vi.fn(async () => {
       call += 1;
       if (call === 1) throw new TypeError("Failed to fetch");
-      return fakeResponse(200, { values: [["f1"]] });
+      return fakeResponse(200, { values: [[...INDEX_SHEET_HEADER], ["f1"]] });
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -89,6 +102,18 @@ describe("createSheetsIndexIO", () => {
     const decoded = decodeURIComponent(url);
     expect(decoded).toContain(`${INDEX_SHEET_NAME}'!1:1`);
     expect(decoded).not.toMatch(/![A-Z]+\d*:[A-Z]/);
+  });
+
+  test("listExistingRowsは数値範囲なしでシート全体を読み、ヘッダーを除外する", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(200, { values: [[...INDEX_SHEET_HEADER], ["f1"], ["f2"]] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createSheetsIndexIO("sheet1", async () => "token").listExistingRows()).resolves.toEqual([["f1"], ["f2"]]);
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    const requestedRange = decodeURIComponent(url).split("/values/")[1];
+    expect(requestedRange).toBe(`'${INDEX_SHEET_NAME}'`);
+    expect(requestedRange).not.toMatch(/\d/);
+    expect(requestedRange).not.toContain("!");
   });
 
   test("readHeaderRowはヘッダー行が空の場合は空配列を返す", async () => {

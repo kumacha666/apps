@@ -18,6 +18,17 @@ async function login(page: import("@playwright/test").Page) {
   await expect(page.locator("#status")).toContainText("ログイン済み");
 }
 
+test("46列のレガシーindexグリッドから全データ行を読み取れる", async ({ page, context }) => {
+  const mocks = await installGoogleMocks(context, {
+    rows: [makeRow({ fileId: "1", title: "Song", artist: "Artist", album: "Album", genre: "Rock" })],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  await page.getByRole("button", { name: "健全性チェックを実行" }).click();
+  await expect(page.locator("#status")).toContainText("要確認項目は見つかりませんでした");
+  expect(mocks.sheetsReadRanges).toContain("'index'");
+});
+
 test("表記ゆれをチェックして統一し、元に戻せる", async ({ page, context }) => {
   await installGoogleMocks(context, {
     rows: [
