@@ -17,7 +17,7 @@
 // `ensureValidHeader`（下記）が、`main.ts`側のヘッダー検証が実際に失敗した場合にのみ行う
 // フォールバックとして引き受ける。定常状態のスキャンでは一切呼ばれない。
 
-import { columnLetter, createSheetsFetch, INDEX_SHEET_HEADER, INDEX_SHEET_NAME, isLegacyIndexHeaderV1, isLegacyIndexHeaderV2 } from "./sheets";
+import { columnLetter, createSheetsFetch, INDEX_SHEET_HEADER, INDEX_SHEET_NAME, isLegacyIndexHeaderV1, isLegacyIndexHeaderV2, isLegacyIndexHeaderV3 } from "./sheets";
 import { SYNC_SHEET_NAME, SYNC_TAB_HEADER } from "./sync";
 import { PLAYLISTS_SHEET_HEADER, PLAYLISTS_SHEET_NAME, PLAYLIST_TRACKS_SHEET_HEADER, PLAYLIST_TRACKS_SHEET_NAME } from "./playlists";
 import { FOLDERS_SHEET_HEADER, FOLDERS_SHEET_NAME } from "./folderCache";
@@ -157,6 +157,13 @@ export async function migrateLegacyIndexHeaderV1(setupIO: SpreadsheetSetupIO, he
 // 通常通り再処理対象になる（読み取り側の解釈に影響しない）。
 export async function migrateLegacyIndexHeaderV2(setupIO: SpreadsheetSetupIO, header: (string | number)[]): Promise<boolean> {
   if (!isLegacyIndexHeaderV2(header)) return false;
+  await setupIO.expandColumnCount(INDEX_SHEET_NAME, INDEX_SHEET_HEADER.length);
+  await setupIO.writeHeaderRow(INDEX_SHEET_NAME, INDEX_SHEET_HEADER);
+  return true;
+}
+
+export async function migrateLegacyIndexHeaderV3(setupIO: SpreadsheetSetupIO, header: (string | number)[]): Promise<boolean> {
+  if (!isLegacyIndexHeaderV3(header)) return false;
   await setupIO.expandColumnCount(INDEX_SHEET_NAME, INDEX_SHEET_HEADER.length);
   await setupIO.writeHeaderRow(INDEX_SHEET_NAME, INDEX_SHEET_HEADER);
   return true;

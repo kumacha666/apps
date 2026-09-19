@@ -57,6 +57,7 @@ export const INDEX_SHEET_HEADER = [
   "providerNote_conflictCandidate",
   "providerNote_hasConflict",
   "scanRunId",
+  "genre_override",
 ] as const;
 
 export const WRITE_BATCH_SIZE = 200;

@@ -73,6 +73,7 @@ export const INDEX_SHEET_HEADER = [
   // ランダム文字列）にし、この列に「そのファイルを最後に処理したスキャン実行のID」を記録して
   // 完全一致でのみ「今回の実行で処理済み」と判定する（main.tsのpendingEntries参照）。
   "scanRunId",
+  "genre_override",
 ] as const;
 
 // mergeDuplicateIndexRowsが対象にする_override列のベース名（列名から末尾"_override"を除いたもの）。
@@ -239,6 +240,7 @@ export function buildIndexRow({
     // 常に「競合なし」として新規行を作成する（これらの列を埋めるのはmergeDuplicateIndexRowsのみ）。
     ...OVERRIDE_FIELD_NAMES.flatMap(() => ["", "FALSE"]),
     scanRunId, // 2026-08-21追加：このファイルを処理したスキャン実行のID
+    "", // genre_override（スキャナは書き込まない）
   ];
 }
 
@@ -306,11 +308,21 @@ export function isLegacyIndexHeaderV1(header: (string | number)[]): boolean {
 // LEGACY_INDEX_SHEET_HEADER_V1と同じ理由：この列を追加する前から使っていた既存ユーザーの
 // indexタブがisValidIndexHeaderで弾かれ続けないよう、sheetsSetup.tsのmigrateLegacyIndexHeaderV2
 // がこの旧ヘッダーを検出してグリッド拡張＋ヘッダー書き換えのマイグレーションを行う。
-export const LEGACY_INDEX_SHEET_HEADER_V2 = INDEX_SHEET_HEADER.slice(0, INDEX_SHEET_HEADER.length - 1);
+export const LEGACY_INDEX_SHEET_HEADER_V2 = INDEX_SHEET_HEADER.slice(0, 45);
 
 export function isLegacyIndexHeaderV2(header: (string | number)[]): boolean {
   return (
     header.length === LEGACY_INDEX_SHEET_HEADER_V2.length && header.every((v, i) => v === LEGACY_INDEX_SHEET_HEADER_V2[i])
+  );
+}
+
+// genre_override列追加前の現行ヘッダー（46列）。既存ユーザーのindexタブを
+// 次回スキャン時に新スキーマへ移行するため、末尾1列を除いた形で保持する。
+export const LEGACY_INDEX_SHEET_HEADER_V3 = INDEX_SHEET_HEADER.slice(0, INDEX_SHEET_HEADER.length - 1);
+
+export function isLegacyIndexHeaderV3(header: (string | number)[]): boolean {
+  return (
+    header.length === LEGACY_INDEX_SHEET_HEADER_V3.length && header.every((v, i) => v === LEGACY_INDEX_SHEET_HEADER_V3[i])
   );
 }
 

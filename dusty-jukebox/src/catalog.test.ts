@@ -12,6 +12,12 @@ describe("索引行の読み取り", () => {
     expect(readOverride(row({ [field]: "Extracted", [`${field}_override`]: "(none)" }), field)).toBe("");
     expect(readOverride(row({ [field]: "Extracted", [`${field}_override`]: "Corrected" }), field)).toBe("Corrected");
   });
+  test("genre overrideの空欄/(none)/補正値を扱い、parseIndexRowsへ反映する", () => {
+    expect(readOverride(row({ genre: "Extracted" }), "genre")).toBe("Extracted");
+    expect(readOverride(row({ genre: "Extracted", genre_override: "(none)" }), "genre")).toBe("");
+    expect(readOverride(row({ genre: "Extracted", genre_override: "Corrected" }), "genre")).toBe("Corrected");
+    expect(parseIndexRows([row({ fileId: "genre-song", genre: "Extracted", genre_override: "Corrected" })])[0].genre).toBe("Corrected");
+  });
   test("releaseType_overrideは抽出値へのフォールバックが無く、空欄・(none)・値をそのまま扱う（開発体制#39④UI-5）", () => {
     expect(parseIndexRows([row({ fileId: "a" })])[0].releaseType).toBe("");
     expect(parseIndexRows([row({ fileId: "b", releaseType_override: "(none)" })])[0].releaseType).toBe("");

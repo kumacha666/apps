@@ -7,10 +7,12 @@ import {
   INDEX_SHEET_NAME,
   isLegacyIndexHeaderV1,
   isLegacyIndexHeaderV2,
+  isLegacyIndexHeaderV3,
   isValidIndexHeader,
   listExtractionFailedFileIds,
   LEGACY_INDEX_SHEET_HEADER_V1,
   LEGACY_INDEX_SHEET_HEADER_V2,
+  LEGACY_INDEX_SHEET_HEADER_V3,
   mergeDuplicateIndexRows,
   reconcileIndexAgainstRoot,
   removeIndexRows,
@@ -728,6 +730,22 @@ describe("isLegacyIndexHeaderV2", () => {
 
   test("無関係なヘッダーはfalse", () => {
     expect(isLegacyIndexHeaderV2(["foo", "bar"])).toBe(false);
+  });
+});
+
+describe("isLegacyIndexHeaderV3", () => {
+  test("genre_override列追加前の旧46列ヘッダーと完全一致する場合はtrue", () => {
+    expect(isLegacyIndexHeaderV3([...LEGACY_INDEX_SHEET_HEADER_V3])).toBe(true);
+  });
+
+  test("genre_override列追加後の現行ヘッダーはfalse", () => {
+    expect(isLegacyIndexHeaderV3([...INDEX_SHEET_HEADER])).toBe(false);
+  });
+
+  test("V1/V2旧ヘッダーと無関係なヘッダーはfalse", () => {
+    expect(isLegacyIndexHeaderV3([...LEGACY_INDEX_SHEET_HEADER_V1])).toBe(false);
+    expect(isLegacyIndexHeaderV3([...LEGACY_INDEX_SHEET_HEADER_V2])).toBe(false);
+    expect(isLegacyIndexHeaderV3(["foo", "bar"])).toBe(false);
   });
 });
 

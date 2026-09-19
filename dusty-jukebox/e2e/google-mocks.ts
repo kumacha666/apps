@@ -15,6 +15,8 @@ export type MockOptions = {
   rejectFirstStreamToken?: boolean;
   /** Provide multiple albums and deliberately unordered disc/track rows. */
   albumCatalog?: boolean;
+  /** Give every Symphony track a manual Genre override for catalog/filter coverage. */
+  genreOverride?: boolean;
   extractionFailedCount?: number;
   spreadsheetCanEdit?: boolean;
   /** Pre-seed the playlists/playlist_tracks tabs (e.g. a playlist referencing fileIds no longer in the index). */
@@ -63,10 +65,10 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const indexRows: string[][] = options.extractionFailedCount ? Array.from({ length: options.extractionFailedCount }, (_, index) =>
     indexRow({ fileId: `failed-${index}`, extension: "mp3", parentId: "root", extractionFailed: "TRUE" })
   ) : options.albumCatalog ? [
-    indexRow({ fileId: "album-track-3", extension: "mp3", parentId: "root", title: "Finale", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", discNumber: "2", trackNumber: "1", releaseYear: "2024", releaseType_override: "Album" }),
+    indexRow({ fileId: "album-track-3", extension: "mp3", parentId: "root", title: "Finale", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", genre_override: options.genreOverride ? "Neo Classical" : "", discNumber: "2", trackNumber: "1", releaseYear: "2024", releaseType_override: "Album" }),
     indexRow({ fileId: "other-album", extension: "mp3", parentId: "root", title: "Jazz Song", artist: "Quartet", album: "Blue Notes", composer: "Writer", genre: "Jazz", discNumber: "1", trackNumber: "1", releaseYear: "2020", releaseType_override: "Single" }),
-    indexRow({ fileId: "album-track-2", extension: "mp3", parentId: "root", title: "Scherzo", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", discNumber: "1", trackNumber: "2", releaseYear: "2024", releaseType_override: "Album" }),
-    indexRow({ fileId: "album-track-1", extension: "mp3", parentId: "root", title: "Opening", artist: "Conductor", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", discNumber: "1", trackNumber: "1", releaseYear: "2024", releaseType_override: "Album" }),
+    indexRow({ fileId: "album-track-2", extension: "mp3", parentId: "root", title: "Scherzo", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", genre_override: options.genreOverride ? "Neo Classical" : "", discNumber: "1", trackNumber: "2", releaseYear: "2024", releaseType_override: "Album" }),
+    indexRow({ fileId: "album-track-1", extension: "mp3", parentId: "root", title: "Opening", artist: "Conductor", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", genre_override: options.genreOverride ? "Neo Classical" : "", discNumber: "1", trackNumber: "1", releaseYear: "2024", releaseType_override: "Album" }),
   ] : [
     indexRow({ fileId: "song-1", extension: "mp3", parentId: "root", driveModifiedTime: "2026-01-01T00:00:00Z", title: "First song", artist: "Artist", genre: "Rock", releaseYear: "2024" }),
     indexRow({ fileId: "song-2", extension: "mp3", parentId: "root", driveModifiedTime: "2026-01-01T00:00:00Z", title: "Second song", artist: "Artist", genre: "Rock", releaseYear: "2024" }),
