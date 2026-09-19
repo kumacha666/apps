@@ -16,7 +16,7 @@
 
 - `src/auth.ts` ← 本体の`src/auth.ts`。トークンモデル・GISの`error_callback`処理・多重呼び出しガード等は同じ設計。要求スコープのみ`SPREADSHEETS_SCOPE`単独に変更（本体は`drive.readonly`+`spreadsheets`）
 - `src/lib.ts` ← 本体の`src/lib.ts`から`sheetRange`・`detectGarbled`のみ移植（文字化け判定ロジック自体は無変更）。新規追加として`repairGarbledText`を実装
-- `src/sheets.ts` ← 本体の`src/sheets.ts`から、`INDEX_SHEET_HEADER`（27+18+1=46列、本体と完全に同じ列順）・`SheetsHttpError`・`isValidIndexHeader`・`WRITE_BATCH_SIZE`・`createSheetsFetch`・`createSheetsIndexIO`・`columnLetter`のみを移植したサブセット。upsert・重複行マージ・削除・リコンサイル等、スキャン・差分同期に関わるロジックは対象外（本体のみが担当）。`updateRows`（行全体書き込み）・`appendRows`（追記）も実装していない：このアプリは対象`<field>_override`セル1つだけをピンポイント更新する設計のため
+- `src/sheets.ts` ← 本体の`src/sheets.ts`から、`INDEX_SHEET_HEADER`（27+18+1=46列だったが、2026-09-19のPR #470で`genre_override`/`genre_conflictCandidate`/`genre_hasConflict`が末尾追加され現在は49列、本体と完全に同じ列順）・`SheetsHttpError`・`isValidIndexHeader`・`WRITE_BATCH_SIZE`・`createSheetsFetch`・`createSheetsIndexIO`・`columnLetter`のみを移植したサブセット。upsert・重複行マージ・削除・リコンサイル等、スキャン・差分同期に関わるロジックは対象外（本体のみが担当）。`updateRows`（行全体書き込み）・`appendRows`（追記）も実装していない：このアプリは対象`<field>_override`セル1つだけをピンポイント更新する設計のため
 - `src/caseNormalization.ts`/`caseNormalization.test.ts` ← 本体で開発体制#41として実装・3ラウンドのレビュー対応を経て実機確認済みだったものをそのまま移植（ロジック自体は無変更）
 
 ## 文字化け修復（実装済みだが実データにはほぼ効かないことが判明、下記参照）
