@@ -40,16 +40,45 @@ test("表記ゆれをチェックして統一し、元に戻せる", async ({ pa
   await login(page);
   await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
 
-  await page.getByRole("button", { name: "表記ゆれをチェック" }).click();
+  await page.getByRole("button", { name: "表記ゆれをチェック", exact: true }).click();
   await expect(page.locator("#status")).toContainText("1件の表記ゆれ候補");
   await expect(page.locator("#casing-results")).toContainText("AKB48");
   await expect(page.locator("#casing-results")).toContainText("akb48");
 
-  await page.getByRole("button", { name: "統一を適用" }).click();
+  await page.getByRole("button", { name: "統一を適用", exact: true }).click();
   await expect(page.locator("#status")).toContainText("1件の表記ゆれを統一しました");
 
-  await page.getByRole("button", { name: "直前の統一を元に戻す" }).click();
+  await page.getByRole("button", { name: "直前の統一を元に戻す", exact: true }).click();
   await expect(page.locator("#status")).toContainText("1件の表記ゆれ統一を元に戻しました");
+});
+
+test("Genre表記ゆれをトークン単位で統一し、元に戻せる", async ({ page, context }) => {
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    rows: [
+      makeRow({ fileId: "1", title: "A", genre: "rock / Jazz" }),
+      makeRow({ fileId: "2", title: "B", genre: "Rock / jazz" }),
+    ],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+
+  await page.getByRole("button", { name: "Genre表記ゆれをチェック" }).click();
+  await expect(page.locator("#status")).toContainText("2件のGenre表記ゆれ候補");
+  await expect(page.locator("#genre-results")).toContainText("トークン: 「Rock」(1曲) / 「rock」(1曲)");
+  await expect(page.locator("#genre-results")).toContainText("トークン: 「Jazz」(1曲) / 「jazz」(1曲)");
+  await page.screenshot({ path: "/tmp/genre-normalization-ui.png", fullPage: true });
+
+  await page.getByRole("button", { name: "Genre統一を適用" }).click();
+  await expect(page.locator("#status")).toContainText("2曲のGenre表記ゆれを統一しました");
+  expect(mocks.getIndexRows().map((row) => row[INDEX_SHEET_HEADER.indexOf("genre_override")])).toEqual([
+    "Rock / Jazz",
+    "Rock / Jazz",
+  ]);
+
+  await page.getByRole("button", { name: "直前のGenre統一を元に戻す" }).click();
+  await expect(page.locator("#status")).toContainText("2曲のGenre表記ゆれ統一を元に戻しました");
+  expect(mocks.getIndexRows().map((row) => row[INDEX_SHEET_HEADER.indexOf("genre_override")])).toEqual(["", ""]);
 });
 
 test("文字化けをチェックして修復し、元に戻せる", async ({ page, context }) => {
@@ -139,10 +168,10 @@ test("チェック時と異なるスプレッドシートIDで適用しようと
   });
   await login(page);
   await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
-  await page.getByRole("button", { name: "表記ゆれをチェック" }).click();
+  await page.getByRole("button", { name: "表記ゆれをチェック", exact: true }).click();
   await expect(page.locator("#status")).toContainText("1件の表記ゆれ候補");
 
   await page.locator("#spreadsheet-id").fill("different-sheet");
-  await page.getByRole("button", { name: "統一を適用" }).click();
+  await page.getByRole("button", { name: "統一を適用", exact: true }).click();
   await expect(page.locator("#status")).toContainText("チェック時と異なるスプレッドシートID");
 });

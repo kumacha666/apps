@@ -8,6 +8,8 @@ export type MockOptions = {
   rows?: (string | number)[][];
   /** Serve an index tab whose header row does not match INDEX_SHEET_HEADER. */
   invalidHeader?: boolean;
+  /** Use the current schema (including genre_override) instead of the legacy readable schema. */
+  currentHeader?: boolean;
 };
 
 /**
@@ -24,7 +26,9 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   let indexRows: (string | number)[][] = options.rows ?? defaultRows;
   // 実運用でスキャン前に残る直前の46列ヘッダーを既定にし、全機能が読み取り時に
   // マイグレーションやヘッダー書き込みを要求しないことをブラウザ経路で検証する。
-  const header: (string | number)[] = options.invalidHeader ? ["wrong", "header"] : [...LEGACY_INDEX_SHEET_HEADER_V3];
+  const header: (string | number)[] = options.invalidHeader
+    ? ["wrong", "header"]
+    : [...(options.currentHeader ? INDEX_SHEET_HEADER : LEGACY_INDEX_SHEET_HEADER_V3)];
 
   const authFailures: string[] = [];
   const sheetsWrites: { range: string; value: string | number }[] = [];
