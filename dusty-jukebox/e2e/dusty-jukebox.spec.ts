@@ -37,6 +37,15 @@ test("46列のレガシーindexグリッドからカタログを読み込める"
   await expect(page.locator("#catalog-list li")).toHaveCount(2);
 });
 
+test("1000行グリッドからシート名だけの範囲で全データ行を読み込める", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context);
+  await page.goto("/");
+  await login(page);
+  await openCatalog(page);
+  await expect(page.locator("#catalog-list li")).toHaveCount(2);
+  expect(mock.sheetsReadRanges).toContain("'index'");
+});
+
 test("リピートボタンはオフ→1曲→リスト全曲→オフと巡回する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
   const repeat = page.locator("#repeat-btn");

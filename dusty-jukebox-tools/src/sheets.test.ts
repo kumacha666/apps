@@ -66,7 +66,7 @@ describe("createSheetsIndexIO", () => {
     const fetchMock = vi.fn(async () => {
       call += 1;
       if (call === 1) throw new TypeError("Failed to fetch");
-      return fakeResponse(200, { values: [["f1"]] });
+      return fakeResponse(200, { values: [[...INDEX_SHEET_HEADER], ["f1"]] });
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -104,16 +104,16 @@ describe("createSheetsIndexIO", () => {
     expect(decoded).not.toMatch(/![A-Z]+\d*:[A-Z]/);
   });
 
-  test("listExistingRowsは列幅を固定せず2行目以降を行範囲で読み取る", async () => {
-    const fetchMock = vi.fn(async () => fakeResponse(200, { values: [["f1"]] }));
+  test("listExistingRowsは数値範囲なしでシート全体を読み、ヘッダーを除外する", async () => {
+    const fetchMock = vi.fn(async () => fakeResponse(200, { values: [[...INDEX_SHEET_HEADER], ["f1"], ["f2"]] }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await createSheetsIndexIO("sheet1", async () => "token").listExistingRows();
+    await expect(createSheetsIndexIO("sheet1", async () => "token").listExistingRows()).resolves.toEqual([["f1"], ["f2"]]);
     const [url] = fetchMock.mock.calls[0] as unknown as [string];
-    const decoded = decodeURIComponent(url);
-    expect(decoded).toContain(`${INDEX_SHEET_NAME}'!2:1000000`);
-    expect(decoded).not.toContain(`A2:${columnLetter(INDEX_SHEET_HEADER.length)}`);
-    expect(decoded).not.toMatch(/![A-Z]+\d+:[A-Z]+/);
+    const requestedRange = decodeURIComponent(url).split("/values/")[1];
+    expect(requestedRange).toBe(`'${INDEX_SHEET_NAME}'`);
+    expect(requestedRange).not.toMatch(/\d/);
+    expect(requestedRange).not.toContain("!");
   });
 
   test("readHeaderRowはヘッダー行が空の場合は空配列を返す", async () => {

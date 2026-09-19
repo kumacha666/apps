@@ -49,7 +49,7 @@ type SheetWrite = {
 // 任意のタブ名を許容する（元々はindex/syncのみを想定していたが、playlists/playlist_tracks
 // タブ（保存済みプレイリスト機能）を実際に読み書きして検証するため汎用化した）。
 function sheetNameForRange(range: string | undefined): string {
-  const match = range?.match(/^'?([^'!]+)'?!/);
+  const match = range?.match(/^'?([^'!]+)'?(?:!|$)/);
   return match?.[1] ?? "unknown";
 }
 
@@ -64,6 +64,12 @@ function requestedColumnCount(range: string): number | undefined {
   const a1 = range.split("!")[1];
   const match = a1?.match(/^[A-Z]+\d*:\s*([A-Z]+)/);
   return match ? columnLettersToIndex(match[1]) + 1 : undefined;
+}
+
+function requestedRowCount(range: string): number | undefined {
+  const a1 = range.split("!")[1];
+  const rows = a1?.match(/\d+/g)?.map(Number);
+  return rows?.length ? Math.max(...rows) : undefined;
 }
 
 /** In-memory GIS, Drive and Sheets boundary. Every authenticated API request is
@@ -106,6 +112,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const driveMetadataRequests: string[] = [];
   let remainingStreamTokenRejections = options.rejectFirstStreamToken ? 1 : 0;
   const sheetsWrites: SheetWrite[] = [];
+  const sheetsReadRanges: string[] = [];
   const pendingPlaylistsReads: (() => void)[] = [];
   const pendingPlaylistsAppends: (() => void)[] = [];
   let playlistsAppendsReleased = false;
@@ -260,10 +267,16 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       const sheetName = sheetNameForRange(rangeSegment);
       const isHeader = url.includes("1:1") || url.includes("A1:");
       if (method === "GET") {
+        sheetsReadRanges.push(rangeSegment);
         const requestedColumns = requestedColumnCount(rangeSegment);
         const gridColumns = sheetHeaders[sheetName]?.length ?? 26;
         if (requestedColumns !== undefined && requestedColumns > gridColumns) {
           return json(route, { error: { message: `Range exceeds grid limits: ${requestedColumns} > ${gridColumns}` } }, 400);
+        }
+        const requestedRows = requestedRowCount(rangeSegment);
+        const gridRows = Math.max(1000, (sheetData[sheetName]?.length ?? 0) + 1);
+        if (requestedRows !== undefined && requestedRows > gridRows) {
+          return json(route, { error: { message: `Range exceeds grid limits: ${requestedRows} > ${gridRows}` } }, 400);
         }
         // loadPlaylists()のgenerationガード（main.ts）を検証するテスト専用のゲート。
         // playlists/playlist_tracksタブのA2:...読み取り（listPlaylists/listPlaylistTracks）だけを
@@ -272,7 +285,9 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
         if (options.gatePlaylistsListReads && (sheetName === "playlists" || sheetName === "playlist_tracks") && !isHeader) {
           await new Promise<void>((resolve) => pendingPlaylistsReads.push(resolve));
         }
-        return json(route, { values: isHeader ? [sheetHeaders[sheetName] ?? []] : (sheetData[sheetName] ?? []).map((row) => row.slice(0, gridColumns)) });
+        const dataRows = (sheetData[sheetName] ?? []).map((row) => row.slice(0, gridColumns));
+        const isWholeSheet = !rangeSegment.includes("!");
+        return json(route, { values: isHeader ? [sheetHeaders[sheetName] ?? []] : isWholeSheet ? [sheetHeaders[sheetName] ?? [], ...dataRows] : dataRows });
       }
       if (method === "PUT") {
         // writeHeaderRow（タブ初回自動作成のヘッダー書き込み）専用。
@@ -318,6 +333,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     streamRequests,
     driveMetadataRequests,
     sheetsWrites,
+    sheetsReadRanges,
     releaseServiceWorker,
     pendingPlaylistsReadCount,
     releasePlaylistsReadsAt,

@@ -28,6 +28,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
 
   const authFailures: string[] = [];
   const sheetsWrites: { range: string; value: string | number }[] = [];
+  const sheetsReadRanges: string[] = [];
 
   const json = (route: Route, value: unknown, status = 200) =>
     route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
@@ -55,11 +56,18 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     }
     if (url.includes("values/") && method === "GET") {
       const range = url.split("values/")[1]?.split("?")[0] ?? "";
+      sheetsReadRanges.push(range);
       const requestedColumns = requestedColumnCount(range);
       if (requestedColumns !== undefined && requestedColumns > header.length) {
         return json(route, { error: { message: `Range exceeds grid limits: ${requestedColumns} > ${header.length}` } }, 400);
       }
-      return json(route, { values: indexRows.map((row) => row.slice(0, header.length)) });
+      const requestedRows = requestedRowCount(range);
+      const gridRows = Math.max(1000, indexRows.length + 1);
+      if (requestedRows !== undefined && requestedRows > gridRows) {
+        return json(route, { error: { message: `Range exceeds grid limits: ${requestedRows} > ${gridRows}` } }, 400);
+      }
+      const dataRows = indexRows.map((row) => row.slice(0, header.length));
+      return json(route, { values: range.includes("!") ? dataRows : [header, ...dataRows] });
     }
     if (url.includes("values:batchUpdate") && method === "POST") {
       const body = JSON.parse(route.request().postData() ?? "{}") as {
@@ -83,6 +91,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   return {
     authFailures,
     sheetsWrites,
+    sheetsReadRanges,
     getIndexRows: () => indexRows,
     setIndexRows: (rows: (string | number)[][]) => {
       indexRows = rows;
@@ -100,4 +109,10 @@ function requestedColumnCount(range: string): number | undefined {
   const a1 = range.split("!")[1];
   const match = a1?.match(/^[A-Z]+\d*:\s*([A-Z]+)/);
   return match ? columnLettersToIndex(match[1]) + 1 : undefined;
+}
+
+function requestedRowCount(range: string): number | undefined {
+  const a1 = range.split("!")[1];
+  const rows = a1?.match(/\d+/g)?.map(Number);
+  return rows?.length ? Math.max(...rows) : undefined;
 }
