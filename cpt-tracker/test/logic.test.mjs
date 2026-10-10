@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   pointsForPlacement, placementForPoints, tiedStart, normalizeTag, tagPart, nameKeys,
   compareTiebreak, rankRows, evaluateEntrants, aliveBounds, buildRows, judge, baselineRankMap,
+  liveFreshness, nextRefreshDelayMs,
 } from "../logic.js";
 
 const config = JSON.parse(readFileSync(new URL("../data/config.json", import.meta.url)));
@@ -325,4 +326,24 @@ test("生存中の選手はポイント枠が絶望でも圏外確定にしな�
   // 早期敗退が確定したJr.は本当の圏外確定
   assert.equal(rowOf(rows, "Jr.").evo.state, "final");
   assert.notEqual(rowOf(rows, "Jr.").safety, "winonly");
+});
+
+test("liveFreshness: 中継が前回応答を返した、または取得から3分超なら古い", () => {
+  const now = Date.parse("2026-10-10T16:10:00Z");
+  assert.deepEqual(liveFreshness(null, now), { ageSec: null, stale: false });
+  assert.equal(liveFreshness({ fetchedAt: "2026-10-10T16:09:30Z" }, now).stale, false);
+  assert.equal(liveFreshness({ fetchedAt: "2026-10-10T16:09:30Z" }, now).ageSec, 30);
+  assert.equal(liveFreshness({ fetchedAt: "2026-10-10T16:06:00Z" }, now).stale, true);
+  // staleフラグが立っていれば、取得時刻が新しくても古い扱い
+  assert.equal(liveFreshness({ fetchedAt: "2026-10-10T16:09:50Z", stale: true }, now).stale, true);
+  // 時刻が壊れていても落ちない
+  assert.equal(liveFreshness({ fetchedAt: "x" }, now).ageSec, null);
+});
+
+test("nextRefreshDelayMs: 基準±最大10秒の範囲でばらつき、下限は20秒", () => {
+  assert.equal(nextRefreshDelayMs(60, 0.5), 60000);
+  assert.equal(nextRefreshDelayMs(60, 0), 50000);
+  assert.equal(nextRefreshDelayMs(60, 1), 70000);
+  assert.equal(nextRefreshDelayMs(5, 0.5), 20000); // 短すぎる設定は20秒に切り上げ
+  assert.equal(nextRefreshDelayMs(600, 1), 610000); // 揺らぎは最大10秒
 });

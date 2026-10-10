@@ -15,7 +15,7 @@
 /7metch2/            ナナメッチ系列の新作（開発中）— Vite+TS、ビルド有
 /7metch-tools/       7metch用デバッグ・プレビュー用の単独HTMLツール群
 /combrawl/           カード×オートバトラー・ローグライク「combrawl」（開発中）— Vite+TS、ビルド有
-/cpt-tracker/        CAPCOM Pro Tour 2026 Premierポイントのリアルタイム更新トラッカー（EVO France進行に合わせて8列目と出場枠の確定を更新）— 静的PWA（ユニットテスト有）＋start.gg中継GAS、非掲載
+/cpt-tracker/        CAPCOM Pro Tour 2026 Premierポイントのリアルタイム更新トラッカー（EVO France進行に合わせて8列目と出場枠の確定を更新）— 静的PWA（ユニットテスト有）＋start.gg中継GAS、トップに掲載（期間限定）
 /dusty-jukebox/      Googleドライブ音楽プレイヤー「DustyJukebox」（開発中・実機で音楽再生可能、絞り込み/プレイリスト/シャッフル等まで実装済み）— Vite+TS、ビルド有、Playwright e2e有、AGENTS.md有
 /dusty-jukebox-tools/ dusty-jukebox用カタログ補正ツール（表記ゆれ統一・文字化け修復・ライブラリ健全性チェック、必要な時だけ起動する管理ツール）— Vite+TS、ビルド有、Playwright e2e有、非掲載
 /enblo/              ローグライクバトラー（開発中）— Vite+TS、ビルド有、Playwright e2e有
@@ -30,7 +30,7 @@
 /tapu-neko/          シンプルな単独ウィジェット（PWA化なし）
 ```
 
-- ランディングページ（`index.html`）に掲載されているのは現状 `7metch`・`emoji-dm`・`enblo-classic`・`LifeLog`・`marvel-checklist` のみ。他のアプリは未掲載／開発中で、URLを直接踏んで動作確認する運用。`marvel-checklist`のカードアイコンは`icon-192.png`ではなく`/marvel-checklist/icon.svg`を直接参照している（PNGアイコンを持たないため）。新しいアプリを公開する際は `index.html` の `.apps` セクションにカードを追加する。`mori-no-yakai` は実機での動作確認・機能実装が完了済みだが、**身内利用アプリのため意図的に非掲載**（不特定多数への公開を想定していない、2026-07-11判断。`mori-no-yakai/CLAUDE.md`参照）。著作権的な懸念もあり、部屋の新規作成（ホスト操作）は合言葉ゲートで管理者本人に限定している（2026-07-13、`mori-no-yakai/CLAUDE.md`の「部屋作成（ホスト）の合言葉ゲート」参照）。`enblo-classic` は専用PNGアイコン（`icon-192.png`/`icon-512.png`）が未整備のため、ランディングページのカードは絵文字（⚔️）ベースのdata URI SVGアイコンを使用している（LifeLogカードと同じ手法）。`combrawl` も開発中・有料化検討前段階のため`enblo`と同様に意図的に非掲載（URLを直接踏んで確認する運用）。
+- ランディングページ（`index.html`）に掲載されているのは現状 `cpt-tracker`（2026-10-10掲載、EVO France専用の期間限定ツール。大会終了後は掲載を外すか判断）・`7metch`・`emoji-dm`・`enblo-classic`・`LifeLog`・`marvel-checklist` のみ。他のアプリは未掲載／開発中で、URLを直接踏んで動作確認する運用。`marvel-checklist`のカードアイコンは`icon-192.png`ではなく`/marvel-checklist/icon.svg`を直接参照している（PNGアイコンを持たないため）。新しいアプリを公開する際は `index.html` の `.apps` セクションにカードを追加する。`mori-no-yakai` は実機での動作確認・機能実装が完了済みだが、**身内利用アプリのため意図的に非掲載**（不特定多数への公開を想定していない、2026-07-11判断。`mori-no-yakai/CLAUDE.md`参照）。著作権的な懸念もあり、部屋の新規作成（ホスト操作）は合言葉ゲートで管理者本人に限定している（2026-07-13、`mori-no-yakai/CLAUDE.md`の「部屋作成（ホスト）の合言葉ゲート」参照）。`enblo-classic` は専用PNGアイコン（`icon-192.png`/`icon-512.png`）が未整備のため、ランディングページのカードは絵文字（⚔️）ベースのdata URI SVGアイコンを使用している（LifeLogカードと同じ手法）。`combrawl` も開発中・有料化検討前段階のため`enblo`と同様に意図的に非掲載（URLを直接踏んで確認する運用）。
 - `lifelog/` は2026-07-13、単独リポジトリ `kumacha666/lifelog`（`https://kumacha666.github.io/lifelog/`）から本リポジトリに移行したもの。旧リポジトリは開発終了・クローズ済みで、以後の変更は本ディレクトリ側で行う。データはlocalStorage保存のためoriginをまたいだ自動移行はできない（利用者本人がエクスポート/インポート機能で手動移行）。
 - 各アプリディレクトリに固有の `CLAUDE.md` がある場合（例: `7metch/CLAUDE.md`）は、そのアプリを変更する際に必ず参照・遵守する。アプリ固有の開発ルール・テスト方針・チェックリストはそちらに記載されている。アプリ固有の`AGENTS.md`がある場合（現状`dusty-jukebox`のみ）は、Codex向けの実行手順としてそちらも参照する。
 

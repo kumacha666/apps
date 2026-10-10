@@ -2,7 +2,7 @@
  * cpt-tracker 用 start.gg 中継（Google Apps Script ウェブアプリ）
  *
  * - start.gg APIのトークンは「スクリプト プロパティ」に保存する（このファイルにもリポジトリにも書かない）
- * - 公開GETエンドポイントで、イベントの順位・生存者を整形した軽量JSONを返す（約45秒キャッシュ）
+ * - 公開GETエンドポイントで、イベントの順位・生存者を整形した軽量JSONを返す（60秒キャッシュ。更新中・start.gg障害時は前回の応答を即返す）
  * - 呼べるイベントは EVENT_ID プロパティで固定（トークンの悪用防止）。クライアントからのパラメータは受け付けない
  *
  * 手順は SETUP.md を参照。コードを変更したら「デプロイを管理」→ 既存デプロイを編集 → 新バージョンで更新する
@@ -10,7 +10,10 @@
  */
 
 var STARTGG_ENDPOINT = 'https://api.start.gg/gql/alpha';
-var CACHE_SECONDS = 45;
+var CACHE_SECONDS = 60;          // この間は新しい応答をそのまま返す
+var STALE_SECONDS = 21600;       // 古い応答の保管期間（CacheServiceの上限6時間）。更新中・エラー時に即返す
+var LOCK_TRY_MS = 500;           // 更新担当になれなかったら古い応答を即返すための待ち時間
+var LOCK_WAIT_FIRST_MS = 20000;  // 古い応答がまだ無い最初の1回だけ待つ
 var PER_PAGE = 100;
 var MAX_STANDING_PAGES = 15;   // 1500人まで（EVO France SF6は約1,070人）
 var MAX_SET_PAGES = 15;
@@ -24,28 +27,52 @@ function doGet() {
   if (!token) return jsonOut_({ ok: false, error: 'STARTGG_TOKEN未設定（SETUP.md参照）' });
 
   var cache = CacheService.getScriptCache();
-  var cacheKey = 'live:' + eventId;
-  var hit = cache.get(cacheKey);
+  var freshKey = 'live:' + eventId;
+  var staleKey = 'stale:' + eventId;
+  var hit = cache.get(freshKey);
   if (hit) return textOut_(hit);
 
-  // 多数のクライアントが同時にキャッシュ切れを踏んでAPIを叩き過ぎないよう直列化
+  // キャッシュ切れの瞬間に全員がstart.ggの取得完了を待つと同時実行の上限(30)を超えて詰まるため、
+  // 更新できるのは1人だけ。他の人は待たずに「前回の応答」を即座に返す。
   var lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(20000);
-  } catch (e) {
-    return jsonOut_({ ok: false, error: '混雑しています。しばらくして再試行してください' });
+  if (!lock.tryLock(LOCK_TRY_MS)) {
+    var stale = cache.get(staleKey);
+    if (stale) return textOut_(markStale_(stale, null));
+    // 古い応答がまだ無い（起動直後の最初の1回）ときだけ、更新担当の完了を待つ
+    if (!lock.tryLock(LOCK_WAIT_FIRST_MS)) {
+      return jsonOut_({ ok: false, error: '混雑しています。しばらくして再試行してください' });
+    }
   }
   try {
-    hit = cache.get(cacheKey);
+    hit = cache.get(freshKey);
     if (hit) return textOut_(hit);
     var payload = JSON.stringify(fetchLive_(token, eventId));
     // CacheServiceは1キー100KBまで。超える場合はキャッシュせず返す
-    if (payload.length < 95000) cache.put(cacheKey, payload, CACHE_SECONDS);
+    if (payload.length < 95000) {
+      cache.put(freshKey, payload, CACHE_SECONDS);
+      cache.put(staleKey, payload, STALE_SECONDS);
+    }
     return textOut_(payload);
   } catch (err) {
-    return jsonOut_({ ok: false, error: String(err && err.message ? err.message : err) });
+    var reason = String(err && err.message ? err.message : err);
+    var fallback = cache.get(staleKey);
+    // start.ggが一時的に落ちていても、前回の応答があればそれを返す（画面側で「古い」と表示される）
+    if (fallback) return textOut_(markStale_(fallback, reason));
+    return jsonOut_({ ok: false, error: reason });
   } finally {
     lock.releaseLock();
+  }
+}
+
+/** 前回の応答に stale:true を付けて返す。fetchedAt は取得時刻のまま残す（画面が経過時間を出せるように）。 */
+function markStale_(json, reason) {
+  try {
+    var obj = JSON.parse(json);
+    obj.stale = true;
+    if (reason) obj.staleReason = reason;
+    return JSON.stringify(obj);
+  } catch (e) {
+    return json;
   }
 }
 
