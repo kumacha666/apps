@@ -394,3 +394,19 @@ export function nextRefreshDelayMs(baseSec, rand = Math.random(), jitterRatio = 
   const jitter = Math.min(base * jitterRatio, maxJitterSec * 1000);
   return Math.round(base + (rand * 2 - 1) * jitter);
 }
+
+/** URLに debug=1 が付いているときだけ、開発者向けの表示（名簿に見つからない選手の警告など）を出す。 */
+export function isDebugMode(search) {
+  try {
+    return new URLSearchParams(search || "").get("debug") === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 閲覧者向けの取得エラー文。技術的な原因（HTMLが返った、HTTPエラー等）は出さない（開発者は ?debug=1 で生の文言を見る）。 */
+export function friendlyLiveError(hasPreviousData) {
+  return hasPreviousData
+    ? "データを一時的に取得できませんでした。自動で再試行します（前回のデータを表示しています）。"
+    : "データを一時的に取得できませんでした。自動で再試行します。";
+}
