@@ -1,6 +1,6 @@
 # cpt-tracker — 開発ガイド
 
-CAPCOM Pro Tour 2026 の **Premierポイントランキング**（公式 `https://sf.esports.capcom.com/cpt/jp/pp-rankings/`）を、進行中のPremier大会（2026-10-10〜11の **EVO France 2026 SF6**、Premier 8/8）の結果に合わせてリアルタイム更新するトラッカー。公式ページは大会終了まで更新されないため、start.ggの進行から8列目を埋め、Capcom Cup 13のPremierポイント枠（上位8名）の確定・圏外確定を判定する。**非掲載（URL直踏み運用）、非公式ファンツール**。
+CAPCOM Pro Tour 2026 の **Premierポイントランキング**（公式 `https://sf.esports.capcom.com/cpt/jp/pp-rankings/`）を、進行中のPremier大会（2026-10-10〜11の **EVO France 2026 SF6**、Premier 8/8）の結果に合わせてリアルタイム更新するトラッカー。公式ページは大会終了まで更新されないため、start.ggの進行から8列目を埋め、Capcom Cup 13のPremierポイント枠（上位8名）の確定・圏外確定を判定する。**非公式ファンツール**。2026-10-10にトップページ（`/index.html`）の先頭へ掲載（期間限定。EVO France終了後に掲載を外す／凍結するかを判断する）。ページ下部に権利表記（カプコン商標・非公式・データ出典）とスタジオロゴを置く（ロゴは明るい背景用なのでクリーム色の台座に載せる）。
 
 ## 構成（ビルド不要の静的PWA。`marvel-checklist`と同じA系パターン）
 - `logic.js`: 純ロジック（ポイント表、名前マッチング、タイブレーク、ライブ評価、枠判定）。**テスト対象は全部ここ**
