@@ -26,7 +26,7 @@
     "lastPlace": 32
   },
   "qualified": {
-    "_comment": "既にCAPCOM CUP 13出場権を保持している選手（Premierポイント枠8名には数えない）。公式ランキング表の出場権アイコンの読み取り(2026-10-10)＋大会結果報道に基づく。要確認。keyは選手タグ（チーム名なし・大文字小文字/記号無視）。baselineに居ない選手（ポイント無し）も指定可。",
+    "_comment": "既にCAPCOM CUP 13出場権を保持している選手（Premierポイント枠8名には数えない）。公式ランキング表の出場権アイコン＋大会結果報道に基づき、2026-10-10にユーザーが全員の保持を確認済み。keyは選手タグ（チーム名なし・大文字小文字/記号無視）。baselineに居ない選手（ポイント無し）も指定可。",
     "players": [
       { "tag": "Yamaguchi", "note": "Premier 1 EVO Japan優勝" },
       { "tag": "Xiaohai", "note": "Premier 2 COMBO BREAKER優勝（ポイント表に不在）" },
@@ -35,11 +35,11 @@
       { "tag": "Tokido", "note": "Premier 6 CEO優勝（以前から出場権保持）" },
       { "tag": "Booce_Lee", "note": "Premier 6 CEOで権利繰り下がり（準優勝）" },
       { "tag": "NoahTheProdigy", "note": "Premier 7 UFA優勝" },
-      { "tag": "Craime", "note": "要確認（ランキング表のアイコン読み取り）" },
-      { "tag": "Fuudo", "note": "要確認（ランキング表のアイコン読み取り）" },
-      { "tag": "Leshar", "note": "要確認（ランキング表のアイコン読み取り）" },
-      { "tag": "Sahara.", "note": "要確認（ランキング表のアイコン読み取り）" },
-      { "tag": "DAIGO", "note": "要確認（ランキング表のアイコン読み取り）" }
+      { "tag": "Craime", "note": "出場権保持を確認済み（2026-10-10、ユーザー確認）" },
+      { "tag": "Fuudo", "note": "出場権保持を確認済み（2026-10-10、ユーザー確認）" },
+      { "tag": "Leshar", "note": "出場権保持を確認済み（2026-10-10、ユーザー確認）" },
+      { "tag": "Sahara.", "note": "出場権保持を確認済み（2026-10-10、ユーザー確認）" },
+      { "tag": "DAIGO", "note": "出場権保持を確認済み（2026-10-10、ユーザー確認）" }
     ]
   },
   "aliases": {
