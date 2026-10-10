@@ -1,5 +1,5 @@
 // DOM描画とイベント配線のみ。判定・集計は logic.js（テスト済み）に置く。
-import { buildRows, judge, baselineRankMap, pointsForPlacement } from "./logic.js";
+import { buildRows, judge, baselineRankMap, liveFreshness, nextRefreshDelayMs } from "./logic.js";
 
 const STORE_KEY = "cpt-tracker-v1";
 const VIEW_HELP = {
@@ -119,7 +119,16 @@ function renderStatus() {
     if (alive != null && String(live.eventState).toUpperCase() !== "COMPLETED") el.append(h("span", { class: "pill", text: `生存 ${alive}人` }));
   }
   if (state.loading) el.append(h("span", { class: "pill", text: "更新中…" }));
-  else if (state.lastOkAt) el.append(h("span", { class: "pill", text: `最終更新 ${fmtTime(state.lastOkAt)}` }));
+  else if (live) {
+    // 表示するのは「画面を更新した時刻」ではなく、start.ggから取得したデータの時刻
+    const fetched = new Date(live.fetchedAt);
+    el.append(h("span", { class: "pill", text: `データ ${Number.isNaN(fetched.getTime()) ? fmtTime(state.lastOkAt) : fmtTime(fetched)}` }));
+    const fresh = liveFreshness(live, Date.now());
+    if (fresh.stale) {
+      const min = fresh.ageSec != null ? Math.max(1, Math.round(fresh.ageSec / 60)) : null;
+      el.append(h("span", { class: "pill warn", title: "start.ggからの取得が遅れています。前回のデータを表示中です", text: min ? `データが古い可能性（約${min}分前）` : "データが古い可能性" }));
+    }
+  }
   if (state.liveError) el.append(h("span", { class: "pill err", text: state.lastOkAt ? "再取得に失敗（前回データを表示中）" : "取得に失敗" }));
 }
 
@@ -335,7 +344,12 @@ async function init() {
 
   recompute();
   await fetchLive();
-  setInterval(() => { if (!document.hidden) fetchLive(); }, Math.max(config.refreshSec || 60, 20) * 1000);
+  // 取得間隔にばらつきを持たせ、多数の閲覧者が同じ秒に中継へ殺到しないようにする
+  const tick = async () => {
+    if (!document.hidden) await fetchLive();
+    setTimeout(tick, nextRefreshDelayMs(config.refreshSec || 60));
+  };
+  setTimeout(tick, nextRefreshDelayMs(config.refreshSec || 60));
   document.addEventListener("visibilitychange", () => { if (!document.hidden) fetchLive(); });
 
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

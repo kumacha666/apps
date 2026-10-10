@@ -363,3 +363,20 @@ export function baselineRankMap(rows, rules) {
   const ranked = rankRows(tmp, (r) => r.baseTotal);
   return new Map(ranked.map((r) => [r.key, r.rank]));
 }
+
+// ---- ライブデータの鮮度 ------------------------------------------------
+
+/** GAS応答の経過時間と「古い」判定。中継が前回の応答を返した(stale)か、取得から一定時間たっていれば古い。 */
+export function liveFreshness(live, nowMs, staleAfterSec = 180) {
+  if (!live) return { ageSec: null, stale: false };
+  const t = Date.parse(live.fetchedAt);
+  const ageSec = Number.isFinite(t) ? Math.max(0, Math.round((nowMs - t) / 1000)) : null;
+  return { ageSec, stale: !!live.stale || (ageSec != null && ageSec > staleAfterSec) };
+}
+
+/** 次の取得までの待ち時間(ms)。全員が同じ秒に取りに行かないよう±jitterRatioだけばらす。rand は 0〜1。 */
+export function nextRefreshDelayMs(baseSec, rand = Math.random(), jitterRatio = 0.2, maxJitterSec = 10) {
+  const base = Math.max(baseSec, 20) * 1000;
+  const jitter = Math.min(base * jitterRatio, maxJitterSec * 1000);
+  return Math.round(base + (rand * 2 - 1) * jitter);
+}
