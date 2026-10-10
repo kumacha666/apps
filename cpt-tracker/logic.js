@@ -117,14 +117,28 @@ export function evaluateEntrants(live) {
   for (const s of live.standings || []) {
     const id = String(s.id);
     const placement = Number.isFinite(s.placement) ? s.placement : null;
-    // 確定条件: 大会終了、または「生存者ではない」かつ順位が生存者数より下（不変条件で誤判定を防ぐ）
-    const final = placement != null && (completed || (!alive.has(id) && placement > aliveCount));
+    // 確定条件: 大会終了、または「生存者ではない」かつ、順位が生存者数の属するタイ順位帯の開始順位以上。
+    // 順位は「17位タイ=17〜24位」のような帯なので、生存22人でも17位で敗退した人は確定でよい（22位より下とは限らない）。
+    // 生存者でないのに帯より良い順位（例: 生存22人で暫定13位）の人は、次の試合が未作成なだけの勝ち上がりかもしれないので未確定にする。
+    const final =
+      placement != null && (completed || (!alive.has(id) && placement >= tiedStart(Math.max(aliveCount, 1))));
     out.set(id, { state: final ? "final" : "alive", placement, tag: s.tag, name: s.name });
   }
   for (const id of alive) {
     if (!out.has(id)) out.set(id, { state: "alive", placement: null, tag: null, name: null });
   }
   return out;
+}
+
+/**
+ * 生存中の選手個別の最低保証ポイント。start.ggが出す暫定順位は「その選手が次に負けた場合の順位」
+ * （例: TOP 24のルーザーズ1回戦に勝つと17位→13位に上がる）なので、生存者数からの一律の下限より
+ * 良ければそちらを採る。暫定順位が不正（欠損・1位・生存者数を超える）なら一律の下限だけを使う。
+ */
+export function aliveFloorPoints(placement, aliveCount, rules) {
+  const byCount = pointsForPlacement(tiedStart(Math.max(aliveCount, 2)), rules);
+  if (!Number.isFinite(placement) || placement < 2 || placement > aliveCount) return byCount;
+  return Math.max(byCount, pointsForPlacement(placement, rules));
 }
 
 /** 生存者の最低保証（今負けたら）と最大（準優勝=2位）のポイント。 */
@@ -270,7 +284,7 @@ export function buildRows({ baseline, config, live, overrides = {}, qualifiedExt
       pts = pointsForPlacement(evo.placement, rules);
       floor = ceil = pts;
     } else if (evo.state === "alive") {
-      floor = bounds.floor;
+      floor = aliveFloorPoints(evo.placement, aliveCount, rules);
       ceil = bounds.ceil;
     } else if (evo.state === "none") {
       // ライブ未取得: 結果が全く分からないので上振れ余地は最大とみなす（確定判定を誤って出さない）

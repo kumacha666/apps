@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   pointsForPlacement, placementForPoints, tiedStart, normalizeTag, tagPart, nameKeys,
   compareTiebreak, rankRows, evaluateEntrants, aliveBounds, buildRows, judge, baselineRankMap,
-  liveFreshness, nextRefreshDelayMs,
+  liveFreshness, nextRefreshDelayMs, aliveFloorPoints,
 } from "../logic.js";
 
 const config = JSON.parse(readFileSync(new URL("../data/config.json", import.meta.url)));
@@ -89,7 +89,7 @@ test("同点9位3人のうち出場権保持者を除いた8枠: 公式の同順
 });
 
 // ---- ライブ評価 ----
-test("evaluateEntrants: 大会終了なら全員確定、進行中は生存者より下位の非生存者のみ確定", () => {
+test("evaluateEntrants: 大会終了なら全員確定、進行中は『生存者ではなく、生存者数の順位帯以下』の選手だけ確定", () => {
   const live = {
     eventState: "ACTIVE", aliveCount: 6, aliveIds: ["1", "2", "3", "4", "5", "6"],
     standings: [entrant(1, "A", 1), entrant(7, "B", 7), entrant(8, "C", 7), entrant(9, "D", 9), entrant(2, "E", 2)],
@@ -99,13 +99,19 @@ test("evaluateEntrants: 大会終了なら全員確定、進行中は生存者�
   assert.equal(m.get("9").state, "final");
   assert.equal(m.get("1").state, "alive");
   assert.equal(m.get("2").state, "alive");
-  // 生存者ではないが順位が生存者数以下 → 誤判定防止で未確定扱い
-  const m2 = evaluateEntrants({ ...live, standings: [entrant(7, "B", 5)] });
-  assert.equal(m2.get("7").state, "alive");
-  const m3 = evaluateEntrants({ ...live, eventState: "COMPLETED", standings: [entrant(7, "B", 5)] });
+  // 生存6人の順位帯は5位タイ(5-6位)。生存者ではなく5位ならこれから敗退した人として確定
+  assert.equal(evaluateEntrants({ ...live, standings: [entrant(7, "B", 5)] }).get("7").state, "final");
+  // 生存者ではないが、帯より良い暫定順位（3位）は、次の試合が未作成なだけの勝ち上がりかもしれないので未確定
+  assert.equal(evaluateEntrants({ ...live, standings: [entrant(7, "B", 3)] }).get("7").state, "alive");
+  const m3 = evaluateEntrants({ ...live, eventState: "COMPLETED", standings: [entrant(7, "B", 3)] });
   assert.equal(m3.get("7").state, "final");
   // 生存IDがstandingsに無くても生存として扱う
   assert.equal(evaluateEntrants({ ...live, standings: [] }).get("3").state, "alive");
+  // 実データ: 生存22人のとき、17位で敗退した人は確定（帯17〜24の開始順位17以上）
+  const live22 = { eventState: "ACTIVE", aliveCount: 22, aliveIds: ["1"], standings: [entrant(2, "X", 17), entrant(3, "Y", 13)] };
+  const m22 = evaluateEntrants(live22);
+  assert.equal(m22.get("2").state, "final");
+  assert.equal(m22.get("3").state, "alive"); // 13位は帯17より良い→未確定
 });
 
 test("aliveBounds: 生存者数に応じた最低保証と最大", () => {
@@ -129,14 +135,15 @@ test("TOP 24でのポイント確定が表に反映される（Hinao 300 + 25位
     standings: [entrant(1, "Hinao", 25, "REJECT | Hinao"), entrant(2, "Jr.", 17, "RIDDLE ORDER | Jr.")],
     roster: rosterTags,
   });
-  // 生存者24人 → placement>24 のみ確定。Hinao(25位)は確定、Jr.(17位)は未確定扱い
+  // 生存者24人 → 順位帯は17位タイ(17-24)。Hinao(25位)もJr.(17位)も生存者ではないので確定（20pt）
   const { rows } = buildRows({ baseline, config, live });
   const hinao = rowOf(rows, "Hinao");
   const jr = rowOf(rows, "Jr.");
   assert.equal(hinao.evo.state, "final");
   assert.equal(hinao.evoPoints, 10);
   assert.equal(hinao.totals.confirmed, 310);
-  assert.equal(jr.evo.state, "alive");
+  assert.equal(jr.evo.state, "final");
+  assert.equal(jr.evoPoints, 20);
 });
 
 test("名簿に居ない選手は欠場扱い、名簿にいるのにstandingsに居ない選手は0pt確定", () => {
@@ -346,4 +353,44 @@ test("nextRefreshDelayMs: 基準±最大10秒の範囲でばらつき、下限�
   assert.equal(nextRefreshDelayMs(60, 1), 70000);
   assert.equal(nextRefreshDelayMs(5, 0.5), 20000); // 短すぎる設定は20秒に切り上げ
   assert.equal(nextRefreshDelayMs(600, 1), 610000); // 揺らぎは最大10秒
+});
+
+test("aliveFloorPoints: 暫定順位が生存者数からの下限より良ければそれを採る（ルーザーズ1回戦に勝つと17位→13位=30pt）", () => {
+  // 生存22人 → 一律の下限は17位タイ=20pt
+  assert.equal(aliveFloorPoints(17, 22, rules), 20);
+  assert.equal(aliveFloorPoints(13, 22, rules), 30);
+  assert.equal(aliveFloorPoints(9, 22, rules), 50);
+  // 暫定順位が悪い（下限より下）場合は下限を下回らない
+  assert.equal(aliveFloorPoints(25, 22, rules), 20);
+  // 不正な暫定順位（欠損・1位・生存者数超え）は無視して一律の下限
+  assert.equal(aliveFloorPoints(null, 22, rules), 20);
+  assert.equal(aliveFloorPoints(1, 22, rules), 20);
+  assert.equal(aliveFloorPoints(25, 8, rules), 100); // 生存8人: 暫定25位は不正（8人しか居ない）
+  // 準決勝以降: 生存4人で暫定3位なら3位=250pt、決勝(2人)で暫定2位なら300pt
+  assert.equal(aliveFloorPoints(3, 4, rules), 250);
+  assert.equal(aliveFloorPoints(2, 2, rules), 300);
+});
+
+test("ルーザーズ勝者は個別に高い最低保証が反映され、負けた人は敗退確定する（実データの再現）", () => {
+  const roster = baseline.players.map((p) => tagPart(p.name));
+  // 生存22人。cosaとgachikunはルーザーズ1回戦に勝って暫定13位、他は暫定17位
+  const aliveTags = ["cosa", "gachikun", "Punk", "kobayan", "Blaz", "Dogura"];
+  const ids = Array.from({ length: 22 }, (_, i) => 500 + i);
+  const standings = [
+    entrant(500, "cosa", 13), entrant(501, "gachikun", 13),
+    entrant(502, "Punk", 9), entrant(503, "kobayan", 9), entrant(504, "Blaz", 9), entrant(505, "Dogura", 17),
+    entrant(900, "NuckleDu", 17), // 負けて敗退（生存者に含まれない）
+  ];
+  const live = liveWith({ alive: ids, standings, roster });
+  live.aliveIds = ids.map(String); // 敗退者(900)は含めない
+  const { rows } = buildRows({ baseline, config, live });
+  assert.equal(rowOf(rows, "cosa").evoFloor, 30);
+  assert.equal(rowOf(rows, "gachikun").evoFloor, 30);
+  assert.equal(rowOf(rows, "Punk").evoFloor, 50);
+  assert.equal(rowOf(rows, "Dogura").evoFloor, 20); // 暫定17位 → 一律の下限と同じ
+  assert.equal(rowOf(rows, "cosa").evoCeil, 300);
+  // 負けた人は17位で確定=20pt
+  const nk = rowOf(rows, "NuckleDu");
+  assert.equal(nk.evo.state, "final");
+  assert.equal(nk.evoPoints, 20);
 });
