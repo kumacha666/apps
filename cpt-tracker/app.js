@@ -152,12 +152,13 @@ function renderSummary() {
   const count = (k) => pool.filter((r) => r.safety === k).length;
   const locked = count("locked");
   const elim = count("eliminated");
+  const winonly = count("winonly");
   const contested = count("contested");
   const open = Math.max(slots - locked, 0);
   box.append(
-    h("div", { class: "card ok" }, h("b", { text: String(locked) }), h("span", { text: "確定圏内" })),
-    h("div", { class: "card" }, h("b", { text: String(open) }), h("span", { text: `未確定の枠（全${slots}）` })),
-    h("div", { class: "card" }, h("b", { text: String(contested) }), h("span", { text: "争い中の選手" })),
+    h("div", { class: "card ok" }, h("b", { text: String(locked) }), h("span", { text: `確定圏内（残り${open}枠）` })),
+    h("div", { class: "card" }, h("b", { text: String(contested) }), h("span", { text: "争い中" })),
+    h("div", { class: "card warn", title: "ポイント枠は絶望だが、優勝（または既に出場権を持つ人が優勝した場合の準優勝以下への繰り下がり）で出場権を得られる" }, h("b", { text: String(winonly) }), h("span", { text: "優勝のみ" })),
     h("div", { class: "card ng" }, h("b", { text: String(elim) }), h("span", { text: "圏外確定" })),
   );
 }
@@ -171,6 +172,7 @@ function renderControls() {
 const SAFETY_LABEL = {
   qualified: ["出場権", "q"],
   locked: ["確定圏内", "ok"],
+  winonly: ["優勝のみ", "mid"],
   eliminated: ["圏外確定", "ng"],
   contested: ["争い中", "mid"],
 };
@@ -255,7 +257,7 @@ function renderTable() {
     tr.append(
       h("td", { class: "num c-total" }, h("b", { text: String(r.totals[view]) }),
         view !== "confirmed" && r.totals[view] !== r.totals.confirmed ? h("small", { text: `確定 ${r.totals.confirmed}` }) : null),
-      h("td", { class: "c-state" }, h("span", { class: `badge ${cls}`, text: label + (r.safety === "qualified" && r.qualifiedBy === "premier" ? "（今大会）" : "") })),
+      h("td", { class: "c-state" }, h("span", { class: `badge ${cls}`, title: r.safety === "winonly" ? "ポイント枠は圏外。優勝（または既に出場権を持つ人が優勝した場合の準優勝以下への繰り下がり）のみ出場権の可能性あり" : null, text: label + (r.safety === "qualified" && r.qualifiedBy === "premier" ? "（今大会）" : "") })),
     );
     const open = () => openDetail(r.key);
     tr.addEventListener("click", open);

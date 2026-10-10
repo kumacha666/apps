@@ -343,7 +343,10 @@ export function judge(rows, config, view, { premierDecided = false } = {}) {
       if (o.totals.floor !== r.totals.ceil) return o.totals.floor > r.totals.ceil;
       return o.evo.state !== "alive" && r.evo.state !== "alive" && compareTiebreak(o.placements, r.placements) < 0;
     }).length;
-    r.safety = above - leaveAllowance >= slots ? "eliminated" : "contested";
+    const outOfPoints = above - leaveAllowance >= slots;
+    // 生存中なら優勝（既に出場権を持つ選手が優勝した場合は準優勝以下への繰り下がり）でPremier出場権を得られるため、
+    // ポイント枠が絶望でも「圏外確定」にはしない（winonly）。確定済みの敗退者だけが本当の圏外確定。
+    r.safety = outOfPoints ? (r.evo.state === "alive" ? "winonly" : "eliminated") : "contested";
   }
   return ranked;
 }

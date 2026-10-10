@@ -309,3 +309,20 @@ test("別表記（aliases）: start.ggのタグ違いでも、名簿・生存者
   assert.equal(rowOf(rows2, "CrossoverRD").evo.state, "absent");
   assert.equal(rows2.filter((r) => r.isNew).length, 1);
 });
+
+test("生存中の選手はポイント枠が絶望でも圏外確定にしない（優勝のみ）、敗退確定者は圏外確定", () => {
+  const roster = baseline.players.map((p) => tagPart(p.name));
+  // 生存8人。上位8枠は敗退・確定済みの選手で埋まり、生存者のうち基準0の新規選手はポイントでは届かない
+  const aliveTags = ["Higuchi", "Kilzyou", "Tantanmen", "CrossoverRD", "Blaz", "AngryBird", "Shuto", "NewKid"];
+  const standings = aliveTags.map((t, i) => entrant(300 + i, t, 7));
+  const live = liveWith({ alive: standings.map((s) => s.id), standings, roster: [...roster, "NewKid"] });
+  const { rows, premierDecided } = buildRows({ baseline, config, live });
+  judge(rows, config, "floor", { premierDecided });
+  const kid = rows.find((r) => r.isNew);
+  assert.equal(kid.evo.state, "alive");
+  // NewKid(0pt)の最大は300。上に最低保証300超の選手が9人以上（Micky/Punk/Kobayan/cosa/Higuchi/Kilzyou/Tantanmen/CrossoverRD/Blaz…）→ポイントでは絶望
+  assert.equal(kid.safety, "winonly");
+  // 早期敗退が確定したJr.は本当の圏外確定
+  assert.equal(rowOf(rows, "Jr.").evo.state, "final");
+  assert.notEqual(rowOf(rows, "Jr.").safety, "winonly");
+});
