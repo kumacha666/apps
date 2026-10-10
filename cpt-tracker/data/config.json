@@ -7,7 +7,7 @@
     "startggEventId": 1602225,
     "startggUrl": "https://www.start.gg/tournament/evo-france-2026/event/street-fighter-6-ps5/overview"
   },
-  "apiUrl": "",
+  "apiUrl": "https://script.google.com/macros/s/AKfycbzWeNh9lPj7NWZI875osJGKBox-i-DXPcpj7YtjI5bSrpLzyLineas-5DZX3KOx6xPu/exec",
   "refreshSec": 60,
   "cupSlots": 8,
   "rules": {
@@ -44,6 +44,11 @@
   },
   "aliases": {
     "_comment": "start.ggのタグ→baselineのタグ（正規化前の表記でよい）。自動マッチで拾えない選手だけ追記する。",
-    "map": {}
+    "map": {
+      "EVG Crossover": "CrossoverRD",
+      "SR NuckleDu": "NuckleDu",
+      "Akutagawa": "あくたがわ",
+      "JPKING": "KT_JPKING"
+    }
   }
 }

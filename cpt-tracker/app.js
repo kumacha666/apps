@@ -133,11 +133,11 @@ function renderBanners() {
   if (liveError) box.append(h("div", { class: "banner err" }, `ライブ取得エラー: ${liveError}`));
   if (live && current) {
     const absent = current.rows
-      .filter((r) => r.evo.state === "absent" && r.baseTotal >= 200)
+      .filter((r) => r.evo.state === "absent" && !r.qualified && r.baseTotal >= 200)
       .map((r) => r.name);
     if (absent.length) {
       box.append(h("div", { class: "banner" },
-        `start.ggの参加者名簿に見つからない選手（欠場なら問題なし／表記違いなら要登録）: ${absent.join(" / ")}`));
+        `start.ggの参加者に見つからない選手（不参加なら問題なし／別のタグで出場しているなら data/config.json の aliases に登録）: ${absent.join(" / ")}`));
     }
   }
 }

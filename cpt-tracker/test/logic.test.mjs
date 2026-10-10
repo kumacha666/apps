@@ -287,3 +287,25 @@ test("早期敗退者は8列目に0ptが確定し、欠場者は0pt(absent)と�
   assert.equal(rowOf(rows, "Punk").evo.state, "absent");
   assert.equal(rowOf(rows, "Punk").totals.ceil, rowOf(rows, "Punk").baseTotal);
 });
+
+test("別表記（aliases）: start.ggのタグ違いでも、名簿・生存者の両方でbaselineの選手に一致する", () => {
+  const cfg = { ...config, aliases: { map: { "EVG Crossover": "CrossoverRD", Akutagawa: "あくたがわ" } } };
+  const roster = ["RR | EVG Crossover", "Akutagawa", "Higuchi"];
+  // CrossoverRDは名簿に別表記で居て生存者ではない → 0pt確定（欠場扱いにしない）
+  // あくたがわは別表記で生存中 → baselineの行にマッチし、新規行を作らない
+  const live = liveWith({
+    alive: [7], roster,
+    standings: [entrant(7, "Akutagawa", 17, "SCARZ | Akutagawa")],
+  });
+  const { rows } = buildRows({ baseline, config: cfg, live });
+  const c = rowOf(rows, "CrossoverRD");
+  assert.equal(c.evo.state, "final");
+  assert.equal(c.evoPoints, 0);
+  const a = rowOf(rows, "あくたがわ");
+  assert.equal(a.evo.state, "alive");
+  assert.equal(rows.filter((r) => r.isNew).length, 0);
+  // aliasなしだと別人扱い（CrossoverRDは欠場、Akutagawaは新規行）になることも確認
+  const { rows: rows2 } = buildRows({ baseline, config: { ...config, aliases: { map: {} } }, live });
+  assert.equal(rowOf(rows2, "CrossoverRD").evo.state, "absent");
+  assert.equal(rows2.filter((r) => r.isNew).length, 1);
+});

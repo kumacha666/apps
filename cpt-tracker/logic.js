@@ -199,10 +199,15 @@ export function buildRows({ baseline, config, live, overrides = {}, qualifiedExt
   // 名簿に居ない選手は欠場の可能性が高いが名前の照合ミスの可能性もあるため、確定判定には使わず警告対象にする。
   if (live) {
     const roster = new Set();
-    for (const t of live.roster || []) for (const k of nameKeys(t)) roster.add(k);
+    for (const t of live.roster || []) {
+      for (const k of nameKeys(t)) {
+        roster.add(k);
+        if (aliasMap.has(k)) roster.add(aliasMap.get(k)); // start.ggの別表記 → baselineのタグ
+      }
+    }
     for (const r of rows) {
       if (r.evo.state !== "none") continue;
-      const inRoster = [...r.keys].some((k) => roster.has(k)) || [...r.keys].some((k) => aliasMap.has(k) && roster.has(aliasMap.get(k)));
+      const inRoster = [...r.keys].some((k) => roster.has(k));
       r.evo = inRoster ? { state: "final", placement: null, implied: true } : { state: "absent", placement: null };
     }
   }
