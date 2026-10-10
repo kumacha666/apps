@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   pointsForPlacement, placementForPoints, tiedStart, normalizeTag, tagPart, nameKeys,
   compareTiebreak, rankRows, evaluateEntrants, aliveBounds, buildRows, judge, baselineRankMap,
-  liveFreshness, nextRefreshDelayMs, aliveFloorPoints,
+  liveFreshness, nextRefreshDelayMs, aliveFloorPoints, isDebugMode, friendlyLiveError,
 } from "../logic.js";
 
 const config = JSON.parse(readFileSync(new URL("../data/config.json", import.meta.url)));
@@ -393,4 +393,20 @@ test("ルーザーズ勝者は個別に高い最低保証が反映され、負�
   const nk = rowOf(rows, "NuckleDu");
   assert.equal(nk.evo.state, "final");
   assert.equal(nk.evoPoints, 20);
+});
+
+test("isDebugMode: debug=1 のときだけ有効", () => {
+  assert.equal(isDebugMode("?debug=1"), true);
+  assert.equal(isDebugMode("?utm_source=x&debug=1"), true);
+  for (const s of ["", "?", "?debug=0", "?debug=true", "?debugx=1", null, undefined]) assert.equal(isDebugMode(s), false, String(s));
+});
+
+test("friendlyLiveError: 閲覧者向けの文言に技術的な原因を含めない", () => {
+  for (const prev of [true, false]) {
+    const m = friendlyLiveError(prev);
+    assert.match(m, /自動で再試行/);
+    assert.doesNotMatch(m, /Unexpected|token|HTTP|JSON|start\.gg|<|>/);
+  }
+  assert.match(friendlyLiveError(true), /前回のデータ/);
+  assert.doesNotMatch(friendlyLiveError(false), /前回のデータ/);
 });

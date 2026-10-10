@@ -1,5 +1,5 @@
 // DOM描画とイベント配線のみ。判定・集計は logic.js（テスト済み）に置く。
-import { buildRows, judge, baselineRankMap, liveFreshness, nextRefreshDelayMs } from "./logic.js";
+import { buildRows, judge, baselineRankMap, liveFreshness, nextRefreshDelayMs, isDebugMode, friendlyLiveError } from "./logic.js";
 import { initAnalytics, track } from "./analytics.js";
 
 const STORE_KEY = "cpt-tracker-v1";
@@ -51,6 +51,7 @@ const state = {
   store: loadStore(),
   current: null, // { rows(ranked), meta }
   editingKey: null,
+  debug: isDebugMode(globalThis.location?.search),
 };
 
 // ---- 取得 ------------------------------------------------------------
@@ -140,8 +141,11 @@ function renderBanners() {
   if (!config.apiUrl) {
     box.append(h("div", { class: "banner" }, "start.ggからの自動取得はまだ設定されていません（セットアップ: gas/SETUP.md）。行をタップすると、EVO Franceの結果を手動で入力して計算できます。"));
   }
-  if (liveError) box.append(h("div", { class: "banner err" }, `ライブ取得エラー: ${liveError}`));
-  if (live && current) {
+  if (liveError) {
+    box.append(h("div", { class: "banner err" }, state.debug ? `ライブ取得エラー: ${liveError}` : friendlyLiveError(!!state.lastOkAt)));
+  }
+  // 名簿に見つからない選手の警告は開発者向け（設定ファイルの編集が必要）なので、?debug=1 のときだけ表示する
+  if (state.debug && live && current) {
     const absent = current.rows
       .filter((r) => r.evo.state === "absent" && !r.qualified && r.baseTotal >= 200)
       .map((r) => r.name);
