@@ -410,3 +410,19 @@ export function friendlyLiveError(hasPreviousData) {
     ? "データを一時的に取得できませんでした。自動で再試行します（前回のデータを表示しています）。"
     : "データを一時的に取得できませんでした。自動で再試行します。";
 }
+
+/**
+ * 上部に出す大会の進行表示。進行中のフェーズがあればその名前、無ければ「次に始まるフェーズ（開始前）」を出す。
+ * （TOP 24が終わりTOP 8がまだ始まっていない夜間などに、先頭のフェーズ名「ROUND 1」を誤って出さないため）
+ */
+export function phaseLabel(live) {
+  if (!live) return "";
+  if (String(live.eventState || "").toUpperCase() === "COMPLETED") return "大会終了";
+  const phases = live.phases || [];
+  const state = (p) => String(p.state).toUpperCase();
+  const active = phases.filter((p) => state(p) === "ACTIVE");
+  if (active.length) return `${active[active.length - 1].name} 進行中`;
+  const next = phases.find((p) => state(p) !== "COMPLETED");
+  if (next) return `${next.name} 開始前`;
+  return phases.length ? "全フェーズ終了" : "進行中";
+}
