@@ -1,5 +1,5 @@
 // DOM描画とイベント配線のみ。判定・集計は logic.js（テスト済み）に置く。
-import { buildRows, judge, baselineRankMap, liveFreshness, nextRefreshDelayMs, isDebugMode, friendlyLiveError } from "./logic.js";
+import { buildRows, judge, baselineRankMap, liveFreshness, nextRefreshDelayMs, isDebugMode, friendlyLiveError, phaseLabel } from "./logic.js";
 import { initAnalytics, track } from "./analytics.js";
 
 const STORE_KEY = "cpt-tracker-v1";
@@ -96,15 +96,6 @@ function render() {
 
 function fmtTime(d) {
   return d ? d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Tokyo" }) : "";
-}
-
-function phaseLabel(live) {
-  if (!live) return "";
-  const ev = String(live.eventState || "").toUpperCase();
-  if (ev === "COMPLETED") return "大会終了";
-  const active = (live.phases || []).filter((p) => String(p.state).toUpperCase() === "ACTIVE");
-  const last = active[active.length - 1] || (live.phases || [])[0];
-  return last ? `${last.name} 進行中` : "進行中";
 }
 
 function renderStatus() {

@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   pointsForPlacement, placementForPoints, tiedStart, normalizeTag, tagPart, nameKeys,
   compareTiebreak, rankRows, evaluateEntrants, aliveBounds, buildRows, judge, baselineRankMap,
-  liveFreshness, nextRefreshDelayMs, aliveFloorPoints, isDebugMode, friendlyLiveError,
+  liveFreshness, nextRefreshDelayMs, aliveFloorPoints, isDebugMode, friendlyLiveError, phaseLabel,
 } from "../logic.js";
 
 const config = JSON.parse(readFileSync(new URL("../data/config.json", import.meta.url)));
@@ -409,4 +409,17 @@ test("friendlyLiveError: 閲覧者向けの文言に技術的な原因を含め�
   }
   assert.match(friendlyLiveError(true), /前回のデータ/);
   assert.doesNotMatch(friendlyLiveError(false), /前回のデータ/);
+});
+
+test("phaseLabel: 進行中のフェーズ名／開始前の次フェーズ／大会終了を正しく出す（先頭のフェーズ名を誤って出さない）", () => {
+  const ph = (...a) => a.map(([name, state]) => ({ name, state }));
+  assert.equal(phaseLabel(null), "");
+  // 進行中が複数なら最後（実データ: ROUND 3とTOP 24が同時にACTIVE）
+  assert.equal(phaseLabel({ eventState: "ACTIVE", phases: ph(["ROUND 1", "COMPLETED"], ["ROUND 3", "ACTIVE"], ["TOP 24", "ACTIVE"], ["TOP 8", "CREATED"]) }), "TOP 24 進行中");
+  // TOP 24が終わり、TOP 8がまだ始まっていない（夜間）→ 「ROUND 1 進行中」にしない
+  assert.equal(phaseLabel({ eventState: "ACTIVE", phases: ph(["ROUND 1", "COMPLETED"], ["ROUND 3", "COMPLETED"], ["TOP 24", "COMPLETED"], ["TOP 8", "CREATED"]) }), "TOP 8 開始前");
+  assert.equal(phaseLabel({ eventState: "ACTIVE", phases: ph(["TOP 8", "ACTIVE"]) }), "TOP 8 進行中");
+  assert.equal(phaseLabel({ eventState: "COMPLETED", phases: ph(["TOP 8", "COMPLETED"]) }), "大会終了");
+  assert.equal(phaseLabel({ eventState: "ACTIVE", phases: ph(["TOP 8", "COMPLETED"]) }), "全フェーズ終了");
+  assert.equal(phaseLabel({ eventState: "ACTIVE", phases: [] }), "進行中");
 });
