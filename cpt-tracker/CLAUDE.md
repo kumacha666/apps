@@ -27,4 +27,4 @@ CAPCOM Pro Tour 2026 の **Premierポイントランキング**（公式 `https:
 - **出場権保持者の初期値**（`config.qualified.players`）は公式ランキング表のアイコン読み取り＋大会結果報道。2026-10-10にユーザーが全員（Craime/Fuudo/Leshar/Sahara./DAIGO含む）の保持を確認済み。新たに判明したら`config.json`に追記する（画面の行タップでも端末内だけ修正できる）
 - EVO France終了後は公式ページが更新される。更新後は`baseline.json`を差し替えるか、アプリを役目終了として凍結する
 - start.ggのAPIは2026-10-10にEVO France SF6の実データで検証済み（ROUND 3〜TOP 24：生存者数の推移、TOP 24の25位タイ敗退による10pt確定、名簿との照合）。**未検証**: TOP 24途中〜決勝での「次の試合がまだ作られていない一瞬」の挙動、優勝決着後の準優勝者への出場権繰り下がり（ユニットテストのみ）。本番で表示と実際の対戦表がずれたら、`/exec`のJSON（`aliveIds`/`standings`/`phases`）を保存して原因を調べる
-- deployスクリプト無し（静的ファイルのコミット＝公開）。`sw.js`はネットワーク優先で、`ASSETS`にファイルを足したら`CACHE_NAME`を上げる
+- deployスクリプト無し（静的ファイルのコミット＝公開）。`sw.js`はネットワーク優先で、`ASSETS`にファイルを足したら`CACHE_NAME`を上げる。**`fetch(..., { cache: "no-cache" })`で毎回サーバーに更新確認する**（GitHub Pagesは`max-age=600`なので、これが無いと修正をデプロイしても利用者の画面が最大10分古いまま。旧版では実際にそうなった）。事前保存も`cache:"reload"`。`ASSETS`には新しいJS（`analytics.js`等）を必ず含める（無いとオフライン時にimportが失敗する）。`test/sw.test.mjs`にSW APIのモックでテストあり
