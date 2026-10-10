@@ -1,0 +1,54 @@
+{
+  "title": "CPT Premier ポイントトラッカー",
+  "season": 2026,
+  "liveEvent": {
+    "label": "EVO France 2026 (SF6)",
+    "premierIndex": 7,
+    "startggEventId": 1602225,
+    "startggUrl": "https://www.start.gg/tournament/evo-france-2026/event/street-fighter-6-ps5/overview"
+  },
+  "apiUrl": "https://script.google.com/macros/s/AKfycbzWeNh9lPj7NWZI875osJGKBox-i-DXPcpj7YtjI5bSrpLzyLineas-5DZX3KOx6xPu/exec",
+  "refreshSec": 60,
+  "cupSlots": 8,
+  "rules": {
+    "_comment": "CPT 2026 公式規定 2.3 / 順位別Premierポイント表（2026-10-10確認）。placeは「その順位以降（タイ含む）」の開始順位。1位はポイント無し（Capcom Cup 13出場権）。lastPlace超はポイント無し。",
+    "table": [
+      { "place": 2, "points": 300 },
+      { "place": 3, "points": 250 },
+      { "place": 4, "points": 200 },
+      { "place": 5, "points": 150 },
+      { "place": 7, "points": 100 },
+      { "place": 9, "points": 50 },
+      { "place": 13, "points": 30 },
+      { "place": 17, "points": 20 },
+      { "place": 25, "points": 10 }
+    ],
+    "lastPlace": 32
+  },
+  "qualified": {
+    "_comment": "既にCAPCOM CUP 13出場権を保持している選手（Premierポイント枠8名には数えない）。公式ランキング表の出場権アイコン＋大会結果報道に基づき、2026-10-10にユーザーが全員の保持を確認済み。keyは選手タグ（チーム名なし・大文字小文字/記号無視）。baselineに居ない選手（ポイント無し）も指定可。",
+    "players": [
+      { "tag": "Yamaguchi", "note": "Premier 1 EVO Japan優勝" },
+      { "tag": "Xiaohai", "note": "Premier 2 COMBO BREAKER優勝（ポイント表に不在）" },
+      { "tag": "MenaRD", "note": "Premier 3 Blink Respawn / Premier 4 Evo 2026優勝" },
+      { "tag": "Shigematsu", "note": "Premier 4 Evo 2026で権利繰り下がり（準優勝）" },
+      { "tag": "Tokido", "note": "Premier 6 CEO優勝（以前から出場権保持）" },
+      { "tag": "Booce_Lee", "note": "Premier 6 CEOで権利繰り下がり（準優勝）" },
+      { "tag": "NoahTheProdigy", "note": "Premier 7 UFA優勝" },
+      { "tag": "Craime", "note": "出場権保持を確認済み（2026-10-10、ユーザー確認）" },
+      { "tag": "Fuudo", "note": "出場権保持を確認済み（2026-10-10、ユーザー確認）" },
+      { "tag": "Leshar", "note": "出場権保持を確認済み（2026-10-10、ユーザー確認）" },
+      { "tag": "Sahara.", "note": "出場権保持を確認済み（2026-10-10、ユーザー確認）" },
+      { "tag": "DAIGO", "note": "出場権保持を確認済み（2026-10-10、ユーザー確認）" }
+    ]
+  },
+  "aliases": {
+    "_comment": "start.ggのタグ→baselineのタグ（正規化前の表記でよい）。自動マッチで拾えない選手だけ追記する。",
+    "map": {
+      "EVG Crossover": "CrossoverRD",
+      "SR NuckleDu": "NuckleDu",
+      "Akutagawa": "あくたがわ",
+      "JPKING": "KT_JPKING"
+    }
+  }
+}

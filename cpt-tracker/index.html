@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>CPT Premier ポイントトラッカー</title>
+  <meta name="description" content="CAPCOM Pro Tour 2026 Premierポイントランキングを、大会進行に合わせてリアルタイムで更新するトラッカー">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0e1116">
+  <meta name="robots" content="noindex">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="top-row">
+      <h1 id="title">CPT Premier ポイントトラッカー</h1>
+      <button id="refresh" class="btn" type="button" aria-label="今すぐ更新">更新</button>
+    </div>
+    <p id="subtitle" class="sub"></p>
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+  </header>
+
+  <main>
+    <div id="banners"></div>
+
+    <section class="summary" id="summary" aria-label="Capcom Cup出場枠の状況"></section>
+
+    <div class="controls">
+      <div class="seg" role="group" aria-label="表示する合計">
+        <button type="button" data-view="confirmed">確定のみ</button>
+        <button type="button" data-view="floor">最低保証</button>
+        <button type="button" data-view="ceil">最大</button>
+      </div>
+      <div class="seg" role="group" aria-label="絞り込み">
+        <button type="button" data-filter="all">全員</button>
+        <button type="button" data-filter="contest" title="出場権保持者と圏外確定を隠す">候補のみ</button>
+      </div>
+    </div>
+    <p id="viewHelp" class="help"></p>
+
+    <div class="table-wrap">
+      <table id="ranking">
+        <thead id="thead"></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+    <details class="notes">
+      <summary>見方と注意</summary>
+      <ul>
+        <li><b>8列目（EVO France）</b>は start.gg の進行から自動で埋まります。敗退が確定した選手はそのポイント（早期敗退は<b>0</b>）、生き残っている選手は <i>最低保証〜最大</i> の幅で表示します。</li>
+        <li>優勝者はPremierポイントが付かず、代わりにCapcom Cup 13の出場権を得ます。既に出場権を持つ選手が優勝した場合は、出場権が次順位の選手へ繰り下がります（公式規定5.2）。</li>
+        <li><b>確定圏内</b>＝他の誰がどう勝ってもポイント上位8名（出場権保持者を除く）に残る。<b>圏外確定</b>＝残りの結果がどうなっても届かない。判定は上位の1名がPremier出場権を得て枠を空ける可能性を見込んでいます。</li>
+        <li>同点は公式規定2.3.1のタイブレーク（最高順位→入賞回数→次点…）で並べ、それでも決まらない場合は「同率（CAPCOM抽選）」です。</li>
+        <li>出場権保持者の一覧は公式ランキングのアイコンから転記したもので、行をタップして修正できます（この端末にだけ保存）。</li>
+        <li>非公式のファンツールです。正式なポイント・順位は<a href="https://sf.esports.capcom.com/cpt/jp/pp-rankings/" target="_blank" rel="noopener">CAPCOM公式</a>を確認してください。</li>
+      </ul>
+    </details>
+  </main>
+
+  <dialog id="detail">
+    <form method="dialog" id="detailForm">
+      <h2 id="dTitle"></h2>
+      <p id="dSummary" class="help"></p>
+      <table class="mini" id="dEvents"></table>
+      <label>EVO France の結果を手動で指定
+        <select id="dPlacement"></select>
+      </label>
+      <label>Capcom Cup 13 出場権
+        <select id="dQualified">
+          <option value="auto">自動（設定どおり）</option>
+          <option value="yes">保持している</option>
+          <option value="no">保持していない</option>
+        </select>
+      </label>
+      <div class="dialog-actions">
+        <button type="button" id="dReset" class="btn ghost">この選手の手動設定を消す</button>
+        <span class="spacer"></span>
+        <button type="button" id="dCancel" class="btn ghost">閉じる</button>
+        <button type="submit" class="btn primary" value="save">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
