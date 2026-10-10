@@ -5,6 +5,7 @@ CAPCOM Pro Tour 2026 の **Premierポイントランキング**（公式 `https:
 ## 構成（ビルド不要の静的PWA。`marvel-checklist`と同じA系パターン）
 - `logic.js`: 純ロジック（ポイント表、名前マッチング、タイブレーク、ライブ評価、枠判定）。**テスト対象は全部ここ**
 - `app.js`: DOM描画・イベント配線・ポーリング・手動上書きUIのみ。判定ロジックを書かない
+- `analytics.js`: GA4のラッパー（`test/analytics.test.mjs`）
 - `data/config.json`: ポイント表・出場権保持者・start.ggイベントID・`apiUrl`（GASのURL）・エイリアス
 - `data/baseline.json`: EVO France前の公式ランキング（117人、Premier 1〜7のポイント）。公式ページから手動転記済み
 - `gas/Code.gs` + `gas/SETUP.md`: start.ggトークンを預かる中継（Google Apps Script）。**トークンはリポジトリに書かない**（スクリプトプロパティ）
@@ -19,6 +20,7 @@ CAPCOM Pro Tour 2026 の **Premierポイントランキング**（公式 `https:
 - `safety`: `locked`（確定圏内）＝自分の最低合計以上になり得る他者が枠数-1人以下。`eliminated`（圏外確定）＝自分の最大より上の他者が、枠を空け得る1名を差し引いても枠数以上。**同点はタイブレークで解決できる場合のみ有利/不利に数える**
 - **名簿(`roster`)に居ない選手は`absent`（0pt扱い・8列目に薄い「0」）**。名前の照合ミスで確定判定を誤らないよう、baseline合計200pt以上でabsentの選手は画面に警告を出す。直すには `config.aliases.map`（start.ggタグ→baselineタグ）に追記
 - GAS中継は**stale-while-refresh**: 新しい応答(60秒)とは別に前回応答を6時間保管し、更新担当（ロックを取れた1人）以外・start.gg障害時はそれを`stale:true`で即返す（`gas/Code.gs`の`doGet`。`test/gas.test.mjs`にGASサービスのモックで挙動テストあり）。画面は`liveFreshness`でデータの古さを表示し、取得間隔は`nextRefreshDelayMs`で±10秒ばらす
+- **アクセス解析（GA4）**: `analytics.js`（`gtag.js`の薄いラッパー。`config.analyticsId`が空・不正なら何もしない）。測定IDはトップページと共用の`G-Q962ZC0PJH`（2026-10-10決定: 期間限定ツールなので専用IDは作らない。他アプリはアプリごとに別ID: 7metch/LifeLog等。GA4ではページのパス`/cpt-tracker/`で絞って見る。専用IDにしたくなったら`config.json`の`analyticsId`を差し替えるだけ）。送るイベントは`view_change`/`filter_change`/`open_player`/`refresh_click`/`manual_save`のみで個人情報は送らない（`open_player`の選手名は公開情報）。フッターに利用の旨を明記。SNS等の流入元を見るにはURLに`?utm_source=x&utm_medium=social&utm_campaign=evo-france-2026`を付ける
 - ライブ未取得（`apiUrl`空・取得失敗）のときは、上振れ余地を最大(300)とみなして確定判定を出し過ぎない
 
 ## 運用メモ

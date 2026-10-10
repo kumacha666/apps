@@ -1,5 +1,6 @@
 // DOM描画とイベント配線のみ。判定・集計は logic.js（テスト済み）に置く。
 import { buildRows, judge, baselineRankMap, liveFreshness, nextRefreshDelayMs } from "./logic.js";
+import { initAnalytics, track } from "./analytics.js";
 
 const STORE_KEY = "cpt-tracker-v1";
 const VIEW_HELP = {
@@ -281,6 +282,7 @@ function openDetail(key) {
   const r = cur.rows.find((x) => x.key === key);
   if (!r) return;
   state.editingKey = key;
+  track("open_player", { player: r.name.slice(0, 60) });
   const { baseline, config } = state;
   $("dTitle").textContent = r.name;
   $("dSummary").textContent = `事前の合計 ${r.baseTotal}pt ／ 現在の見込み 確定 ${r.totals.confirmed}・最低保証 ${r.totals.floor}・最大 ${r.totals.ceil}`;
@@ -312,6 +314,7 @@ function applyDetail() {
   else state.store.qualifiedExtra[key] = q === "yes";
   saveStore();
   recompute();
+  track("manual_save");
 }
 
 // ---- 起動 -----------------------------------------------------------
@@ -322,16 +325,17 @@ async function init() {
   ]);
   state.config = config;
   state.baseline = baseline;
+  initAnalytics(config.analyticsId);
   $("title").textContent = config.title;
   $("subtitle").textContent = `${config.liveEvent.label} の結果を反映 ／ 基準: ${baseline.asOf}時点のCAPCOM公式ランキング`;
 
   for (const b of document.querySelectorAll("[data-view]")) {
-    b.addEventListener("click", () => { state.store.view = b.dataset.view; saveStore(); recompute(); });
+    b.addEventListener("click", () => { state.store.view = b.dataset.view; saveStore(); recompute(); track("view_change", { view: b.dataset.view }); });
   }
   for (const b of document.querySelectorAll("[data-filter]")) {
-    b.addEventListener("click", () => { state.store.filter = b.dataset.filter; saveStore(); render(); });
+    b.addEventListener("click", () => { state.store.filter = b.dataset.filter; saveStore(); render(); track("filter_change", { filter: b.dataset.filter }); });
   }
-  $("refresh").addEventListener("click", () => fetchLive());
+  $("refresh").addEventListener("click", () => { track("refresh_click"); fetchLive(); });
   $("dCancel").addEventListener("click", () => $("detail").close());
   $("dReset").addEventListener("click", () => {
     delete state.store.overrides[state.editingKey];
