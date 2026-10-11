@@ -219,7 +219,7 @@ function renderFeed() {
   const box = $("feed");
   box.replaceChildren();
   if (!state.config.apiUrl) return;
-  box.append(h("h2", { text: "いま起きたこと" }));
+  box.append(h("h2", { text: "直近の出来事" }));
   // 中継が返す「直近の終了試合」があれば、誰がいつ開いても同じ内容になる。無い（中継が古い）ときだけ、この画面で見た変化にフォールバックする
   const server = recentResults(state.live, state.config.rules, FEED_SHOWN);
   if (server) {
