@@ -19,7 +19,9 @@ var MAX_STANDING_PAGES = 15;   // 1500人まで（EVO France SF6は約1,070人�
 var MAX_SET_PAGES = 15;
 // start.ggのSet状態: 1=未開始, 2=進行中, 3=終了, 6=呼出し済み, 7=キュー待ち
 var INCOMPLETE_SET_STATES = [1, 2, 6, 7];
-var RECENT_SETS_PER_PAGE = 40;   // 直近の試合結果を拾うため、終了済みSetの先頭ページと最終ページだけを見る
+var RECENT_SETS_PER_PAGE = 40;
+var RECENT_SETS_PAGES = 6;       // 直近24時間に更新された終了済みSetを、最大6ページ(240件)まで読む
+var RECENT_SETS_WINDOW_SEC = 86400;
 var RECENT_SETS_KEEP = 8;        // 画面に出すのは最大6件だが、無効なSetを除く余裕を持たせて8件返す
 
 function doGet() {
@@ -146,21 +148,25 @@ function fetchLive_(token, eventId) {
 }
 
 /**
- * 直近に終了した試合（誰がいつ開いても同じ「直近のできごと」を出すため、中継側で返す）。
- * start.ggのSetSortTypeに「終了時刻順」が無い（CALL_ORDERは「終了済みは呼出し順の逆」と説明されるが並び方向は未確認）ので、
- * 終了済みSetの先頭ページと最終ページの両端を取り、completedAt の新しい順に並べ直す。どちらの向きでも直近が含まれる。
+ * 直近に終了した試合（誰がいつ開いても同じ「直近の出来事」を出すため、中継側で返す）。
+ * start.ggのSet一覧の並び順（SetSortType）は終了時刻順ではない（実データで確認: ラウンド順に近い並びになる）ので、
+ * 並び順に頼らず `filters.updatedAfter`（指定時刻以降に更新されたSet）で直近24時間に絞り、
+ * completedAt の新しい順に並べ直して上位だけを返す。
  * このクエリが失敗しても本体の応答（順位・生存者）は壊さない（null を返す）。
  */
 function fetchRecentSets_(token, eventId) {
   try {
-    var q = 'query($id:ID!,$p:Int!,$n:Int!){event(id:$id){sets(page:$p,perPage:$n,sortType:CALL_ORDER,filters:{state:[3]}){pageInfo{totalPages} nodes{completedAt fullRoundText winnerId slots{entrant{id name}}}}}}';
-    var first = gql_(token, q, { id: eventId, p: 1, n: RECENT_SETS_PER_PAGE }).event.sets;
-    var nodes = (first.nodes || []).slice();
-    var totalPages = first.pageInfo.totalPages || 1;
-    if (totalPages > 1) {
-      var last = gql_(token, q, { id: eventId, p: totalPages, n: RECENT_SETS_PER_PAGE }).event.sets;
-      nodes = nodes.concat(last.nodes || []);
-    }
+    var since = Math.floor(Date.now() / 1000) - RECENT_SETS_WINDOW_SEC;
+    var q = 'query($id:ID!,$p:Int!,$n:Int!){event(id:$id){sets(page:$p,perPage:$n,sortType:NONE,filters:{state:[3],updatedAfter:' + since + '}){pageInfo{totalPages} nodes{completedAt fullRoundText winnerId slots{entrant{id name}}}}}}';
+    var nodes = [];
+    var page = 1;
+    var totalPages = 1;
+    do {
+      var sets = gql_(token, q, { id: eventId, p: page, n: RECENT_SETS_PER_PAGE }).event.sets;
+      totalPages = sets.pageInfo.totalPages || 1;
+      nodes = nodes.concat(sets.nodes || []);
+      page++;
+    } while (page <= totalPages && page <= RECENT_SETS_PAGES);
     var out = [];
     nodes.forEach(function (n) {
       var slots = n.slots || [];

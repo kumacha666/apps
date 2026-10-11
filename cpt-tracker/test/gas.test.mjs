@@ -133,21 +133,28 @@ test("大会終了(COMPLETED)なら生存者は空で aliveCount=0", () => {
 
 // ---- 直近の試合結果（recentSets） ----
 const setNode = (at, w, a, b) => ({ completedAt: at, fullRoundText: "Losers Round 1", winnerId: w, slots: [{ entrant: { id: a, name: `T | P${a}` } }, { entrant: { id: b, name: `T | P${b}` } }] });
-test("recentSets: 終了済みSetの先頭ページと最終ページを取り、completedAtの新しい順に並べ、無効なSetは除く", () => {
+test("recentSets: 直近24時間に更新された終了済みSetを全ページ読み、completedAtの新しい順に並べ、無効なSetは除く", () => {
   const seenPages = [];
+  const queries = [];
   const e = makeEnv();
-  // 変数(page)を見られるよう、UrlFetchAppを差し替える
+  // 変数(page)とクエリ本文を見られるよう、UrlFetchAppを差し替える
   e.ctx.UrlFetchApp.fetch = (_u, opts) => {
     const body = JSON.parse(opts.payload);
     if (!body.query.includes("completedAt")) return defaultFetch(body.query);
     seenPages.push(body.variables.p);
+    queries.push(body.query);
     const nodes = body.variables.p === 1
       ? [setNode(100, 1, 1, 2), setNode(110, 2, 1, 2)]
-      : [setNode(300, 3, 3, 4), setNode(200, 4, 3, 4), { completedAt: 999, fullRoundText: "x", winnerId: null, slots: [{ entrant: { id: 5, name: "n" } }, { entrant: null }] }];
+      : body.variables.p === 2
+        ? [setNode(300, 3, 3, 4), setNode(200, 4, 3, 4)]
+        : [{ completedAt: 999, fullRoundText: "x", winnerId: null, slots: [{ entrant: { id: 5, name: "n" } }, { entrant: null }] }];
     return resp({ event: { sets: { pageInfo: { totalPages: 3 }, nodes } } });
   };
   const out = e.run();
-  assert.deepEqual(seenPages, [1, 3]);
+  assert.deepEqual(seenPages, [1, 2, 3]);
+  const since = Number(queries[0].match(/updatedAfter:(\d+)/)[1]);
+  assert.ok(Math.abs(Date.now() / 1000 - 86400 - since) < 60, "updatedAfterは現在から24時間前");
+  assert.ok(queries[0].includes("state:[3]"));
   assert.deepEqual(out.recentSets.map((s) => s.at), [300, 200, 110, 100]); // 新しい順、勝者不明/片側空きのSetは除く
   assert.equal(out.recentSets[0].winnerId, "3");
   assert.deepEqual(out.recentSets[0].a, { id: "3", name: "T | P3" });
