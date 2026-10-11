@@ -544,3 +544,20 @@ test("carryAliveIfGap: 進行中フェーズがあるのに生存者が一瞬0�
   const normal = { ...gap, aliveCount: 7, aliveIds: ["1"] };
   assert.equal(carryAliveIfGap(prev, normal, t0), normal); // 通常の更新はそのまま
 });
+
+// ---- 大会終了後の固定表示（data/final.json） -----------------------------------
+test("固定表示の最終データ: 優勝者が出場権を得て、Tachikawaが8枠目に入りBlazは圏外確定", () => {
+  const live = JSON.parse(readFileSync(new URL("../data/final.json", import.meta.url)));
+  assert.equal(String(live.eventState).toUpperCase(), "COMPLETED");
+  assert.ok(config.frozenLiveUrl, "config.frozenLiveUrl が設定されている");
+  const { rows, premierDecided } = buildRows({ baseline, config, live });
+  assert.equal(premierDecided, true);
+  const ranked = judge(rows, config, "confirmed", { premierDecided });
+  const byTag = (re) => ranked.find((r) => re.test(r.name));
+  assert.equal(byTag(/Dual Kevin/).qualifiedBy, "premier");
+  const pool = ranked.filter((r) => !r.qualified).slice(0, 9);
+  assert.deepEqual(pool.slice(0, 8).map((r) => r.safety), Array(8).fill("locked"));
+  assert.match(pool[7].name, /Tachikawa/);
+  assert.match(pool[8].name, /Blaz/);
+  assert.equal(pool[8].safety, "eliminated");
+});

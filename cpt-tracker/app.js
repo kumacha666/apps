@@ -59,6 +59,7 @@ const T = (key, params) => t(state.lang, key, params);
 
 // ---- 取得 ------------------------------------------------------------
 async function fetchLive() {
+  if (state.config.frozenLiveUrl) return; // 大会終了後の固定表示。中継(GAS)へは取りに行かない
   const url = state.config.apiUrl;
   if (!url) return;
   state.loading = true;
@@ -124,6 +125,11 @@ function renderStatus() {
   const el = $("status");
   el.replaceChildren();
   const { config, live } = state;
+  if (config.frozenLiveUrl) {
+    if (live) el.append(h("span", { class: "pill live", text: T("stFrozen") }));
+    if (state.liveError) el.append(h("span", { class: "pill err", text: T("stLoadFailed") }));
+    return;
+  }
   if (!config.apiUrl) {
     el.append(h("span", { class: "pill warn", text: T("stNoApi") }));
     return;
@@ -459,6 +465,21 @@ async function init() {
   $("detailForm").addEventListener("submit", () => applyDetail());
 
   recompute();
+  if (config.frozenLiveUrl) {
+    // 大会終了後は、確定した最終結果の保存データを表示するだけ（更新ボタンと定期取得は止める）
+    $("refresh").hidden = true;
+    try {
+      const res = await fetch(config.frozenLiveUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      state.live = await res.json();
+      state.lastOkAt = new Date();
+    } catch (e) {
+      state.liveError = String(e.message || e);
+    }
+    recompute();
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+    return;
+  }
   await fetchLive();
   // 取得間隔にばらつきを持たせ、多数の閲覧者が同じ秒に中継へ殺到しないようにする
   const tick = async () => {

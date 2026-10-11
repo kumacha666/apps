@@ -9,6 +9,7 @@
   },
   "analyticsId": "G-Q962ZC0PJH",
   "apiUrl": "https://script.google.com/macros/s/AKfycbzWeNh9lPj7NWZI875osJGKBox-i-DXPcpj7YtjI5bSrpLzyLineas-5DZX3KOx6xPu/exec",
+  "frozenLiveUrl": "data/final.json",
   "refreshSec": 60,
   "cupSlots": 8,
   "rules": {
