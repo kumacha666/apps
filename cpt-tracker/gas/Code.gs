@@ -19,6 +19,8 @@ var MAX_STANDING_PAGES = 15;   // 1500人まで（EVO France SF6は約1,070人�
 var MAX_SET_PAGES = 15;
 // start.ggのSet状態: 1=未開始, 2=進行中, 3=終了, 6=呼出し済み, 7=キュー待ち
 var INCOMPLETE_SET_STATES = [1, 2, 6, 7];
+var RECENT_SETS_PER_PAGE = 40;   // 直近の試合結果を拾うため、終了済みSetの先頭ページと最終ページだけを見る
+var RECENT_SETS_KEEP = 8;        // 画面に出すのは最大6件だが、無効なSetを除く余裕を持たせて8件返す
 
 function doGet() {
   var props = PropertiesService.getScriptProperties();
@@ -125,7 +127,7 @@ function fetchLive_(token, eventId) {
     return alive[x.id] || (x.placement != null && x.placement <= 64);
   });
 
-  return {
+  var result = {
     ok: true,
     fetchedAt: new Date().toISOString(),
     eventState: ev.state,
@@ -137,6 +139,47 @@ function fetchLive_(token, eventId) {
     standings: keep,
     roster: roster
   };
+  // 取得に失敗したら recentSets のキーごと省く（画面は従来の速報にフォールバックする）
+  var recent = fetchRecentSets_(token, eventId);
+  if (recent) result.recentSets = recent;
+  return result;
+}
+
+/**
+ * 直近に終了した試合（誰がいつ開いても同じ「直近のできごと」を出すため、中継側で返す）。
+ * start.ggのSetSortTypeに「終了時刻順」が無い（CALL_ORDERは「終了済みは呼出し順の逆」と説明されるが並び方向は未確認）ので、
+ * 終了済みSetの先頭ページと最終ページの両端を取り、completedAt の新しい順に並べ直す。どちらの向きでも直近が含まれる。
+ * このクエリが失敗しても本体の応答（順位・生存者）は壊さない（null を返す）。
+ */
+function fetchRecentSets_(token, eventId) {
+  try {
+    var q = 'query($id:ID!,$p:Int!,$n:Int!){event(id:$id){sets(page:$p,perPage:$n,sortType:CALL_ORDER,filters:{state:[3]}){pageInfo{totalPages} nodes{completedAt fullRoundText winnerId slots{entrant{id name}}}}}}';
+    var first = gql_(token, q, { id: eventId, p: 1, n: RECENT_SETS_PER_PAGE }).event.sets;
+    var nodes = (first.nodes || []).slice();
+    var totalPages = first.pageInfo.totalPages || 1;
+    if (totalPages > 1) {
+      var last = gql_(token, q, { id: eventId, p: totalPages, n: RECENT_SETS_PER_PAGE }).event.sets;
+      nodes = nodes.concat(last.nodes || []);
+    }
+    var out = [];
+    nodes.forEach(function (n) {
+      var slots = n.slots || [];
+      var a = slots[0] && slots[0].entrant;
+      var b = slots[1] && slots[1].entrant;
+      if (!a || !b || a.id == null || b.id == null || n.winnerId == null || typeof n.completedAt !== 'number') return;
+      out.push({
+        at: n.completedAt,
+        round: n.fullRoundText || '',
+        winnerId: String(n.winnerId),
+        a: { id: String(a.id), name: a.name },
+        b: { id: String(b.id), name: b.name }
+      });
+    });
+    out.sort(function (x, y) { return y.at - x.at; });
+    return out.slice(0, RECENT_SETS_KEEP);
+  } catch (e) {
+    return null;
+  }
 }
 
 function firstTag_(entrant) {

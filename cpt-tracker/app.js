@@ -1,7 +1,7 @@
 // DOM描画とイベント配線のみ。判定・集計は logic.js（テスト済み）に置く。
 import {
   buildRows, judge, baselineRankMap, liveFreshness, nextRefreshDelayMs, isDebugMode, friendlyLiveError, phaseLabel,
-  borderInfo, snapshotRows, createChangeTracker,
+  borderInfo, snapshotRows, createChangeTracker, recentResults,
 } from "./logic.js";
 import { initAnalytics, track } from "./analytics.js";
 
@@ -220,6 +220,18 @@ function renderFeed() {
   box.replaceChildren();
   if (!state.config.apiUrl) return;
   box.append(h("h2", { text: "いま起きたこと" }));
+  // 中継が返す「直近の終了試合」があれば、誰がいつ開いても同じ内容になる。無い（中継が古い）ときだけ、この画面で見た変化にフォールバックする
+  const server = recentResults(state.live, state.config.rules, FEED_SHOWN);
+  if (server) {
+    if (!server.length) {
+      box.append(h("p", { class: "feed-empty", text: "試合が終わると、ここに直近の結果が表示されます。" }));
+      return;
+    }
+    box.append(h("ul", {}, server.map((e) =>
+      h("li", {}, h("time", { text: fmtHM(e.at) }),
+        h("span", {}, e.text, e.round ? h("small", { class: "fr", text: e.round }) : null, e.note ? h("small", { class: "fn", text: e.note }) : null)))));
+    return;
+  }
   if (!state.feed.length) {
     box.append(h("p", { class: "feed-empty", text: `直近のランキング動向（敗退・枠の確定など）が最大${FEED_SHOWN}件まで表示されます。ページを開いたままでご覧ください。` }));
     return;
