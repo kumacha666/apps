@@ -15,7 +15,13 @@
   <header class="top">
     <div class="top-row">
       <h1 id="title">CPT Premier ポイントトラッカー</h1>
-      <button id="refresh" class="btn" type="button" aria-label="今すぐ更新">更新</button>
+      <div class="top-actions">
+        <div class="seg lang" role="group" aria-label="Language">
+          <button type="button" data-lang="ja">日本語</button>
+          <button type="button" data-lang="en">EN</button>
+        </div>
+        <button id="refresh" class="btn" type="button" data-i18n="refresh" data-i18n-aria="refreshAria" aria-label="今すぐ更新">更新</button>
+      </div>
     </div>
     <p id="subtitle" class="sub"></p>
     <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -24,19 +30,19 @@
   <main>
     <div id="banners"></div>
 
-    <section class="summary" id="summary" aria-label="Capcom Cup出場枠の状況"></section>
-    <p class="border" id="border" aria-label="ポイント枠のボーダー"></p>
-    <section class="feed" id="feed" aria-live="polite" aria-label="速報"></section>
+    <section class="summary" id="summary" data-i18n-aria="ariaSummary" aria-label="Capcom Cup出場枠の状況"></section>
+    <p class="border" id="border" data-i18n-aria="ariaBorder" aria-label="ポイント枠のボーダー"></p>
+    <section class="feed" id="feed" aria-live="polite" data-i18n-aria="ariaFeed" aria-label="直近の出来事"></section>
 
     <div class="controls">
-      <div class="seg" role="group" aria-label="表示する合計">
-        <button type="button" data-view="confirmed">確定のみ</button>
-        <button type="button" data-view="floor">最低保証</button>
-        <button type="button" data-view="ceil">最大</button>
+      <div class="seg" role="group" data-i18n-aria="ariaView" aria-label="表示する合計">
+        <button type="button" data-view="confirmed" data-i18n="viewConfirmed">確定のみ</button>
+        <button type="button" data-view="floor" data-i18n="viewFloor">最低保証</button>
+        <button type="button" data-view="ceil" data-i18n="viewCeil">最大</button>
       </div>
-      <div class="seg" role="group" aria-label="絞り込み">
-        <button type="button" data-filter="all">全員</button>
-        <button type="button" data-filter="contest" title="出場権保持者と圏外確定を隠す">候補のみ</button>
+      <div class="seg" role="group" data-i18n-aria="ariaFilter" aria-label="絞り込み">
+        <button type="button" data-filter="all" data-i18n="filterAll">全員</button>
+        <button type="button" data-filter="contest" data-i18n="filterContest" data-i18n-title="filterContestTitle" title="出場権保持者と圏外確定を隠す">候補のみ</button>
       </div>
     </div>
     <p id="viewHelp" class="help"></p>
@@ -49,8 +55,8 @@
     </div>
 
     <details class="notes">
-      <summary>見方と注意</summary>
-      <ul>
+      <summary data-i18n="notesSummary">見方と注意</summary>
+      <ul id="notesList">
         <li><b>8列目（EVO France）</b>は start.gg の進行から自動で埋まります。敗退が確定した選手はそのポイント（早期敗退は<b>0</b>）、生き残っている選手は <i>最低保証〜最大</i> の幅で表示します。</li>
         <li>優勝者はPremierポイントが付かず、代わりにCapcom Cup 13の出場権を得ます。既に出場権を持つ選手が優勝した場合は、出場権が次順位の選手へ繰り下がります（公式規定5.2）。</li>
         <li><b>確定圏内</b>＝他の誰がどう勝ってもポイント上位8名（出場権保持者を除く）に残る。<b>圏外確定</b>＝残りの結果がどうなっても届かない。判定は上位の1名がPremier出場権を得て枠を空ける可能性を見込んでいます。<b>優勝のみ</b>＝ポイント枠は絶望だが、まだ勝ち残っているので優勝（または既に出場権を持つ選手が優勝した場合の準優勝以下への繰り下がり）なら出場権を得られる。</li>
@@ -63,12 +69,12 @@
   </main>
 
   <footer class="site-footer">
-    <p class="legal">
+    <p class="legal" id="legal" data-i18n-html="legal">
       本ページは<b>非公式のファン制作ツール</b>です。株式会社カプコン、start.gg、Evo主催者とは関係がなく、各社の承認・提携を受けたものではありません。<br>
       「CAPCOM」「CAPCOM PRO TOUR」「ストリートファイター」は株式会社カプコンの商標または登録商標です。その他の社名・製品名・大会名は各社の商標または登録商標です。<br>
       データ出典: <a href="https://sf.esports.capcom.com/cpt/jp/pp-rankings/" target="_blank" rel="noopener">CAPCOM PRO TOUR 公式サイト</a>（Premierポイントランキング・規定）／<a href="https://www.start.gg/tournament/evo-france-2026/event/street-fighter-6-ps5/overview" target="_blank" rel="noopener">start.gg</a>（EVO France 2026の公開データ）
     </p>
-    <p class="legal">アクセス解析（Google Analytics）を利用しています。閲覧状況の集計のみに使い、個人を特定する情報は送信しません。</p>
+    <p class="legal" data-i18n="legalGa">アクセス解析（Google Analytics）を利用しています。閲覧状況の集計のみに使い、個人を特定する情報は送信しません。</p>
     <p class="copy">&copy; <a href="https://honeypawlab.com/">Honeypaw Lab.</a> by kumacha.</p>
   </footer>
 
@@ -77,21 +83,21 @@
       <h2 id="dTitle"></h2>
       <p id="dSummary" class="help"></p>
       <table class="mini" id="dEvents"></table>
-      <label>EVO France の結果を手動で指定
+      <label><span data-i18n="dPlacementLabel">EVO France の結果を手動で指定</span>
         <select id="dPlacement"></select>
       </label>
-      <label>Capcom Cup 13 出場権
+      <label><span data-i18n="dQualLabel">Capcom Cup 13 出場権</span>
         <select id="dQualified">
-          <option value="auto">自動（設定どおり）</option>
-          <option value="yes">保持している</option>
-          <option value="no">保持していない</option>
+          <option value="auto" data-i18n="dQAuto">自動（設定どおり）</option>
+          <option value="yes" data-i18n="dQYes">保持している</option>
+          <option value="no" data-i18n="dQNo">保持していない</option>
         </select>
       </label>
       <div class="dialog-actions">
-        <button type="button" id="dReset" class="btn ghost">この選手の手動設定を消す</button>
+        <button type="button" id="dReset" class="btn ghost" data-i18n="dReset">この選手の手動設定を消す</button>
         <span class="spacer"></span>
-        <button type="button" id="dCancel" class="btn ghost">閉じる</button>
-        <button type="submit" class="btn primary" value="save">保存</button>
+        <button type="button" id="dCancel" class="btn ghost" data-i18n="dClose">閉じる</button>
+        <button type="submit" class="btn primary" value="save" data-i18n="dSave">保存</button>
       </div>
     </form>
   </dialog>

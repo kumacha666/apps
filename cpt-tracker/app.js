@@ -4,21 +4,14 @@ import {
   borderInfo, snapshotRows, createChangeTracker, recentResults,
 } from "./logic.js";
 import { initAnalytics, track } from "./analytics.js";
+import { t, placeLabel, detectLang } from "./i18n.js";
 
 const STORE_KEY = "cpt-tracker-v1";
-const VIEW_HELP = {
-  confirmed: "確定した結果だけを足した合計。生存中の選手の8列目は未加算。",
-  floor: "生存中の選手は「今負けた場合の順位」のポイントを加算した合計（最低保証）。",
-  ceil: "生存中の選手は準優勝（300pt）まで進んだ場合の合計（最大）。優勝すると出場権を得てポイント枠から外れる。",
-};
-const VIEW_SHORT = { confirmed: "確定のみ", floor: "最低保証", ceil: "最大" };
+const VIEW_KEY = { confirmed: "viewConfirmed", floor: "viewFloor", ceil: "viewCeil" };
+const VIEW_HELP_KEY = { confirmed: "helpConfirmed", floor: "helpFloor", ceil: "helpCeil" };
 const FEED_MAX = 30;
 const FEED_SHOWN = 6;
-const PLACEMENT_CHOICES = [
-  [1, "1位（優勝・ポイント無し）"], [2, "2位（300）"], [3, "3位（250）"], [4, "4位（200）"],
-  [5, "5位タイ（150）"], [7, "7位タイ（100）"], [9, "9位タイ（50）"], [13, "13位タイ（30）"],
-  [17, "17位タイ（20）"], [25, "25位タイ（10）"], [33, "33位以下（0）"],
-];
+const PLACEMENT_VALUES = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33];
 
 const $ = (id) => document.getElementById(id);
 const h = (tag, props = {}, ...kids) => {
@@ -60,7 +53,9 @@ const state = {
   feed: [], // 速報（この画面を開いている間の変化）。新しい順
   tracker: createChangeTracker(),
   debug: isDebugMode(globalThis.location?.search),
+  lang: "ja",
 };
+const T = (key, params) => t(state.lang, key, params);
 
 // ---- 取得 ------------------------------------------------------------
 async function fetchLive() {
@@ -73,7 +68,7 @@ async function fetchLive() {
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    if (!data.ok) throw new Error(data.error || "取得に失敗しました");
+    if (!data.ok) throw new Error(data.error || "fetch failed");
     state.live = data;
     state.liveError = null;
     state.lastOkAt = new Date();
@@ -116,8 +111,12 @@ function render() {
   renderTable();
 }
 
+// 英語では全角の括弧・記号を使わない
+const paren = (x) => (state.lang === "en" ? ` (${x})` : `（${x}）`);
+const rangeText = (a, b) => (state.lang === "en" ? `${a}–${b}` : `${a}〜${b}`);
+const LOCALE = { ja: "ja-JP", en: "en-GB" };
 function fmtTime(d) {
-  return d ? d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Tokyo" }) : "";
+  return d ? d.toLocaleTimeString(LOCALE[state.lang], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Tokyo" }) : "";
 }
 
 function renderStatus() {
@@ -125,26 +124,26 @@ function renderStatus() {
   el.replaceChildren();
   const { config, live } = state;
   if (!config.apiUrl) {
-    el.append(h("span", { class: "pill warn", text: "ライブ取得 未設定（手動入力モード）" }));
+    el.append(h("span", { class: "pill warn", text: T("stNoApi") }));
     return;
   }
   if (live) {
-    el.append(h("span", { class: "pill live", text: phaseLabel(live) }));
+    el.append(h("span", { class: "pill live", text: phaseLabel(live, state.lang) }));
     const alive = live.aliveCount;
-    if (alive != null && String(live.eventState).toUpperCase() !== "COMPLETED") el.append(h("span", { class: "pill", text: `生存 ${alive}人` }));
+    if (alive != null && String(live.eventState).toUpperCase() !== "COMPLETED") el.append(h("span", { class: "pill", text: T("stAlive", { n: alive }) }));
   }
-  if (state.loading) el.append(h("span", { class: "pill", text: "更新中…" }));
+  if (state.loading) el.append(h("span", { class: "pill", text: T("stUpdating") }));
   else if (live) {
     // 表示するのは「画面を更新した時刻」ではなく、start.ggから取得したデータの時刻
     const fetched = new Date(live.fetchedAt);
-    el.append(h("span", { class: "pill", text: `データ ${Number.isNaN(fetched.getTime()) ? fmtTime(state.lastOkAt) : fmtTime(fetched)}` }));
+    el.append(h("span", { class: "pill", text: T("stData", { time: Number.isNaN(fetched.getTime()) ? fmtTime(state.lastOkAt) : fmtTime(fetched) }) }));
     const fresh = liveFreshness(live, Date.now());
     if (fresh.stale) {
       const min = fresh.ageSec != null ? Math.max(1, Math.round(fresh.ageSec / 60)) : null;
-      el.append(h("span", { class: "pill warn", title: "start.ggからの取得が遅れています。前回のデータを表示中です", text: min ? `データが古い可能性（約${min}分前）` : "データが古い可能性" }));
+      el.append(h("span", { class: "pill warn", title: T("stStaleTitle"), text: min ? T("stStale", { min }) : T("stStaleNoMin") }));
     }
   }
-  if (state.liveError) el.append(h("span", { class: "pill err", text: state.lastOkAt ? "再取得に失敗（前回データを表示中）" : "取得に失敗" }));
+  if (state.liveError) el.append(h("span", { class: "pill err", text: state.lastOkAt ? T("stRefreshFailed") : T("stLoadFailed") }));
 }
 
 function renderBanners() {
@@ -152,10 +151,10 @@ function renderBanners() {
   box.replaceChildren();
   const { config, liveError, current, live } = state;
   if (!config.apiUrl) {
-    box.append(h("div", { class: "banner" }, "start.ggからの自動取得はまだ設定されていません（セットアップ: gas/SETUP.md）。行をタップすると、EVO Franceの結果を手動で入力して計算できます。"));
+    box.append(h("div", { class: "banner" }, T("bnNoApi")));
   }
   if (liveError) {
-    box.append(h("div", { class: "banner err" }, state.debug ? `ライブ取得エラー: ${liveError}` : friendlyLiveError(!!state.lastOkAt)));
+    box.append(h("div", { class: "banner err" }, state.debug ? `ライブ取得エラー: ${liveError}` : friendlyLiveError(!!state.lastOkAt, state.lang)));
   }
   // 名簿に見つからない選手の警告は開発者向け（設定ファイルの編集が必要）なので、?debug=1 のときだけ表示する
   if (state.debug && live && current) {
@@ -183,10 +182,10 @@ function renderSummary() {
   const contested = count("contested");
   const open = Math.max(slots - locked, 0);
   box.append(
-    h("div", { class: "card ok" }, h("b", { text: String(locked) }), h("span", { text: `確定圏内（残り${open}枠）` })),
-    h("div", { class: "card" }, h("b", { text: String(contested) }), h("span", { text: "争い中" })),
-    h("div", { class: "card warn", title: "ポイント枠は絶望だが、優勝（または既に出場権を持つ人が優勝した場合の準優勝以下への繰り下がり）で出場権を得られる" }, h("b", { text: String(winonly) }), h("span", { text: "優勝のみ" })),
-    h("div", { class: "card ng" }, h("b", { text: String(elim) }), h("span", { text: "圏外確定" })),
+    h("div", { class: "card ok" }, h("b", { text: String(locked) }), h("span", { text: T("sumLocked", { n: open }) })),
+    h("div", { class: "card" }, h("b", { text: String(contested) }), h("span", { text: T("sumContested") })),
+    h("div", { class: "card warn", title: T("sumWinOnlyTitle") }, h("b", { text: String(winonly) }), h("span", { text: T("sumWinOnly") })),
+    h("div", { class: "card ng" }, h("b", { text: String(elim) }), h("span", { text: T("sumElim") })),
   );
 }
 
@@ -198,15 +197,15 @@ function renderBorder() {
   const view = state.store.view;
   const b = borderInfo(cur.rows, state.config.cupSlots, view);
   if (!b) return;
-  const who = (p) => `${p.name} ${p.pts}pt${p.alive ? "（生存中）" : ""}`;
-  const gap = b.gap === 0 ? "同点" : `差${b.gap}pt`;
+  const who = (p) => `${p.name} ${p.pts}pt${p.alive ? T("bdAlive") : ""}`;
+  const gap = b.gap === 0 ? T("bdTied") : T("bdGap", { n: b.gap });
   box.append(
-    h("b", { text: "枠のボーダー" }),
-    h("span", { class: "bd-note", text: `（${VIEW_SHORT[view]}）` }),
-    h("span", { text: `枠の${b.slots}番目 ${who(b.last)}` }),
-    h("span", { class: "bd-sep", text: "／" }),
-    h("span", { text: `次点 ${who(b.next)}` }),
-    h("span", { class: "bd-gap", text: `（${gap}）` }),
+    h("b", { text: T("bdTitle") }),
+    h("span", { class: "bd-note", text: paren(T(VIEW_KEY[view])) }),
+    h("span", { text: T("bdSlot", { n: b.slots, who: who(b.last) }) }),
+    h("span", { class: "bd-sep", text: state.lang === "en" ? "/" : "／" }),
+    h("span", { text: T("bdNext", { who: who(b.next) }) }),
+    h("span", { class: "bd-gap", text: paren(gap) }),
   );
 }
 
@@ -215,21 +214,24 @@ function fmtHM(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const day = (x) => x.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
-  const hm = d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" });
+  const hm = d.toLocaleTimeString(LOCALE[state.lang], { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Tokyo" });
   if (day(d) === day(new Date())) return hm;
-  return `${d.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", timeZone: "Asia/Tokyo" })} ${hm}`;
+  const date = state.lang === "en"
+    ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "Asia/Tokyo" })
+    : d.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", timeZone: "Asia/Tokyo" });
+  return `${date} ${hm}`;
 }
 
 function renderFeed() {
   const box = $("feed");
   box.replaceChildren();
   if (!state.config.apiUrl) return;
-  box.append(h("h2", { text: "直近の出来事" }));
+  box.append(h("h2", { text: T("fdTitle") }));
   // 中継が返す「直近の終了試合」があれば、誰がいつ開いても同じ内容になる。無い（中継が古い）ときだけ、この画面で見た変化にフォールバックする
-  const server = recentResults(state.live, state.config.rules, FEED_SHOWN);
+  const server = recentResults(state.live, state.config.rules, FEED_SHOWN, state.lang);
   if (server) {
     if (!server.length) {
-      box.append(h("p", { class: "feed-empty", text: "試合が終わると、ここに直近の結果が表示されます。" }));
+      box.append(h("p", { class: "feed-empty", text: T("fdEmptyServer") }));
       return;
     }
     box.append(h("ul", {}, server.map((e) =>
@@ -238,25 +240,26 @@ function renderFeed() {
     return;
   }
   if (!state.feed.length) {
-    box.append(h("p", { class: "feed-empty", text: `直近のランキング動向（敗退・枠の確定など）が最大${FEED_SHOWN}件まで表示されます。ページを開いたままでご覧ください。` }));
+    box.append(h("p", { class: "feed-empty", text: T("fdEmptyFallback", { n: FEED_SHOWN }) }));
     return;
   }
   box.append(h("ul", {}, state.feed.slice(0, FEED_SHOWN).map((e) =>
-    h("li", {}, h("time", { text: fmtHM(e.at) }), h("span", { text: e.text })))));
+    h("li", {}, h("time", { text: fmtHM(e.at) }), h("span", { text: state.lang === "en" && e.en ? e.en : e.text })))));
 }
 
 function renderControls() {
   for (const b of document.querySelectorAll("[data-view]")) b.setAttribute("aria-pressed", String(b.dataset.view === state.store.view));
   for (const b of document.querySelectorAll("[data-filter]")) b.setAttribute("aria-pressed", String(b.dataset.filter === state.store.filter));
-  $("viewHelp").textContent = VIEW_HELP[state.store.view];
+  for (const b of document.querySelectorAll("[data-lang]")) b.setAttribute("aria-pressed", String(b.dataset.lang === state.lang));
+  $("viewHelp").textContent = T(VIEW_HELP_KEY[state.store.view]);
 }
 
 const SAFETY_LABEL = {
-  qualified: ["出場権", "q"],
-  locked: ["確定圏内", "ok"],
-  winonly: ["優勝のみ", "mid"],
-  eliminated: ["圏外確定", "ng"],
-  contested: ["争い中", "mid"],
+  qualified: ["bQualified", "q"],
+  locked: ["bLocked", "ok"],
+  winonly: ["bWinOnly", "mid"],
+  eliminated: ["bElim", "ng"],
+  contested: ["bContested", "mid"],
 };
 
 function evoCell(r, config) {
@@ -266,18 +269,18 @@ function evoCell(r, config) {
     const place = evo.placement;
     const cell = h("td", { class: "num evo " + (pts > 0 ? "got" : "zero") });
     if (place === 1) {
-      cell.append(h("span", { class: "win", text: "優勝" }));
+      cell.append(h("span", { class: "win", text: T("cellWin") }));
     } else {
       cell.append(String(pts));
-      if (place != null && place <= config.rules.lastPlace) cell.append(h("small", { text: `${place}位` }));
+      if (place != null && place <= config.rules.lastPlace) cell.append(h("small", { text: placeLabel(state.lang, place) }));
     }
     return cell;
   }
   if (evo.state === "alive") {
-    const range = r.evoFloor === r.evoCeil ? String(r.evoFloor) : `${r.evoFloor}〜${r.evoCeil}`;
-    return h("td", { class: "num evo alive", title: "進行中: 最低保証〜最大" }, h("span", { class: "range", text: range }));
+    const range = r.evoFloor === r.evoCeil ? String(r.evoFloor) : rangeText(r.evoFloor, r.evoCeil);
+    return h("td", { class: "num evo alive", title: T("evoAliveTitle") }, h("span", { class: "range", text: range }));
   }
-  if (evo.state === "absent") return h("td", { class: "num evo zero absent", title: "start.ggの名簿に見つかりません（欠場とみなして0）", text: "0" });
+  if (evo.state === "absent") return h("td", { class: "num evo zero absent", title: T("evoAbsentTitle"), text: "0" });
   return h("td", { class: "num evo none", text: "–" });
 }
 
@@ -300,11 +303,11 @@ function renderTable() {
   const labels = baseline.events;
   thead.append(
     h("tr", {},
-      h("th", { class: "c-rank", rowspan: "2", text: "順位" }),
-      h("th", { class: "c-name", rowspan: "2", text: "選手" }),
-      h("th", { colspan: String(labels.length), text: "Premierポイント" }),
-      h("th", { class: "c-total", rowspan: "2", text: "合計" }),
-      h("th", { class: "c-state", rowspan: "2", text: "Cup13" }),
+      h("th", { class: "c-rank", rowspan: "2", text: T("thRank") }),
+      h("th", { class: "c-name", rowspan: "2", text: T("thPlayer") }),
+      h("th", { colspan: String(labels.length), text: T("thPoints") }),
+      h("th", { class: "c-total", rowspan: "2", text: T("thTotal") }),
+      h("th", { class: "c-state", rowspan: "2", text: T("thCup") }),
     ),
     h("tr", {}, labels.map((l, i) => h("th", { class: "c-ev" + (i === config.liveEvent.premierIndex ? " live" : ""), title: l, text: String(i + 1) }))),
   );
@@ -320,17 +323,17 @@ function renderTable() {
     const afterLine = inPool && poolCount === config.cupSlots + 1 && !lineDrawn;
     if (afterLine) {
       lineDrawn = true;
-      tbody.append(h("tr", { class: "line" }, h("td", { colspan: String(labels.length + 4), text: `▲ ここまでが Premierポイント枠（出場権保持者を除く上位${config.cupSlots}名）` })));
+      tbody.append(h("tr", { class: "line" }, h("td", { colspan: String(labels.length + 4), text: T("lineText", { n: config.cupSlots }) })));
     }
     if (filtered) continue;
 
     const delta = r.baseRank != null ? (cur.baseRanks.get(r.key) ?? r.rank) - r.rank : null;
     const deltaEl = delta ? h("small", { class: delta > 0 ? "up" : "down", text: (delta > 0 ? "▲" : "▼") + Math.abs(delta) }) : null;
-    const [label, cls] = SAFETY_LABEL[r.safety];
+    const [labelKey, cls] = SAFETY_LABEL[r.safety];
     const tr = h("tr", { class: `row ${cls}` + (r.isNew ? " newp" : ""), tabindex: "0", "data-key": r.key });
     tr.append(
-      h("td", { class: "c-rank num" }, String(r.rank), r.rankTied ? h("small", { class: "tie", title: "同率（CAPCOM抽選）", text: "同率" }) : null, deltaEl),
-      h("td", { class: "c-name" }, nameParts(r.name), r.isNew ? h("small", { class: "tag", text: "NEW" }) : null, r.evo.manual ? h("small", { class: "tag", text: "手動" }) : null),
+      h("td", { class: "c-rank num" }, String(r.rank), r.rankTied ? h("small", { class: "tie", title: T("tieTitle"), text: T("tie") }) : null, deltaEl),
+      h("td", { class: "c-name" }, nameParts(r.name), r.isNew ? h("small", { class: "tag", text: T("tagNew") }) : null, r.evo.manual ? h("small", { class: "tag", text: T("tagManual") }) : null),
     );
     r.events.forEach((p, i) => {
       if (i === config.liveEvent.premierIndex) tr.append(evoCell(r, config));
@@ -338,8 +341,8 @@ function renderTable() {
     });
     tr.append(
       h("td", { class: "num c-total" }, h("b", { text: String(r.totals[view]) }),
-        view !== "confirmed" && r.totals[view] !== r.totals.confirmed ? h("small", { text: `確定 ${r.totals.confirmed}` }) : null),
-      h("td", { class: "c-state" }, h("span", { class: `badge ${cls}`, title: r.safety === "winonly" ? "ポイント枠は圏外。優勝（または既に出場権を持つ人が優勝した場合の準優勝以下への繰り下がり）のみ出場権の可能性あり" : null, text: label + (r.safety === "qualified" && r.qualifiedBy === "premier" ? "（今大会）" : "") })),
+        view !== "confirmed" && r.totals[view] !== r.totals.confirmed ? h("small", { text: `${state.lang === "en" ? "Confirmed" : "確定"} ${r.totals.confirmed}` }) : null),
+      h("td", { class: "c-state" }, h("span", { class: `badge ${cls}`, title: r.safety === "winonly" ? T("winOnlyBadgeTitle") : null, text: T(labelKey) + (r.safety === "qualified" && r.qualifiedBy === "premier" ? T("bThisEvent") : "") })),
     );
     const open = () => openDetail(r.key);
     tr.addEventListener("click", open);
@@ -357,16 +360,16 @@ function openDetail(key) {
   track("open_player", { player: r.name.slice(0, 60) });
   const { baseline, config } = state;
   $("dTitle").textContent = r.name;
-  $("dSummary").textContent = `事前の合計 ${r.baseTotal}pt ／ 現在の見込み 確定 ${r.totals.confirmed}・最低保証 ${r.totals.floor}・最大 ${r.totals.ceil}`;
+  $("dSummary").textContent = T("dSummary", { base: r.baseTotal, c: r.totals.confirmed, f: r.totals.floor, m: r.totals.ceil });
 
-  const t = $("dEvents");
-  t.replaceChildren(
+  const evTable = $("dEvents");
+  evTable.replaceChildren(
     h("tr", {}, baseline.events.map((_, i) => h("th", { text: String(i + 1) }))),
-    h("tr", {}, r.events.map((p, i) => h("td", { class: "num" }, i === config.liveEvent.premierIndex ? (r.evo.state === "final" ? String(r.evoPoints) : r.evo.state === "alive" ? `${r.evoFloor}〜${r.evoCeil}` : "") : p ? String(p) : ""))),
+    h("tr", {}, r.events.map((p, i) => h("td", { class: "num" }, i === config.liveEvent.premierIndex ? (r.evo.state === "final" ? String(r.evoPoints) : r.evo.state === "alive" ? rangeText(r.evoFloor, r.evoCeil) : "") : p ? String(p) : ""))),
   );
 
   const sel = $("dPlacement");
-  sel.replaceChildren(h("option", { value: "auto", text: "自動（start.ggの結果）" }), ...PLACEMENT_CHOICES.map(([v, l]) => h("option", { value: String(v), text: l })));
+  sel.replaceChildren(h("option", { value: "auto", text: T("dAuto") }), ...PLACEMENT_VALUES.map((v) => h("option", { value: String(v), text: T("pc" + v) })));
   const ov = state.store.overrides[key];
   sel.value = Number.isFinite(ov) ? String(ov) : "auto";
 
@@ -389,6 +392,30 @@ function applyDetail() {
   track("manual_save");
 }
 
+// ---- 言語 -------------------------------------------------------------
+// HTMLに直接書かれた文言（日本語）を、選んだ言語の辞書で置き換える。動的に描く部分は render() が T() を使う。
+function applyStatic() {
+  document.documentElement.lang = state.lang;
+  document.title = T("title");
+  $("title").textContent = T("title");
+  $("subtitle").textContent = T("subtitle", { label: state.config.liveEvent.label, asOf: state.baseline.asOf });
+  for (const el of document.querySelectorAll("[data-i18n]")) el.textContent = T(el.dataset.i18n);
+  for (const el of document.querySelectorAll("[data-i18n-html]")) el.innerHTML = T(el.dataset.i18nHtml);
+  for (const el of document.querySelectorAll("[data-i18n-title]")) el.title = T(el.dataset.i18nTitle);
+  for (const el of document.querySelectorAll("[data-i18n-aria]")) el.setAttribute("aria-label", T(el.dataset.i18nAria));
+  $("notesList").innerHTML = T("notes").map((li) => `<li>${li}</li>`).join("");
+}
+
+function setLang(lang) {
+  if (lang === state.lang) return;
+  state.lang = lang;
+  state.store.lang = lang;
+  saveStore();
+  applyStatic();
+  if (state.current) recompute();
+  track("lang_change", { lang });
+}
+
 // ---- 起動 -----------------------------------------------------------
 async function init() {
   const [config, baseline] = await Promise.all([
@@ -398,14 +425,17 @@ async function init() {
   state.config = config;
   state.baseline = baseline;
   initAnalytics(config.analyticsId);
-  $("title").textContent = config.title;
-  $("subtitle").textContent = `${config.liveEvent.label} の結果を反映 ／ 基準: ${baseline.asOf}時点のCAPCOM公式ランキング`;
+  state.lang = detectLang({ search: globalThis.location?.search, stored: state.store.lang, navLang: globalThis.navigator?.language });
+  applyStatic();
 
   for (const b of document.querySelectorAll("[data-view]")) {
     b.addEventListener("click", () => { state.store.view = b.dataset.view; saveStore(); recompute(); track("view_change", { view: b.dataset.view }); });
   }
   for (const b of document.querySelectorAll("[data-filter]")) {
     b.addEventListener("click", () => { state.store.filter = b.dataset.filter; saveStore(); render(); track("filter_change", { filter: b.dataset.filter }); });
+  }
+  for (const b of document.querySelectorAll("[data-lang]")) {
+    b.addEventListener("click", () => setLang(b.dataset.lang));
   }
   $("refresh").addEventListener("click", () => { track("refresh_click"); fetchLive(); });
   $("dCancel").addEventListener("click", () => $("detail").close());
@@ -432,5 +462,5 @@ async function init() {
 }
 
 init().catch((e) => {
-  $("status").replaceChildren(h("span", { class: "pill err", text: `起動に失敗しました: ${e.message}` }));
+  $("status").replaceChildren(h("span", { class: "pill err", text: T("stStartFailed", { msg: e.message }) }));
 });

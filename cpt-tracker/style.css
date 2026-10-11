@@ -26,6 +26,9 @@ body {
 .top { padding: 14px 16px 8px; max-width: 1100px; margin: 0 auto; }
 .top-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 h1 { font-size: 18px; margin: 0; letter-spacing: .02em; }
+.top-actions { display: flex; align-items: center; gap: 8px; }
+.seg.lang button { padding: 5px 9px; font-size: 12.5px; white-space: nowrap; }
+.top-row h1 { min-width: 0; }
 .sub { margin: 4px 0 8px; color: var(--muted); font-size: 12px; }
 main { max-width: 1100px; margin: 0 auto; padding: 0 16px 40px; }
 
@@ -78,8 +81,8 @@ main { max-width: 1100px; margin: 0 auto; padding: 0 16px 40px; }
 .feed h2 { margin: 0 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; }
 .feed ul { list-style: none; margin: 0; padding: 0; }
 .feed li { display: flex; gap: 8px; font-size: 13px; padding: 2px 0; }
-.feed small { margin-left: 8px; font-size: 11.5px; color: var(--muted); }
-.feed small.fn { color: #e3c565; }
+.feed small { margin-left: 8px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.feed small.fn { color: #e3c565; white-space: normal; }
 .feed time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
 .feed-empty { margin: 0; font-size: 12px; color: var(--muted); }
 

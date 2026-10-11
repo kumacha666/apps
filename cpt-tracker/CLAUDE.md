@@ -6,6 +6,7 @@ CAPCOM Pro Tour 2026 の **Premierポイントランキング**（公式 `https:
 - `logic.js`: 純ロジック（ポイント表、名前マッチング、タイブレーク、ライブ評価、枠判定）。**テスト対象は全部ここ**
 - `app.js`: DOM描画・イベント配線・ポーリング・手動上書きUIのみ。判定ロジックを書かない
 - `analytics.js`: GA4のラッパー（`test/analytics.test.mjs`）
+- `i18n.js`: 日本語/英語の辞書と言語判定（`test/i18n.test.mjs`）
 - `data/config.json`: ポイント表・出場権保持者・start.ggイベントID・`apiUrl`（GASのURL）・エイリアス
 - `data/baseline.json`: EVO France前の公式ランキング（117人、Premier 1〜7のポイント）。公式ページから手動転記済み
 - `gas/Code.gs` + `gas/SETUP.md`: start.ggトークンを預かる中継（Google Apps Script）。**トークンはリポジトリに書かない**（スクリプトプロパティ）
@@ -18,11 +19,12 @@ CAPCOM Pro Tour 2026 の **Premierポイントランキング**（公式 `https:
 - start.ggの標準順位は進行中は信頼できないため、**「生存者」を未終了Setのスロットから計算**し（`gas/Code.gs`）、`evaluateEntrants`が「生存者ではなく、順位が生存者数より下」の選手だけを確定扱いにする（誤確定防止）
 - **決勝のリセット戦待ち**: 負け側が決勝1試合目に勝つとリセット戦が作られるが、作成までの一瞬は生存者0人・フェーズ進行中になる。この間（`evaluateEntrants`の`betweenSets`）は1位・2位を確定扱いにしない（誤って優勝確定→出場権の繰り下がりが動くのを防ぐ）。3位以下は決勝で動かないので従来どおり確定
 - **枠のボーダー表示と「直近の出来事」**（2026-10-11追加、画面表示のみで判定ロジックは変えない）: `borderInfo`が、出場権保持者を除いた枠の最後の1人と次点・差を返す（表の上の黄色い帯。表示切替の合計に連動）。「直近の出来事」は**中継(GAS)の`recentSets`**（直近に終了した試合。`fetchRecentSets_`が`filters.updatedAfter`で直近24時間に更新された終了済みSetを全ページ読み、`completedAt`の新しい順に並べ直す。**start.ggのSet一覧の並び順は終了時刻順ではない（実データで確認）ので、並び順には頼らない**）を`recentResults`が画面用にする。誰がいつ開いても同じ内容で、負け側が敗退確定済みなら順位とポイントを添える。**中継が未更新（`recentSets`が無い）／取得失敗のときだけ**、`createChangeTracker`による「この画面で見た変化」の速報にフォールバックする（同じ変化が別々の2回の取得で続いたときだけ出す。メモリ上のみ）。**GASを更新（新バージョンで再デプロイ）しないと`recentSets`は出ない**（`gas/SETUP.md`）。recentSetsのクエリが失敗しても本体の応答（順位・生存者）は壊さない（`test/gas.test.mjs`）
+- **日本語/英語の切り替え**（2026-10-11追加）: 文言は`i18n.js`の辞書（`ja`/`en`）に集約。`logic.js`の進行表示・エラー・速報も`lang`引数で辞書を引く。言語は`?lang=`＞端末に保存した選択＞ブラウザ言語（日本語以外は英語）の順で決まり、ヘッダーの「日本語 / EN」で切り替える（`localStorage`の`cpt-tracker-v1.lang`）。HTMLの固定文言は`data-i18n`/`data-i18n-html`/`data-i18n-title`/`data-i18n-aria`属性で`applyStatic()`が置き換える。**文言を足す・変えるときは`ja`と`en`の両方に同じキーを入れる**（`test/i18n.test.mjs`がキーの不一致・`{置換名}`の不一致・リンク/タグ数の不一致を検出する）。選手名・ラウンド名（start.ggの英語表記）は翻訳しない。英語では全角記号を使わない（`paren`/`rangeText`）。時刻は常にJST表記
 - 生存者の幅: 最低保証=`tiedStart(生存者数)`位のポイント、最大=2位(300)。優勝は0ptだが出場権を得て枠から外れる
 - `safety`: `locked`（確定圏内）＝自分の最低合計以上になり得る他者が枠数-1人以下。`eliminated`（圏外確定）＝自分の最大より上の他者が、枠を空け得る1名を差し引いても枠数以上。**同点はタイブレークで解決できる場合のみ有利/不利に数える**
 - **名簿(`roster`)に居ない選手は`absent`（0pt扱い・8列目に薄い「0」）**。名前の照合ミスで確定判定を誤らないよう、baseline合計200pt以上でabsentの選手の警告を出す（開発者向けの文言なので**URLに`?debug=1`を付けたときだけ**表示。公開の画面・SNS用のスクショには出さない）。直すには `config.aliases.map`（start.ggタグ→baselineタグ）に追記
 - GAS中継は**stale-while-refresh**: 新しい応答(60秒)とは別に前回応答を6時間保管し、更新担当（ロックを取れた1人）以外・start.gg障害時はそれを`stale:true`で即返す（`gas/Code.gs`の`doGet`。`test/gas.test.mjs`にGASサービスのモックで挙動テストあり）。画面は`liveFreshness`でデータの古さを表示し、取得間隔は`nextRefreshDelayMs`で±10秒ばらす
-- **アクセス解析（GA4）**: `analytics.js`（`gtag.js`の薄いラッパー。`config.analyticsId`が空・不正なら何もしない）。測定IDはトップページと共用の`G-Q962ZC0PJH`（2026-10-10決定: 期間限定ツールなので専用IDは作らない。他アプリはアプリごとに別ID: 7metch/LifeLog等。GA4ではページのパス`/cpt-tracker/`で絞って見る。専用IDにしたくなったら`config.json`の`analyticsId`を差し替えるだけ）。送るイベントは`view_change`/`filter_change`/`open_player`/`refresh_click`/`manual_save`のみで個人情報は送らない（`open_player`の選手名は公開情報）。フッターに利用の旨を明記。SNS等の流入元を見るにはURLに`?utm_source=x&utm_medium=social&utm_campaign=evo-france-2026`を付ける
+- **アクセス解析（GA4）**: `analytics.js`（`gtag.js`の薄いラッパー。`config.analyticsId`が空・不正なら何もしない）。測定IDはトップページと共用の`G-Q962ZC0PJH`（2026-10-10決定: 期間限定ツールなので専用IDは作らない。他アプリはアプリごとに別ID: 7metch/LifeLog等。GA4ではページのパス`/cpt-tracker/`で絞って見る。専用IDにしたくなったら`config.json`の`analyticsId`を差し替えるだけ）。送るイベントは`view_change`/`filter_change`/`open_player`/`refresh_click`/`manual_save`/`lang_change`のみで個人情報は送らない（`open_player`の選手名は公開情報）。フッターに利用の旨を明記。SNS等の流入元を見るにはURLに`?utm_source=x&utm_medium=social&utm_campaign=evo-france-2026`を付ける
 - ライブ未取得（`apiUrl`空・取得失敗）のときは、上振れ余地を最大(300)とみなして確定判定を出し過ぎない
 
 ## 運用メモ

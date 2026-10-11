@@ -1,5 +1,6 @@
 // CPT Premier ポイントトラッカーの純ロジック（DOM非依存・ユニットテスト対象）。
 // 仕様の根拠は CPT 2026 公式規定 2.3 / 5.1 / 5.2（apps/cpt-tracker/CLAUDE.md参照）。
+import { t, placeLabel } from "./i18n.js";
 
 export const VIEWS = ["confirmed", "floor", "ceil"];
 
@@ -414,26 +415,24 @@ export function isDebugMode(search) {
 }
 
 /** 閲覧者向けの取得エラー文。技術的な原因（HTMLが返った、HTTPエラー等）は出さない（開発者は ?debug=1 で生の文言を見る）。 */
-export function friendlyLiveError(hasPreviousData) {
-  return hasPreviousData
-    ? "データを一時的に取得できませんでした。自動で再試行します（前回のデータを表示しています）。"
-    : "データを一時的に取得できませんでした。自動で再試行します。";
+export function friendlyLiveError(hasPreviousData, lang = "ja") {
+  return t(lang, hasPreviousData ? "errPrev" : "errNoPrev");
 }
 
 /**
  * 上部に出す大会の進行表示。進行中のフェーズがあればその名前、無ければ「次に始まるフェーズ（開始前）」を出す。
  * （TOP 24が終わりTOP 8がまだ始まっていない夜間などに、先頭のフェーズ名「ROUND 1」を誤って出さないため）
  */
-export function phaseLabel(live) {
+export function phaseLabel(live, lang = "ja") {
   if (!live) return "";
-  if (String(live.eventState || "").toUpperCase() === "COMPLETED") return "大会終了";
+  if (String(live.eventState || "").toUpperCase() === "COMPLETED") return t(lang, "phEnd");
   const phases = live.phases || [];
   const state = (p) => String(p.state).toUpperCase();
   const active = phases.filter((p) => state(p) === "ACTIVE");
-  if (active.length) return `${active[active.length - 1].name} 進行中`;
+  if (active.length) return t(lang, "phActive", { name: active[active.length - 1].name });
   const next = phases.find((p) => state(p) !== "COMPLETED");
-  if (next) return `${next.name} 開始前`;
-  return phases.length ? "全フェーズ終了" : "進行中";
+  if (next) return t(lang, "phNotStarted", { name: next.name });
+  return phases.length ? t(lang, "phAllDone") : t(lang, "phRunning");
 }
 
 // ---- 枠のボーダー表示・速報フィード -------------------------------------
@@ -469,22 +468,21 @@ export function snapshotRows(rows) {
 }
 
 /** 1人分の before → after の変化を、速報の文言にする（手動上書きが絡むものは出さない）。 */
-export function changeEvents(prev, next) {
+export function changeEvents(prev, next, lang = "ja") {
   const out = [];
   if (prev.manual || next.manual) return out;
+  const name = next.name;
   if (prev.evoState !== "final" && next.evoState === "final" && next.placement != null) {
-    if (next.placement === 1) out.push(`${next.name} 優勝`);
-    else if (next.placement === 2) out.push(`${next.name} 準優勝 ${next.points}pt確定`);
-    else out.push(`${next.name} 敗退 → ${next.placement}位 ${next.points}pt確定`);
+    if (next.placement === 1) out.push(t(lang, "evWinner", { name }));
+    else if (next.placement === 2) out.push(t(lang, "evRunnerUp", { name, pts: next.points }));
+    else out.push(t(lang, "evOut", { name, place: placeLabel(lang, next.placement), pts: next.points }));
   }
-  if (prev.qualifiedBy !== "premier" && next.qualifiedBy === "premier") {
-    out.push(`${next.name} CAPCOM CUP 13の出場権を獲得（今大会）`);
-  }
+  if (prev.qualifiedBy !== "premier" && next.qualifiedBy === "premier") out.push(t(lang, "evQualified", { name }));
   if (prev.safety !== next.safety && prev.safety !== "qualified" && next.safety !== "qualified") {
     switch (next.safety) {
-      case "locked": out.push(`${next.name} ポイント枠が確定圏内に`); break;
-      case "eliminated": out.push(`${next.name} ポイント枠は圏外確定`); break;
-      case "winonly": out.push(`${next.name} ポイント枠は絶望（優勝のみ）`); break;
+      case "locked": out.push(t(lang, "evLocked", { name })); break;
+      case "eliminated": out.push(t(lang, "evElim", { name })); break;
+      case "winonly": out.push(t(lang, "evWinOnly", { name })); break;
       case "contested": break;
       default: break;
     }
@@ -524,7 +522,9 @@ export function createChangeTracker() {
         }
         const p = pending.get(key);
         if (p && sig(p.snap) === sig(cur)) {
-          for (const text of changeEvents(b, cur)) events.push({ key, text, at: p.stamp });
+          const ja = changeEvents(b, cur, "ja");
+          const en = changeEvents(b, cur, "en");
+          ja.forEach((text, i) => events.push({ key, text, en: en[i], at: p.stamp }));
           base.set(key, cur);
           pending.delete(key);
         } else {
@@ -541,7 +541,7 @@ export function createChangeTracker() {
  * 誰がいつ開いても同じ内容になる（端末側の履歴に頼らない）。負けた選手がすでに敗退確定していれば、順位とポイントを添える。
  * 返り値: 配列（新しい順）。中継が未対応で recentSets が無いときは null（呼び出し側は従来の速報にフォールバックする）。
  */
-export function recentResults(live, rules, limit = 6) {
+export function recentResults(live, rules, limit = 6, lang = "ja") {
   if (!live || !Array.isArray(live.recentSets)) return null;
   const entrants = evaluateEntrants(live);
   const out = [];
@@ -555,8 +555,8 @@ export function recentResults(live, rules, limit = 6) {
     out.push({
       at: new Date(s.at * 1000).toISOString(),
       round: s.round || "",
-      text: `${tagPart(winner.name)} が ${tagPart(loser.name)} に勝利`,
-      note: place != null && place > 1 ? `${tagPart(loser.name)} ${place}位 ${pointsForPlacement(place, rules)}pt確定` : null,
+      text: t(lang, "fdBeat", { w: tagPart(winner.name), l: tagPart(loser.name) }),
+      note: place != null && place > 1 ? t(lang, "fdNote", { l: tagPart(loser.name), place: placeLabel(lang, place), pts: pointsForPlacement(place, rules) }) : null,
     });
     if (out.length >= limit) break;
   }
