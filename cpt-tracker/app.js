@@ -221,7 +221,7 @@ function renderFeed() {
   if (!state.config.apiUrl) return;
   box.append(h("h2", { text: "いま起きたこと" }));
   if (!state.feed.length) {
-    box.append(h("p", { class: "feed-empty", text: "敗退や枠の確定があると、ここに自動で表示されます。ページを開いたままでご覧ください。" }));
+    box.append(h("p", { class: "feed-empty", text: `直近のランキング動向（敗退・枠の確定など）が最大${FEED_SHOWN}件まで表示されます。ページを開いたままでご覧ください。` }));
     return;
   }
   box.append(h("ul", {}, state.feed.slice(0, FEED_SHOWN).map((e) =>
