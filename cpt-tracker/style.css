@@ -65,6 +65,22 @@ main { max-width: 1100px; margin: 0 auto; padding: 0 16px 40px; }
 .card.ng b { color: var(--ng); }
 .card.warn b { color: var(--mid); }
 
+.border {
+  margin: 4px 0 8px; padding: 6px 10px; border: 1px solid #5a4310; border-radius: 8px; background: #2a2208;
+  color: #e3c565; font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline;
+}
+.border:empty { display: none; }
+.border .bd-note, .border .bd-gap { color: var(--muted); }
+.border .bd-sep { color: var(--muted); }
+
+.feed { margin: 4px 0 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.feed:empty { display: none; }
+.feed h2 { margin: 0 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.feed ul { list-style: none; margin: 0; padding: 0; }
+.feed li { display: flex; gap: 8px; font-size: 13px; padding: 2px 0; }
+.feed time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+.feed-empty { margin: 0; font-size: 12px; color: var(--muted); }
+
 .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 2px; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .seg button {

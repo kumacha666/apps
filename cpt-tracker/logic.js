@@ -435,3 +435,103 @@ export function phaseLabel(live) {
   if (next) return `${next.name} 開始前`;
   return phases.length ? "全フェーズ終了" : "進行中";
 }
+
+// ---- 枠のボーダー表示・速報フィード -------------------------------------
+
+/**
+ * ポイント枠のボーダー（枠の最後の1人と、その次の1人）。rows は judge() が返した並び（その表示の合計順）。
+ * 出場権保持者は枠に数えない。枠より後ろに人がいなければ null。
+ */
+export function borderInfo(rows, slots, view) {
+  const pool = rows.filter((r) => !r.qualified);
+  if (slots < 1 || pool.length <= slots) return null;
+  const pick = (r) => ({ name: tagPart(r.name), pts: r.totals[view], alive: r.evo.state === "alive" });
+  const last = pick(pool[slots - 1]);
+  const next = pick(pool[slots]);
+  return { slots, last, next, gap: last.pts - next.pts };
+}
+
+/** 速報フィード用に、各行から変化を見たい項目だけを取り出す（key → 状態）。 */
+export function snapshotRows(rows) {
+  const m = new Map();
+  for (const r of rows) {
+    m.set(r.key, {
+      name: tagPart(r.name),
+      evoState: r.evo.state,
+      placement: r.evo.placement ?? null,
+      points: r.evoPoints,
+      safety: r.safety,
+      qualifiedBy: r.qualifiedBy ?? null,
+      manual: !!r.evo.manual,
+    });
+  }
+  return m;
+}
+
+/** 1人分の before → after の変化を、速報の文言にする（手動上書きが絡むものは出さない）。 */
+export function changeEvents(prev, next) {
+  const out = [];
+  if (prev.manual || next.manual) return out;
+  if (prev.evoState !== "final" && next.evoState === "final" && next.placement != null) {
+    if (next.placement === 1) out.push(`${next.name} 優勝`);
+    else if (next.placement === 2) out.push(`${next.name} 準優勝 ${next.points}pt確定`);
+    else out.push(`${next.name} 敗退 → ${next.placement}位 ${next.points}pt確定`);
+  }
+  if (prev.qualifiedBy !== "premier" && next.qualifiedBy === "premier") {
+    out.push(`${next.name} CAPCOM CUP 13の出場権を獲得（今大会）`);
+  }
+  if (prev.safety !== next.safety && prev.safety !== "qualified" && next.safety !== "qualified") {
+    switch (next.safety) {
+      case "locked": out.push(`${next.name} ポイント枠が確定圏内に`); break;
+      case "eliminated": out.push(`${next.name} ポイント枠は圏外確定`); break;
+      case "winonly": out.push(`${next.name} ポイント枠は絶望（優勝のみ）`); break;
+      case "contested": break;
+      default: break;
+    }
+  }
+  return out;
+}
+
+/**
+ * 取得のたびに snapshotRows を渡すと、変化の速報を返す。
+ * 一瞬の取得ずれ（次の試合が未作成など）で誤った速報を出さないよう、同じ変化が「別々の2回の取得」で続けて
+ * 見えたときだけ確定して出す。stamp は取得データの時刻（同じ stamp の再処理は無視する）。
+ */
+export function createChangeTracker() {
+  let base = null;
+  let lastStamp = null;
+  const pending = new Map();
+  const sig = (s) => [s.evoState, s.placement, s.safety, s.qualifiedBy, s.manual].join("|");
+  return {
+    update(snap, stamp) {
+      if (stamp != null && stamp === lastStamp) return [];
+      lastStamp = stamp ?? null;
+      if (!base) {
+        base = new Map(snap);
+        return [];
+      }
+      const events = [];
+      for (const [key, cur] of snap) {
+        const b = base.get(key);
+        if (!b) {
+          base.set(key, cur);
+          pending.delete(key);
+          continue;
+        }
+        if (sig(b) === sig(cur)) {
+          pending.delete(key);
+          continue;
+        }
+        const p = pending.get(key);
+        if (p && sig(p.snap) === sig(cur)) {
+          for (const text of changeEvents(b, cur)) events.push({ key, text, at: p.stamp });
+          base.set(key, cur);
+          pending.delete(key);
+        } else {
+          pending.set(key, { snap: cur, stamp });
+        }
+      }
+      return events;
+    },
+  };
+}
