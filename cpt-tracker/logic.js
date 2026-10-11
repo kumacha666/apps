@@ -539,9 +539,10 @@ export function createChangeTracker() {
 /**
  * 中継(GAS)が返す直近の終了試合（live.recentSets）→ 画面に出す「直近のできごと」。
  * 誰がいつ開いても同じ内容になる（端末側の履歴に頼らない）。負けた選手がすでに敗退確定していれば、順位とポイントを添える。
+ * safetyById（entrant id → 判定）を渡すと、勝者が現在確定圏内なら `lock` に文言を入れる。
  * 返り値: 配列（新しい順）。中継が未対応で recentSets が無いときは null（呼び出し側は従来の速報にフォールバックする）。
  */
-export function recentResults(live, rules, limit = 6, lang = "ja") {
+export function recentResults(live, rules, limit = 6, lang = "ja", safetyById = null) {
   if (!live || !Array.isArray(live.recentSets)) return null;
   const entrants = evaluateEntrants(live);
   const out = [];
@@ -557,6 +558,8 @@ export function recentResults(live, rules, limit = 6, lang = "ja") {
       round: s.round || "",
       text: t(lang, "fdBeat", { w: tagPart(winner.name), l: tagPart(loser.name) }),
       note: place != null && place > 1 ? t(lang, "fdNote", { l: tagPart(loser.name), place: placeLabel(lang, place), pts: pointsForPlacement(place, rules) }) : null,
+      // 勝った選手が「いま」ポイント枠の確定圏内なら添える（試合の直接の結果ではなく現在の状態。履歴を持たなくても誰が見ても同じ）
+      lock: safetyById && safetyById.get(String(winner.id)) === "locked" ? t(lang, "fdLocked", { w: tagPart(winner.name) }) : null,
     });
     if (out.length >= limit) break;
   }
