@@ -1,6 +1,6 @@
 const CACHE_PREFIX = "cpt-tracker-";
-const CACHE_NAME = CACHE_PREFIX + "v2";
-const ASSETS = [".", "index.html", "style.css", "app.js", "logic.js", "analytics.js", "manifest.json", "icon.svg", "data/config.json", "data/baseline.json"];
+const CACHE_NAME = CACHE_PREFIX + "v3";
+const ASSETS = [".", "index.html", "style.css", "app.js", "logic.js", "i18n.js", "analytics.js", "manifest.json", "icon.svg", "data/config.json", "data/baseline.json"];
 
 self.addEventListener("install", (e) => {
   // 事前保存もHTTPキャッシュ(GitHub Pagesは10分)を経由せず、常に最新を取る
