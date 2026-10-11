@@ -30,5 +30,6 @@ CAPCOM Pro Tour 2026 の **Premierポイントランキング**（公式 `https:
 ## 運用メモ
 - **出場権保持者の初期値**（`config.qualified.players`）は公式ランキング表のアイコン読み取り＋大会結果報道。2026-10-10にユーザーが全員（Craime/Fuudo/Leshar/Sahara./DAIGO含む）の保持を確認済み。新たに判明したら`config.json`に追記する（画面の行タップでも端末内だけ修正できる）
 - EVO France終了後は公式ページが更新される。更新後は`baseline.json`を差し替えるか、アプリを役目終了として凍結する
+- **固定表示（2026-10-12、大会終了後）**: `config.frozenLiveUrl`（`data/final.json`）があると、中継(GAS)へは取りに行かず保存済みの最終データだけを表示する（更新ボタンと定期取得は止め、状態表示は「大会終了・最終結果（固定表示）」）。`final.json`はCOMPLETED後に`/exec`のJSONを保存したもの（優勝1位・Tachikawa 2位まで確定済みを確認）。固定を解くには`frozenLiveUrl`を消す。最終判定（Dual Kevin優勝で出場権／ポイント枠8位Tachikawa 320／Blaz圏外確定）は`test/logic.test.mjs`で検証している
 - start.ggのAPIは2026-10-10にEVO France SF6の実データで検証済み（ROUND 3〜TOP 24：生存者数の推移、TOP 24の25位タイ敗退による10pt確定、名簿との照合）。**未検証**: TOP 24途中〜決勝での「次の試合がまだ作られていない一瞬」の挙動、優勝決着後の準優勝者への出場権繰り下がり（ユニットテストのみ）。本番で表示と実際の対戦表がずれたら、`/exec`のJSON（`aliveIds`/`standings`/`phases`）を保存して原因を調べる
 - deployスクリプト無し（静的ファイルのコミット＝公開）。`sw.js`はネットワーク優先で、`ASSETS`にファイルを足したら`CACHE_NAME`を上げる。**`fetch(..., { cache: "no-cache" })`で毎回サーバーに更新確認する**（GitHub Pagesは`max-age=600`なので、これが無いと修正をデプロイしても利用者の画面が最大10分古いまま。旧版では実際にそうなった）。事前保存も`cache:"reload"`。`ASSETS`には新しいJS（`analytics.js`等）を必ず含める（無いとオフライン時にimportが失敗する）。`test/sw.test.mjs`にSW APIのモックでテストあり
