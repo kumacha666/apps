@@ -427,6 +427,8 @@ async function init() {
   initAnalytics(config.analyticsId);
   state.lang = detectLang({ search: globalThis.location?.search, stored: state.store.lang, navLang: globalThis.navigator?.language });
   applyStatic();
+  // 言語別のアクセスをGAのリアルタイム画面でそのまま見られるよう、言語ごとに別のイベント名で送る（カスタムディメンションの登録が不要）
+  track("lang_view_" + state.lang);
 
   for (const b of document.querySelectorAll("[data-view]")) {
     b.addEventListener("click", () => { state.store.view = b.dataset.view; saveStore(); recompute(); track("view_change", { view: b.dataset.view }); });
