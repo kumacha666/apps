@@ -535,3 +535,30 @@ export function createChangeTracker() {
     },
   };
 }
+
+/**
+ * 中継(GAS)が返す直近の終了試合（live.recentSets）→ 画面に出す「直近のできごと」。
+ * 誰がいつ開いても同じ内容になる（端末側の履歴に頼らない）。負けた選手がすでに敗退確定していれば、順位とポイントを添える。
+ * 返り値: 配列（新しい順）。中継が未対応で recentSets が無いときは null（呼び出し側は従来の速報にフォールバックする）。
+ */
+export function recentResults(live, rules, limit = 6) {
+  if (!live || !Array.isArray(live.recentSets)) return null;
+  const entrants = evaluateEntrants(live);
+  const out = [];
+  for (const s of [...live.recentSets].sort((a, b) => b.at - a.at)) {
+    if (!s || !s.a || !s.b) continue;
+    const winner = String(s.winnerId) === String(s.a.id) ? s.a : String(s.winnerId) === String(s.b.id) ? s.b : null;
+    if (!winner) continue;
+    const loser = winner === s.a ? s.b : s.a;
+    const le = entrants.get(String(loser.id));
+    const place = le && le.state === "final" ? le.placement : null;
+    out.push({
+      at: new Date(s.at * 1000).toISOString(),
+      round: s.round || "",
+      text: `${tagPart(winner.name)} が ${tagPart(loser.name)} に勝利`,
+      note: place != null && place > 1 ? `${tagPart(loser.name)} ${place}位 ${pointsForPlacement(place, rules)}pt確定` : null,
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}

@@ -1,7 +1,7 @@
 // DOM描画とイベント配線のみ。判定・集計は logic.js（テスト済み）に置く。
 import {
   buildRows, judge, baselineRankMap, liveFreshness, nextRefreshDelayMs, isDebugMode, friendlyLiveError, phaseLabel,
-  borderInfo, snapshotRows, createChangeTracker,
+  borderInfo, snapshotRows, createChangeTracker, recentResults,
 } from "./logic.js";
 import { initAnalytics, track } from "./analytics.js";
 
@@ -210,18 +210,35 @@ function renderBorder() {
   );
 }
 
+// 時刻（JST）。今日(JST)より前の日付なら「10/11 21:46」のように日付も付ける（昨日の試合が今日のものに見えないように）
 function fmtHM(iso) {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" });
+  if (Number.isNaN(d.getTime())) return "";
+  const day = (x) => x.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+  const hm = d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" });
+  if (day(d) === day(new Date())) return hm;
+  return `${d.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", timeZone: "Asia/Tokyo" })} ${hm}`;
 }
 
 function renderFeed() {
   const box = $("feed");
   box.replaceChildren();
   if (!state.config.apiUrl) return;
-  box.append(h("h2", { text: "いま起きたこと" }));
+  box.append(h("h2", { text: "直近の出来事" }));
+  // 中継が返す「直近の終了試合」があれば、誰がいつ開いても同じ内容になる。無い（中継が古い）ときだけ、この画面で見た変化にフォールバックする
+  const server = recentResults(state.live, state.config.rules, FEED_SHOWN);
+  if (server) {
+    if (!server.length) {
+      box.append(h("p", { class: "feed-empty", text: "試合が終わると、ここに直近の結果が表示されます。" }));
+      return;
+    }
+    box.append(h("ul", {}, server.map((e) =>
+      h("li", {}, h("time", { text: fmtHM(e.at) }),
+        h("span", {}, e.text, e.round ? h("small", { class: "fr", text: e.round }) : null, e.note ? h("small", { class: "fn", text: e.note }) : null)))));
+    return;
+  }
   if (!state.feed.length) {
-    box.append(h("p", { class: "feed-empty", text: "更新があると、ここに表示されます（この画面を開いている間の変化）。" }));
+    box.append(h("p", { class: "feed-empty", text: `直近のランキング動向（敗退・枠の確定など）が最大${FEED_SHOWN}件まで表示されます。ページを開いたままでご覧ください。` }));
     return;
   }
   box.append(h("ul", {}, state.feed.slice(0, FEED_SHOWN).map((e) =>

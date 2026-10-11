@@ -46,6 +46,9 @@ function defaultFetch(query) {
       { placement: 33, entrant: { id: 2, name: "B", participants: [{ player: { gamerTag: "B" } }] } },
     ] } } });
   }
+  if (query.includes("completedAt")) {
+    return resp({ event: { sets: { pageInfo: { totalPages: 1 }, nodes: [] } } });
+  }
   if (query.includes("sets(")) {
     return resp({ event: { sets: { pageInfo: { totalPages: 1 }, nodes: [{ slots: [{ entrant: { id: 1 } }, { entrant: null }] }] } } });
   }
@@ -126,4 +129,39 @@ test("大会終了(COMPLETED)なら生存者は空で aliveCount=0", () => {
   const out = e.run();
   assert.equal(out.aliveCount, 0);
   assert.deepEqual(out.aliveIds, []);
+});
+
+// ---- 直近の試合結果（recentSets） ----
+const setNode = (at, w, a, b) => ({ completedAt: at, fullRoundText: "Losers Round 1", winnerId: w, slots: [{ entrant: { id: a, name: `T | P${a}` } }, { entrant: { id: b, name: `T | P${b}` } }] });
+test("recentSets: 終了済みSetの先頭ページと最終ページを取り、completedAtの新しい順に並べ、無効なSetは除く", () => {
+  const seenPages = [];
+  const e = makeEnv();
+  // 変数(page)を見られるよう、UrlFetchAppを差し替える
+  e.ctx.UrlFetchApp.fetch = (_u, opts) => {
+    const body = JSON.parse(opts.payload);
+    if (!body.query.includes("completedAt")) return defaultFetch(body.query);
+    seenPages.push(body.variables.p);
+    const nodes = body.variables.p === 1
+      ? [setNode(100, 1, 1, 2), setNode(110, 2, 1, 2)]
+      : [setNode(300, 3, 3, 4), setNode(200, 4, 3, 4), { completedAt: 999, fullRoundText: "x", winnerId: null, slots: [{ entrant: { id: 5, name: "n" } }, { entrant: null }] }];
+    return resp({ event: { sets: { pageInfo: { totalPages: 3 }, nodes } } });
+  };
+  const out = e.run();
+  assert.deepEqual(seenPages, [1, 3]);
+  assert.deepEqual(out.recentSets.map((s) => s.at), [300, 200, 110, 100]); // 新しい順、勝者不明/片側空きのSetは除く
+  assert.equal(out.recentSets[0].winnerId, "3");
+  assert.deepEqual(out.recentSets[0].a, { id: "3", name: "T | P3" });
+});
+
+test("recentSets: 取得に失敗しても本体の応答（順位・生存者）は壊さず、recentSetsを省く", () => {
+  const e = makeEnv();
+  e.ctx.UrlFetchApp.fetch = (_u, opts) => {
+    const body = JSON.parse(opts.payload);
+    if (body.query.includes("completedAt")) return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ errors: [{ message: "Cannot query field" }] }) };
+    return defaultFetch(body.query);
+  };
+  const out = e.run();
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.aliveIds, ["1"]);
+  assert.equal("recentSets" in out, false);
 });

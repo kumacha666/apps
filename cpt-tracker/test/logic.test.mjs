@@ -5,7 +5,7 @@ import {
   pointsForPlacement, placementForPoints, tiedStart, normalizeTag, tagPart, nameKeys,
   compareTiebreak, rankRows, evaluateEntrants, aliveBounds, buildRows, judge, baselineRankMap,
   liveFreshness, nextRefreshDelayMs, aliveFloorPoints, isDebugMode, friendlyLiveError, phaseLabel,
-  borderInfo, snapshotRows, changeEvents, createChangeTracker,
+  borderInfo, snapshotRows, changeEvents, createChangeTracker, recentResults,
 } from "../logic.js";
 
 const config = JSON.parse(readFileSync(new URL("../data/config.json", import.meta.url)));
@@ -498,4 +498,27 @@ test("createChangeTracker: 一瞬だけの変化（すぐ元に戻る）は出�
 test("snapshotRows: 行から速報用の項目を取り出す", () => {
   const rows = [{ key: "k", name: "CR | Dogura", evo: { state: "final", placement: 7 }, evoPoints: 100, safety: "eliminated", qualifiedBy: undefined }];
   assert.deepEqual(snapshotRows(rows).get("k"), { name: "Dogura", evoState: "final", placement: 7, points: 100, safety: "eliminated", qualifiedBy: null, manual: false });
+});
+
+test("recentResults: 直近の試合結果を新しい順に出し、敗退確定した負け側には順位とポイントを添える", () => {
+  const live = {
+    eventState: "ACTIVE", aliveCount: 7, aliveIds: ["1", "2"],
+    standings: [entrant(1, "A", 5), entrant(2, "B", 5), entrant(3, "C", 7)],
+    recentSets: [
+      { at: 100, round: "Losers Round 1", winnerId: "1", a: { id: "1", name: "T | A" }, b: { id: "3", name: "T | C" } },
+      { at: 300, round: "Winners Semi-Final", winnerId: "2", a: { id: "1", name: "T | A" }, b: { id: "2", name: "T | B" } },
+      { at: 200, round: "bad", winnerId: "9", a: { id: "1", name: "A" }, b: { id: "3", name: "C" } }, // 勝者がどちらでもない → 除く
+    ],
+  };
+  const r = recentResults(live, rules);
+  assert.equal(r.length, 2);
+  assert.equal(r[0].text, "B が A に勝利"); // 新しい順（タグ部分だけ）
+  assert.equal(r[0].note, null); // 勝ち側の敗者はまだ生存 → 添えない
+  assert.equal(r[1].text, "A が C に勝利");
+  assert.equal(r[1].note, "C 7位 100pt確定"); // 敗退確定
+  assert.equal(r[1].round, "Losers Round 1");
+  assert.equal(recentResults(live, rules, 1).length, 1);
+  assert.equal(recentResults({ ...live, recentSets: undefined }, rules), null); // 中継が未対応 → null
+  assert.deepEqual(recentResults({ ...live, recentSets: [] }, rules), []);
+  assert.equal(recentResults(null, rules), null);
 });
