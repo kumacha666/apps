@@ -88,3 +88,16 @@ test("logic.js の文言が言語で切り替わる（進行表示・エラー�
   assert.equal(ja.text, "A が C に勝利");
   assert.equal(ja.note, "C 7位 100pt確定");
 });
+
+test("recentResults: 勝者が現在確定圏内なら lock を添える（safetyById を渡したときだけ）", () => {
+  const rlive = {
+    eventState: "ACTIVE", aliveCount: 7, aliveIds: ["1", "2"],
+    standings: [{ id: 1, tag: "A", name: "A", placement: 3 }, { id: 2, tag: "B", name: "B", placement: 5 }],
+    recentSets: [{ at: 100, round: "Winners Semi-Final", winnerId: "1", a: { id: "1", name: "T | A" }, b: { id: "2", name: "T | B" } }],
+  };
+  const safety = new Map([["1", "locked"], ["2", "contested"]]);
+  assert.equal(recentResults(rlive, config.rules, 6, "ja", safety)[0].lock, "A ポイント枠 確定圏内");
+  assert.equal(recentResults(rlive, config.rules, 6, "en", safety)[0].lock, "A: locked into a points slot");
+  assert.equal(recentResults(rlive, config.rules, 6, "ja")[0].lock, null); // 渡さなければ付かない
+  assert.equal(recentResults(rlive, config.rules, 6, "ja", new Map([["1", "contested"]]))[0].lock, null);
+});

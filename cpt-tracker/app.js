@@ -223,13 +223,20 @@ function fmtHM(iso) {
   return `${date} ${hm}`;
 }
 
+// 参加者ID → いまの判定（確定圏内など）。直近の出来事の勝者に「確定圏内」を添えるために使う
+function safetyByEntrant() {
+  const m = new Map();
+  for (const r of state.current?.rows || []) if (r.entrantId != null) m.set(String(r.entrantId), r.safety);
+  return m;
+}
+
 function renderFeed() {
   const box = $("feed");
   box.replaceChildren();
   if (!state.config.apiUrl) return;
   box.append(h("h2", { text: T("fdTitle") }));
   // 中継が返す「直近の終了試合」があれば、誰がいつ開いても同じ内容になる。無い（中継が古い）ときだけ、この画面で見た変化にフォールバックする
-  const server = recentResults(state.live, state.config.rules, FEED_SHOWN, state.lang);
+  const server = recentResults(state.live, state.config.rules, FEED_SHOWN, state.lang, safetyByEntrant());
   if (server) {
     if (!server.length) {
       box.append(h("p", { class: "feed-empty", text: T("fdEmptyServer") }));
@@ -237,7 +244,7 @@ function renderFeed() {
     }
     box.append(h("ul", {}, server.map((e) =>
       h("li", {}, h("time", { text: fmtHM(e.at) }),
-        h("span", {}, e.text, e.round ? h("small", { class: "fr", text: e.round }) : null, e.note ? h("small", { class: "fn", text: e.note }) : null)))));
+        h("span", {}, e.text, e.round ? h("small", { class: "fr", text: e.round }) : null, e.note ? h("small", { class: "fn", text: e.note }) : null, e.lock ? h("small", { class: "fn lk", text: e.lock }) : null)))));
     return;
   }
   if (!state.feed.length) {
