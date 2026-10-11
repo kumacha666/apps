@@ -114,9 +114,18 @@ export function evaluateEntrants(live) {
   const completed = String(live.eventState || "").toUpperCase() === "COMPLETED";
   const alive = new Set((live.aliveIds || []).map(String));
   const aliveCount = completed ? 0 : (live.aliveCount ?? alive.size);
+  // 決勝(グランドファイナル)の1試合目が終わり、リセット戦がまだ作られていない一瞬は、生存者が0人でもフェーズは進行中。
+  // この間は1位・2位（リセット戦に出る2人）を確定扱いにしない（確定すると優勝者が決まったと誤判定し、出場権の繰り下がりまで動く）。
+  const phases = live.phases || [];
+  const betweenSets =
+    !completed && aliveCount === 0 && phases.some((p) => String(p.state).toUpperCase() !== "COMPLETED");
   for (const s of live.standings || []) {
     const id = String(s.id);
     const placement = Number.isFinite(s.placement) ? s.placement : null;
+    if (betweenSets && placement != null && placement <= 2) {
+      out.set(id, { state: "alive", placement, tag: s.tag, name: s.name });
+      continue;
+    }
     // 確定条件: 大会終了、または「生存者ではない」かつ、順位が生存者数の属するタイ順位帯の開始順位以上。
     // 順位は「17位タイ=17〜24位」のような帯なので、生存22人でも17位で敗退した人は確定でよい（22位より下とは限らない）。
     // 生存者でないのに帯より良い順位（例: 生存22人で暫定13位）の人は、次の試合が未作成なだけの勝ち上がりかもしれないので未確定にする。
