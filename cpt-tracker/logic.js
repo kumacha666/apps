@@ -562,3 +562,21 @@ export function recentResults(live, rules, limit = 6, lang = "ja") {
   }
   return out;
 }
+
+/**
+ * 取得データの「生存者」が一瞬だけ空（0人）になることがある（フェーズ開始時の切り替えなど。実際にTOP 8開始直後に起きた）。
+ * 大会は未終了・進行中のフェーズがあるのに生存者が0人なら、取得の一時的なずれとみなし、前回の生存者を引き継ぐ
+ * （順位表は新しいものを使う）。引き継ぎは最大 maxCarryMs（既定10分）まで。それを超えて0人のままなら実際の状態として扱う。
+ * 返り値は新しいliveオブジェクト（引き継ぎ時は aliveCarriedSince を持つ）。
+ */
+export function carryAliveIfGap(prev, next, nowMs = Date.now(), maxCarryMs = 10 * 60 * 1000) {
+  if (!next || !prev) return next;
+  const completed = String(next.eventState || "").toUpperCase() === "COMPLETED";
+  const anyActive = (next.phases || []).some((p) => String(p.state).toUpperCase() === "ACTIVE");
+  const nextAlive = next.aliveCount ?? (next.aliveIds || []).length;
+  const prevAlive = prev.aliveCount ?? (prev.aliveIds || []).length;
+  if (completed || !anyActive || nextAlive > 0 || !(prevAlive > 0)) return next;
+  const since = prev.aliveCarriedSince ?? nowMs;
+  if (nowMs - since > maxCarryMs) return next;
+  return { ...next, aliveIds: [...(prev.aliveIds || [])], aliveCount: prevAlive, aliveCarriedSince: since };
+}

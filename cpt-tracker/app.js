@@ -1,7 +1,7 @@
 // DOM描画とイベント配線のみ。判定・集計は logic.js（テスト済み）に置く。
 import {
   buildRows, judge, baselineRankMap, liveFreshness, nextRefreshDelayMs, isDebugMode, friendlyLiveError, phaseLabel,
-  borderInfo, snapshotRows, createChangeTracker, recentResults,
+  borderInfo, snapshotRows, createChangeTracker, recentResults, carryAliveIfGap,
 } from "./logic.js";
 import { initAnalytics, track } from "./analytics.js";
 import { t, placeLabel, detectLang } from "./i18n.js";
@@ -69,7 +69,8 @@ async function fetchLive() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || "fetch failed");
-    state.live = data;
+    // 生存者が一瞬0人になる取得ずれ（フェーズ開始時など）では、前回の生存者を引き継いで表示が崩れないようにする
+    state.live = carryAliveIfGap(state.live, data);
     state.liveError = null;
     state.lastOkAt = new Date();
     fetchedOk = true;

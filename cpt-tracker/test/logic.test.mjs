@@ -5,7 +5,7 @@ import {
   pointsForPlacement, placementForPoints, tiedStart, normalizeTag, tagPart, nameKeys,
   compareTiebreak, rankRows, evaluateEntrants, aliveBounds, buildRows, judge, baselineRankMap,
   liveFreshness, nextRefreshDelayMs, aliveFloorPoints, isDebugMode, friendlyLiveError, phaseLabel,
-  borderInfo, snapshotRows, changeEvents, createChangeTracker, recentResults,
+  borderInfo, snapshotRows, changeEvents, createChangeTracker, recentResults, carryAliveIfGap,
 } from "../logic.js";
 
 const config = JSON.parse(readFileSync(new URL("../data/config.json", import.meta.url)));
@@ -521,4 +521,26 @@ test("recentResults: 直近の試合結果を新しい順に出し、敗退確�
   assert.equal(recentResults({ ...live, recentSets: undefined }, rules), null); // 中継が未対応 → null
   assert.deepEqual(recentResults({ ...live, recentSets: [] }, rules), []);
   assert.equal(recentResults(null, rules), null);
+});
+
+test("carryAliveIfGap: 進行中フェーズがあるのに生存者が一瞬0人なら、前回の生存者を引き継ぐ（10分まで）", () => {
+  const phases = [{ name: "TOP 24", state: "COMPLETED" }, { name: "TOP 8", state: "ACTIVE" }];
+  const prev = { eventState: "ACTIVE", phases, aliveCount: 8, aliveIds: ["1", "2", "3", "4", "5", "6", "7", "8"] };
+  const gap = { eventState: "ACTIVE", phases, aliveCount: 0, aliveIds: [], standings: [{ id: 1, placement: 5 }] };
+  const t0 = 1_000_000;
+  const out = carryAliveIfGap(prev, gap, t0);
+  assert.equal(out.aliveCount, 8);
+  assert.deepEqual(out.aliveIds, prev.aliveIds);
+  assert.deepEqual(out.standings, gap.standings); // 順位表は新しいものを使う
+  assert.equal(out.aliveCarriedSince, t0);
+  // 引き継ぎが続いて10分を超えたら、実際の状態（0人）として扱う
+  assert.equal(carryAliveIfGap(out, gap, t0 + 9 * 60 * 1000).aliveCount, 8);
+  assert.equal(carryAliveIfGap(out, gap, t0 + 11 * 60 * 1000).aliveCount, 0);
+  // 引き継がない場合
+  assert.equal(carryAliveIfGap(prev, { ...gap, eventState: "COMPLETED" }, t0).aliveCount, 0); // 大会終了
+  assert.equal(carryAliveIfGap(prev, { ...gap, phases: phases.map((p) => ({ ...p, state: "COMPLETED" })) }, t0).aliveCount, 0); // 進行中のフェーズ無し
+  assert.equal(carryAliveIfGap(null, gap, t0), gap); // 初回（前回なし）
+  assert.equal(carryAliveIfGap({ ...prev, aliveCount: 0, aliveIds: [] }, gap, t0), gap); // 前回も0人
+  const normal = { ...gap, aliveCount: 7, aliveIds: ["1"] };
+  assert.equal(carryAliveIfGap(prev, normal, t0), normal); // 通常の更新はそのまま
 });
