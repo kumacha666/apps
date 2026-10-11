@@ -5,6 +5,7 @@ import {
   pointsForPlacement, placementForPoints, tiedStart, normalizeTag, tagPart, nameKeys,
   compareTiebreak, rankRows, evaluateEntrants, aliveBounds, buildRows, judge, baselineRankMap,
   liveFreshness, nextRefreshDelayMs, aliveFloorPoints, isDebugMode, friendlyLiveError, phaseLabel,
+  borderInfo, snapshotRows, changeEvents, createChangeTracker,
 } from "../logic.js";
 
 const config = JSON.parse(readFileSync(new URL("../data/config.json", import.meta.url)));
@@ -444,4 +445,57 @@ test("evaluateEntrants: 決勝1試合目の後でリセット戦が未作成（�
   const base = { players: [{ name: "P", rank: 1, events: [0, 0, 0, 0, 0, 0, 0, null] }, { name: "Q", rank: 2, events: [0, 0, 0, 0, 0, 0, 0, null] }] };
   assert.equal(buildRows({ baseline: base, config: cfg, live }).premierDecided, false);
   assert.equal(buildRows({ baseline: base, config: cfg, live: { ...live, eventState: "COMPLETED" } }).premierDecided, true);
+});
+
+// ---- 枠のボーダー・速報フィード ----
+const brow = (name, pts, o = {}) => ({ name, key: name, qualified: false, totals: { floor: pts, confirmed: pts, ceil: pts }, evo: { state: o.alive ? "alive" : "final" }, ...o });
+
+test("borderInfo: 出場権保持者を除いた枠の最後と次点、差を返す", () => {
+  const rows = [brow("T | A", 700), brow("Q", 650, { qualified: true }), brow("B", 600), brow("C", 360, { alive: true }), brow("D", 320), brow("E", 300)];
+  const b = borderInfo(rows, 3, "floor");
+  assert.deepEqual(b.last, { name: "C", pts: 360, alive: true }); // Qは枠に数えない → 枠3番目はC
+  assert.deepEqual(b.next, { name: "D", pts: 320, alive: false });
+  assert.equal(b.gap, 40);
+  assert.equal(borderInfo(rows, 3, "confirmed").slots, 3);
+  assert.equal(borderInfo(rows.slice(0, 3), 3, "floor"), null); // 枠より後ろに人がいない
+});
+
+
+test("changeEvents: 敗退・順位確定・確定圏内・圏外確定・出場権獲得を文言にし、手動上書きは出さない", () => {
+  const p = { name: "X", evoState: "alive", placement: 7, points: 0, safety: "contested", qualifiedBy: null, manual: false };
+  assert.deepEqual(changeEvents(p, { ...p, evoState: "final", points: 100, safety: "eliminated" }), ["X 敗退 → 7位 100pt確定", "X ポイント枠は圏外確定"]);
+  assert.deepEqual(changeEvents(p, { ...p, safety: "locked" }), ["X ポイント枠が確定圏内に"]);
+  assert.deepEqual(changeEvents(p, { ...p, safety: "winonly" }), ["X ポイント枠は絶望（優勝のみ）"]);
+  assert.deepEqual(changeEvents(p, { ...p, evoState: "final", placement: 2, points: 300 }), ["X 準優勝 300pt確定"]);
+  assert.deepEqual(changeEvents(p, { ...p, evoState: "final", placement: 1, points: 0, safety: "qualified", qualifiedBy: "premier" }), ["X 優勝", "X CAPCOM CUP 13の出場権を獲得（今大会）"]);
+  assert.deepEqual(changeEvents(p, { ...p, safety: "contested" }), []);
+  assert.deepEqual(changeEvents(p, { ...p, evoState: "final", manual: true }), []);
+});
+
+test("createChangeTracker: 初回は出さず、同じ変化が別々の2回の取得で続いたときだけ出す", () => {
+  const snap = (state, pl, pts) => new Map([["x", { name: "X", evoState: state, placement: pl, points: pts, safety: "contested", qualifiedBy: null, manual: false }]]);
+  const t = createChangeTracker();
+  assert.deepEqual(t.update(snap("alive", 7, 0), "t1"), []); // 初回は基準にするだけ
+  assert.deepEqual(t.update(snap("final", 7, 100), "t2"), []); // 1回目の変化は保留
+  assert.deepEqual(t.update(snap("final", 7, 100), "t2"), []); // 同じ取得(stale等)の再処理は数えない
+  const ev = t.update(snap("final", 7, 100), "t3");
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].text, "X 敗退 → 7位 100pt確定");
+  assert.equal(ev[0].at, "t2"); // 時刻は最初に見えた取得
+  assert.deepEqual(t.update(snap("final", 7, 100), "t4"), []); // 二重に出さない
+});
+
+test("createChangeTracker: 一瞬だけの変化（すぐ元に戻る）は出さない", () => {
+  const snap = (state) => new Map([["x", { name: "X", evoState: state, placement: 5, points: 150, safety: "contested", qualifiedBy: null, manual: false }]]);
+  const t = createChangeTracker();
+  t.update(snap("alive"), "t1");
+  assert.deepEqual(t.update(snap("final"), "t2"), []);
+  assert.deepEqual(t.update(snap("alive"), "t3"), []); // 元に戻った → 保留を捨てる
+  assert.deepEqual(t.update(snap("alive"), "t4"), []);
+  assert.deepEqual(t.update(snap("final"), "t5"), []); // 改めて1回目から数える
+});
+
+test("snapshotRows: 行から速報用の項目を取り出す", () => {
+  const rows = [{ key: "k", name: "CR | Dogura", evo: { state: "final", placement: 7 }, evoPoints: 100, safety: "eliminated", qualifiedBy: undefined }];
+  assert.deepEqual(snapshotRows(rows).get("k"), { name: "Dogura", evoState: "final", placement: 7, points: 100, safety: "eliminated", qualifiedBy: null, manual: false });
 });

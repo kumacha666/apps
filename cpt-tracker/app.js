@@ -1,5 +1,8 @@
 // DOM描画とイベント配線のみ。判定・集計は logic.js（テスト済み）に置く。
-import { buildRows, judge, baselineRankMap, liveFreshness, nextRefreshDelayMs, isDebugMode, friendlyLiveError, phaseLabel } from "./logic.js";
+import {
+  buildRows, judge, baselineRankMap, liveFreshness, nextRefreshDelayMs, isDebugMode, friendlyLiveError, phaseLabel,
+  borderInfo, snapshotRows, createChangeTracker,
+} from "./logic.js";
 import { initAnalytics, track } from "./analytics.js";
 
 const STORE_KEY = "cpt-tracker-v1";
@@ -8,6 +11,9 @@ const VIEW_HELP = {
   floor: "生存中の選手は「今負けた場合の順位」のポイントを加算した合計（最低保証）。",
   ceil: "生存中の選手は準優勝（300pt）まで進んだ場合の合計（最大）。優勝すると出場権を得てポイント枠から外れる。",
 };
+const VIEW_SHORT = { confirmed: "確定のみ", floor: "最低保証", ceil: "最大" };
+const FEED_MAX = 30;
+const FEED_SHOWN = 6;
 const PLACEMENT_CHOICES = [
   [1, "1位（優勝・ポイント無し）"], [2, "2位（300）"], [3, "3位（250）"], [4, "4位（200）"],
   [5, "5位タイ（150）"], [7, "7位タイ（100）"], [9, "9位タイ（50）"], [13, "13位タイ（30）"],
@@ -51,6 +57,8 @@ const state = {
   store: loadStore(),
   current: null, // { rows(ranked), meta }
   editingKey: null,
+  feed: [], // 速報（この画面を開いている間の変化）。新しい順
+  tracker: createChangeTracker(),
   debug: isDebugMode(globalThis.location?.search),
 };
 
@@ -60,6 +68,7 @@ async function fetchLive() {
   if (!url) return;
   state.loading = true;
   renderStatus();
+  let fetchedOk = false;
   try {
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -68,12 +77,23 @@ async function fetchLive() {
     state.live = data;
     state.liveError = null;
     state.lastOkAt = new Date();
+    fetchedOk = true;
   } catch (e) {
     state.liveError = String(e.message || e);
   } finally {
     state.loading = false;
     recompute();
+    if (fetchedOk) updateFeed();
   }
+}
+
+// 取得のたびに前回との差分を見て、速報欄に足す（確定の仕方は logic.js の createChangeTracker）
+function updateFeed() {
+  if (!state.current || !state.live) return;
+  const events = state.tracker.update(snapshotRows(state.current.rows), state.live.fetchedAt);
+  if (!events.length) return;
+  state.feed = [...events, ...state.feed].slice(0, FEED_MAX);
+  renderFeed();
 }
 
 // ---- 計算→描画 --------------------------------------------------------
@@ -90,6 +110,8 @@ function render() {
   renderStatus();
   renderBanners();
   renderSummary();
+  renderBorder();
+  renderFeed();
   renderControls();
   renderTable();
 }
@@ -166,6 +188,44 @@ function renderSummary() {
     h("div", { class: "card warn", title: "ポイント枠は絶望だが、優勝（または既に出場権を持つ人が優勝した場合の準優勝以下への繰り下がり）で出場権を得られる" }, h("b", { text: String(winonly) }), h("span", { text: "優勝のみ" })),
     h("div", { class: "card ng" }, h("b", { text: String(elim) }), h("span", { text: "圏外確定" })),
   );
+}
+
+function renderBorder() {
+  const box = $("border");
+  box.replaceChildren();
+  const cur = state.current;
+  if (!cur) return;
+  const view = state.store.view;
+  const b = borderInfo(cur.rows, state.config.cupSlots, view);
+  if (!b) return;
+  const who = (p) => `${p.name} ${p.pts}pt${p.alive ? "（生存中）" : ""}`;
+  const gap = b.gap === 0 ? "同点" : `差${b.gap}pt`;
+  box.append(
+    h("b", { text: "枠のボーダー" }),
+    h("span", { class: "bd-note", text: `（${VIEW_SHORT[view]}）` }),
+    h("span", { text: `枠の${b.slots}番目 ${who(b.last)}` }),
+    h("span", { class: "bd-sep", text: "／" }),
+    h("span", { text: `次点 ${who(b.next)}` }),
+    h("span", { class: "bd-gap", text: `（${gap}）` }),
+  );
+}
+
+function fmtHM(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" });
+}
+
+function renderFeed() {
+  const box = $("feed");
+  box.replaceChildren();
+  if (!state.config.apiUrl) return;
+  box.append(h("h2", { text: "いま起きたこと" }));
+  if (!state.feed.length) {
+    box.append(h("p", { class: "feed-empty", text: "更新があると、ここに表示されます（この画面を開いている間の変化）。" }));
+    return;
+  }
+  box.append(h("ul", {}, state.feed.slice(0, FEED_SHOWN).map((e) =>
+    h("li", {}, h("time", { text: fmtHM(e.at) }), h("span", { text: e.text })))));
 }
 
 function renderControls() {
