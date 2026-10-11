@@ -210,9 +210,14 @@ function renderBorder() {
   );
 }
 
+// 時刻（JST）。今日(JST)より前の日付なら「10/11 21:46」のように日付も付ける（昨日の試合が今日のものに見えないように）
 function fmtHM(iso) {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" });
+  if (Number.isNaN(d.getTime())) return "";
+  const day = (x) => x.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+  const hm = d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" });
+  if (day(d) === day(new Date())) return hm;
+  return `${d.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", timeZone: "Asia/Tokyo" })} ${hm}`;
 }
 
 function renderFeed() {
