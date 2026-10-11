@@ -221,7 +221,7 @@ function renderFeed() {
   if (!state.config.apiUrl) return;
   box.append(h("h2", { text: "いま起きたこと" }));
   if (!state.feed.length) {
-    box.append(h("p", { class: "feed-empty", text: "更新があると、ここに表示されます（この画面を開いている間の変化）。" }));
+    box.append(h("p", { class: "feed-empty", text: "敗退や枠の確定があると、ここに自動で表示されます。ページを開いたままでご覧ください。" }));
     return;
   }
   box.append(h("ul", {}, state.feed.slice(0, FEED_SHOWN).map((e) =>
