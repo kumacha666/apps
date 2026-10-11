@@ -423,3 +423,25 @@ test("phaseLabel: 進行中のフェーズ名／開始前の次フェーズ／�
   assert.equal(phaseLabel({ eventState: "ACTIVE", phases: ph(["TOP 8", "COMPLETED"]) }), "全フェーズ終了");
   assert.equal(phaseLabel({ eventState: "ACTIVE", phases: [] }), "進行中");
 });
+
+test("evaluateEntrants: 決勝1試合目の後でリセット戦が未作成（生存者0人・フェーズ進行中）の間は1位・2位を確定扱いにしない", () => {
+  const phases = [{ name: "TOP 24", state: "COMPLETED" }, { name: "TOP 8", state: "ACTIVE" }];
+  const live = {
+    eventState: "ACTIVE", aliveCount: 0, aliveIds: [], phases,
+    standings: [entrant(1, "P", 1), entrant(2, "Q", 2), entrant(3, "R", 3), entrant(4, "S", 5)],
+  };
+  const m = evaluateEntrants(live);
+  assert.equal(m.get("1").state, "alive");
+  assert.equal(m.get("2").state, "alive");
+  assert.equal(m.get("3").state, "final"); // 3位以下は決勝の結果で動かない
+  assert.equal(m.get("4").state, "final");
+  // 全フェーズ終了・大会終了なら従来どおり確定
+  const done = evaluateEntrants({ ...live, phases: phases.map((p) => ({ ...p, state: "COMPLETED" })) });
+  assert.equal(done.get("1").state, "final");
+  assert.equal(evaluateEntrants({ ...live, eventState: "COMPLETED" }).get("2").state, "final");
+  // 優勝が決まった扱いにならない（出場権の繰り下がりが動かない）
+  const cfg = { ...config, qualified: { players: [] } };
+  const base = { players: [{ name: "P", rank: 1, events: [0, 0, 0, 0, 0, 0, 0, null] }, { name: "Q", rank: 2, events: [0, 0, 0, 0, 0, 0, 0, null] }] };
+  assert.equal(buildRows({ baseline: base, config: cfg, live }).premierDecided, false);
+  assert.equal(buildRows({ baseline: base, config: cfg, live: { ...live, eventState: "COMPLETED" } }).premierDecided, true);
+});
