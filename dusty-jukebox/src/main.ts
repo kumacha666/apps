@@ -576,7 +576,7 @@ function crossfadeEnabled(): boolean {
 }
 
 // クロスフェード長（秒、ユーザー選択）をms換算で返す（2026-09-11、ユーザー提案：ON/OFFの隣に
-// 3/5/7/10秒から選べる設定を置く）。値がCROSSFADE_DURATION_OPTIONS_SECの範囲外（DOM改変等の
+// 3/5/7/10/20秒から選べる設定を置く）。値がCROSSFADE_DURATION_OPTIONS_SECの範囲外（DOM改変等の
 // 想定外の状態）の場合は既定値へフォールバックする。
 function crossfadeDurationMs(): number {
   const raw = Number(el<HTMLSelectElement>("crossfade-duration-sec").value);

@@ -21,10 +21,14 @@ function chunkIndexRange(start: number, length: number): [number, number] {
 
 export type FetchRangeFn = (startByte: number, endByteInclusive: number) => Promise<Uint8Array>;
 
+// strtok3 10.5.0以降のnormalizeOptions()は`offset`を返さない（バッファは常に先頭から埋める仕様に
+// 変更された）。package.jsonは`^10.2.1`で旧版（offsetを返す）も許容するため、どちらでも動くよう
+// offsetは省略可能とし、未指定なら0として扱う。package-lock.jsonはgitignoreのため、新規
+// `npm install`で解決される版は時期により変わる。
 interface NormalizedReadOptions {
   position: number;
   length: number;
-  offset: number;
+  offset?: number;
   mayBeLess?: boolean;
 }
 
@@ -100,7 +104,8 @@ export class DriveRangeTokenizer extends AbstractTokenizer {
 
   // uint8Arrayに書き込み、実際に埋められたバイト数を返す（ファイル末尾を超えて要求された分は書けない）
   private async _fill(uint8Array: Uint8Array, normOptions: NormalizedReadOptions): Promise<number> {
-    const { position, length, offset } = normOptions;
+    const { position, length } = normOptions;
+    const offset = normOptions.offset ?? 0;
     if (length === 0) return 0;
 
     const fileSize = this.fileInfo.size;
