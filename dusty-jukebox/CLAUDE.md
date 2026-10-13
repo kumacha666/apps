@@ -306,6 +306,8 @@
 
 ## クロスフェード（開発体制#42④の残り、2026-09-10）
 
+**クロスフェード長の選択肢は3/5/7/10/20秒**（`crossfade.ts`の`CROSSFADE_DURATION_OPTIONS_SEC`、2026-10-13に20秒を追加。UI・型ガード・秒→ms換算はすべてこの定数から派生するため、選択肢の増減はこの1箇所と`crossfade.test.ts`の確認ケースだけで済む）。先読み準備はランプ開始の`CROSSFADE_PREPARE_LEAD_MS`（5秒）前に始まるため、20秒選択時は曲末尾の約25秒前から次曲の接続確立が始まる。曲自体が25秒未満の場合は準備が即座に始まり、20秒未満ならランプも即座に始まる（既存ゲートの仕様どおり）。
+
 上記「フェードアウト（手動スキップ時）」節と対になる、開発体制#42④の本格版。手動スキップ時のフェードアウトは単曲の音量を下げてから切り替えるだけだが、こちらはキュー内の曲が**自然終了**する際、次の曲を先読み再生しながら2曲を実際に重ねて鳴らす。ユーザーとの相談で「固定3秒程度」「新しいチェックボックスで独立にON/OFF（既定OFF）」「キュー内の曲の自然終了時のみ（手動スキップ・外部単曲試聴・プレイリスト読み込み直後の1曲目は対象外）」を確認して実装した。
 
 - **設計方針：既存の`PlaybackController`/`PlaybackQueue`の単一audio要素前提は変更しない**。この2ファイルは既に多数ラウンドのレビューで固められた複雑な世代管理（generation/generationReasons/pendingFadeOriginalVolume等）を持つため、これ以上の複雑化を避け、クロスフェード専用の**一時的な第二の`<audio id="audio-player-crossfade">`要素**（`.now-playing-bar`内、メインの`#audio-player`と同じCSSで非表示）をオーバーラップ区間だけに限定して使う設計にした。メインの`#audio-player`は常にシークバー・MediaSession・`PlaybackQueue`結線の唯一の正（single source of truth）であり続ける。
@@ -764,6 +766,7 @@ CONCEPT.md 4.3節「絞り込み→除外→保存という操作フローで作
 `ai-workspace/projects/google-drive-music-player/catalog-script/`（使い捨て検証スクリプト）からの移植:
 
 - `src/lib.ts` ← `catalog-script/src/lib.js`：タグ解析・文字化け検出ロジック。`SHEET_HEADER`はcatalog-script実行時の列順のまま残しており、本体のスプレッドシート列（`CONCEPT.md` 4.3節、`_override`列等を含む実際のスキーマ）とは異なる。索引読み書きの実装時に本体スキーマへ合わせて作り直すこと
+- **`strtok3` 10.5.0以降は`normalizeOptions()`が`offset`を返さない**（バッファは常に先頭から埋める仕様）。`package.json`は`^10.2.1`で旧版も許容し、`package-lock.json`はgitignoreのため新規`npm install`の解決版は時期で変わる。`rangeTokenizer.ts`は`offset`を省略可能（未指定なら0）として両対応にしてある（2026-10-13、新規installで`rangeTokenizer.test.ts`が落ちて発覚。放置すると再ビルドでタグ抽出がずれたバイト列を読む）。`strtok3`/`music-metadata`を更新した際は`rangeTokenizer.test.ts`の「チャンク境界をまたぐ読み出し」ケースが回帰検知を担う
 - `src/rangeTokenizer.ts` ← `catalog-script/src/rangeTokenizer.js`：strtok3の`ITokenizer`実装。Drive呼び出し部分（`fetchRange`関数）はコンストラクタに渡す関数として外側から注入する設計のまま。実装自体は`drive.ts`の`createDriveFetchRange`として2026-08-20に追加済み（`catalog-script/src/verify-range.js`の`makeFetchRange`と同じ方針、ブラウザの`fetch` Range リクエストに置き換え）
 
 ## テスト

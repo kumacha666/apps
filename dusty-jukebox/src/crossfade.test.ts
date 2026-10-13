@@ -28,6 +28,11 @@ describe("crossfadeDurationMsForSeconds", () => {
   it("既定値（3秒）は既存の固定値と一致する", () => {
     expect(crossfadeDurationMsForSeconds(DEFAULT_CROSSFADE_DURATION_SEC)).toBe(3000);
   });
+
+  it("20秒は選択肢に含まれ、20000msになる（2026-10-13追加）", () => {
+    expect(CROSSFADE_DURATION_OPTIONS_SEC).toContain(20);
+    expect(crossfadeDurationMsForSeconds(20)).toBe(20000);
+  });
 });
 
 describe("isCrossfadeDurationSec", () => {

@@ -26,9 +26,10 @@ const DEFAULT_STEPS = 30;
 const defaultWait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 // クロスフェード長は秒単位でユーザーが選べる（2026-09-11、ユーザーからの提案：ON/OFFの隣に
-// 秒数設定を置き、3/5/7/10秒から選べるとちょうどよい）。QUEUE_SORT_FIELDS（queueSort.ts）と
-// 同じ「as const配列＋Record<...,label>」パターンで網羅性を保証する。
-export const CROSSFADE_DURATION_OPTIONS_SEC = [3, 5, 7, 10] as const;
+// 秒数設定を置き、3/5/7/10秒から選べるとちょうどよい）。2026-10-13、長めのつなぎを好む
+// ユーザー要望で20秒を追加。QUEUE_SORT_FIELDS（queueSort.ts）と同じ「as const配列＋
+// Record<...,label>」パターンで網羅性を保証する。
+export const CROSSFADE_DURATION_OPTIONS_SEC = [3, 5, 7, 10, 20] as const;
 export type CrossfadeDurationSec = (typeof CROSSFADE_DURATION_OPTIONS_SEC)[number];
 export const DEFAULT_CROSSFADE_DURATION_SEC: CrossfadeDurationSec = 3;
 

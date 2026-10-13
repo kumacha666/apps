@@ -1358,6 +1358,9 @@ test("クロスフェードのUI（チェックボックス・秒数選択・非
   await installGoogleMocks(context); await page.goto("/"); await login(page);
   await expect(page.getByRole("checkbox", { name: "曲間をクロスフェードする" })).toBeAttached();
   await expect(page.locator("#crossfade-duration-sec")).toBeAttached();
+  // 秒数の選択肢（3/5/7/10/20秒）がCROSSFADE_DURATION_OPTIONS_SECからそのまま描画される。
+  await expect(page.locator("#crossfade-duration-sec option")).toHaveText(["3秒", "5秒", "7秒", "10秒", "20秒"]);
+  await expect(page.locator("#crossfade-duration-sec")).toHaveValue("3");
   await expect(page.locator("#audio-player-b")).toBeAttached();
 });
 
