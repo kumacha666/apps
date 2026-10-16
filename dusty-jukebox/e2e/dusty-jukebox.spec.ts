@@ -1379,6 +1379,31 @@ test("曲一覧を読み込み直すと、古い検索結果は破棄される�
   await expect(page.locator("#search-add-all-btn")).toBeDisabled();
 });
 
+test("索引の再読み込み中は、旧索引の検索結果が失効して検索も止まり、完了後に検索できる（旧索引の曲を足さない、2026-10-16）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true, delaySheetsReads: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  const load = page.getByRole("button", { name: "索引から曲一覧を読み込む" });
+  await load.click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  const search = page.getByRole("button", { name: "検索", exact: true });
+  await page.locator("#filter-query").fill("jazz");
+  await search.click();
+  await expect(page.locator("#search-results li")).toHaveCount(1);
+
+  // 再読み込みを始めた時点で、旧索引の検索結果が失効し、検索も止まる（読み込みの長いawait中に
+  // 旧結果の「＋追加」が押せない）。
+  await load.click();
+  await expect(page.locator("#search-results li")).toHaveCount(0);
+  await expect(page.locator("#search-add-all-btn")).toBeDisabled();
+  await expect(search).toBeDisabled();
+
+  // 読み込みが終わると検索できる
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await expect(search).toBeEnabled();
+  await search.click();
+  await expect(page.locator("#search-results li")).toHaveCount(1);
+});
+
 test("曲一覧を読み込む前は「検索」ボタンが押せない（2026-10-16）", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page);
   await expect(page.getByRole("button", { name: "検索", exact: true })).toBeDisabled();

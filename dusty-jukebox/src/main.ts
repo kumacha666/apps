@@ -1091,6 +1091,12 @@ async function loadCatalog(): Promise<void> {
   // cannot overlap through two consecutive user actions.
   loadButton.disabled = true; spreadsheetInput.disabled = true;
   scanButton.disabled = true; retryButton.disabled = true; folderInput.disabled = true;
+  // 読み込み中は旧索引の検索結果を失効させ、検索も止める（2026-10-16、レビュー指摘：P2）。
+  // 別のスプレッドシートを読み込む間の長いawait中に旧結果の「＋追加」が押せると、旧索引の曲が
+  // 再生リストに混ざり、新索引の読み込み成功後も残ってしまう。検索ボタンは終了時に、旧カタログの
+  // スナップショットが残っている場合に限り再有効化する（下のfinally）。
+  clearSearchResults();
+  el<HTMLButtonElement>("search-btn").disabled = true;
   try {
     const sheetsIO = createSheetsIndexIO(spreadsheetId, () => auth.ensureAccessToken());
     const syncIO = createSyncTabIO(spreadsheetId, () => auth.ensureAccessToken());
@@ -1189,6 +1195,10 @@ async function loadCatalog(): Promise<void> {
     folderInput.disabled = false;
     scanButton.disabled = false;
     retryButton.disabled = false;
+    // 成功（新しいカタログに置き換わった）または失敗しても旧カタログのスナップショットが残って
+    // いる場合は検索を再有効化し、一度も読み込めていない・スキャンで無効化済みなら無効のままにする。
+    // 失敗時に旧索引を維持するのは「この条件で再生リストを作る」と同じ扱い。
+    el<HTMLButtonElement>("search-btn").disabled = catalogSession.createQueue(() => []) === null;
   }
 }
 // 現在の絞り込み条件に合う曲を、再生リストと同じ既定順で取り出す。「作る」と「追加」の両方が使う
