@@ -44,6 +44,11 @@ export class PlaybackQueue {
   // 誤って「再生リストが変更された」と判定してしまう。generationId()の用途（setList()での
   // 差し替え検出）に専念する別カウンタとして分離する。
   private contentGeneration = 0;
+  // appendSongs()で実際に曲が足されるたびに進む、保存待機中の検出専用の版数（2026-10-16、
+  // レビュー指摘：P2）。generationId()（contentGeneration）に足すと、main.tsが「setList()で
+  // 別のキューへ差し替わった」判定に使うバックグラウンド復帰対象・リピート切替まで、追加
+  // だけで失効してしまう。リスト差し替えの世代とは別カウンタに分ける。
+  private appendVersionCounter = 0;
   // シャッフル前の並び順（初回シャッフル時点のスナップショット）。連続してシャッフルしても
   // 上書きしない＝unshuffle()は常に「一度も並べ替えていない元の並び」へ戻る。setList()で
   // リストを作り直すたびにリセットする。
@@ -141,6 +146,9 @@ export class PlaybackQueue {
   // 組み合わせて使う：待機中にチェックボックスで一部の曲だけ除外/除外解除された場合、
   // setList()を経由しないためgenerationId()は変わらないが、これは変わる。
   exclusionVersion(): number { return this.exclusionVersionCounter; }
+  // appendSongs()で曲が足された回数。generationId()/exclusionVersion()と組み合わせて、保存待機中の
+  // 「足された」変更を検出する（handleSavePlaylist()）。setList()では進まない。
+  appendVersion(): number { return this.appendVersionCounter; }
   currentPlayingFileId(): string | null { return this.currentFileId; }
   // 「再生」ボタン（開発体制#40）向け：現在の曲を再開してよいかどうか。currentFileIdは
   // notifyExternalPlaybackStarted()後も温存され続けるため、これ単独では「キュー由来の再生
@@ -456,6 +464,41 @@ export class PlaybackQueue {
       this.originalOrder = null;
       return true;
     });
+  }
+  // 検索結果などの曲を再生リストの末尾へ足す（2026-10-16、ユーザー要望：検索→追加を何回か
+  // 繰り返して好みの再生リストを作りたい。setList()は毎回リストを丸ごと置き換えるため、これが
+  // できなかった）。
+  // - **同期的に即時反映する**（pendingMoveの直列化チェーンには載せない）。末尾に足すだけで
+  //   currentFileId（再生中の曲の位置）に依存しないため、直列化する理由が無い。チェーンに載せると、
+  //   先行するplay()が解決するまで反映が遅れ（その間ユーザーには無反応に見える）、待機中の
+  //   一時停止・invalidatePendingMove()でgenerationが進むと黙って落ちた（/code-reviewの指摘）。
+  // - 既に入っている曲と、入力内の重複は足さない。既に入っていて**除外中**の曲は除外を変えず、
+  //   alreadyExcludedとして別に数える（足し直しても再生されないことを呼び出し元が伝えるため）。
+  // - 再生中の曲・除外設定・generationは変えない。足した曲は末尾なので、現在曲より後ろにあり
+  //   next()で必ず辿り着ける。
+  // - シャッフル履歴（originalOrder）は温存し、足した曲を末尾に加える（unshuffle()が
+  //   originalOrder基準で並べ直すとき、足した曲が消えないようにするため）。
+  // - 曲が実際に足されたらappendVersion()を進める（handleSavePlaylist()のwhenIdle()待機中に
+  //   足されたことを検出し、意図しない内容を保存しないため）。generationId()は進めない
+  //   （main.tsのバックグラウンド復帰対象等が「setList()で差し替わったか」の判定に使うため）。
+  // - 配列の末尾追加は`push(...配列)`ではなくループで行う（引数の上限を超えるとRangeErrorに
+  //   なる。全曲が対象になる条件では数万曲を一度に足しうる）。
+  appendSongs(songs: Song[]): { added: number; alreadyExcluded: number } {
+    const known = new Set(this.songs.map((song) => song.fileId));
+    let added = 0;
+    let alreadyExcluded = 0;
+    for (const song of songs) {
+      if (known.has(song.fileId)) {
+        if (this.excluded.has(song.fileId)) alreadyExcluded += 1;
+        continue;
+      }
+      known.add(song.fileId);
+      this.songs.push(song);
+      this.originalOrder?.push(song);
+      added += 1;
+    }
+    if (added > 0) this.appendVersionCounter += 1;
+    return { added, alreadyExcluded };
   }
 }
 

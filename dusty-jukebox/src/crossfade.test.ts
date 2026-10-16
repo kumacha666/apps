@@ -850,3 +850,96 @@ describe("CrossfadeOrchestrator", () => {
     expect(previewAudio.seekedListenerCount()).toBe(0);
   });
 });
+
+// 2026-10-16、レビュー指摘（P2）：先読み中・ランプ中に「次の曲」が変わった場合（検索結果の追加、
+// シャッフル・並び替え・上下ボタン・除外）、先読み済みの古い曲をそのまま昇格させると、
+// 本来の次曲が再生されない（例：全曲リピートで末尾曲の再生中にAを先読み→曲Cを追加すると、
+// 正しい次曲はCなのにAが昇格する）。commitPreparedFile()は曲が存在するかしか見ないため、
+// オーケストレーター側で先読み対象と最新の次曲（queue.peekNextFileId()）の一致を確認する。
+describe("CrossfadeOrchestrator 先読み対象と最新の次曲の一致確認", () => {
+  const params = { enabled: true, durationMs: 3000, manualTransitionInFlight: false };
+
+  it("先読み中に次曲が変わったら、ランプを始めずに諦め、先読みを破棄する", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    player.inactiveControllerInstance.autoResolve = false;
+    const discarded: number[] = [];
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, {
+      wait: immediateWait,
+      steps: 1,
+      onPreviewDiscarded: (streamId) => discarded.push(streamId),
+    });
+    setNearEnd(player);
+    const volumeBefore = player.activeAudio.volume;
+
+    const started = orchestrator.maybeStart(params);
+    await Promise.resolve();
+    expect(orchestrator.isPreparing()).toBe(true);
+    queue.nextFileId = "added"; // 先読み中に追加などで次曲が変わった
+    player.inactiveControllerInstance.resolvePending();
+    await started;
+
+    expect(queue.commitCalls).toEqual([]);
+    expect(player.promotions).toBe(0);
+    expect(player.activeAudio.volume).toBe(volumeBefore);
+    expect(discarded).toEqual([1]);
+    expect(orchestrator.isActive()).toBe(false);
+  });
+
+  it("先読み中に次曲が変わり、退場側も既に自然終了していたら、通常の自然終了フローへ委ねる", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    player.inactiveControllerInstance.autoResolve = false;
+    let fallbacks = 0;
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, {
+      wait: immediateWait,
+      steps: 1,
+      onFallbackToNaturalEnd: () => { fallbacks += 1; },
+    });
+    setNearEnd(player);
+
+    const started = orchestrator.maybeStart(params);
+    await Promise.resolve();
+    queue.nextFileId = "added";
+    player.activeAudio.ended = true;
+    player.inactiveControllerInstance.resolvePending();
+    await started;
+
+    expect(player.promotions).toBe(0);
+    expect(fallbacks).toBe(1);
+  });
+
+  it("ランプ中に次曲が変わったら、コミット前に諦めて退場側の音量を元に戻す", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const release: { fn: (() => void) | null } = { fn: null };
+    const controlledWait: WaitFn = () => new Promise((resolve) => { release.fn = resolve; });
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, { wait: controlledWait, steps: 1 });
+    setNearEnd(player);
+    const volumeBefore = player.activeAudio.volume;
+
+    const started = orchestrator.maybeStart(params);
+    for (let i = 0; i < 20 && release.fn === null; i += 1) await Promise.resolve();
+    expect(orchestrator.isCrossfading()).toBe(true);
+    queue.nextFileId = "added"; // ランプ中に次曲が変わった
+    release.fn?.();
+    await started;
+
+    expect(queue.commitCalls).toEqual([]);
+    expect(player.promotions).toBe(0);
+    expect(player.activeAudio.volume).toBe(volumeBefore);
+    expect(orchestrator.isActive()).toBe(false);
+  });
+
+  it("次曲が変わらなければ、従来どおり先読み済みの曲を昇格させる", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, { wait: immediateWait, steps: 1 });
+    setNearEnd(player);
+
+    await orchestrator.maybeStart(params);
+
+    expect(queue.commitCalls).toEqual(["next"]);
+    expect(player.promotions).toBe(1);
+  });
+});

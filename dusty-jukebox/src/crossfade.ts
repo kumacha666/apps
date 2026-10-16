@@ -535,6 +535,15 @@ export class CrossfadeOrchestrator {
     }
     const activeAudio = this.player.activeAudioElement();
     const inactiveAudio = this.player.inactiveAudioElement();
+    // 先読みを始めてから今までの間に「次の曲」が変わっていないか確認する（2026-10-16、レビュー
+    // 指摘：P2）。検索結果の追加・シャッフル・並び替え・上下ボタン・除外はいずれも先読みを
+    // 無効化しないため、古い曲をそのまま昇格させると本来の次曲が再生されない（例：全曲リピートで
+    // 末尾曲の再生中にAを先読み→曲Cを追加すると、正しい次曲はCなのにAが昇格する）。
+    // 食い違えばクロスフェードを諦め、通常の自然終了フロー（正しい次曲へ進む）に委ねる。
+    if (this.queue.peekNextFileId() !== nextFileId) {
+      this.abandonRamp(activeAudio.ended);
+      return;
+    }
     // 先読み側（次の曲）自体がprepareリード時間（最大CROSSFADE_PREPARE_LEAD_MS、本番5秒）より
     // 短く、ランプ開始前に既に自然終了していた場合（2026-09-14〜、ChatGPTレビュー再指摘：P1）。
     // 停止済み・無音のBをそのままpromotionすると、無音化した曲へ切り替わるだけで実質何も
@@ -601,6 +610,14 @@ export class CrossfadeOrchestrator {
   }
 
   private async commit(nextFileId: string, myGeneration: number): Promise<void> {
+    // ランプ中にも「次の曲」が変わりうる（beginRamp()冒頭の確認と同じ理由）。コミットの直前に
+    // 再確認し、食い違えば昇格させず諦める（abandonRamp()がランプで下げた退場側の音量を復元し、
+    // 先読みを破棄する）。peekNextFileId()は同期のため、この確認とcommitPreparedFile()の間に
+    // 割り込みは入らない。
+    if (this.queue.peekNextFileId() !== nextFileId) {
+      this.abandonRamp(this.player.activeAudioElement().ended);
+      return;
+    }
     // queue.commitPreparedFile()はplayer.play()を一切呼ばない純粋な帳簿更新（pendingMove
     // 直列化のためawaitは必要）。この待機中に本物の割り込み（cancel()）が発生していれば、
     // 既にそちらが後始末済みのため何もしない。

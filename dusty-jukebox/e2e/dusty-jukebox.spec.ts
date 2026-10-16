@@ -868,6 +868,56 @@ test("保存ボタンの待機中に一部の曲だけチェックを外した�
   await expect(page.locator("#playlist-list li")).toHaveCount(0);
 });
 
+test("保存ボタンの待機中に検索結果を再生リストへ追加した場合も、保存は中止され意図しない曲は保存されない（2026-10-16、appendVersionによる検出）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true, delayFirstMediaPlay: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await page.locator("#filter-artist").fill("Soloist");
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(2);
+
+  await page.getByRole("button", { name: "再生", exact: true }).click(); // 先頭曲の再生開始、play()は保留のまま
+  await page.locator("#playlist-name").fill("追加テスト");
+  await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
+
+  // 保存がpendingMove待機中の間に、別の条件の検索結果を追加する（setList()もexclude()も
+  // 経由しないため、appendVersionだけがこの変更を検出できる）。
+  await page.locator("#filter-artist").fill("Quartet");
+  await page.getByRole("button", { name: "この条件の曲を再生リストに追加" }).click();
+
+  await page.evaluate(() => (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay());
+
+  // 追加は同期的に即時反映されステータスが先に出るので、保存の中止メッセージ（play()の解放後に
+  // 出る）が最終的に残る。中止を文言で直接確認し、保存ボタンの再有効化（保存処理の完了）まで
+  // 待ってからプレイリストが1件も作られていないことを確認する。
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await expect(page.locator("#status")).toContainText("保存を待っている間に再生リストが変更されたため、保存を中止しました。");
+  await expect(page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" })).toBeEnabled();
+  await expect(page.locator("#playlist-list li")).toHaveCount(0);
+});
+
+test("既に入っていて除外中の曲を足し直しても除外のままで、再生されない旨が案内される（2026-10-16、/code-reviewの指摘）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await page.locator("#filter-artist").fill("Soloist");
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  const items = page.locator("#catalog-list li");
+  await expect(items).toHaveCount(2);
+
+  await items.nth(0).locator("input[type=checkbox]").uncheck();
+  await page.getByRole("button", { name: "この条件の曲を再生リストに追加" }).click();
+
+  await expect(items).toHaveCount(2);
+  await expect(items.nth(0).locator("input[type=checkbox]")).not.toBeChecked();
+  await expect(page.locator("#status")).toContainText("すべて再生リストに入っています");
+  await expect(page.locator("#status")).toContainText("1曲は除外中のため再生されません");
+});
+
 test("「再生」ボタンで先頭曲から再生でき、一時停止中の曲は同じ位置から再開する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
@@ -1235,6 +1285,45 @@ test("スキャン開始後のアルバム再生は再読み込みエラーに�
   await expect(page.locator("#catalog-list li")).toHaveCount(1);
   await expect(page.locator("#catalog-list")).toContainText("Jazz Song");
   await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /album-track-/);
+});
+
+test("検索結果を再生リストへ追加でき、条件を変えて繰り返しても既存の曲は消えず重複もしない（2026-10-16、ユーザー要望）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  const append = page.getByRole("button", { name: "この条件の曲を再生リストに追加" });
+  await expect(append).toBeEnabled();
+
+  // 1回目：検索「jazz」→追加（空のリストへも足せる）
+  await page.locator("#filter-query").fill("jazz");
+  await append.click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(1);
+  await expect(page.locator("#status")).toContainText("1曲を再生リストに追加しました");
+
+  // 2回目：条件を変えて追加→1回目の曲は残ったまま末尾に続く
+  await page.locator("#filter-query").fill("");
+  await page.locator("#filter-artist").fill("Soloist");
+  await append.click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await expect(page.locator("#catalog-list li").first()).toContainText("Jazz Song");
+  await expect(page.locator("#status")).toContainText("2曲を再生リストに追加しました");
+  await expect(page.locator("#status")).toContainText("合計3曲");
+
+  // 3回目：同じ条件をもう一度→すべて入っているので増えない
+  await append.click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await expect(page.locator("#status")).toContainText("すべて再生リストに入っています");
+
+  // 従来の「作る」ボタンは引き続きリストを置き換える
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(2);
+  await expect(page.locator("#catalog-list")).not.toContainText("Jazz Song");
+});
+
+test("曲一覧を読み込む前は「再生リストに追加」ボタンが押せない（2026-10-16）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page);
+  await expect(page.getByRole("button", { name: "この条件の曲を再生リストに追加" })).toBeDisabled();
 });
 
 test("ネイティブの<audio controls>は表示されず、独自シークバー（#seek-slider）に置き換わっている（開発体制#42③、2026-09-09）", async ({ context, page }) => {

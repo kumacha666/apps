@@ -672,6 +672,18 @@ PR分割はChatGPT提案の3段階（①DualAudioPlayer基盤〈挙動は変え�
 - **2026-09-09、ChatGPTレビュー指摘（P2）を修正**：Drive側の401等で`PlaybackAuthenticationGate`に再生継続操作が保留され「認証を更新して続行」（`#playback-auth-notice`）が表示されている状態は、キューとは別管理のため`queue.setList([])`だけでは解消されず、キューが空・操作ボタン無効化された後もこの通知だけが残る（「クリア済み」と「再生継続待ち」が矛盾する）回帰があった。`handleClearQueue()`に`playbackAuthGate?.clear()`・`setPlaybackAuthNotice(false)`を追加。E2E（`e2e/dusty-jukebox.spec.ts`「認証更新待ち（「認証を更新して続行」表示中）の状態から「再生リストをクリア」を押すと...」）で、`rejectFirstStreamToken`モックで認証待ち状態を作ってからクリアし、通知が非表示になることを検証。該当コードを一時的に無効化して実際に失敗することを確認済み。
 - **2026-09-09、実機で動作確認済み**（PR #440マージ後にmainへ追従・sw.jsのCACHE_NAME競合を解消してから再デプロイ、その公開バンドルで確認）。
 
+## 検索結果の再生リストへの追加（2026-10-16）
+
+ユーザー要望：検索で出た曲を再生リストへ足していき、条件を変えて何回か繰り返して好みのリストを作りたい（従来の「この条件で再生リストを作る」は毎回リストを丸ごと置き換える）。ライブラリに「この条件の曲を再生リストに追加」ボタン（`#append-queue-btn`）を追加。「作る」ボタンは従来どおり置き換えのまま。
+
+- `PlaybackQueue.appendSongs(songs): { added, alreadyExcluded }`（`queue.ts`）。**同期的に即時反映する**（`pendingMove`の直列化チェーンには載せない）：末尾に足すだけで再生中の曲の位置に依存せず、チェーンに載せると先行する`play()`の解決待ちで反映が遅れ、待機中の一時停止・`invalidatePendingMove()`で`generation`が進むと黙って落ちた（`/code-review`の指摘。キャンセル/`null`の概念自体が不要になった）。
+- 既に入っている曲と入力内の重複は足さない。既に入っていて**除外中**の曲は除外を変えず`alreadyExcluded`として別に数え、ステータスで「除外中のため再生されません（チェックを入れると再生対象になります）」と案内する（足し直しても再生されないことを伝えるため）。足した曲は末尾（現在曲より後ろ）なので`next()`で辿れる。再生中の曲・除外設定・並び順は変えない。
+- 配列への追加は`push(...配列)`ではなくループ（スプレッドは引数上限を超えると`RangeError`。全曲が対象の条件で数万曲を足しうる。30万曲でテスト）。
+- シャッフル履歴（`originalOrder`）は温存して足した曲も末尾に加える（「シャッフルを元に戻す」で足した曲が消えない）。
+- 曲が足されたら専用の`appendVersion()`を進める。`handleSavePlaylist()`が`whenIdle()`待機中に足されたことを`generationId()`/`exclusionVersion()`と併せて検出し、保存を中止する（意図しない内容を保存しない）。**`generationId()`は進めない**：main.tsのバックグラウンド復帰対象（`pendingNaturalEndAdvance`/`pendingQueueTransitionTarget`）やリピート切替が「`setList()`で別のキューへ差し替わったか」の判定に使うため、追加だけで有効な復帰対象が失効してしまう（レビュー指摘で分離）。
+- **クロスフェードの先読み対象と最新の次曲の一致確認**（`crossfade.ts`の`beginRamp()`冒頭と`commit()`冒頭）：先読み中・ランプ中に「次の曲」が変わる操作（追加・シャッフル・並び替え・上下ボタン・除外）は先読みを無効化しないため、古い先読み曲をそのまま昇格させると本来の次曲が再生されない（例：全曲リピートで末尾曲の再生中にAを先読み→曲Cを追加すると、正しい次曲はCなのにAが昇格）。`queue.peekNextFileId()`と先読み対象が食い違えば`abandonRamp()`で諦め、通常の自然終了フローに委ねる（追加固有ではなく既存の穴だったが、追加で顕在化したためレビュー指摘で塞いだ）。
+- 足す曲の抽出は「作る」と共通の`selectSongsFromFilters()`（`main.ts`、`sortSongs(filterSongs(...))`）。カタログ未読み込み・スキャンによる無効化後は`createQueue()`がnullを返し、再読み込みを促すエラーを出す。スキャン開始時は作成ボタンと一緒に無効化し、索引読み込み成功時に有効化する。
+
 ## 保存済みプレイリスト（2026-09-03、PR #406）
 
 CONCEPT.md 4.3節「絞り込み→除外→保存という操作フローで作る「保存済みプレイリスト」機能」を実装。`src/playlists.ts`が`playlists`（`playlistId, name, createdAt, updatedAt`）・`playlist_tracks`（`playlistId, order, fileId`、1プレイリスト＝複数行の縦持ち）の2タブへの読み書きを担う。`sheetsSetup.ts`の`ensurePlaylistsTabsExist`が両タブを（index/syncタブとは独立して）ユーザーが初めてプレイリスト機能を使おうとした時点で自動作成する。
