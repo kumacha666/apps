@@ -14,6 +14,12 @@ export class CatalogSession<T> {
     this.loaded = false;
   }
 
+  // 読み込み済み（有効なスナップショットがある）かどうか。検索ボタンの有効/無効など、曲を取り出さず
+  // 状態だけを知りたい呼び出し元向け。
+  isLoaded(): boolean {
+    return this.loaded;
+  }
+
   createQueue(select: (songs: T[]) => T[]): T[] | null {
     return this.loaded ? select(this.songs) : null;
   }

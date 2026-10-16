@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { appendStatusMessage, buildSearchResultView, SEARCH_RESULT_DISPLAY_LIMIT } from "./searchResults";
+import { appendStatusMessage, buildSearchResultView, isSearchSubmitKey, SEARCH_RESULT_DISPLAY_LIMIT } from "./searchResults";
 import type { Song } from "./catalog";
 
 const song = (fileId: string): Song => ({ fileId, parentId: "p", title: fileId, artist: "", album: "", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", releaseType: "" });
@@ -87,5 +87,42 @@ describe("appendStatusMessage", () => {
   test("既に入っていて除外中の曲があれば、再生されない旨を案内する", () => {
     expect(appendStatusMessage(2, 0, 1, 7)).toContain("1曲は除外中のため再生されません（チェックを入れると再生対象になります）。");
     expect(appendStatusMessage(3, 1, 1, 7)).toContain("1曲は除外中のため再生されません");
+  });
+});
+
+// /code-reviewの指摘：1曲だけを足す操作（行の「＋追加」）で既に入っていた場合に、「条件に合う1曲は
+// すべて…」と、検索条件の一括追加向けの文言が出て紛らわしい。
+describe("appendStatusMessage（1曲だけを足す場合）", () => {
+  test("既に入っていれば、この曲が既に入っていることを伝える", () => {
+    expect(appendStatusMessage(1, 0, 0, 7)).toBe("この曲は既に再生リストに入っています（合計7曲）。");
+  });
+
+  test("既に入っていて除外中なら、除外のままで再生されない旨を伝える", () => {
+    expect(appendStatusMessage(1, 0, 1, 7)).toBe("この曲は再生リストに入っていますが除外中のため再生されません（チェックを入れると再生対象になります）。");
+  });
+
+  test("足せたときは通常の文言のまま", () => {
+    expect(appendStatusMessage(1, 1, 0, 7)).toBe("1曲を再生リストに追加しました。合計7曲。");
+  });
+});
+
+// 日本語入力の確定のEnterで検索が走らないようにする（/code-reviewの指摘：Safari/iOSは確定の
+// EnterがisComposing=falseのままkeyCode 229で届く）。
+describe("isSearchSubmitKey", () => {
+  test("通常のEnterは検索のキー", () => {
+    expect(isSearchSubmitKey({ key: "Enter", isComposing: false, keyCode: 13 })).toBe(true);
+  });
+
+  test("Enter以外は検索のキーではない", () => {
+    expect(isSearchSubmitKey({ key: "a", isComposing: false, keyCode: 65 })).toBe(false);
+    expect(isSearchSubmitKey({ key: "Tab", isComposing: false, keyCode: 9 })).toBe(false);
+  });
+
+  test("変換中（isComposing）のEnterは検索のキーではない", () => {
+    expect(isSearchSubmitKey({ key: "Enter", isComposing: true, keyCode: 13 })).toBe(false);
+  });
+
+  test("Safari/iOSの確定のEnter（isComposing=falseでkeyCode 229）も検索のキーではない", () => {
+    expect(isSearchSubmitKey({ key: "Enter", isComposing: false, keyCode: 229 })).toBe(false);
   });
 });

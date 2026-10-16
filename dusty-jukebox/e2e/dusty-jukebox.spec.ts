@@ -1404,6 +1404,51 @@ test("索引の再読み込み中は、旧索引の検索結果が失効して�
   await expect(page.locator("#search-results li")).toHaveCount(1);
 });
 
+test("抽出失敗曲の再抽出で索引を無効化したら、検索結果が失効して検索ボタンも止まる（スキャン開始時と同じ、2026-10-16）", async ({ context, page }) => {
+  await installGoogleMocks(context, { extractionFailedCount: 1 }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から1曲");
+  const search = page.getByRole("button", { name: "検索", exact: true });
+  await search.click();
+  await expect(page.locator("#search-results li")).toHaveCount(1);
+
+  await page.getByRole("button", { name: "抽出失敗曲の再抽出を試みる" }).click();
+  // 再抽出は索引を書き換えうるため、読み込み済みのスナップショットが無効化され、検索結果も失効する。
+  await expect(page.locator("#search-results li")).toHaveCount(0);
+  await expect(search).toBeDisabled();
+  await page.locator("#filter-query").press("Enter");
+  await expect(page.locator("#search-results li")).toHaveCount(0);
+});
+
+test("日本語入力の確定のEnter（isComposing=falseでkeyCode 229）では検索せず、通常のEnterでは検索する（2026-10-16）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await page.locator("#filter-query").fill("jazz");
+
+  // Safari/iOSの確定のEnter相当：isComposing=falseのまま、keyCodeが229
+  await page.locator("#filter-query").evaluate((input) => {
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, isComposing: false, bubbles: true }));
+  });
+  await page.waitForTimeout(300);
+  await expect(page.locator("#search-results li")).toHaveCount(0);
+
+  await page.locator("#filter-query").press("Enter");
+  await expect(page.locator("#search-results li")).toHaveCount(1);
+});
+
+test("検索結果の一覧は高さに上限があり一覧の中でスクロールする（下のシャッフル・再生リスト本体を押し流さない、2026-10-16）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  const style = await page.locator("#search-results").evaluate((el) => {
+    const css = getComputedStyle(el);
+    return { overflowY: css.overflowY, maxHeight: css.maxHeight };
+  });
+  expect(style.overflowY).toBe("auto");
+  expect(style.maxHeight).not.toBe("none");
+});
+
 test("曲一覧を読み込む前は「検索」ボタンが押せない（2026-10-16）", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page);
   await expect(page.getByRole("button", { name: "検索", exact: true })).toBeDisabled();

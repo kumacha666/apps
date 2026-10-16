@@ -58,6 +58,20 @@ export function buildSearchResultView(
 export function appendStatusMessage(attempted: number, added: number, alreadyExcluded: number, total: number): string {
   const skipped = attempted - added;
   const excludedNote = alreadyExcluded > 0 ? `${alreadyExcluded}曲は除外中のため再生されません（チェックを入れると再生対象になります）。` : "";
+  if (added === 0 && attempted === 1) {
+    // 行の「＋追加」（1曲だけ）。素早い二度押しなどで既に入っていた場合に、検索条件の一括追加向けの
+    // 「条件に合う1曲はすべて…」では紛らわしいため、専用の文言にする。
+    return alreadyExcluded > 0
+      ? "この曲は再生リストに入っていますが除外中のため再生されません（チェックを入れると再生対象になります）。"
+      : `この曲は既に再生リストに入っています（合計${total}曲）。`;
+  }
   if (added === 0) return `条件に合う${attempted}曲はすべて再生リストに入っています（合計${total}曲）。${excludedNote}`;
   return `${added}曲を再生リストに追加しました${skipped > 0 ? `（${skipped}曲は既に入っているため除く）` : ""}。合計${total}曲。${excludedNote}`;
+}
+
+// 絞り込み欄のEnterで検索を実行してよいキー入力かどうか。日本語入力の変換中・確定のEnterは除く：
+// 変換中はisComposing=true、Safari/iOSは確定のEnterがisComposing=falseのままkeyCode 229で届く
+// （どちらも入力の途中で検索が走って、確定前の文字列で検索してしまう）。
+export function isSearchSubmitKey(event: { key: string; isComposing: boolean; keyCode: number }): boolean {
+  return event.key === "Enter" && !event.isComposing && event.keyCode !== 229;
 }

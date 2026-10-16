@@ -13,7 +13,7 @@ import { DualAudioPlayer, createSharedStreamIdAllocator, type PlaybackController
 import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStatus";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
-import { appendStatusMessage, buildSearchResultView } from "./searchResults";
+import { appendStatusMessage, buildSearchResultView, isSearchSubmitKey, type SearchResultView } from "./searchResults";
 import { parseIndexRows, filterSongs, groupSongsByAlbum, groupAlbumsByArtist, filterAlbumGroups, filterAlbumGroupsBySongs, compareAlbumGroups, sortSongs, distinctFieldValuesForFilters, type AlbumGroup, type AlbumSort, type AutocompleteField, type Song, type SongFilters } from "./catalog";
 import { withTimeout } from "./withTimeout";
 import { CatalogOperationGate } from "./catalogOperationGate";
@@ -1176,8 +1176,8 @@ async function loadCatalog(): Promise<void> {
     // 防ぐ。persistFolderCache参照、2026-09-03 ChatGPTレビュー指摘）。
     // 書き込み失敗はこの読み込み自体を失敗させない（persistFolderCache内でcatch済み）。
     if (foldersTabReady) await persistFolderCache(spreadsheetId, newlyResolvedFromDrive, undefined, true);
+    // 検索結果は読み込み開始時に破棄済みで、読み込み中は検索も止まっているため、ここで改めて破棄する必要は無い。
     catalogSession.replace(songs);
-    clearSearchResults();
     loadedCatalogSpreadsheetId = spreadsheetId;
     loadedAlbumGroups = groupSongsByAlbum(songs);
     refreshAlbumGroups();
@@ -1198,7 +1198,7 @@ async function loadCatalog(): Promise<void> {
     // 成功（新しいカタログに置き換わった）または失敗しても旧カタログのスナップショットが残って
     // いる場合は検索を再有効化し、一度も読み込めていない・スキャンで無効化済みなら無効のままにする。
     // 失敗時に旧索引を維持するのは「この条件で再生リストを作る」と同じ扱い。
-    el<HTMLButtonElement>("search-btn").disabled = catalogSession.createQueue(() => []) === null;
+    el<HTMLButtonElement>("search-btn").disabled = !catalogSession.isLoaded();
   }
 }
 // 現在の絞り込み条件に合う曲を、再生リストと同じ既定順で取り出す。「作る」と「追加」の両方が使う
@@ -1232,22 +1232,45 @@ function runSearch(): void {
   const songs = selectSongsFromFilters("検索");
   if (!songs) return;
   searchResults = songs;
-  renderSearchResults();
-  setStatus(songs.length === 0 ? "条件に合う曲がありませんでした。" : `${songs.length}曲がヒットしました。検索結果から再生リストに追加できます。`);
+  const view = renderSearchResults();
+  // 0件の文言は要約（#search-summary）と同じ一箇所（buildSearchResultView）から取り、二重管理しない。
+  setStatus(view.total === 0 ? view.summary : `${view.total}曲ヒットしました。検索結果から再生リストに追加できます。`);
 }
 function clearSearchResults(): void {
   searchResults = null;
   renderSearchResults();
 }
+// カタログのスナップショットを無効化したとき（スキャン・再抽出の開始）の検索まわりの後始末：結果を
+// 破棄して検索ボタンも止める。再読み込み（loadCatalog）が成功するまで検索はできない。
+function invalidateSearchForCatalogChange(): void {
+  clearSearchResults();
+  el<HTMLButtonElement>("search-btn").disabled = true;
+}
 // 検索結果の一覧を描画し直す。renderQueue()の末尾からも呼ぶ（再生リストの中身が変わるたびに
 // 「追加済み」の表示と「すべて追加」の件数を最新にするため）。
-function renderSearchResults(): void {
-  const list = el<HTMLUListElement>("search-results"); list.innerHTML = "";
-  const inQueueIds = new Set((queue?.all() ?? []).map((song) => song.fileId));
-  const excludedIds = new Set([...inQueueIds].filter((fileId) => queue?.isExcluded(fileId) ?? false));
-  const view = buildSearchResultView(searchResults, inQueueIds, excludedIds);
-  el<HTMLParagraphElement>("search-summary").textContent = view.summary;
+function renderSearchResults(): SearchResultView {
+  const list = el<HTMLUListElement>("search-results");
   const addAll = el<HTMLButtonElement>("search-add-all-btn");
+  // 未検索のときは再生リストを一切走査しない（renderQueue()の末尾から毎回呼ばれ、再生リストが
+  // 数万曲でも曲の切り替え・除外の切り替え・上下ボタンのたびに無駄な走査をしないため。
+  // /code-reviewの指摘）。一覧・要約・「すべて追加」を空の状態にするだけ。
+  if (searchResults === null) {
+    list.replaceChildren();
+    el<HTMLParagraphElement>("search-summary").textContent = "";
+    addAll.disabled = true;
+    addAll.textContent = "検索結果をすべて再生リストに追加";
+    return buildSearchResultView(null, new Set());
+  }
+  // 再生リストの「入っている曲」と「そのうち除外中の曲」を1回の走査で集める。
+  const inQueueIds = new Set<string>();
+  const excludedIds = new Set<string>();
+  for (const song of queue?.all() ?? []) {
+    inQueueIds.add(song.fileId);
+    if (queue?.isExcluded(song.fileId)) excludedIds.add(song.fileId);
+  }
+  const view = buildSearchResultView(searchResults, inQueueIds, excludedIds);
+  list.replaceChildren();
+  el<HTMLParagraphElement>("search-summary").textContent = view.summary;
   addAll.disabled = view.addableCount === 0;
   addAll.textContent = view.total > 0 ? `ヒットした${view.total}曲をすべて再生リストに追加` : "検索結果をすべて再生リストに追加";
   for (const song of view.shown) {
@@ -1263,6 +1286,7 @@ function renderSearchResults(): void {
     item.append(label, " ", addBtn);
     list.append(item);
   }
+  return view;
 }
 // 曲を再生リストの末尾へ足す。queue.appendSongs()は同期的に即時反映されるため、先行する再生操作の
 // 解決待ちの間でも反応が遅れず、途中で黙って落ちることも無い。
@@ -2472,7 +2496,7 @@ async function handleRetryExtraction(): Promise<void> {
     // 残り、削除・変更済みの内容から再生リストが作られてしまう恐れがある（2026-09-02 Codex
     // レビュー指摘、P2）。
     catalogSession.invalidate();
-    clearSearchResults();
+    invalidateSearchForCatalogChange();
     loadedCatalogSpreadsheetId = null;
     // タグ抽出中に他デバイスの差分同期が同じファイルを先に処理していた場合、書き込み直前に
     // 索引を読み直しそのエントリを書き込まずスキップする（2026-09-02 Codexレビュー指摘、P1：
@@ -2589,10 +2613,9 @@ async function handleScan(): Promise<void> {
   // A scan can update or delete index rows. Invalidate the previous snapshot
   // before the first asynchronous scan operation so it can never form a queue.
   catalogSession.invalidate();
-  clearSearchResults();
+  invalidateSearchForCatalogChange();
   loadedCatalogSpreadsheetId = null;
   el<HTMLButtonElement>("create-queue-btn").disabled = true;
-  el<HTMLButtonElement>("search-btn").disabled = true;
   // A scan can change both index and sync rows. Keep catalog loading from
   // consuming the intermediate state until the scan has fully completed.
   folderInput.disabled = true;
@@ -3043,11 +3066,14 @@ function init(): void {
     el<HTMLButtonElement>("search-btn").addEventListener("click", runSearch);
     el<HTMLButtonElement>("search-add-all-btn").addEventListener("click", () => addSongsToQueue(searchResults ?? []));
     // 絞り込み欄でEnterを押しても検索を実行できる（検索ボタンが有効＝曲一覧の読み込み後のみ）。
+    // 日本語入力の変換・確定のEnterは除く（isSearchSubmitKey参照）。preventDefaultは呼ばない：
+    // datalistの候補をEnterで選ぶ既定の動作を妨げないため（これらの欄はformの中に無く、Enterの
+    // 既定の動作で送信されることも無い）。候補の選択が入力値に反映された後の値で検索するよう、
+    // 検索は次のタスクへ遅らせる（候補を選ぶEnterで、反映前の途中の文字列で検索してしまうのを避ける）。
     for (const id of ["filter-query", "filter-artist", "filter-album", "filter-composer", "filter-genre", "filter-release-type", "filter-min-year", "filter-max-year"]) {
       el<HTMLInputElement>(id).addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" || event.isComposing || el<HTMLButtonElement>("search-btn").disabled) return;
-        event.preventDefault();
-        runSearch();
+        if (!isSearchSubmitKey(event) || el<HTMLButtonElement>("search-btn").disabled) return;
+        setTimeout(() => { if (!el<HTMLButtonElement>("search-btn").disabled) runSearch(); }, 0);
       });
     }
     // アルバム検索は曲の絞り込み（ボタン起点）とは別に、入力の都度その場で絞り込む
