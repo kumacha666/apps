@@ -1237,6 +1237,45 @@ test("スキャン開始後のアルバム再生は再読み込みエラーに�
   await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /album-track-/);
 });
 
+test("検索結果を再生リストへ追加でき、条件を変えて繰り返しても既存の曲は消えず重複もしない（2026-10-16、ユーザー要望）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  const append = page.getByRole("button", { name: "この条件の曲を再生リストに追加" });
+  await expect(append).toBeEnabled();
+
+  // 1回目：検索「jazz」→追加（空のリストへも足せる）
+  await page.locator("#filter-query").fill("jazz");
+  await append.click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(1);
+  await expect(page.locator("#status")).toContainText("1曲を再生リストに追加しました");
+
+  // 2回目：条件を変えて追加→1回目の曲は残ったまま末尾に続く
+  await page.locator("#filter-query").fill("");
+  await page.locator("#filter-artist").fill("Soloist");
+  await append.click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await expect(page.locator("#catalog-list li").first()).toContainText("Jazz Song");
+  await expect(page.locator("#status")).toContainText("2曲を再生リストに追加しました");
+  await expect(page.locator("#status")).toContainText("合計3曲");
+
+  // 3回目：同じ条件をもう一度→すべて入っているので増えない
+  await append.click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await expect(page.locator("#status")).toContainText("すべて再生リストに入っています");
+
+  // 従来の「作る」ボタンは引き続きリストを置き換える
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(2);
+  await expect(page.locator("#catalog-list")).not.toContainText("Jazz Song");
+});
+
+test("曲一覧を読み込む前は「再生リストに追加」ボタンが押せない（2026-10-16）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page);
+  await expect(page.getByRole("button", { name: "この条件の曲を再生リストに追加" })).toBeDisabled();
+});
+
 test("ネイティブの<audio controls>は表示されず、独自シークバー（#seek-slider）に置き換わっている（開発体制#42③、2026-09-09）", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
   expect(await page.locator("#audio-player").evaluate((el) => el.hasAttribute("controls"))).toBe(false);

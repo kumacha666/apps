@@ -672,6 +672,16 @@ PR分割はChatGPT提案の3段階（①DualAudioPlayer基盤〈挙動は変え�
 - **2026-09-09、ChatGPTレビュー指摘（P2）を修正**：Drive側の401等で`PlaybackAuthenticationGate`に再生継続操作が保留され「認証を更新して続行」（`#playback-auth-notice`）が表示されている状態は、キューとは別管理のため`queue.setList([])`だけでは解消されず、キューが空・操作ボタン無効化された後もこの通知だけが残る（「クリア済み」と「再生継続待ち」が矛盾する）回帰があった。`handleClearQueue()`に`playbackAuthGate?.clear()`・`setPlaybackAuthNotice(false)`を追加。E2E（`e2e/dusty-jukebox.spec.ts`「認証更新待ち（「認証を更新して続行」表示中）の状態から「再生リストをクリア」を押すと...」）で、`rejectFirstStreamToken`モックで認証待ち状態を作ってからクリアし、通知が非表示になることを検証。該当コードを一時的に無効化して実際に失敗することを確認済み。
 - **2026-09-09、実機で動作確認済み**（PR #440マージ後にmainへ追従・sw.jsのCACHE_NAME競合を解消してから再デプロイ、その公開バンドルで確認）。
 
+## 検索結果の再生リストへの追加（2026-10-16）
+
+ユーザー要望：検索で出た曲を再生リストへ足していき、条件を変えて何回か繰り返して好みのリストを作りたい（従来の「この条件で再生リストを作る」は毎回リストを丸ごと置き換える）。ライブラリに「この条件の曲を再生リストに追加」ボタン（`#append-queue-btn`）を追加。「作る」ボタンは従来どおり置き換えのまま。
+
+- `PlaybackQueue.appendSongs(songs): Promise<number>`（`queue.ts`）が足せた件数を返す。既に入っている曲（除外中を含む）と入力内の重複は足さない。足した曲は末尾（現在曲より後ろ）なので`next()`で辿れる。再生中の曲・除外設定・並び順は変えない。
+- `moveSong()`等と同じ`pendingMove`直列化チェーンに参加する。待機中に`setList()`で別のリストへ差し替わった場合は`move()`の世代確認で実行されず0を返す（古い検索結果を新しいリストへ混ぜない）。
+- シャッフル履歴（`originalOrder`）は温存して足した曲も末尾に加える（「シャッフルを元に戻す」で足した曲が消えない）。
+- 曲一覧の中身が変わるので`contentGeneration`（`generationId()`）を進める。`handleSavePlaylist()`が`whenIdle()`待機中に足されたことを検出して保存を中止する（意図しない内容を保存しない）。
+- 足す曲の抽出は`createQueueFromFilters()`と同じ`sortSongs(filterSongs(...))`。カタログ未読み込み・スキャンによる無効化後は`createQueue()`がnullを返し、再読み込みを促すエラーを出す（作成時と同じ）。スキャン開始時は作成ボタンと一緒に無効化し、索引読み込み成功時に有効化する。
+
 ## 保存済みプレイリスト（2026-09-03、PR #406）
 
 CONCEPT.md 4.3節「絞り込み→除外→保存という操作フローで作る「保存済みプレイリスト」機能」を実装。`src/playlists.ts`が`playlists`（`playlistId, name, createdAt, updatedAt`）・`playlist_tracks`（`playlistId, order, fileId`、1プレイリスト＝複数行の縦持ち）の2タブへの読み書きを担う。`sheetsSetup.ts`の`ensurePlaylistsTabsExist`が両タブを（index/syncタブとは独立して）ユーザーが初めてプレイリスト機能を使おうとした時点で自動作成する。

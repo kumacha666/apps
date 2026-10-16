@@ -1243,6 +1243,93 @@ describe("PlaybackQueue.resume() onRegistered", () => {
   });
 });
 
+// 検索結果を既存の再生リストの末尾へ足していく機能（2026-10-16、ユーザー要望：検索→追加を
+// 何回か繰り返して好みの再生リストを作りたい。従来の「この条件で再生リストを作る」は毎回
+// リストを丸ごと置き換えるためできなかった）。
+describe("PlaybackQueue.appendSongs", () => {
+  test("空のリストへも末尾へも足せて、追加できた件数を返す", async () => {
+    const queue = new PlaybackQueue({ play: async () => {} }, new Audio());
+    expect(await queue.appendSongs([song("a"), song("b")])).toBe(2);
+    expect(await queue.appendSongs([song("c")])).toBe(1);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "c"]);
+  });
+
+  test("既に入っている曲（除外中の曲を含む）と、今回の入力内の重複は足さない", async () => {
+    const queue = new PlaybackQueue({ play: async () => {} }, new Audio());
+    queue.setList([song("a"), song("b")]);
+    queue.exclude("b", true);
+    expect(await queue.appendSongs([song("a"), song("b"), song("c"), song("c")])).toBe(1);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "c"]);
+    expect(queue.isExcluded("b")).toBe(true);
+  });
+
+  test("足す曲が無ければ0を返し、リストも世代も変えない", async () => {
+    const queue = new PlaybackQueue({ play: async () => {} }, new Audio());
+    queue.setList([song("a")]);
+    const before = queue.generationId();
+    expect(await queue.appendSongs([song("a")])).toBe(0);
+    expect(await queue.appendSongs([])).toBe(0);
+    expect(queue.generationId()).toBe(before);
+  });
+
+  test("再生中の曲・除外設定は変えず、足した曲へはnext()で辿り着ける", async () => {
+    const played: string[] = [];
+    const queue = new PlaybackQueue({ play: async (id) => { played.push(id); } }, new Audio());
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0);
+    await queue.appendSongs([song("c")]);
+    expect(queue.currentPlayingFileId()).toBe("a");
+    expect(await queue.next()).toBe(true);
+    expect(await queue.next()).toBe(true);
+    expect(played).toEqual(["a", "b", "c"]);
+  });
+
+  test("曲一覧が変わるのでgenerationId()が進む（保存待機中の検出に使われる）", async () => {
+    const queue = new PlaybackQueue({ play: async () => {} }, new Audio());
+    queue.setList([song("a")]);
+    const before = queue.generationId();
+    await queue.appendSongs([song("b")]);
+    expect(queue.generationId()).toBe(before + 1);
+  });
+
+  test("シャッフル後に足しても、シャッフルを元に戻したときに足した曲が消えない", async () => {
+    const queue = new PlaybackQueue({ play: async () => {} }, new Audio());
+    queue.setList([song("a"), song("b"), song("c")]);
+    await queue.shuffle(() => 0);
+    await queue.appendSongs([song("d")]);
+    expect(queue.hasShuffleHistory()).toBe(true);
+    await queue.unshuffle();
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  test("進行中の移動（player.play()の解決待ち）が終わってから反映される", async () => {
+    let release: () => void = () => {};
+    const queue = new PlaybackQueue({ play: () => new Promise<void>((resolve) => { release = resolve; }) }, new Audio());
+    queue.setList([song("a")]);
+    const moving = queue.playAt(0);
+    const appending = queue.appendSongs([song("b")]);
+    await Promise.resolve();
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a"]);
+    release();
+    await moving;
+    expect(await appending).toBe(1);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b"]);
+  });
+
+  test("待機中に別のリストへ差し替えられたら、古い検索結果は足さない", async () => {
+    let release: () => void = () => {};
+    const queue = new PlaybackQueue({ play: () => new Promise<void>((resolve) => { release = resolve; }) }, new Audio());
+    queue.setList([song("a")]);
+    const moving = queue.playAt(0);
+    const appending = queue.appendSongs([song("old")]);
+    queue.setList([song("x")]);
+    release();
+    await moving.catch(() => {});
+    expect(await appending).toBe(0);
+    expect(queue.all().map((s) => s.fileId)).toEqual(["x"]);
+  });
+});
+
 describe("queueRowViews", () => {
   test("除外されていない曲だけがlistIndexを持ち、list()と同じ順序で採番される", () => {
     const songs = [song("a"), song("b"), song("c")];

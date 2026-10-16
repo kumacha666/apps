@@ -421,6 +421,7 @@ function render(): void {
         <datalist id="filter-release-type-options"></datalist>
         <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
         <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
+        <button id="append-queue-btn" type="button" disabled>この条件の曲を再生リストに追加</button>
         <div><button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button> <button id="clear-queue-btn" type="button" disabled>再生リストをクリア</button></div>
         <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトする</label>
         <label><input id="crossfade-toggle" type="checkbox" /> 曲間をクロスフェードする</label>
@@ -1167,6 +1168,7 @@ async function loadCatalog(): Promise<void> {
     refreshAlbumGroups();
     renderFilterSuggestions(songs);
     el<HTMLButtonElement>("create-queue-btn").disabled = false;
+    el<HTMLButtonElement>("append-queue-btn").disabled = false;
     setStatus(`索引から${songs.length}曲を読み込みました${failedPathCount > 0 ? `（${failedPathCount}件はパス解決に失敗）` : ""}。条件を指定して再生リストを作れます。`);
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
@@ -1189,6 +1191,36 @@ function createQueueFromFilters(): void {
   }
   queue.setList(songs); renderQueue(); setQueueNavEnabled(songs.length > 0);
   setStatus(`${songs.length}曲の再生リストを作りました。`);
+}
+
+// 現在の絞り込み条件に合う曲を、既存の再生リストの末尾へ足す（2026-10-16、ユーザー要望：
+// 検索→追加を何回か繰り返して好みの再生リストを作りたい）。createQueueFromFilters()が毎回
+// リストを置き換えるのに対し、こちらは足すだけで、再生中の曲・除外設定・並び順は変えない。
+// 既に入っている曲は足さない（queue.appendSongs()参照）。足した曲の並びは新規作成時と同じ
+// 既定順（sortSongs）で末尾に続く。
+async function appendQueueFromFilters(): Promise<void> {
+  if (!queue) return;
+  const currentQueue = queue;
+  const songs = catalogSession.createQueue((loadedSongs) => sortSongs(filterSongs(loadedSongs, currentFilterValues())));
+  if (!songs) {
+    setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストに追加してください。", true);
+    return;
+  }
+  if (songs.length === 0) {
+    setStatus("条件に合う曲がありませんでした。", true);
+    return;
+  }
+  const added = await currentQueue.appendSongs(songs);
+  // 待機中に再生リストが別のものへ差し替えられていた場合はqueue.ts側で何も足されず0になる。
+  // 最新のキューの状態を描画し直す（差し替えた側の操作が自身でrenderQueue()済みだが冪等）。
+  renderQueue(); setQueueNavEnabled(currentQueue.all().length > 0);
+  const total = currentQueue.all().length;
+  const skipped = songs.length - added;
+  if (added === 0) {
+    setStatus(`条件に合う${songs.length}曲はすべて再生リストに入っています（合計${total}曲）。`);
+    return;
+  }
+  setStatus(`${added}曲を再生リストに追加しました${skipped > 0 ? `（${skipped}曲は既に入っているため除く）` : ""}。合計${total}曲。`);
 }
 
 function setStatus(message: string, isError = false): void {
@@ -2507,6 +2539,7 @@ async function handleScan(): Promise<void> {
   catalogSession.invalidate();
   loadedCatalogSpreadsheetId = null;
   el<HTMLButtonElement>("create-queue-btn").disabled = true;
+  el<HTMLButtonElement>("append-queue-btn").disabled = true;
   // A scan can change both index and sync rows. Keep catalog loading from
   // consuming the intermediate state until the scan has fully completed.
   folderInput.disabled = true;
@@ -2954,6 +2987,7 @@ function init(): void {
     el<HTMLButtonElement>("playback-auth-refresh-btn").addEventListener("click", () => void continuePlaybackAfterAuthentication());
     el<HTMLButtonElement>("load-catalog-btn").addEventListener("click", () => void loadCatalog());
     el<HTMLButtonElement>("create-queue-btn").addEventListener("click", createQueueFromFilters);
+    el<HTMLButtonElement>("append-queue-btn").addEventListener("click", () => void appendQueueFromFilters());
     // アルバム検索は曲の絞り込み（ボタン起点）とは別に、入力の都度その場で絞り込む
     // （アルバム件数は曲数よりずっと少なく、jankの懸念が無いためユーザーとの相談で確認済み）。
     el<HTMLInputElement>("album-search").addEventListener("input", () => {

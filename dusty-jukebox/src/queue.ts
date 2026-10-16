@@ -457,6 +457,37 @@ export class PlaybackQueue {
       return true;
     });
   }
+  // 検索結果などの曲を再生リストの末尾へ足し、実際に足せた件数を返す（2026-10-16、ユーザー要望：
+  // 検索→追加を何回か繰り返して好みの再生リストを作りたい。setList()は毎回リストを丸ごと
+  // 置き換えるため、これができなかった）。
+  // - 既に入っている曲（除外中の曲を含む。除外設定は変えない）と、入力内の重複は足さない。
+  // - 再生中の曲・除外設定・generationは変えない。足した曲は末尾なので、現在曲より後ろにあり
+  //   next()で必ず辿り着ける。
+  // - シャッフル履歴（originalOrder）は温存し、足した曲を末尾に加える（unshuffle()が
+  //   originalOrder基準で並べ直すとき、足した曲が消えないようにするため）。
+  // - 曲一覧の中身が変わるのでcontentGenerationを進める（handleSavePlaylist()のwhenIdle()待機中に
+  //   足されたことをgenerationId()で検出し、意図しない内容を保存しないため）。
+  // - moveSong()等と同じpendingMoveの直列化チェーンに参加する。待機中にsetList()で別のリストへ
+  //   差し替えられた場合はmove()の世代確認で実行されず、0を返す（古い検索結果を新しいリストへ
+  //   混ぜない）。
+  appendSongs(songs: Song[]): Promise<number> {
+    let added = 0;
+    return this.move(async () => {
+      const known = new Set(this.songs.map((song) => song.fileId));
+      const fresh: Song[] = [];
+      for (const song of songs) {
+        if (known.has(song.fileId)) continue;
+        known.add(song.fileId);
+        fresh.push(song);
+      }
+      if (fresh.length === 0) return false;
+      this.songs.push(...fresh);
+      if (this.originalOrder !== null) this.originalOrder.push(...fresh);
+      this.contentGeneration += 1;
+      added = fresh.length;
+      return true;
+    }).then(() => added);
+  }
 }
 
 // 索引ライブラリUI（main.tsのrenderQueue）向けの純粋な表示計算。DOM操作自体はmain.tsに残すが、
