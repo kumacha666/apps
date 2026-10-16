@@ -16,4 +16,17 @@ describe("CatalogSession", () => {
     catalog.replace(["rescanned-song"]);
     expect(catalog.createQueue((songs) => [...songs])).toEqual(["rescanned-song"]);
   });
+
+  // 検索ボタンの有効/無効など「読み込み済みか」だけを知りたい呼び出し元のための問い合わせ
+  // （createQueue(() => [])がnullかどうかで代用すると、createQueueの意味が変わったときに壊れる）。
+  test("isLoaded()は読み込み済みかどうかだけを返し、空のカタログでも読み込み済みならtrue", () => {
+    const catalog = new CatalogSession<string>();
+    expect(catalog.isLoaded()).toBe(false);
+    catalog.replace([]);
+    expect(catalog.isLoaded()).toBe(true);
+    catalog.replace(["a"]);
+    expect(catalog.isLoaded()).toBe(true);
+    catalog.invalidate();
+    expect(catalog.isLoaded()).toBe(false);
+  });
 });

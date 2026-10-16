@@ -148,6 +148,13 @@
     .filter-years input { width: 100%; }
     #now-playing { font-weight: 600; color: #d9a441; }
     .queue-item.now-playing { background: #2a2530; border-radius: 4px; }
+    /* 検索結果の行：曲名の長さに関わらず「＋追加」ボタンを右端にそろえる（2026-10-16）。 */
+    /* 検索結果の一覧は高さに上限を付けて一覧の中でスクロールさせる（200行が並んでも、下のシャッフル・
+       クリア・並び替え・再生リスト本体が画面の下へ押し流されないように。2026-10-16、レビュー指摘）。 */
+    #search-results { max-height: 40vh; overflow-y: auto; }
+    .search-result-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .search-result-item span { min-width: 0; text-align: left; overflow-wrap: anywhere; }
+    .search-result-item button { flex: none; }
     .song-link { cursor: pointer; }
     .song-link:hover { text-decoration: underline; }
     .album-artist-heading { font-weight: 600; color: #d9a441; margin-top: 8px; list-style: none; }
