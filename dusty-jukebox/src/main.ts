@@ -933,6 +933,7 @@ async function handleSavePlaylist(): Promise<void> {
   // 除外バージョンを記録しておく（2026-09-08、Codexレビュー指摘：P2）。
   const startGeneration = queue?.generationId();
   const startExclusionVersion = queue?.exclusionVersion();
+  const startAppendVersion = queue?.appendVersion();
   try {
     // 上下ボタン（moveSong）等、queueへの直前の操作がplayer.play()の解決待ちでまだ
     // pendingMove内に留まっている場合があるため、実際に保存する曲順を読む前に完了を待つ
@@ -948,7 +949,7 @@ async function handleSavePlaylist(): Promise<void> {
     // 無関係な曲を保存してしまうため中止する。曲数チェックは差し替え確認と合わせて
     // ここでも行う（待機中の除外操作で全曲除外された場合、世代も除外バージョンも
     // チェックだけでは「元々何曲だったか」までは分からないため）。
-    if (queue?.generationId() !== startGeneration || queue?.exclusionVersion() !== startExclusionVersion) {
+    if (queue?.generationId() !== startGeneration || queue?.exclusionVersion() !== startExclusionVersion || queue?.appendVersion() !== startAppendVersion) {
       setStatus("保存を待っている間に再生リストが変更されたため、保存を中止しました。内容を確認してもう一度お試しください。", true);
       return;
     }
@@ -1211,8 +1212,11 @@ async function appendQueueFromFilters(): Promise<void> {
     return;
   }
   const added = await currentQueue.appendSongs(songs);
-  // 待機中に再生リストが別のものへ差し替えられていた場合はqueue.ts側で何も足されず0になる。
-  // 最新のキューの状態を描画し直す（差し替えた側の操作が自身でrenderQueue()済みだが冪等）。
+  // 待機中に再生リストが別のものへ差し替えられていた場合、queue.ts側で何も足されずnull（キャンセル）
+  // になる。差し替えた側の操作が自身で描画・ステータス表示を済ませているため、ここでは何も
+  // 上書きしない（「すべて入っています」のような、新しいリストについて誤った成功メッセージを
+  // 後から出さない。2026-10-16、レビュー指摘：P2）。
+  if (added === null) return;
   renderQueue(); setQueueNavEnabled(currentQueue.all().length > 0);
   const total = currentQueue.all().length;
   const skipped = songs.length - added;

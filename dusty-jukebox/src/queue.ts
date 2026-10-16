@@ -44,6 +44,11 @@ export class PlaybackQueue {
   // 誤って「再生リストが変更された」と判定してしまう。generationId()の用途（setList()での
   // 差し替え検出）に専念する別カウンタとして分離する。
   private contentGeneration = 0;
+  // appendSongs()で実際に曲が足されるたびに進む、保存待機中の検出専用の版数（2026-10-16、
+  // レビュー指摘：P2）。generationId()（contentGeneration）に足すと、main.tsが「setList()で
+  // 別のキューへ差し替わった」判定に使うバックグラウンド復帰対象・リピート切替まで、追加
+  // だけで失効してしまう。リスト差し替えの世代とは別カウンタに分ける。
+  private appendVersionCounter = 0;
   // シャッフル前の並び順（初回シャッフル時点のスナップショット）。連続してシャッフルしても
   // 上書きしない＝unshuffle()は常に「一度も並べ替えていない元の並び」へ戻る。setList()で
   // リストを作り直すたびにリセットする。
@@ -141,6 +146,9 @@ export class PlaybackQueue {
   // 組み合わせて使う：待機中にチェックボックスで一部の曲だけ除外/除外解除された場合、
   // setList()を経由しないためgenerationId()は変わらないが、これは変わる。
   exclusionVersion(): number { return this.exclusionVersionCounter; }
+  // appendSongs()で曲が足された回数。generationId()/exclusionVersion()と組み合わせて、保存待機中の
+  // 「足された」変更を検出する（handleSavePlaylist()）。setList()では進まない。
+  appendVersion(): number { return this.appendVersionCounter; }
   currentPlayingFileId(): string | null { return this.currentFileId; }
   // 「再生」ボタン（開発体制#40）向け：現在の曲を再開してよいかどうか。currentFileIdは
   // notifyExternalPlaybackStarted()後も温存され続けるため、これ単独では「キュー由来の再生
@@ -465,14 +473,16 @@ export class PlaybackQueue {
   //   next()で必ず辿り着ける。
   // - シャッフル履歴（originalOrder）は温存し、足した曲を末尾に加える（unshuffle()が
   //   originalOrder基準で並べ直すとき、足した曲が消えないようにするため）。
-  // - 曲一覧の中身が変わるのでcontentGenerationを進める（handleSavePlaylist()のwhenIdle()待機中に
-  //   足されたことをgenerationId()で検出し、意図しない内容を保存しないため）。
+  // - 曲が実際に足されたらappendVersion()を進める（handleSavePlaylist()のwhenIdle()待機中に
+  //   足されたことを検出し、意図しない内容を保存しないため）。generationId()は進めない
+  //   （main.tsのバックグラウンド復帰対象等が「setList()で差し替わったか」の判定に使うため）。
   // - moveSong()等と同じpendingMoveの直列化チェーンに参加する。待機中にsetList()で別のリストへ
-  //   差し替えられた場合はmove()の世代確認で実行されず、0を返す（古い検索結果を新しいリストへ
-  //   混ぜない）。
-  appendSongs(songs: Song[]): Promise<number> {
-    let added = 0;
+  //   差し替えられた場合はmove()の世代確認で実行されず、**0ではなくnull（キャンセル）**を返す
+  //   （「すべて既に入っている」の0と区別するため。古い検索結果を新しいリストへ混ぜない）。
+  appendSongs(songs: Song[]): Promise<number | null> {
+    let result: number | null = null;
     return this.move(async () => {
+      result = 0;
       const known = new Set(this.songs.map((song) => song.fileId));
       const fresh: Song[] = [];
       for (const song of songs) {
@@ -483,10 +493,10 @@ export class PlaybackQueue {
       if (fresh.length === 0) return false;
       this.songs.push(...fresh);
       if (this.originalOrder !== null) this.originalOrder.push(...fresh);
-      this.contentGeneration += 1;
-      added = fresh.length;
+      this.appendVersionCounter += 1;
+      result = fresh.length;
       return true;
-    }).then(() => added);
+    }).then(() => result);
   }
 }
 

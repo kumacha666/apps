@@ -1263,13 +1263,15 @@ describe("PlaybackQueue.appendSongs", () => {
     expect(queue.isExcluded("b")).toBe(true);
   });
 
-  test("足す曲が無ければ0を返し、リストも世代も変えない", async () => {
+  test("足す曲が無ければ0を返し、リストも各版数も変えない", async () => {
     const queue = new PlaybackQueue({ play: async () => {} }, new Audio());
     queue.setList([song("a")]);
-    const before = queue.generationId();
+    const generation = queue.generationId();
+    const appendVersion = queue.appendVersion();
     expect(await queue.appendSongs([song("a")])).toBe(0);
     expect(await queue.appendSongs([])).toBe(0);
-    expect(queue.generationId()).toBe(before);
+    expect(queue.generationId()).toBe(generation);
+    expect(queue.appendVersion()).toBe(appendVersion);
   });
 
   test("再生中の曲・除外設定は変えず、足した曲へはnext()で辿り着ける", async () => {
@@ -1284,12 +1286,20 @@ describe("PlaybackQueue.appendSongs", () => {
     expect(played).toEqual(["a", "b", "c"]);
   });
 
-  test("曲一覧が変わるのでgenerationId()が進む（保存待機中の検出に使われる）", async () => {
+  // 2026-10-16、レビュー指摘（P2）：generationId()はmain.tsのバックグラウンド復帰対象
+  // （pendingNaturalEndAdvance/pendingQueueTransitionTarget）やリピート切替が「setList()で
+  // 別のキューへ差し替わったか」の判定に使う。追加だけでこれが進むと、まだ有効な復帰対象まで
+  // 差し替え扱いで失効してしまうため、保存待機中の検出用には別のappendVersion()を使う。
+  test("追加はgenerationId()（リスト差し替えの判定）を進めず、appendVersion()（保存待機中の検出用）だけを進める", async () => {
     const queue = new PlaybackQueue({ play: async () => {} }, new Audio());
     queue.setList([song("a")]);
-    const before = queue.generationId();
+    const generation = queue.generationId();
+    const appendVersion = queue.appendVersion();
     await queue.appendSongs([song("b")]);
-    expect(queue.generationId()).toBe(before + 1);
+    expect(queue.generationId()).toBe(generation);
+    expect(queue.appendVersion()).toBe(appendVersion + 1);
+    queue.setList([song("x")]);
+    expect(queue.generationId()).toBe(generation + 1);
   });
 
   test("シャッフル後に足しても、シャッフルを元に戻したときに足した曲が消えない", async () => {
@@ -1316,7 +1326,9 @@ describe("PlaybackQueue.appendSongs", () => {
     expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b"]);
   });
 
-  test("待機中に別のリストへ差し替えられたら、古い検索結果は足さない", async () => {
+  // 2026-10-16、レビュー指摘（P2）：キャンセルされた場合も0を返すと、呼び出し元が「すべて
+  // 入っています」と誤表示してしまうため、実行されなかった場合はnullで区別する。
+  test("待機中に別のリストへ差し替えられたら、古い検索結果は足さず、0ではなくnull（キャンセル）を返す", async () => {
     let release: () => void = () => {};
     const queue = new PlaybackQueue({ play: () => new Promise<void>((resolve) => { release = resolve; }) }, new Audio());
     queue.setList([song("a")]);
@@ -1325,7 +1337,7 @@ describe("PlaybackQueue.appendSongs", () => {
     queue.setList([song("x")]);
     release();
     await moving.catch(() => {});
-    expect(await appending).toBe(0);
+    expect(await appending).toBeNull();
     expect(queue.all().map((s) => s.fileId)).toEqual(["x"]);
   });
 });

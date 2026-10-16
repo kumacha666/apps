@@ -677,9 +677,9 @@ PR分割はChatGPT提案の3段階（①DualAudioPlayer基盤〈挙動は変え�
 ユーザー要望：検索で出た曲を再生リストへ足していき、条件を変えて何回か繰り返して好みのリストを作りたい（従来の「この条件で再生リストを作る」は毎回リストを丸ごと置き換える）。ライブラリに「この条件の曲を再生リストに追加」ボタン（`#append-queue-btn`）を追加。「作る」ボタンは従来どおり置き換えのまま。
 
 - `PlaybackQueue.appendSongs(songs): Promise<number>`（`queue.ts`）が足せた件数を返す。既に入っている曲（除外中を含む）と入力内の重複は足さない。足した曲は末尾（現在曲より後ろ）なので`next()`で辿れる。再生中の曲・除外設定・並び順は変えない。
-- `moveSong()`等と同じ`pendingMove`直列化チェーンに参加する。待機中に`setList()`で別のリストへ差し替わった場合は`move()`の世代確認で実行されず0を返す（古い検索結果を新しいリストへ混ぜない）。
+- `moveSong()`等と同じ`pendingMove`直列化チェーンに参加する。待機中に`setList()`で別のリストへ差し替わった場合は`move()`の世代確認で実行されず**0ではなく`null`（キャンセル）**を返す（古い検索結果を新しいリストへ混ぜない。0は「すべて既に入っている」の意味で、呼び出し元はnullのときステータス表示を上書きしない）。
 - シャッフル履歴（`originalOrder`）は温存して足した曲も末尾に加える（「シャッフルを元に戻す」で足した曲が消えない）。
-- 曲一覧の中身が変わるので`contentGeneration`（`generationId()`）を進める。`handleSavePlaylist()`が`whenIdle()`待機中に足されたことを検出して保存を中止する（意図しない内容を保存しない）。
+- 曲が足されたら専用の`appendVersion()`を進める。`handleSavePlaylist()`が`whenIdle()`待機中に足されたことを`generationId()`/`exclusionVersion()`と併せて検出し、保存を中止する（意図しない内容を保存しない）。**`generationId()`は進めない**：main.tsのバックグラウンド復帰対象（`pendingNaturalEndAdvance`/`pendingQueueTransitionTarget`）やリピート切替が「`setList()`で別のキューへ差し替わったか」の判定に使うため、追加だけで有効な復帰対象が失効してしまう（レビュー指摘で分離）。
 - 足す曲の抽出は`createQueueFromFilters()`と同じ`sortSongs(filterSongs(...))`。カタログ未読み込み・スキャンによる無効化後は`createQueue()`がnullを返し、再読み込みを促すエラーを出す（作成時と同じ）。スキャン開始時は作成ボタンと一緒に無効化し、索引読み込み成功時に有効化する。
 
 ## 保存済みプレイリスト（2026-09-03、PR #406）

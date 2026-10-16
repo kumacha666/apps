@@ -868,6 +868,37 @@ test("保存ボタンの待機中に一部の曲だけチェックを外した�
   await expect(page.locator("#playlist-list li")).toHaveCount(0);
 });
 
+test("保存ボタンの待機中に検索結果を再生リストへ追加した場合も、保存は中止され意図しない曲は保存されない（2026-10-16、appendVersionによる検出）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true, delayFirstMediaPlay: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await page.locator("#filter-artist").fill("Soloist");
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(2);
+
+  await page.getByRole("button", { name: "再生", exact: true }).click(); // 先頭曲の再生開始、play()は保留のまま
+  await page.locator("#playlist-name").fill("追加テスト");
+  await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
+
+  // 保存がpendingMove待機中の間に、別の条件の検索結果を追加する（setList()もexclude()も
+  // 経由しないため、appendVersionだけがこの変更を検出できる）。
+  await page.locator("#filter-artist").fill("Quartet");
+  await page.getByRole("button", { name: "この条件の曲を再生リストに追加" }).click();
+
+  await page.evaluate(() => (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay());
+
+  // 保存の中止メッセージと追加完了のメッセージは同じ#statusを共有し、後から出た方が残るため、
+  // ステータス文言ではなく「保存が起きていない」ことを直接確認する（追加が反映され、保存パイプラインが
+  // 十分進む時間を置いても、プレイリストが1件も作られない）。
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await expect(page.locator("#status")).toContainText("1曲を再生リストに追加しました");
+  await page.waitForTimeout(1000);
+  await expect(page.locator("#status")).not.toContainText("を保存しました");
+  await expect(page.locator("#playlist-list li")).toHaveCount(0);
+});
+
 test("「再生」ボタンで先頭曲から再生でき、一時停止中の曲は同じ位置から再開する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
