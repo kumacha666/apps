@@ -465,10 +465,15 @@ export class PlaybackQueue {
       return true;
     });
   }
-  // 検索結果などの曲を再生リストの末尾へ足し、実際に足せた件数を返す（2026-10-16、ユーザー要望：
-  // 検索→追加を何回か繰り返して好みの再生リストを作りたい。setList()は毎回リストを丸ごと
-  // 置き換えるため、これができなかった）。
-  // - 既に入っている曲（除外中の曲を含む。除外設定は変えない）と、入力内の重複は足さない。
+  // 検索結果などの曲を再生リストの末尾へ足す（2026-10-16、ユーザー要望：検索→追加を何回か
+  // 繰り返して好みの再生リストを作りたい。setList()は毎回リストを丸ごと置き換えるため、これが
+  // できなかった）。
+  // - **同期的に即時反映する**（pendingMoveの直列化チェーンには載せない）。末尾に足すだけで
+  //   currentFileId（再生中の曲の位置）に依存しないため、直列化する理由が無い。チェーンに載せると、
+  //   先行するplay()が解決するまで反映が遅れ（その間ユーザーには無反応に見える）、待機中の
+  //   一時停止・invalidatePendingMove()でgenerationが進むと黙って落ちた（/code-reviewの指摘）。
+  // - 既に入っている曲と、入力内の重複は足さない。既に入っていて**除外中**の曲は除外を変えず、
+  //   alreadyExcludedとして別に数える（足し直しても再生されないことを呼び出し元が伝えるため）。
   // - 再生中の曲・除外設定・generationは変えない。足した曲は末尾なので、現在曲より後ろにあり
   //   next()で必ず辿り着ける。
   // - シャッフル履歴（originalOrder）は温存し、足した曲を末尾に加える（unshuffle()が
@@ -476,27 +481,24 @@ export class PlaybackQueue {
   // - 曲が実際に足されたらappendVersion()を進める（handleSavePlaylist()のwhenIdle()待機中に
   //   足されたことを検出し、意図しない内容を保存しないため）。generationId()は進めない
   //   （main.tsのバックグラウンド復帰対象等が「setList()で差し替わったか」の判定に使うため）。
-  // - moveSong()等と同じpendingMoveの直列化チェーンに参加する。待機中にsetList()で別のリストへ
-  //   差し替えられた場合はmove()の世代確認で実行されず、**0ではなくnull（キャンセル）**を返す
-  //   （「すべて既に入っている」の0と区別するため。古い検索結果を新しいリストへ混ぜない）。
-  appendSongs(songs: Song[]): Promise<number | null> {
-    let result: number | null = null;
-    return this.move(async () => {
-      result = 0;
-      const known = new Set(this.songs.map((song) => song.fileId));
-      const fresh: Song[] = [];
-      for (const song of songs) {
-        if (known.has(song.fileId)) continue;
-        known.add(song.fileId);
-        fresh.push(song);
+  // - 配列の末尾追加は`push(...配列)`ではなくループで行う（引数の上限を超えるとRangeErrorに
+  //   なる。全曲が対象になる条件では数万曲を一度に足しうる）。
+  appendSongs(songs: Song[]): { added: number; alreadyExcluded: number } {
+    const known = new Set(this.songs.map((song) => song.fileId));
+    let added = 0;
+    let alreadyExcluded = 0;
+    for (const song of songs) {
+      if (known.has(song.fileId)) {
+        if (this.excluded.has(song.fileId)) alreadyExcluded += 1;
+        continue;
       }
-      if (fresh.length === 0) return false;
-      this.songs.push(...fresh);
-      if (this.originalOrder !== null) this.originalOrder.push(...fresh);
-      this.appendVersionCounter += 1;
-      result = fresh.length;
-      return true;
-    }).then(() => result);
+      known.add(song.fileId);
+      this.songs.push(song);
+      this.originalOrder?.push(song);
+      added += 1;
+    }
+    if (added > 0) this.appendVersionCounter += 1;
+    return { added, alreadyExcluded };
   }
 }
 

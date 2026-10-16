@@ -889,14 +889,33 @@ test("保存ボタンの待機中に検索結果を再生リストへ追加し�
 
   await page.evaluate(() => (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay());
 
-  // 保存の中止メッセージと追加完了のメッセージは同じ#statusを共有し、後から出た方が残るため、
-  // ステータス文言ではなく「保存が起きていない」ことを直接確認する（追加が反映され、保存パイプラインが
-  // 十分進む時間を置いても、プレイリストが1件も作られない）。
+  // 追加は同期的に即時反映されステータスが先に出るので、保存の中止メッセージ（play()の解放後に
+  // 出る）が最終的に残る。中止を文言で直接確認し、保存ボタンの再有効化（保存処理の完了）まで
+  // 待ってからプレイリストが1件も作られていないことを確認する。
   await expect(page.locator("#catalog-list li")).toHaveCount(3);
-  await expect(page.locator("#status")).toContainText("1曲を再生リストに追加しました");
-  await page.waitForTimeout(1000);
-  await expect(page.locator("#status")).not.toContainText("を保存しました");
+  await expect(page.locator("#status")).toContainText("保存を待っている間に再生リストが変更されたため、保存を中止しました。");
+  await expect(page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" })).toBeEnabled();
   await expect(page.locator("#playlist-list li")).toHaveCount(0);
+});
+
+test("既に入っていて除外中の曲を足し直しても除外のままで、再生されない旨が案内される（2026-10-16、/code-reviewの指摘）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true });
+  await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await page.locator("#filter-artist").fill("Soloist");
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  const items = page.locator("#catalog-list li");
+  await expect(items).toHaveCount(2);
+
+  await items.nth(0).locator("input[type=checkbox]").uncheck();
+  await page.getByRole("button", { name: "この条件の曲を再生リストに追加" }).click();
+
+  await expect(items).toHaveCount(2);
+  await expect(items.nth(0).locator("input[type=checkbox]")).not.toBeChecked();
+  await expect(page.locator("#status")).toContainText("すべて再生リストに入っています");
+  await expect(page.locator("#status")).toContainText("1曲は除外中のため再生されません");
 });
 
 test("「再生」ボタンで先頭曲から再生でき、一時停止中の曲は同じ位置から再開する", async ({ context, page }) => {
