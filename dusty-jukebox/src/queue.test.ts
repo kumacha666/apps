@@ -1344,6 +1344,19 @@ describe("PlaybackQueue.appendSongs", () => {
     expect(ids(queue)).toEqual(["a", "b", "c"]);
   });
 
+  // レビュー指摘（P2）の前提：全曲リピートで末尾曲の再生中は次曲が先頭へラップするが、追加すると
+  // 追加した曲が次曲になる。クロスフェードのオーケストレーターは先読み対象とこの値の一致を
+  // 確認して、先読み済みの古い曲（先頭曲）を昇格させない（crossfade.test.ts参照）。
+  test("全曲リピートで末尾曲の再生中は次曲が先頭へラップし、追加するとその曲が次曲になる", async () => {
+    const queue = new PlaybackQueue({ play: async () => {} }, new Audio());
+    queue.setList([song("a"), song("b")]);
+    queue.setRepeatMode("all");
+    await queue.playAt(1); // b（末尾）
+    expect(queue.peekNextFileId()).toBe("a");
+    queue.appendSongs([song("c")]);
+    expect(queue.peekNextFileId()).toBe("c");
+  });
+
   test("リストを差し替えた後の追加は新しいリストへ足され、古いリストの内容は混ざらない", () => {
     const queue = new PlaybackQueue({ play: async () => {} }, new Audio());
     queue.setList([song("a")]);
