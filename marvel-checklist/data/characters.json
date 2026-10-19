@@ -352,5 +352,11 @@
   ] },
   { "id": "sheila-rivera", "name": "シーラ・リベラ", "appearances": [
     { "movieId": "daredevil-born-again-s1", "role": "main" }, { "movieId": "daredevil-born-again-s2", "role": "main" }, { "movieId": "spider-man-brand-new-day", "role": "sub" }
+  ] },
+  { "id": "frank-castle", "name": "フランク・キャッスル／パニッシャー", "appearances": [
+    { "movieId": "daredevil-born-again-s1", "role": "sub" }, { "movieId": "punisher-one-last-kill", "role": "main" }
+  ] },
+  { "id": "karen-page", "name": "カレン・ペイジ", "appearances": [
+    { "movieId": "daredevil-born-again-s1", "role": "main" }, { "movieId": "daredevil-born-again-s2", "role": "main" }, { "movieId": "punisher-one-last-kill", "role": "sub" }
   ] }
 ]
