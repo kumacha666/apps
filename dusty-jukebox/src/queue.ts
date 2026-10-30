@@ -535,6 +535,15 @@ export function songDisplayLabel(song: Song): string {
   return `${song.title}${song.artist ? ` — ${song.artist}` : ""}${song.album ? ` / ${song.album}` : ""}${song.folderPath ? ` [${song.folderPath}]` : ""}`;
 }
 
+// 一覧の行（再生リスト・検索結果）の2行目に出す補足。「アーティスト · アルバム」を並べ、どちらも
+// 無い曲（タグ未取得）だけフォルダパスで代用する。フォルダパスは通常アーティスト/アルバムと
+// 重複する（階層がそのまま名前になっていることが多い）ため、タグがあるときは出さない。
+export function songSubLabel(song: Song): string {
+  const parts = [song.artist, song.album].filter((part) => part !== "");
+  if (parts.length > 0) return parts.join(" · ");
+  return song.folderPath ?? "";
+}
+
 export function nowPlayingLabel(song: Song | undefined): string {
   return song ? `再生中: ${songDisplayLabel(song)}` : "";
 }
