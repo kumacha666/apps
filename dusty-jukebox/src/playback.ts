@@ -155,6 +155,24 @@ export class PlaybackController {
   // 全ての操作の先頭でこれを呼ぶことで、後続の操作がaudio.volumeを読み書きする前に必ず
   // 正しいベースラインへ戻す（「後続の種類」を判定する必要が無くなるため、判定ロジック
   // 自体を単純化できる）。
+  // リジューム時のフェードイン（play()のfadeIn）の進行状態。フェードインは再生開始後もplay()の
+  // 解決を待たずにvolumeを更新し続けるため、同じ要素のvolumeを書き込む別の処理（クロスフェードの
+  // ランプ）が始まる前にcancelFadeIn()で止められるようにする。
+  private fadeInToken = 0;
+  private activeFadeInTarget: number | null = null;
+
+  // 進行中のフェードインがあれば、それを止めてvolumeを目標値（再開前の値）まで即座に戻す。
+  // generationは変えない（再生自体は継続する）。クロスフェードのランプ開始前に呼ばれ、
+  // ランプが記録する「開始前のvolume」をフェードイン途中の低い値にしない・両者がvolumeを
+  // 取り合わないようにする。
+  cancelFadeIn(): void {
+    if (this.activeFadeInTarget === null) return;
+    this.fadeInToken += 1;
+    this.audio.volume = this.activeFadeInTarget;
+    if (this.pendingFadeOriginalVolume === this.activeFadeInTarget) this.pendingFadeOriginalVolume = null;
+    this.activeFadeInTarget = null;
+  }
+
   private reclaimPendingFadeVolume(): void {
     if (this.pendingFadeOriginalVolume !== null) {
       this.audio.volume = this.pendingFadeOriginalVolume;
@@ -320,8 +338,16 @@ export class PlaybackController {
       throw err;
     }
     if (fadeInTarget !== null && !isSuperseded()) {
-      // 再生開始の成否はここまでで確定しているため、フェードの完了は待たない。
-      void fadeInVolume(this.audio, fadeInTarget, FADE_IN_DURATION_MS, { isCancelled: isSuperseded }).then(() => {
+      // 再生開始の成否はここまでで確定しているため、フェードの完了は待たない。cancelFadeIn()が
+      // 世代を変えずにこのフェードだけを止められるよう、専用トークンも見る。
+      this.fadeInToken += 1;
+      const myFadeInToken = this.fadeInToken;
+      this.activeFadeInTarget = fadeInTarget;
+      void fadeInVolume(this.audio, fadeInTarget, FADE_IN_DURATION_MS, {
+        isCancelled: () => isSuperseded() || this.fadeInToken !== myFadeInToken,
+      }).then(() => {
+        if (this.fadeInToken !== myFadeInToken) return;
+        this.activeFadeInTarget = null;
         if (!isSuperseded()) this.pendingFadeOriginalVolume = null;
       });
     }

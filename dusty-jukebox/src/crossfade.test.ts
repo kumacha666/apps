@@ -361,6 +361,9 @@ class FakeController implements CrossfadePlaybackControllerLike {
   resolvePending(): void { this.pending?.resolve(); this.pending = null; }
   rejectPending(e: unknown): void { this.pending?.reject(e); this.pending = null; }
   cancelPendingTransition(): void { this.cancelCalls += 1; }
+  fadeInCancelCalls = 0;
+  onCancelFadeIn: (() => void) | null = null;
+  cancelFadeIn(): void { this.fadeInCancelCalls += 1; this.onCancelFadeIn?.(); }
   currentStreamGeneration(): number | null { return this.streamGeneration; }
 }
 
@@ -615,6 +618,30 @@ describe("CrossfadeOrchestrator", () => {
     expect(player.activeAudio.volume).toBe(0.6);
 
     release.fn?.(); // 残りのタイマーも解放し、Promiseが浮遊したままにならないようにする
+    await started;
+  });
+
+  it("9b. リジューム時のフェードイン中にランプが始まる場合、ランプ開始前にフェードインを取り消し、取り消し後の音量を「開始前のvolume」として記録する（レビュー指摘：フェードインとランプのvolume競合）", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const release: { fn: (() => void) | null } = { fn: null };
+    const controlledWait: WaitFn = () => new Promise((resolve) => { release.fn = resolve; });
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, { wait: controlledWait, steps: 2 });
+    setNearEnd(player);
+    // フェードイン途中の低い値（0.1）から始まり、cancelFadeIn()で目標値（0.8）へ戻る想定。
+    player.activeAudio.volume = 0.1;
+    player.activeControllerInstance.onCancelFadeIn = () => { player.activeAudio.volume = 0.8; };
+
+    const started = orchestrator.maybeStart({ enabled: true, durationMs: 4000, manualTransitionInFlight: false });
+    await vi.waitFor(() => expect(orchestrator.isCrossfading()).toBe(true));
+    await vi.waitFor(() => expect(release.fn).not.toBeNull());
+    expect(player.activeControllerInstance.fadeInCancelCalls).toBe(1);
+
+    orchestrator.cancel();
+    // フェードイン途中の0.1ではなく、フェードインを取り消した後の目標値へ復元される。
+    expect(player.activeAudio.volume).toBe(0.8);
+
+    release.fn?.();
     await started;
   });
 

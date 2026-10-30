@@ -30,6 +30,7 @@ export interface PlaybackControllerLike {
   play(fileId: string, position?: number, options?: PlayOptions): Promise<void>;
   pause(fadeOut?: boolean): Promise<boolean>;
   cancelPendingTransition(): void;
+  cancelFadeIn(): void;
   loadPaused(fileId: string, position?: number): void;
   markStreamTokenRejected(fileId: string, generation: number): number | null;
   currentGeneration(): number;
@@ -184,6 +185,12 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
   cancelPendingTransition(): void {
     this.controllers[0].cancelPendingTransition();
     this.controllers[1].cancelPendingTransition();
+  }
+
+  // リジューム時のフェードインの取り消し。フェードインはactiveスロット上で動くため、
+  // active側だけへ委譲すれば足りる。
+  cancelFadeIn(): void {
+    this.activePlaybackController.cancelFadeIn();
   }
 
   // Media Session一時停止（main.ts）向け：activeAudioElement()を直接ネイティブpause()した

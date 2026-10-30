@@ -284,6 +284,9 @@ export interface CrossfadePlaybackControllerLike {
     options?: { onStreamIdAllocated?: (streamId: number, isSuperseded: () => boolean) => void }
   ): Promise<void>;
   cancelPendingTransition?(): void;
+  // リジューム時のフェードインが進行中なら止めてvolumeを目標値へ戻す。ランプ開始前に、同じ
+  // active側のvolumeを取り合わないよう呼ぶ。
+  cancelFadeIn?(): void;
   // 退役する旧activeストリームのContinuation無効化に必要（2026-09-14〜、ChatGPTレビュー
   // 指摘：P1「promotion後の旧outgoing streamの遅延401」）。
   currentStreamGeneration?(): number | null;
@@ -564,6 +567,9 @@ export class CrossfadeOrchestrator {
     // ランプ開始前のactive側volumeを記録する（2026-09-14〜、ChatGPTレビュー指摘：P1）。
     // cancel()・commit失敗でpromotionされずに終わった場合、ランプが変更したこの値を
     // 復元するために使う。
+    // 進行中のリジューム時フェードインがあれば、ランプ（同じvolumeを書く）と取り合わないよう
+    // 先に止め、目標値へ戻してから「開始前のvolume」を記録する。
+    this.player.activeController().cancelFadeIn?.();
     this.activeVolumeBeforeRamp = activeAudio.volume;
     // 準備開始からランプ開始までの間、先読み側は無音のまま鳴り続けているため、この時点の
     // currentTimeは既に数秒進んでいる（CROSSFADE_PREPARE_LEAD_MS分）。次の曲は「冒頭から」

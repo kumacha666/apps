@@ -310,7 +310,7 @@
 
 - **手動スキップ/一時停止のフェードアウト**（`fade.ts`の`fadeOutGain`）：指数カーブ（冒頭で素早く下がり細い余韻が長く続く）に変更し、長さを2秒→3秒（`playback.ts`の`FADE_OUT_DURATION_MS`）、段階数を20→60にした。終端は厳密に0。
 - **クロスフェード**（`crossfade.ts`の`crossfadeVolumes`）：進行度を余弦で滑らかにした等電力カーブ（outgoing²+incoming²=1、両端で変化率0）に変更。長いクロスフェード（最大20秒）の段階数は約100ms刻みを保つよう`max(30, durationMs/100)`にした。
-- **リジューム時のフェードイン**：フェードアウトのチェックボックス（`#fade-out-toggle`）がONのとき、再生リストの「再生」ボタンで**途中位置から再開する場合のみ**（position>0）無音から`FADE_IN_DURATION_MS`（1.5秒）でフェードインする。曲の頭からの再生・次へ/前へ・曲名クリック・自然終了では行わない。`PlayOptions.fadeIn`（`playback.ts`）→`PlaybackQueue.resume(..., fadeIn)`→`fadeInVolume`（`fade.ts`）。元のvolumeは`pendingFadeOriginalVolume`に登録し、フェードイン中に一時停止・別の再生に追い越されても既存の`reclaimPendingFadeVolume()`で復元される。**未対応**：Bluetooth/OSメディアキーの再生（ネイティブ`play()`直呼びのため）とキュー外の単曲試聴の再開。
+- **リジューム時のフェードイン**：フェードアウトのチェックボックス（`#fade-out-toggle`）がONのとき、再生リストの「再生」ボタンで**途中位置から再開する場合のみ**（position>0）無音から`FADE_IN_DURATION_MS`（1.5秒）でフェードインする。曲の頭からの再生・次へ/前へ・曲名クリック・自然終了では行わない。`PlayOptions.fadeIn`（`playback.ts`）→`PlaybackQueue.resume(..., fadeIn)`→`fadeInVolume`（`fade.ts`）。元のvolumeは`pendingFadeOriginalVolume`に登録し、フェードイン中に一時停止・別の再生に追い越されても既存の`reclaimPendingFadeVolume()`で復元される。**クロスフェードとの排他**：フェードインは再生開始後も1.5秒間アクティブ側のvolumeを書き続けるため、曲末尾付近で再開すると`runCrossfade`のランプと同じ要素のvolumeを取り合う。`CrossfadeOrchestrator`はランプ開始前（「開始前のvolume」を記録する前）に`activeController().cancelFadeIn()`（`PlaybackController.cancelFadeIn()`、generationは変えずフェードインだけを止めて目標値へ戻す）を呼ぶ。**未対応**：Bluetooth/OSメディアキーの再生（ネイティブ`play()`直呼びのため）とキュー外の単曲試聴の再開。
 
 ## クロスフェード（開発体制#42④の残り、2026-09-10）
 

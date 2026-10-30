@@ -237,6 +237,37 @@ describe("PlaybackController", () => {
     expect(audio.volume).toBe(0.6);
   });
 
+  test("cancelFadeIn()は進行中のフェードインを止めてvolumeを目標値へ戻し、以後フェードインはvolumeを書き換えない（クロスフェードのランプと取り合わないため）", async () => {
+    vi.useFakeTimers();
+    try {
+      const audio = new FakeAudio();
+      audio.volume = 0.6;
+      const playback = new PlaybackController(audio, () => "valid-token");
+
+      await playback.play("A", 42, { fadeIn: true });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(audio.volume).toBeLessThan(0.6);
+
+      playback.cancelFadeIn();
+      expect(audio.volume).toBe(0.6);
+
+      // 外部（クロスフェードのランプ）がvolumeを書いた後、残りのフェードインが上書きしない。
+      audio.volume = 0.25;
+      await vi.runAllTimersAsync();
+      expect(audio.volume).toBe(0.25);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("フェードインが進行していない時のcancelFadeIn()は何もしない", () => {
+    const audio = new FakeAudio();
+    audio.volume = 0.4;
+    const playback = new PlaybackController(audio, () => "valid-token");
+    playback.cancelFadeIn();
+    expect(audio.volume).toBe(0.4);
+  });
+
   test("フェードイン中に一時停止されても、volumeは元の値へ戻る（次の再生が無音のままにならない）", async () => {
     vi.useFakeTimers();
     try {
