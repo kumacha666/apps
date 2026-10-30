@@ -173,11 +173,30 @@ export class PlaybackController {
     this.activeFadeInTarget = null;
   }
 
-  private reclaimPendingFadeVolume(): void {
+  // 戻り値：進行中のリジューム時フェードインを止めた場合、その目標音量（復元すべき本来の音量）。
+  // この場合はvolumeを目標値へ即時復元せず、現在の（まだ小さい）音量のままにする：呼び出し元が
+  // フェードアウトを始めるなら現在値から下げ（目標値へ跳ね上がってから下げ始めると、消そうと
+  // している音が一瞬大きくなる）、フェードアウトしないなら呼び出し元がrestoreCarriedVolume()で
+  // 目標値へ戻す（レビュー指摘：フェードイン中の一時停止・スキップで音量が急上昇する）。
+  private reclaimPendingFadeVolume(): number | null {
+    if (this.activeFadeInTarget !== null) {
+      const carried = this.activeFadeInTarget;
+      this.fadeInToken += 1;
+      this.activeFadeInTarget = null;
+      this.pendingFadeOriginalVolume = null;
+      return carried;
+    }
     if (this.pendingFadeOriginalVolume !== null) {
       this.audio.volume = this.pendingFadeOriginalVolume;
       this.pendingFadeOriginalVolume = null;
     }
+    return null;
+  }
+
+  // reclaimPendingFadeVolume()が引き継いだフェードインの目標音量を、フェードアウトを伴わない
+  // 呼び出し元がその場で復元する。
+  private restoreCarriedVolume(carried: number | null): void {
+    if (carried !== null) this.audio.volume = carried;
   }
 
   constructor(
@@ -219,7 +238,8 @@ export class PlaybackController {
   }
 
   async play(fileId: string, position = 0, options: PlayOptions = {}): Promise<void> {
-    this.reclaimPendingFadeVolume();
+    const carriedFadeInVolume = this.reclaimPendingFadeVolume();
+    if (!(options.fadeOut && !this.audio.paused)) this.restoreCarriedVolume(carriedFadeInVolume);
     this.onTransitionStart();
     this.generation += 1;
     const playGeneration = this.generation;
@@ -231,7 +251,9 @@ export class PlaybackController {
     // 一切触れない）。
     let preFadeVolume: number | null = null;
     if (options.fadeOut && !this.audio.paused) {
-      preFadeVolume = this.audio.volume;
+      // フェードイン中だった場合は、現在の（小さい）音量ではなく本来の目標音量を「フェード開始前の
+      // volume」として復元に使い、フェードアウト自体は現在の音量から始める。
+      preFadeVolume = carriedFadeInVolume ?? this.audio.volume;
       // 進行中のフェードの元volumeとしてpendingFadeOriginalVolumeへ登録する
       // （2026-09-09、ChatGPTレビュー指摘：P2続き。以前はplay()側のフェードの元volumeを
       // どこにも共有せず、この後でpause(true)に追い越されると、pause側は復元前の下がった
@@ -413,7 +435,7 @@ export class PlaybackController {
   // generationを一切進めないため）。pause()と異なりaudio.pause()やcurrentFileIdのクリアは
   // 行わない（setList()の直後に新しいplayAt()が続く場合、無関係にaudioを止めてしまわないため）。
   cancelPendingTransition(): void {
-    this.reclaimPendingFadeVolume();
+    this.restoreCarriedVolume(this.reclaimPendingFadeVolume());
     this.onTransitionStart();
     this.generation += 1;
     this.generationReasons.set(this.generation, "cancel");
@@ -431,7 +453,7 @@ export class PlaybackController {
   // streamGeneration/rejectedGenerationのクリアは行わない（呼び出し元が既にネイティブ
   // pause()を済ませており、かつ「同じボタンでの再開」を保つため）。
   invalidatePendingRecoveryOnNativePause(): void {
-    this.reclaimPendingFadeVolume();
+    this.restoreCarriedVolume(this.reclaimPendingFadeVolume());
     this.onTransitionStart();
     this.generation += 1;
     this.generationReasons.set(this.generation, "pause");
@@ -528,7 +550,8 @@ export class PlaybackController {
     // いた。generationを進める全操作（play()/pause()/cancelPendingTransition()）の先頭で
     // reclaimPendingFadeVolume()を呼ぶことで、後続の操作がaudio.volumeを読み書きする
     // 前に必ず正しいベースラインへ戻し、「後続の種類」を判定する必要自体を無くしている）。
-    this.reclaimPendingFadeVolume();
+    const carriedFadeInVolume = this.reclaimPendingFadeVolume();
+    if (!(fadeOut && !this.audio.paused)) this.restoreCarriedVolume(carriedFadeInVolume);
     this.onTransitionStart();
     this.generation += 1;
     const pauseGeneration = this.generation;
@@ -538,7 +561,8 @@ export class PlaybackController {
     this.rejectedGeneration = null;
 
     if (fadeOut && !this.audio.paused) {
-      const preFadeVolume = this.audio.volume;
+      // フェードイン中だった場合は、本来の目標音量を復元用に使い、フェードアウトは現在の音量から始める。
+      const preFadeVolume = carriedFadeInVolume ?? this.audio.volume;
       this.pendingFadeOriginalVolume = preFadeVolume;
       const isCancelled = () => this.generation !== pauseGeneration;
       await fadeOutVolume(this.audio, FADE_OUT_DURATION_MS, { isCancelled });
