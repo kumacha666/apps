@@ -944,6 +944,7 @@ test("保存ボタンの待機中に一部の曲だけチェックを外した�
 
   // 保存がpendingMove待機中の間に、1曲だけチェックを外す（setList()は経由しないため
   // exclusionVersionだけが進み、除外後も3曲残るため0曲チェックにも該当しない）。
+  await openTab(page, "queue");
   await items.nth(1).locator("input[type=checkbox]").uncheck();
 
   await page.evaluate(() => (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay());
@@ -3124,4 +3125,108 @@ test("スマホ幅でも絞り込みの年の入力欄・並び替えの選択�
   await openDetails(page, "#sort-details");
   for (const id of ["sort-field", "sort-direction", "sort-secondary-field", "sort-secondary-direction", "sort-btn"]) await expectInsideViewport(id);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+});
+
+// ---- 上部タブ・折りたたみ（UI整理 PR2、2026-10-30） ----
+
+test("タブは選んだ画面のパネルだけを表示し、読み込み・再生リスト作成・アルバム再生で自動的に切り替わる", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  const tabs = ["queue", "library", "albums", "playlists", "settings"] as const;
+  const expectOnlyVisible = async (shown: (typeof tabs)[number]) => {
+    for (const id of tabs) {
+      await expect(page.locator(`#panel-${id}`)).toBeVisible({ visible: id === shown });
+      await expect(page.locator(`#tab-${id}`)).toHaveAttribute("aria-selected", String(id === shown));
+    }
+  };
+  // 初期表示は再生リスト。
+  await expectOnlyVisible("queue");
+  for (const id of tabs) { await page.locator(`#tab-${id}`).click(); await expectOnlyVisible(id); }
+
+  // 索引の読み込みが成功するとライブラリへ移る。
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await expectOnlyVisible("library");
+  // 「この条件で再生リストを作る」で再生リストへ移る。
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  await expectOnlyVisible("queue");
+  // アルバムの再生ボタンでも再生リストへ移る。
+  await openTab(page, "albums");
+  await page.locator("#album-list li").filter({ hasText: "Symphony" }).getByRole("button", { name: "このアルバムを再生" }).click();
+  await expectOnlyVisible("queue");
+});
+
+test("タブは←→・Home/Endで移動でき、再生リストの曲数がバッジに出る", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await expect(page.locator("#queue-badge")).toHaveText("0");
+  await page.locator("#tab-queue").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("#tab-library")).toBeFocused();
+  await expect(page.locator("#panel-library")).toBeVisible();
+  await page.keyboard.press("End");
+  await expect(page.locator("#tab-settings")).toBeFocused();
+  await page.keyboard.press("ArrowRight"); // 末尾から先頭へ循環
+  await expect(page.locator("#tab-queue")).toBeFocused();
+  await page.keyboard.press("ArrowLeft"); // 先頭から末尾へ循環
+  await expect(page.locator("#tab-settings")).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(page.locator("#panel-queue")).toBeVisible();
+
+  await openSymphonyQueue(page);
+  await expect(page.locator("#queue-badge")).toHaveText("3");
+  await expect(page.locator("#queue-count")).toHaveText("3曲");
+});
+
+test("再生リストが空のときは案内を出し、「ライブラリを開く」でライブラリのタブへ移る", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await expect(page.locator("#queue-empty")).toBeVisible();
+  await page.locator("#queue-empty").getByRole("button", { name: "ライブラリを開く" }).click();
+  await expect(page.locator("#panel-library")).toBeVisible();
+  await openSymphonyQueue(page);
+  await expect(page.locator("#queue-empty")).toBeHidden();
+  await page.getByRole("button", { name: "再生リストをクリア" }).click();
+  await expect(page.locator("#queue-empty")).toBeVisible();
+});
+
+test("タブ見出しはページをスクロールしても画面上部に張り付く", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.setViewportSize({ width: 390, height: 500 });
+  await openSymphonyQueue(page);
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
+  const box = await page.locator(".tabs").boundingBox();
+  expect(box).not.toBeNull();
+  expect(Math.abs(box!.y)).toBeLessThanOrEqual(1);
+  // 390px幅（一般的なスマホ）では5つのタブが横スクロールなしで全部収まる（右端の「設定」が切れない）。
+  const overflow = await page.locator(".tabs").evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
+test("詳細条件・並び替え・診断ログは初期状態では閉じていて、開くと入力できる", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await openTab(page, "library");
+  await expect(page.locator("#filter-genre")).toBeHidden();
+  await openDetails(page, "#filter-details");
+  await expect(page.locator("#filter-genre")).toBeVisible();
+  await openTab(page, "queue");
+  await expect(page.locator("#sort-field")).toBeHidden();
+  await openDetails(page, "#sort-details");
+  await expect(page.locator("#sort-field")).toBeVisible();
+  await openTab(page, "settings");
+  await expect(page.locator("#diag-log-show-btn")).toBeHidden();
+  await openDetails(page, "#diagnostics-details");
+  await expect(page.locator("#diag-log-show-btn")).toBeVisible();
+});
+
+test("「接続・索引」パネルの開閉は再読み込みしても覚えている", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/");
+  await expect(page.locator("#folder-id")).toBeVisible();
+  await page.locator("#connection > summary").click();
+  await expect(page.locator("#folder-id")).toBeHidden();
+  await page.reload();
+  await expect(page.locator("#connection")).toHaveJSProperty("open", false);
+  await expect(page.locator("#folder-id")).toBeHidden();
+  await page.locator("#connection > summary").click();
+  await page.reload();
+  await expect(page.locator("#folder-id")).toBeVisible();
 });

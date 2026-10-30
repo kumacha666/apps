@@ -551,7 +551,11 @@ function observeNowPlayingBarHeight(): void {
   const bar = document.querySelector<HTMLElement>(".now-playing-bar");
   if (!bar) return;
   const observer = new ResizeObserver((entries) => {
-    const height = entries[0]?.contentRect.height;
+    // contentRectはパディング・罫線を含まない高さのため、バー自身の上下パディング（8px×2）と上罫線
+    // （1px）ぶん足りず、末尾コンテンツの下端がバーの上端に1px弱食い込んでいた（2026-10-30）。
+    // 罫線・パディングを含むborder-boxの高さを使う（未対応環境ではgetBoundingClientRectで代用）。
+    const entry = entries[0];
+    const height = entry?.borderBoxSize?.[0]?.blockSize ?? entry?.target.getBoundingClientRect().height;
     if (height !== undefined) document.documentElement.style.setProperty("--now-playing-bar-height", `${height}px`);
   });
   observer.observe(bar);
