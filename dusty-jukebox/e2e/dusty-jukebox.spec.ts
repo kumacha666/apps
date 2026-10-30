@@ -10,7 +10,21 @@ async function openCatalog(page: import("@playwright/test").Page) {
   await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から2曲");
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+}
+
+type Tab = "queue" | "library" | "albums" | "playlists" | "settings";
+// 画面上部のタブを開く（パネルは選んだタブだけが表示される）。
+async function openTab(page: import("@playwright/test").Page, tab: Tab) {
+  await page.locator(`#tab-${tab}`).click();
+  await expect(page.locator(`#panel-${tab}`)).toBeVisible();
+}
+// 折りたたみ（<details>）が閉じていれば開く。
+async function openDetails(page: import("@playwright/test").Page, selector: string) {
+  const details = page.locator(selector);
+  if (!(await details.evaluate((el) => (el as HTMLDetailsElement).open))) await details.locator("summary").first().click();
+  await expect(details).toHaveJSProperty("open", true);
 }
 
 async function openSymphonyQueue(page: import("@playwright/test").Page) {
@@ -18,6 +32,7 @@ async function openSymphonyQueue(page: import("@playwright/test").Page) {
   await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "albums");
   await page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).getByRole("button", { name: "このアルバムを再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
 }
@@ -61,18 +76,18 @@ test("ミニプレイヤーの再生ボタンは初期状態から再生・一�
   const toggle = page.locator("#play-pause-btn");
   await expect(toggle).toBeDisabled();
   await expect(toggle).toHaveAttribute("aria-label", "再生");
-  await expect(toggle).toHaveText("▶");
+  await expect(toggle.locator("svg path")).toHaveAttribute("d", /^M8 5v14l11-7z/); // ▶アイコン
 
   await login(page);
   await expect(toggle).toBeEnabled();
   await openCatalog(page);
   await page.getByRole("button", { name: "再生", exact: true }).click();
   await expect(toggle).toHaveAttribute("aria-label", "一時停止");
-  await expect(toggle).toHaveText("⏸");
+  await expect(toggle.locator("svg path")).toHaveAttribute("d", /^M7 5h4v14H7z/); // ⏸アイコン
 
   await page.getByRole("button", { name: "一時停止" }).click();
   await expect(toggle).toHaveAttribute("aria-label", "再生");
-  await expect(toggle).toHaveText("▶");
+  await expect(toggle.locator("svg path")).toHaveAttribute("d", /^M8 5v14l11-7z/); // ▶アイコン
 });
 
 test("ミニプレイヤーの再生操作中はトグルを無効化し、連打を無視して完了後に再有効化する", async ({ context, page }) => {
@@ -156,6 +171,7 @@ test("リスト全曲リピートの最後の曲の自然終了は先頭へル�
 
 test("クロスフェードONでも1曲リピート中は次曲を先読みしない", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
+  await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
   await page.locator("#repeat-btn").click();
   await page.evaluate(() => {
@@ -170,6 +186,7 @@ test("クロスフェードONでも1曲リピート中は次曲を先読みし�
 
 test("クロスフェードのランプ中にリピートモードを切り替えると#audio-player-bがリセットされる", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
+  await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
   await page.clock.install();
   await page.evaluate(() => {
@@ -194,6 +211,7 @@ test("クロスフェードのランプ中に退場側が自然終了してか�
   await page.locator("#repeat-btn").click();
   await page.locator("#repeat-btn").click();
   await expect(page.locator("#repeat-btn")).toHaveAttribute("aria-label", "リピート: リスト全曲");
+  await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
   await page.clock.install();
   await page.evaluate(() => {
@@ -333,11 +351,14 @@ test("不正なsyncヘッダーは誤った設定を使わずエラーになる"
 
 test("除外は再生キューへ反映され、戻して作り直すと復帰する", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await openTab(page, "queue");
   await page.locator("#catalog-list input").first().uncheck();
   await page.getByRole("button", { name: "次へ" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
 
+  await openTab(page, "queue");
   await page.locator("#catalog-list input").first().check();
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   await page.getByRole("button", { name: "次へ" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
@@ -349,9 +370,11 @@ test("「再生リストをクリア」で再生リストを空にでき、キ�
   await page.getByRole("button", { name: "次へ" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 
+  await openTab(page, "queue");
   await page.getByRole("button", { name: "再生リストをクリア" }).click();
   await expect(page.locator("#status")).toContainText("再生リストをクリアしました。");
   await expect(page.locator("#catalog-list li")).toHaveCount(0);
+  await openTab(page, "queue");
   await expect(page.getByRole("button", { name: "再生リストをクリア" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "次へ" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "前へ" })).toBeDisabled();
@@ -366,6 +389,7 @@ test("認証更新待ち（「認証を更新して続行」表示中）の状�
   await page.getByRole("button", { name: "次へ" }).click();
   await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeVisible();
 
+  await openTab(page, "queue");
   await page.getByRole("button", { name: "再生リストをクリア" }).click();
   await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeHidden();
   await expect(page.locator("#catalog-list li")).toHaveCount(0);
@@ -383,7 +407,10 @@ test("genre_overrideを曲一覧・Genre絞り込み・アルバム一覧へ反�
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
 
   await expect(page.locator("#filter-genre-options option")).toHaveText(["Jazz", "Neo Classical"]);
+  await openTab(page, "library");
+  await openDetails(page, "#filter-details");
   await page.locator("#filter-genre").fill("Neo Classical");
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(3);
   await expect(page.locator("#catalog-list li")).toHaveText([/Opening/, /Scherzo/, /Finale/]);
@@ -421,7 +448,8 @@ test("再生バーの高さが認証通知＋長いステータス文言で伸�
   // --now-playing-bar-heightの反映を待ってからボックスを計測する。
   await page.waitForTimeout(200);
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  const lastContentBox = await page.locator("#refresh-playlists-btn").boundingBox();
+  // 画面に表示中のパネル（タブ切替で1つだけ表示される）の下端を「末尾コンテンツ」とみなす。
+  const lastContentBox = await page.locator(".panel:not([hidden])").boundingBox();
   const barBox = await page.locator(".now-playing-bar").boundingBox();
   expect(lastContentBox).not.toBeNull();
   expect(barBox).not.toBeNull();
@@ -496,6 +524,7 @@ test("絞り込み欄同士が連動し、アーティストを選ぶとアル�
   // 絞り込み前はSoloist（Symphony）とQuartet（Blue Notes）の両方のアルバムが候補に出る。
   await expect(page.locator("#filter-album-options option")).toHaveText(["Blue Notes", "Symphony"]);
 
+  await openTab(page, "library");
   await page.locator("#filter-artist").fill("Soloist");
   // アーティストをSoloistに絞ると、そのアーティストのアルバム（Symphony）だけが候補に残る。
   await expect(page.locator("#filter-album-options option")).toHaveText(["Symphony"]);
@@ -504,6 +533,7 @@ test("絞り込み欄同士が連動し、アーティストを選ぶとアル�
   // （ネイティブdatalistのprefixフィルタと二重に絞り込まれることを避けるため）。
   await expect(page.locator("#filter-artist-options option")).toHaveText(["Conductor", "Quartet", "Soloist"]);
 
+  await openTab(page, "library");
   await page.locator("#filter-artist").fill("");
   // アーティスト条件を解除すると、アルバム候補も全アルバムに戻る。
   await expect(page.locator("#filter-album-options option")).toHaveText(["Blue Notes", "Symphony"]);
@@ -579,10 +609,14 @@ test("検索で曲を絞り込み、アルバムをdisc/track順のキューに�
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
+  await openTab(page, "library");
   await page.locator("#filter-query").fill("jazz");
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(1);
   await expect(page.locator("#catalog-list")).toContainText("Jazz Song");
+
+  await openTab(page, "albums");
 
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
@@ -598,7 +632,10 @@ test("リリース種別欄の候補一覧が反映され、絞り込みがで�
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await expect(page.locator("#filter-release-type-options option")).toHaveText(["Album", "Single"]);
 
+  await openTab(page, "library");
+  await openDetails(page, "#filter-details");
   await page.locator("#filter-release-type").fill("single");
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(1);
   await expect(page.locator("#catalog-list")).toContainText("Jazz Song");
@@ -609,6 +646,8 @@ test("再生中にシャッフルしても現在曲は維持され、次へで�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await openTab(page, "albums");
 
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
@@ -640,9 +679,12 @@ test("「シャッフルを元に戻す」でシャッフル前の並び順に�
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
+  await openTab(page, "albums");
+
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await openTab(page, "queue");
   await expect(page.getByRole("button", { name: "シャッフルを元に戻す" })).toBeDisabled();
 
   // シャッフル自体が実際に並び順を変えることは別テスト（「再生中にシャッフルしても現在曲は
@@ -651,10 +693,13 @@ test("「シャッフルを元に戻す」でシャッフル前の並び順に�
   // 偽陽性・偽陰性のどちらにもならないよう、以下は復元後の一致だけを見る）。
   const originalOrder = await page.locator("#catalog-list li").allTextContents();
   await page.getByRole("button", { name: "シャッフル", exact: true }).click();
+  await openTab(page, "queue");
   await expect(page.getByRole("button", { name: "シャッフルを元に戻す" })).toBeEnabled();
 
+  await openTab(page, "queue");
   await page.getByRole("button", { name: "シャッフルを元に戻す" }).click();
   await expect(page.locator("#catalog-list li")).toHaveText(originalOrder.map((t) => new RegExp(t)));
+  await openTab(page, "queue");
   await expect(page.getByRole("button", { name: "シャッフルを元に戻す" })).toBeDisabled();
 });
 
@@ -664,11 +709,18 @@ test("並び替え機能でタイトル順（昇順/降順）に並べ替えら�
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(4);
 
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
   await page.locator("#sort-field").selectOption("title");
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
   await page.locator("#sort-direction").selectOption("asc");
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
   await page.getByRole("button", { name: "並び替えを適用" }).click();
   const ascTitles = await page.locator("#catalog-list li").allTextContents();
   expect(ascTitles.map((t) => t.trim())).toEqual([
@@ -678,7 +730,11 @@ test("並び替え機能でタイトル順（昇順/降順）に並べ替えら�
     expect.stringContaining("Scherzo"),
   ]);
 
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
   await page.locator("#sort-direction").selectOption("desc");
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
   await page.getByRole("button", { name: "並び替えを適用" }).click();
   const descTitles = await page.locator("#catalog-list li").allTextContents();
   expect(descTitles.map((t) => t.trim())).toEqual([
@@ -696,6 +752,7 @@ test("並び替えは再生中の曲を含むリスト全体を対象にする�
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   // アルバム再生で自動的に先頭曲（Opening、disc1/track1）が再生される。
+  await openTab(page, "albums");
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(3);
@@ -706,8 +763,14 @@ test("並び替えは再生中の曲を含むリスト全体を対象にする�
 
   // タイトル昇順で並び替えると、修正前は再生中のOpeningが先頭に固定されたままだったが、
   // 修正後は再生中の曲も含めてリスト全体がタイトル順（Finale, Opening, Scherzo）になる。
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
   await page.locator("#sort-field").selectOption("title");
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
   await page.locator("#sort-direction").selectOption("asc");
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
   await page.getByRole("button", { name: "並び替えを適用" }).click();
   const afterSort = await page.locator("#catalog-list li").allTextContents();
   expect(afterSort.map((t) => t.trim())).toEqual([
@@ -726,16 +789,27 @@ test("並び替えの第二候補を指定すると、第一候補が同値の�
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(4);
 
   // 第一候補: リリース年（昇順）、第二候補: トラック番号（昇順）。
   // Jazz Song(2020,track1) → Symphonyの3曲(2024)はtrack番号順、track1同士（Finale/Opening）は
   // タイトルで最終的な決定性を確保するため Finale が先。
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
   await page.locator("#sort-field").selectOption("releaseYear");
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
   await page.locator("#sort-direction").selectOption("asc");
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
   await page.locator("#sort-secondary-field").selectOption("track");
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
   await page.locator("#sort-secondary-direction").selectOption("asc");
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
   await page.getByRole("button", { name: "並び替えを適用" }).click();
   const titles = await page.locator("#catalog-list li").allTextContents();
   expect(titles.map((t) => t.trim())).toEqual([
@@ -752,6 +826,7 @@ test("再生リストの上下ボタンで曲の順番を手動で入れ替え�
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   const items = page.locator("#catalog-list li");
   await expect(items).toHaveCount(4);
@@ -809,7 +884,9 @@ test("並べ替え待機中に保存ボタンを押しても、要求した新�
   // 保留中に2番目の行を上へ動かし（[song-1, song-2] → [song-2, song-1]）、
   // 反映を待たずにそのまま保存する。
   await items.nth(1).getByRole("button", { name: "上へ", exact: true }).click();
+  await openTab(page, "playlists");
   await page.locator("#playlist-name").fill("並べ替え直後保存");
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
 
   await page.evaluate(() => (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay());
@@ -818,6 +895,7 @@ test("並べ替え待機中に保存ボタンを押しても、要求した新�
 
   // 保存されたプレイリストを読み込み直し、要求した新しい順序（song-2が先頭）で
   // 保存されたことを確認する（修正前は並べ替え前のスナップショットが保存されていた）。
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "再生リストに読み込む" }).click();
   await expect(items).toHaveCount(2);
   await expect(items.nth(0).locator(".song-link")).toContainText("Second song");
@@ -829,11 +907,14 @@ test("保存ボタンの待機中に別の再生リストへ差し替えられ�
   await page.goto("/"); await login(page); await openCatalog(page);
 
   await page.getByRole("button", { name: "再生", exact: true }).click(); // song-1の再生開始、play()は保留のまま
+  await openTab(page, "playlists");
   await page.locator("#playlist-name").fill("差し替えテスト");
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
 
   // 保存がpendingMove待機中の間に、絞り込みで全く別の再生リストへ差し替える
   // （setList()によりqueueの世代が進む）。
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
 
   await page.evaluate(() => (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay());
@@ -850,16 +931,20 @@ test("保存ボタンの待機中に一部の曲だけチェックを外した�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   const items = page.locator("#catalog-list li");
   await expect(items).toHaveCount(4);
 
   await page.getByRole("button", { name: "再生", exact: true }).click(); // 先頭曲の再生開始、play()は保留のまま
+  await openTab(page, "playlists");
   await page.locator("#playlist-name").fill("除外テスト");
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
 
   // 保存がpendingMove待機中の間に、1曲だけチェックを外す（setList()は経由しないため
   // exclusionVersionだけが進み、除外後も3曲残るため0曲チェックにも該当しない）。
+  await openTab(page, "queue");
   await items.nth(1).locator("input[type=checkbox]").uncheck();
 
   await page.evaluate(() => (window as unknown as { __e2eReleaseFirstMediaPlay: () => void }).__e2eReleaseFirstMediaPlay());
@@ -874,17 +959,23 @@ test("保存ボタンの待機中に検索結果を再生リストへ追加し�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "library");
   await page.locator("#filter-artist").fill("Soloist");
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(2);
 
   await page.getByRole("button", { name: "再生", exact: true }).click(); // 先頭曲の再生開始、play()は保留のまま
+  await openTab(page, "playlists");
   await page.locator("#playlist-name").fill("追加テスト");
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
 
   // 保存がpendingMove待機中の間に、別の条件の検索結果を追加する（setList()もexclude()も
   // 経由しないため、appendVersionだけがこの変更を検出できる）。
+  await openTab(page, "library");
   await page.locator("#filter-artist").fill("Quartet");
+  await openTab(page, "library");
   await page.getByRole("button", { name: "検索", exact: true }).click();
   await page.locator("#search-results").getByRole("button", { name: "＋追加" }).click();
 
@@ -895,6 +986,7 @@ test("保存ボタンの待機中に検索結果を再生リストへ追加し�
   // 待ってからプレイリストが1件も作られていないことを確認する。
   await expect(page.locator("#catalog-list li")).toHaveCount(3);
   await expect(page.locator("#status")).toContainText("保存を待っている間に再生リストが変更されたため、保存を中止しました。");
+  await openTab(page, "playlists");
   await expect(page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" })).toBeEnabled();
   await expect(page.locator("#playlist-list li")).toHaveCount(0);
 });
@@ -906,15 +998,20 @@ test("再生リストに入っていて除外中の曲は、検索結果で「�
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   // 再生リストを「Scherzo」1曲だけで作り、その曲を除外（チェックを外す）する
+  await openTab(page, "library");
   await page.locator("#filter-query").fill("Scherzo");
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   const items = page.locator("#catalog-list li");
   await expect(items).toHaveCount(1);
   await items.first().locator("input[type=checkbox]").uncheck();
 
   // アーティスト「Soloist」で検索すると、Finale（未追加）とScherzo（除外中）がヒットする
+  await openTab(page, "library");
   await page.locator("#filter-query").fill("");
+  await openTab(page, "library");
   await page.locator("#filter-artist").fill("Soloist");
+  await openTab(page, "library");
   await page.getByRole("button", { name: "検索", exact: true }).click();
   const results = page.locator("#search-results li");
   await expect(results).toHaveCount(2);
@@ -923,6 +1020,7 @@ test("再生リストに入っていて除外中の曲は、検索結果で「�
   await expect(results.filter({ hasText: "Finale" }).getByRole("button", { name: "＋追加" })).toBeEnabled();
 
   // すべて追加→Finaleだけが足され、Scherzoは除外のままで、再生されない旨が案内される
+  await openTab(page, "library");
   await page.locator("#search-add-all-btn").click();
   await expect(items).toHaveCount(2);
   await expect(page.locator("#status")).toContainText("1曲は除外中のため再生されません");
@@ -939,7 +1037,9 @@ test("「再生」ボタンで先頭曲から再生でき、一時停止中の�
   // 「この条件で再生リストを作る」は自動再生しない（アルバム再生・プレイリスト読み込みとは
   // 異なる既存の仕様）ため、この状態で「再生」ボタンを押すと先頭曲から再生できることを確認する。
   // 検索で1曲だけに絞り込み、どの曲が「先頭」になるか（sortSongsの並び順）に依存しないようにする。
+  await openTab(page, "library");
   await page.locator("#filter-query").fill("opening");
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(1);
   await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /.+/);
@@ -1042,6 +1142,7 @@ test("再生中の曲をチェック解除で除外してから「再生」ボ�
 
   // 再生中のsong-1自身を除外する。修正前はcanResumeCurrent()が除外状態を見ておらず、
   // resume()が除外を理由にfalseを返すため「再生」ボタンが何も再生できなくなっていた。
+  await openTab(page, "queue");
   await page.locator("#catalog-list input").first().uncheck();
   await page.getByRole("button", { name: "一時停止" }).click();
   await page.getByRole("button", { name: "再生", exact: true }).click();
@@ -1057,11 +1158,13 @@ test("アルバム一覧はアーティスト別に見出し付きで表示さ�
   const albumList = page.locator("#album-list");
   await expect(albumList.locator(".album-artist-heading")).toHaveText(["Orchestra", "Quartet"]);
 
+  await openTab(page, "albums");
   await page.locator("#album-search").fill("quartet");
   await expect(albumList.locator(".album-artist-heading")).toHaveText(["Quartet"]);
   await expect(albumList).toContainText("Blue Notes");
   await expect(albumList).not.toContainText("Symphony");
 
+  await openTab(page, "albums");
   await page.locator("#album-search").fill("symphony");
   await expect(albumList.locator(".album-artist-heading")).toHaveText(["Orchestra"]);
   await expect(albumList).toContainText("Symphony");
@@ -1074,14 +1177,18 @@ test("曲フィルタでアルバム一覧を絞っても再生時は全曲を�
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   // Symphonyの3曲中2曲だけがSoloistだが、アルバム単位では表示し、再生リストには全3曲を入れる。
+  await openTab(page, "library");
   await page.locator("#filter-artist").fill("Soloist");
   await expect(page.locator("#album-list")).toContainText("Symphony（3曲）");
   await expect(page.locator("#album-list")).not.toContainText("Blue Notes");
+  await openTab(page, "albums");
   await page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).getByRole("button", { name: "このアルバムを再生" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(3);
   await expect(page.locator("#catalog-list")).toContainText("Opening");
 
+  await openTab(page, "library");
   await page.locator("#filter-artist").fill("");
+  await openTab(page, "albums");
   await page.locator("#album-sort").selectOption("year-asc");
   await expect(page.locator("#album-list .album-artist-heading")).toHaveCount(0);
   const albumRows = page.locator("#album-list > li");
@@ -1096,7 +1203,9 @@ test("曲フィルタでアルバム一覧を絞っても再生時は全曲を�
 test("再生リストをプレイリストとして保存し、一覧から読み込み直して再生でき、削除もできる", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
 
+  await openTab(page, "playlists");
   await page.locator("#playlist-name").fill("テストリスト");
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
   await expect(page.locator("#status")).toContainText("プレイリスト「テストリスト」（2曲）を保存しました");
   await expect(page.locator("#playlist-list li")).toHaveCount(1);
@@ -1107,16 +1216,19 @@ test("再生リストをプレイリストとして保存し、一覧から読�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
   await page.getByRole("button", { name: "次へ" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "再生リストに読み込む" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(2);
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 
   // 削除は取り消せないため確認ダイアログを挟む。キャンセルすれば削除されないことをまず確認する。
   page.once("dialog", (dialog) => void dialog.dismiss());
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "削除" }).click();
   await expect(page.locator("#playlist-list li")).toHaveCount(1);
 
   page.once("dialog", (dialog) => void dialog.accept());
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "削除" }).click();
   await expect(page.locator("#status")).toContainText("プレイリストを削除しました");
   await expect(page.locator("#playlist-list li")).toHaveCount(0);
@@ -1125,7 +1237,9 @@ test("再生リストをプレイリストとして保存し、一覧から読�
 test("プレイリスト一覧の読み込み後に入力欄のスプレッドシートIDを変えても、削除は読み込み時のIDへ送られる", async ({ context, page }) => {
   const mock = await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
 
+  await openTab(page, "playlists");
   await page.locator("#playlist-name").fill("テストリスト");
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
   await expect(page.locator("#playlist-list li")).toHaveCount(1);
 
@@ -1137,6 +1251,7 @@ test("プレイリスト一覧の読み込み後に入力欄のスプレッド�
   // 素通りしてしまっていた）。
   const writesBeforeDelete = mock.sheetsWrites.length;
   page.once("dialog", (dialog) => void dialog.accept());
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "削除" }).click();
   await expect(page.locator("#status")).toContainText("プレイリストを削除しました");
 
@@ -1158,9 +1273,11 @@ test("読み込んだプレイリストの全曲が索引から消えていた�
   await page.getByRole("button", { name: "次へ" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "プレイリスト一覧を更新" }).click();
   await expect(page.locator("#playlist-list")).toContainText("消えた曲（1曲）");
   const pauseCallsBefore = await page.evaluate(() => (window as unknown as { __e2ePauseCalls: number }).__e2ePauseCalls);
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "再生リストに読み込む" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(0);
   // play()を丸ごと差し替えているため、HTMLMediaElement.pausedはこの環境では常にtrueのまま
@@ -1215,14 +1332,18 @@ test("保存操作自身の一覧自動更新は、同じスプレッドシー�
 
   // 保存操作を開始する（先発の操作）。createPlaylist()のappendがゲートで保留されるため、
   // handleSavePlaylistはcreatePlaylist()を待ったまま進まない（ボタンはdisabledのまま）。
+  await openTab(page, "playlists");
   await page.locator("#playlist-name").fill("先発の保存");
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
+  await openTab(page, "playlists");
   await expect(page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" })).toBeDisabled();
 
   // 保存操作の開始より後、同じスプレッドシートに対して手動更新（後発の操作）を実行して
   // 完了させる。この時点ではまだ何も保存されていないため一覧は0件。「一覧が0件」は何も
   // ロードしていない初期状態でも成り立ってしまい待機条件として使えないため、コミット回数が
   // 実際に1件増えるまで待つことで、手動更新が本当に完了したことを確認する。
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "プレイリスト一覧を更新" }).click();
   await expect.poll(() => getCommitCount()).toBe(1);
   await expect(page.locator("#playlist-list li")).toHaveCount(0);
@@ -1234,6 +1355,7 @@ test("保存操作自身の一覧自動更新は、同じスプレッドシー�
   // 判定だと、この自動更新が「古い」という理由だけで一律に破棄され、保存したプレイリストが
   // 次に手動更新するまで一覧に現れなかった）。
   mock.releaseAllPlaylistsAppends();
+  await openTab(page, "playlists");
   await expect(page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" })).toBeEnabled();
   await expect.poll(() => getCommitCount()).toBe(2);
   await expect(page.locator("#playlist-list li")).toHaveCount(1);
@@ -1243,14 +1365,19 @@ test("保存中に次のプレイリスト名を入力し始めても、保存�
   const mock = await installGoogleMocks(context, { gatePlaylistsAppends: true });
   await page.goto("/"); await login(page); await openCatalog(page);
 
+  await openTab(page, "playlists");
   await page.locator("#playlist-name").fill("先発の保存");
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
+  await openTab(page, "playlists");
   await expect(page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" })).toBeDisabled();
 
   // 保存が完了する前に、次のプレイリスト用の名前を入力し始める。
+  await openTab(page, "playlists");
   await page.locator("#playlist-name").fill("次の入力中の名前");
 
   mock.releaseAllPlaylistsAppends();
+  await openTab(page, "playlists");
   await expect(page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" })).toBeEnabled();
   // 保存完了時に入力欄が保存開始時点の名前（"先発の保存"）と一致しない＝ユーザーが既に
   // 次の名前を入力し始めているため、消さずに残さなければならない。
@@ -1260,7 +1387,9 @@ test("保存中に次のプレイリスト名を入力し始めても、保存�
 test("前後に空白があるプレイリスト名でも、保存完了後に入力欄をきちんと空欄化する", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
 
+  await openTab(page, "playlists");
   await page.locator("#playlist-name").fill(" 空白付きの名前 ");
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
   await expect(page.locator("#status")).toContainText("を保存しました");
   await expect(page.locator("#playlist-name")).toHaveValue("");
@@ -1275,9 +1404,11 @@ test("曲一覧とプレイリスト一覧が別のスプレッドシートか�
   // 一覧を再読み込みせずに入力欄だけを別のスプレッドシートIDへ書き換えてから、そのIDで
   // プレイリスト一覧を読み込む。
   await page.locator("#spreadsheet-id").fill("other-sheet");
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "プレイリスト一覧を更新" }).click();
   await expect(page.locator("#playlist-list li")).toHaveCount(1);
 
+  await openTab(page, "playlists");
   await page.getByRole("button", { name: "再生リストに読み込む" }).click();
   await expect(page.locator("#status")).toContainText("曲一覧とプレイリスト一覧が別のスプレッドシートから読み込まれています");
   // キューは変更されず、直前の状態のまま（除外反映前のカタログ一覧が空のまま）であることを確認する。
@@ -1289,11 +1420,14 @@ test("スキャン開始後のアルバム再生は再読み込みエラーに�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "library");
   await page.locator("#filter-query").fill("jazz");
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(1);
 
   await page.getByRole("button", { name: /スキャンして索引/ }).click();
+  await openTab(page, "albums");
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
   await expect(page.locator("#status")).toContainText("曲一覧を再読み込みしてから再生リストを作成してください");
@@ -1316,6 +1450,7 @@ test("検索→一覧から追加を、条件を変えて繰り返して再生�
   await expect(addAll).toBeDisabled();
 
   // 1回目：検索「jazz」→ヒットした1曲を、一覧の「＋追加」で足す
+  await openTab(page, "library");
   await page.locator("#filter-query").fill("jazz");
   await search.click();
   await expect(results).toHaveCount(1);
@@ -1327,7 +1462,9 @@ test("検索→一覧から追加を、条件を変えて繰り返して再生�
   await expect(results.first().getByRole("button", { name: "追加済み" })).toBeDisabled();
 
   // 2回目：条件を変えて検索→「すべて追加」。1回目の曲は残ったまま末尾に続く
+  await openTab(page, "library");
   await page.locator("#filter-query").fill("");
+  await openTab(page, "library");
   await page.locator("#filter-artist").fill("Soloist");
   await search.click();
   await expect(results).toHaveCount(2);
@@ -1346,6 +1483,7 @@ test("検索→一覧から追加を、条件を変えて繰り返して再生�
   await expect(page.locator("#catalog-list li")).toHaveCount(3);
 
   // 従来の「作る」ボタンは引き続き、その条件の曲で再生リストを置き換える
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(2);
   await expect(page.locator("#catalog-list")).not.toContainText("Jazz Song");
@@ -1357,10 +1495,12 @@ test("絞り込み欄でEnterを押しても検索でき、0件ヒットの案�
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
+  await openTab(page, "library");
   await page.locator("#filter-query").fill("jazz");
   await page.locator("#filter-query").press("Enter");
   await expect(page.locator("#search-results li")).toHaveCount(1);
 
+  await openTab(page, "library");
   await page.locator("#filter-query").fill("zzz-no-such-song");
   await page.locator("#filter-query").press("Enter");
   await expect(page.locator("#search-results li")).toHaveCount(0);
@@ -1372,13 +1512,16 @@ test("曲一覧を読み込み直すと、古い検索結果は破棄される�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "library");
   await page.locator("#filter-query").fill("jazz");
+  await openTab(page, "library");
   await page.getByRole("button", { name: "検索", exact: true }).click();
   await expect(page.locator("#search-results li")).toHaveCount(1);
 
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await expect(page.locator("#search-results li")).toHaveCount(0);
+  await openTab(page, "library");
   await expect(page.locator("#search-add-all-btn")).toBeDisabled();
 });
 
@@ -1389,6 +1532,7 @@ test("索引の再読み込み中は、旧索引の検索結果が失効して�
   await load.click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   const search = page.getByRole("button", { name: "検索", exact: true });
+  await openTab(page, "library");
   await page.locator("#filter-query").fill("jazz");
   await search.click();
   await expect(page.locator("#search-results li")).toHaveCount(1);
@@ -1397,6 +1541,7 @@ test("索引の再読み込み中は、旧索引の検索結果が失効して�
   // 旧結果の「＋追加」が押せない）。
   await load.click();
   await expect(page.locator("#search-results li")).toHaveCount(0);
+  await openTab(page, "library");
   await expect(page.locator("#search-add-all-btn")).toBeDisabled();
   await expect(search).toBeDisabled();
 
@@ -1429,6 +1574,7 @@ test("日本語入力の確定のEnter（isComposing=falseでkeyCode 229）で�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "library");
   await page.locator("#filter-query").fill("jazz");
 
   // Safari/iOSの確定のEnter相当：isComposing=falseのまま、keyCodeが229
@@ -1454,6 +1600,7 @@ test("検索結果の一覧は高さに上限があり一覧の中でスクロ�
 
 test("曲一覧を読み込む前は「検索」ボタンが押せない（2026-10-16）", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page);
+  await openTab(page, "library");
   await expect(page.getByRole("button", { name: "検索", exact: true })).toBeDisabled();
 });
 
@@ -1576,7 +1723,9 @@ test("シークバーをドラッグ中に曲が切り替わった後、旧ド�
 
 test("クロスフェードのUI（チェックボックス・秒数選択・非表示の第二audio要素）が存在する", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page);
+  await openTab(page, "settings");
   await expect(page.getByRole("checkbox", { name: "曲間をクロスフェードする" })).toBeAttached();
+  await openTab(page, "settings");
   await expect(page.locator("#crossfade-duration-sec")).toBeAttached();
   // 秒数の選択肢（3/5/7/10/20秒）がCROSSFADE_DURATION_OPTIONS_SECからそのまま描画される。
   await expect(page.locator("#crossfade-duration-sec option")).toHaveText(["3秒", "5秒", "7秒", "10秒", "20秒"]);
@@ -1589,6 +1738,8 @@ test("クロスフェード無効時は残り時間が閾値以内になって�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await openTab(page, "albums");
 
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
@@ -1612,7 +1763,10 @@ test("準備（#audio-player-bへの接続確立）は音量ランプ開始し�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  await openTab(page, "albums");
 
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
@@ -1642,7 +1796,10 @@ test("キュー内自然終了に近づくとクロスフェードが発生し�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  await openTab(page, "albums");
 
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
@@ -1680,7 +1837,9 @@ test("クロスフェード中に退場側が自然終了してpauseイベント
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+  await openTab(page, "albums");
   await page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).getByRole("button", { name: "このアルバムを再生" }).click();
   await expect(page.locator("#play-pause-btn")).toHaveAttribute("aria-label", "一時停止");
 
@@ -1702,7 +1861,7 @@ test("クロスフェード中に退場側が自然終了してpauseイベント
     audio.dispatchEvent(new Event("pause"));
   });
   await expect(page.locator("#play-pause-btn")).toHaveAttribute("aria-label", "一時停止");
-  await expect(page.locator("#play-pause-btn")).toHaveText("⏸");
+  await expect(page.locator("#play-pause-btn svg path")).toHaveAttribute("d", /^M7 5h4v14H7z/); // ⏸アイコン
 });
 
 test("手動で「次へ」を押すとクロスフェードが中断され、#audio-player-bがリセットされる", async ({ context, page }) => {
@@ -1710,7 +1869,10 @@ test("手動で「次へ」を押すとクロスフェードが中断され、#a
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  await openTab(page, "albums");
 
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
@@ -1754,7 +1916,10 @@ test("シークするとクロスフェードのランプが打ち切られ、#a
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  await openTab(page, "albums");
 
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
@@ -1790,7 +1955,10 @@ test("一時停止するとクロスフェードのランプが打ち切られ�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  await openTab(page, "albums");
 
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
@@ -1820,7 +1988,10 @@ test("先読み再生の開始が応答なく固まっても、タイムアウ�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  await openTab(page, "albums");
 
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
@@ -1870,7 +2041,10 @@ test("先読み再生の開始待ち中に主audio要素が自然終了しても
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+
+  await openTab(page, "albums");
 
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
@@ -1933,6 +2107,8 @@ test("バックグラウンドで<audio>が黙って一時停止しても、フ�
 
   // #diag-log-outputはtextareaで、値はJSからoutput.value = ...で設定される（textContentには
   // 反映されない）ため、toContainText()ではなくtoHaveValue()で検証する。
+  await openTab(page, "settings");
+  await openDetails(page, "#diagnostics-details");
   await page.getByRole("button", { name: "診断ログを表示" }).click();
   await expect(page.locator("#diag-log-output")).toHaveValue(/backgroundRecovery:attempt/);
   await expect(page.locator("#audio-player")).not.toHaveAttribute("src", srcBefore!);
@@ -1951,6 +2127,8 @@ test("ユーザー自身が一時停止した曲は、フォアグラウンド�
   await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("pause")));
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
 
+  await openTab(page, "settings");
+  await openDetails(page, "#diagnostics-details");
   await page.getByRole("button", { name: "診断ログを表示" }).click();
   await expect(page.locator("#diag-log-output")).not.toHaveValue(/backgroundRecovery:attempt/);
   await expect(page.locator("#audio-player")).toHaveAttribute("src", srcBefore!);
@@ -2142,6 +2320,8 @@ test("バックグラウンド復帰が自然終了に伴う遷移をreplacePend
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
+  await openTab(page, "albums");
+
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
@@ -2248,6 +2428,8 @@ test("自然終了の遷移が未解決のまま固まるのではなく実際�
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
+  await openTab(page, "albums");
+
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
@@ -2278,6 +2460,7 @@ test("自然終了の遷移が未解決のまま固まるのではなく実際�
 
   // ユーザーが（Bluetooth/OSメディアキーではなく曲名クリックで代表させる）Finaleへ手動で
   // 遷移する。この遷移のplay()呼び出しが未解決のまま固まり続ける。
+  await openTab(page, "queue");
   await page.locator("#catalog-list li").nth(2).locator(".song-link").click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-3(\?|$)/);
   // まだコミットされていないためOpeningのまま。
@@ -2402,11 +2585,14 @@ test("最後の曲が自然終了し次の曲が無くキューが正当に終�
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
+  await openTab(page, "albums");
+
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
 
   // Finale（3曲目）を除外し、実質的な最後の曲をScherzo（2曲目）にする。
+  await openTab(page, "queue");
   await page.locator("#catalog-list li").nth(2).locator("input[type=checkbox]").uncheck();
 
   // Scherzoへ手動で進める。
@@ -2418,6 +2604,7 @@ test("最後の曲が自然終了し次の曲が無くキューが正当に終�
   await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("ended")));
 
   // 除外していたFinaleを再度有効化する（キューを再生する意図は無い、ただのチェック操作）。
+  await openTab(page, "queue");
   await page.locator("#catalog-list li").nth(2).locator("input[type=checkbox]").check();
 
   // documentをhidden→visibleにしてバックグラウンド復帰を発火させる。
@@ -2466,6 +2653,7 @@ test("手動の「次へ」が未解決のまま固まっている間にキュ�
   // この固まった遷移を解決させないまま、同じ条件で再生リストを作り直す（setList()で丸ごと
   // 差し替え。新しいリストにも偶然song-2が含まれる）。この新しい再生リストは絞り込みで
   // 作った直後の既存仕様通り自動再生しない。
+  await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(2);
   await expect(page.locator("#catalog-list li.now-playing")).toHaveCount(0);
@@ -2517,6 +2705,7 @@ test("手動の「次へ」が未解決のまま固まっている間にその�
 
   // song-2をチェックボックスで除外する（exclude()はgenerationId()を変えないため、
   // pendingQueueTransitionTargetの登録時点との突き合わせでは検出できない）。
+  await openTab(page, "queue");
   await page.locator("#catalog-list li").nth(1).locator("input[type=checkbox]").uncheck();
   // 未解決の遷移中にOS/ブラウザ側で音声が止まった状態を再現する。
   await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.dispatchEvent(new Event("pause")));
@@ -2542,6 +2731,8 @@ test("自然終了に伴う遷移の先読み先が無くなった場合（残�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
+
+  await openTab(page, "albums");
 
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
@@ -2571,7 +2762,9 @@ test("自然終了に伴う遷移の先読み先が無くなった場合（残�
   // 残り全曲（Scherzo・Finale）を除外する。これでpeekNextFileId()は次に有効な曲を見つけられ
   // なくなり、attemptBackgroundPlaybackRecovery()のpendingNaturalEndAdvance分岐は
   // 「次の曲が無い」早期returnへ入る。
+  await openTab(page, "queue");
   await page.locator("#catalog-list li").nth(1).locator("input[type=checkbox]").uncheck();
+  await openTab(page, "queue");
   await page.locator("#catalog-list li").nth(2).locator("input[type=checkbox]").uncheck();
 
   // documentをhiddenにして定期リトライループを開始させる（VITE_E2Eでは50ms間隔）。複数回分の
@@ -2678,6 +2871,8 @@ test("自然終了に伴う遷移の先読み先が無くなり諦めた際、�
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
+  await openTab(page, "albums");
+
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
@@ -2713,7 +2908,9 @@ test("自然終了に伴う遷移の先読み先が無くなり諦めた際、�
 
   // 残り全曲（Scherzo・Finale）を除外する。これでpeekNextFileId()は次に有効な曲を見つけられ
   // なくなり、attemptBackgroundPlaybackRecovery()は「次の曲が無い」ため諦める分岐へ入る。
+  await openTab(page, "queue");
   await page.locator("#catalog-list li").nth(1).locator("input[type=checkbox]").uncheck();
+  await openTab(page, "queue");
   await page.locator("#catalog-list li").nth(2).locator("input[type=checkbox]").uncheck();
 
   // フォアグラウンド復帰トリガー（visibilitychange、document.visibilityStateは"visible"の
@@ -2862,9 +3059,10 @@ test("一覧の行は曲名の長さに関わらず操作ボタンが右端に�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
-  await page.locator("#album-list li").filter({ hasText: "Symphony" }).getByRole("button", { name: "このアルバムを再生" }).click();
-  await expect(page.locator("#catalog-list li")).toHaveCount(3);
 
+  // 寸法は「表示されている」一覧でしか測れない（タブで隠れたパネルの要素はgetBoundingClientRect()が
+  // すべて0になり、どの検証も常に通ってしまう。2026-10-30、独立レビュー指摘：P2）。そのため測る前に
+  // 対象のタブを開いて表示を確認し、測定値自体が正の大きさであることも検証する。
   const measure = (listSelector: string) =>
     page.evaluate((selector) => {
       const list = document.querySelector(selector)!.getBoundingClientRect();
@@ -2874,7 +3072,11 @@ test("一覧の行は曲名の長さに関わらず操作ボタンが右端に�
         const buttons = Array.from(li.querySelectorAll(".row-actions button")).map((b) => b.getBoundingClientRect());
         const last = buttons[buttons.length - 1];
         return {
+          listWidth: list.width,
+          rowWidth: row.width,
           rowHeight: row.height,
+          mainWidth: main.width,
+          buttonWidth: last.width,
           // 操作ボタンの右端が一覧（カード）の右端のすぐ内側にあるか。
           gapToListRight: list.right - last.right,
           // 曲名側の右端が最初の操作ボタンの左端を越えていないか（重ならない）。
@@ -2885,22 +3087,40 @@ test("一覧の行は曲名の長さに関わらず操作ボタンが右端に�
         };
       });
     }, listSelector);
+  const expectMeasured = (rows: Awaited<ReturnType<typeof measure>>, count: number) => {
+    expect(rows).toHaveLength(count);
+    for (const m of rows) {
+      expect(m.listWidth).toBeGreaterThan(0);
+      expect(m.rowWidth).toBeGreaterThan(0);
+      expect(m.rowHeight).toBeGreaterThan(0);
+      expect(m.mainWidth).toBeGreaterThan(0);
+      expect(m.buttonWidth).toBeGreaterThan(0);
+      expect(m.gapToListRight).toBeLessThanOrEqual(16);
+      expect(m.mainOverlap).toBeLessThanOrEqual(0.5);
+      expect(m.buttonsInsideRow).toBe(true);
+    }
+  };
 
-  const queueBefore = await measure("#catalog-list");
+  // アルバム一覧（アルバムのタブを表示した状態で測る）。
+  await openTab(page, "albums");
+  await expect(page.locator("#album-list li.row").first()).toBeVisible();
   const albumRows = await measure("#album-list");
+  expectMeasured(albumRows, 2);
+  expect(new Set(albumRows.map((m) => Math.round(m.lastButtonRight))).size).toBe(1);
+
+  // 再生リスト（アルバム再生で再生リストのタブへ移った状態で測る）。
+  await page.locator("#album-list li").filter({ hasText: "Symphony" }).getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await expect(page.locator("#panel-queue")).toBeVisible();
+  const queueBefore = await measure("#catalog-list");
+  expectMeasured(queueBefore, 3);
   // 1行だけ区切りの無い非常に長い曲名にする（折り返さず省略表示になるはず）。
   await page.evaluate(() => {
     const t = document.querySelector("#catalog-list li:nth-child(2) .r-title .t");
     if (t) t.textContent = "VeryLongTitle".repeat(30);
   });
   const queueAfter = await measure("#catalog-list");
-
-  expect(queueBefore).toHaveLength(3);
-  for (const m of [...queueAfter, ...albumRows]) {
-    expect(m.gapToListRight).toBeLessThanOrEqual(16);
-    expect(m.mainOverlap).toBeLessThanOrEqual(0.5);
-    expect(m.buttonsInsideRow).toBe(true);
-  }
+  expectMeasured(queueAfter, 3);
   // 長い曲名にした行も含め、再生リストの操作ボタンの右端は全行で同じ位置にそろう。
   expect(new Set(queueAfter.map((m) => Math.round(m.lastButtonRight))).size).toBe(1);
   // 同じ行の高さは、長い曲名にしても変わらない。
@@ -2911,13 +3131,124 @@ test("一覧の行は曲名の長さに関わらず操作ボタンが右端に�
 test("スマホ幅でも絞り込みの年の入力欄・並び替えの選択欄が画面内に収まり、ページが横にはみ出さない（2026-10-30、UI整理での再発防止ガード。実機では「年（最小）」の入力欄と「ライブラリ」見出しが画面外へはみ出して見えたが、ヘッドレスのChromiumでは旧レイアウトでも再現できなかったため、このテストは旧レイアウトの失敗を確認できていない）", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
   await page.setViewportSize({ width: 320, height: 900 });
-  for (const id of ["filter-min-year", "filter-max-year", "sort-field", "sort-direction", "sort-secondary-field", "sort-secondary-direction", "sort-btn"]) {
+  const expectInsideViewport = async (id: string) => {
     const box = await page.locator(`#${id}`).boundingBox();
     expect(box, id).not.toBeNull();
     expect(box!.x, id).toBeGreaterThanOrEqual(0);
     expect(box!.x + box!.width, id).toBeLessThanOrEqual(320);
-  }
-  const heading = await page.locator(".catalog h2").boundingBox();
+  };
+  await openTab(page, "library");
+  await openDetails(page, "#filter-details");
+  for (const id of ["filter-min-year", "filter-max-year"]) await expectInsideViewport(id);
+  const heading = await page.locator("#panel-library h2").boundingBox();
   expect(heading!.x).toBeGreaterThanOrEqual(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+  await openTab(page, "queue");
+  await openDetails(page, "#sort-details");
+  for (const id of ["sort-field", "sort-direction", "sort-secondary-field", "sort-secondary-direction", "sort-btn"]) await expectInsideViewport(id);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+});
+
+// ---- 上部タブ・折りたたみ（UI整理 PR2、2026-10-30） ----
+
+test("タブは選んだ画面のパネルだけを表示し、読み込み・再生リスト作成・アルバム再生で自動的に切り替わる", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  const tabs = ["queue", "library", "albums", "playlists", "settings"] as const;
+  const expectOnlyVisible = async (shown: (typeof tabs)[number]) => {
+    for (const id of tabs) {
+      await expect(page.locator(`#panel-${id}`)).toBeVisible({ visible: id === shown });
+      await expect(page.locator(`#tab-${id}`)).toHaveAttribute("aria-selected", String(id === shown));
+    }
+  };
+  // 初期表示は再生リスト。
+  await expectOnlyVisible("queue");
+  for (const id of tabs) { await page.locator(`#tab-${id}`).click(); await expectOnlyVisible(id); }
+
+  // 索引の読み込みが成功するとライブラリへ移る。
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await expectOnlyVisible("library");
+  // 「この条件で再生リストを作る」で再生リストへ移る。
+  await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
+  await expectOnlyVisible("queue");
+  // アルバムの再生ボタンでも再生リストへ移る。
+  await openTab(page, "albums");
+  await page.locator("#album-list li").filter({ hasText: "Symphony" }).getByRole("button", { name: "このアルバムを再生" }).click();
+  await expectOnlyVisible("queue");
+});
+
+test("タブは←→・Home/Endで移動でき、再生リストの曲数がバッジに出る", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await expect(page.locator("#queue-badge")).toHaveText("0");
+  await page.locator("#tab-queue").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("#tab-library")).toBeFocused();
+  await expect(page.locator("#panel-library")).toBeVisible();
+  await page.keyboard.press("End");
+  await expect(page.locator("#tab-settings")).toBeFocused();
+  await page.keyboard.press("ArrowRight"); // 末尾から先頭へ循環
+  await expect(page.locator("#tab-queue")).toBeFocused();
+  await page.keyboard.press("ArrowLeft"); // 先頭から末尾へ循環
+  await expect(page.locator("#tab-settings")).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(page.locator("#panel-queue")).toBeVisible();
+
+  await openSymphonyQueue(page);
+  await expect(page.locator("#queue-badge")).toHaveText("3");
+  await expect(page.locator("#queue-count")).toHaveText("3曲");
+});
+
+test("再生リストが空のときは案内を出し、「ライブラリを開く」でライブラリのタブへ移る", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await expect(page.locator("#queue-empty")).toBeVisible();
+  await page.locator("#queue-empty").getByRole("button", { name: "ライブラリを開く" }).click();
+  await expect(page.locator("#panel-library")).toBeVisible();
+  await openSymphonyQueue(page);
+  await expect(page.locator("#queue-empty")).toBeHidden();
+  await page.getByRole("button", { name: "再生リストをクリア" }).click();
+  await expect(page.locator("#queue-empty")).toBeVisible();
+});
+
+test("タブ見出しはページをスクロールしても画面上部に張り付く", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.setViewportSize({ width: 390, height: 500 });
+  await openSymphonyQueue(page);
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
+  const box = await page.locator(".tabs").boundingBox();
+  expect(box).not.toBeNull();
+  expect(Math.abs(box!.y)).toBeLessThanOrEqual(1);
+  // 390px幅（一般的なスマホ）では5つのタブが横スクロールなしで全部収まる（右端の「設定」が切れない）。
+  const overflow = await page.locator(".tabs").evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
+test("詳細条件・並び替え・診断ログは初期状態では閉じていて、開くと入力できる", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await openTab(page, "library");
+  await expect(page.locator("#filter-genre")).toBeHidden();
+  await openDetails(page, "#filter-details");
+  await expect(page.locator("#filter-genre")).toBeVisible();
+  await openTab(page, "queue");
+  await expect(page.locator("#sort-field")).toBeHidden();
+  await openDetails(page, "#sort-details");
+  await expect(page.locator("#sort-field")).toBeVisible();
+  await openTab(page, "settings");
+  await expect(page.locator("#diag-log-show-btn")).toBeHidden();
+  await openDetails(page, "#diagnostics-details");
+  await expect(page.locator("#diag-log-show-btn")).toBeVisible();
+});
+
+test("「接続・索引」パネルの開閉は再読み込みしても覚えている", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/");
+  await expect(page.locator("#folder-id")).toBeVisible();
+  await page.locator("#connection > summary").click();
+  await expect(page.locator("#folder-id")).toBeHidden();
+  await page.reload();
+  await expect(page.locator("#connection")).toHaveJSProperty("open", false);
+  await expect(page.locator("#folder-id")).toBeHidden();
+  await page.locator("#connection > summary").click();
+  await page.reload();
+  await expect(page.locator("#folder-id")).toBeVisible();
 });

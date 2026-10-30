@@ -29,6 +29,7 @@ import {
 } from "./folderCache";
 import { PlaybackQueue, REPEAT_MODES, REPEAT_MODE_LABELS, queueRowViews, songSubLabel, nowPlayingLabel } from "./queue";
 import { iconSvg, type IconName } from "./icons";
+import { DEFAULT_TAB, TAB_IDS, TAB_LABELS, isTabId, nextTabForKey, type TabId } from "./tabs";
 import { QUEUE_SORT_FIELDS, type QueueSortField } from "./queueSort";
 
 // union型の分岐をRecordの網羅性チェックに使う（AI開発ルール4）：QUEUE_SORT_FIELDSに
@@ -348,22 +349,31 @@ function render(): void {
     ${
       CLIENT_ID
         ? `
-      <label class="field">
-        <span>スキャン対象フォルダID</span>
-        <input id="folder-id" type="text" placeholder="Google DriveのフォルダURLの末尾" />
-      </label>
-      <label class="field">
-        <span>索引スプレッドシートID（indexタブ＋ヘッダー行を事前に作成済みのもの）</span>
-        <input id="spreadsheet-id" type="text" placeholder="スプレッドシートURLの末尾" />
-      </label>
-      <button id="login-btn" type="button">Googleドライブ（読み取り専用）＋スプレッドシートへログイン</button>
-      <button id="scan-btn" type="button" disabled>音楽ファイルをスキャンして索引に反映する</button>
-      <button id="retry-extraction-btn" class="ghost" type="button" disabled>抽出失敗曲の再抽出を試みる</button>
-      <label class="field">
-        <span>試聴するGoogle DriveファイルID</span>
-        <input id="play-file-id" type="text" placeholder="Google DriveファイルID" />
-      </label>
-      <button id="play-btn" type="button" disabled>この曲を再生</button>
+      <details id="connection" class="disclosure" open>
+        <summary>接続・索引<span class="hint">ログイン・スキャン・曲一覧の読み込み</span><span class="chev">${iconSvg("down")}</span></summary>
+        <div class="disclosure-body stack">
+          <label class="field">
+            <span>スキャン対象フォルダID</span>
+            <input id="folder-id" type="text" placeholder="Google DriveのフォルダURLの末尾" />
+          </label>
+          <label class="field">
+            <span>索引スプレッドシートID（indexタブ＋ヘッダー行を事前に作成済みのもの）</span>
+            <input id="spreadsheet-id" type="text" placeholder="スプレッドシートURLの末尾" />
+          </label>
+          <button id="login-btn" type="button">Googleドライブ（読み取り専用）＋スプレッドシートへログイン</button>
+          <div class="btn-row">
+            <button id="load-catalog-btn" type="button" disabled>索引から曲一覧を読み込む</button>
+            <button id="scan-btn" class="ghost" type="button" disabled>音楽ファイルをスキャンして索引に反映する</button>
+            <button id="retry-extraction-btn" class="ghost" type="button" disabled>抽出失敗曲の再抽出を試みる</button>
+          </div>
+          <ul id="result-list" class="result-list"></ul>
+          <label class="field">
+            <span>試聴するGoogle DriveファイルID</span>
+            <input id="play-file-id" type="text" placeholder="Google DriveファイルID" />
+          </label>
+          <button id="play-btn" class="ghost" type="button" disabled>この曲を再生</button>
+        </div>
+      </details>
       <div class="now-playing-bar">
         <audio id="audio-player"></audio>
         <!-- 旧ハンドオフ方式（PR #442〜448）が使っていた一時的な第二audio要素。ロールスワップ
@@ -381,100 +391,148 @@ function render(): void {
           <span id="seek-duration" class="seek-time">0:00</span>
         </div>
         <div class="mini-player-controls">
-          <button id="shuffle-btn" type="button" aria-label="シャッフル" disabled>🔀</button>
-          <button id="previous-btn" type="button" aria-label="前へ" disabled>⏮</button>
-          <button id="play-pause-btn" type="button" aria-label="再生" disabled>▶</button>
-          <button id="next-btn" type="button" aria-label="次へ" disabled>⏭</button>
-          <button id="repeat-btn" class="repeat-off" type="button" aria-label="リピート: オフ" disabled>🔁</button>
+          <button id="shuffle-btn" type="button" aria-label="シャッフル" disabled>${iconSvg("shuffle")}</button>
+          <button id="previous-btn" type="button" aria-label="前へ" disabled>${iconSvg("prev")}</button>
+          <button id="play-pause-btn" type="button" aria-label="再生" disabled>${iconSvg("play")}</button>
+          <button id="next-btn" type="button" aria-label="次へ" disabled>${iconSvg("next")}</button>
+          <button id="repeat-btn" class="repeat-off" type="button" aria-label="リピート: オフ" disabled>${iconSvg("repeat")}</button>
         </div>
         <p id="now-playing" class="status"></p>
         <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
         <p id="status" class="status"></p>
       </div>
-      <section class="playlists">
-        <h2>保存済みプレイリスト</h2>
-        <label class="field"><span>プレイリスト名</span><input id="playlist-name" type="text" placeholder="例: ドライブ用" /></label>
-        <button id="save-playlist-btn" type="button">現在の再生リストをプレイリストとして保存</button>
-        <button id="refresh-playlists-btn" class="ghost" type="button">プレイリスト一覧を更新</button>
-        <ul id="playlist-list" class="result-list"></ul>
-      </section>
-      <ul id="result-list" class="result-list"></ul>
-      <section class="diagnostics">
-        <h2>バックグラウンド再生 診断ログ（調査用）</h2>
-        <p>再生が止まる操作（スマホをバックグラウンドにする・Bluetoothの再生ボタン等）を再現した後、下のボタンでログを表示し、内容をコピーして共有してください。</p>
-        <button id="diag-log-show-btn" class="ghost" type="button">診断ログを表示</button>
-        <button id="diag-log-clear-btn" class="ghost" type="button">診断ログをクリア</button>
-        <textarea id="diag-log-output" class="diag-log-output" readonly rows="10" hidden></textarea>
-      </section>
-      <section class="catalog">
-        <h2>ライブラリ</h2>
-        <button id="load-catalog-btn" type="button" disabled>索引から曲一覧を読み込む</button>
-        <label class="field"><span>検索</span><input id="filter-query" type="search" placeholder="タイトル・アーティスト・アルバム・作曲者を検索" /></label>
-        <label class="field"><span>アーティスト</span><input id="filter-artist" type="search" list="filter-artist-options" /></label>
-        <datalist id="filter-artist-options"></datalist>
-        <label class="field"><span>アルバム</span><input id="filter-album" type="search" list="filter-album-options" /></label>
-        <datalist id="filter-album-options"></datalist>
-        <label class="field"><span>作曲者</span><input id="filter-composer" type="search" list="filter-composer-options" /></label>
-        <datalist id="filter-composer-options"></datalist>
-        <div class="filter-years"><label>年（最小）<input id="filter-min-year" type="number" /></label><label>年（最大）<input id="filter-max-year" type="number" /></label></div>
-        <label class="field"><span>カテゴリ（Genre）</span><input id="filter-genre" type="search" list="filter-genre-options" /></label>
-        <datalist id="filter-genre-options"></datalist>
-        <label class="field"><span>リリース種別</span><input id="filter-release-type" type="search" list="filter-release-type-options" /></label>
-        <datalist id="filter-release-type-options"></datalist>
-        <label class="check-row"><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
-        <div class="btn-row">
-          <button id="search-btn" type="button" disabled>検索</button>
-          <button id="create-queue-btn" class="ghost" type="button" disabled>この条件で再生リストを作る</button>
-        </div>
-        <h3>検索結果</h3>
-        <p id="search-summary" class="lead"></p>
-        <button id="search-add-all-btn" class="ghost sm" type="button" disabled>検索結果をすべて再生リストに追加</button>
-        <ul id="search-results" class="result-list"></ul>
+      <div class="tabs" role="tablist" aria-label="画面">
+        ${TAB_IDS.map(
+          (id) =>
+            `<button id="tab-${id}" class="tab" role="tab" type="button" aria-controls="panel-${id}" aria-selected="${id === DEFAULT_TAB}" tabindex="${id === DEFAULT_TAB ? 0 : -1}">${TAB_LABELS[id]}${id === "queue" ? '<span id="queue-badge" class="badge">0</span>' : ""}</button>`
+        ).join("")}
+      </div>
+
+      <section id="panel-queue" class="panel" role="tabpanel" aria-labelledby="tab-queue">
+        <div class="sec-head"><h2>再生リスト</h2><span id="queue-count" class="count"></span></div>
         <div class="btn-row">
           <button id="unshuffle-btn" class="ghost" type="button" disabled>シャッフルを元に戻す</button>
           <button id="clear-queue-btn" class="ghost danger" type="button" disabled>再生リストをクリア</button>
         </div>
-        <label class="check-row"><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトし、再開時にフェードインする</label>
-        <label class="check-row"><input id="crossfade-toggle" type="checkbox" /> 曲間をクロスフェードする</label>
-        <label class="check-row">長さ
-          <select id="crossfade-duration-sec">
-            ${CROSSFADE_DURATION_OPTIONS_SEC.map(
-              (sec) => `<option value="${sec}"${sec === DEFAULT_CROSSFADE_DURATION_SEC ? " selected" : ""}>${sec}秒</option>`
-            ).join("")}
-          </select>
-        </label>
-        <div class="form-grid">
-          <label class="field">並び替え
-            <select id="sort-field" disabled>
-              ${QUEUE_SORT_FIELDS.map((field) => `<option value="${field}">${QUEUE_SORT_FIELD_LABELS[field]}</option>`).join("")}
-            </select>
-          </label>
-          <label class="field">方向
-            <select id="sort-direction" disabled>
-              <option value="asc">昇順</option>
-              <option value="desc">降順</option>
-            </select>
-          </label>
-          <label class="field">第二候補
-            <select id="sort-secondary-field" disabled>
-              <option value="">（なし）</option>
-              ${QUEUE_SORT_FIELDS.map((field) => `<option value="${field}">${QUEUE_SORT_FIELD_LABELS[field]}</option>`).join("")}
-            </select>
-          </label>
-          <label class="field">方向
-            <select id="sort-secondary-direction" disabled>
-              <option value="asc">昇順</option>
-              <option value="desc">降順</option>
-            </select>
-          </label>
-          <button id="sort-btn" class="ghost span-2" type="button" disabled>並び替えを適用</button>
-        </div>
-        <h3>再生リスト</h3>
+        <details id="sort-details" class="disclosure">
+          <summary>並び替え<span class="hint">タイトル・アーティスト・アルバム・年など</span><span class="chev">${iconSvg("down")}</span></summary>
+          <div class="disclosure-body">
+            <label class="field">並び替え
+              <select id="sort-field" disabled>
+                ${QUEUE_SORT_FIELDS.map((field) => `<option value="${field}">${QUEUE_SORT_FIELD_LABELS[field]}</option>`).join("")}
+              </select>
+            </label>
+            <label class="field">方向
+              <select id="sort-direction" disabled>
+                <option value="asc">昇順</option>
+                <option value="desc">降順</option>
+              </select>
+            </label>
+            <label class="field">第二候補
+              <select id="sort-secondary-field" disabled>
+                <option value="">（なし）</option>
+                ${QUEUE_SORT_FIELDS.map((field) => `<option value="${field}">${QUEUE_SORT_FIELD_LABELS[field]}</option>`).join("")}
+              </select>
+            </label>
+            <label class="field">方向
+              <select id="sort-secondary-direction" disabled>
+                <option value="asc">昇順</option>
+                <option value="desc">降順</option>
+              </select>
+            </label>
+            <button id="sort-btn" class="ghost span-2" type="button" disabled>並び替えを適用</button>
+          </div>
+        </details>
         <ul id="catalog-list" class="result-list"></ul>
-        <h3>アルバム</h3>
+        <div id="queue-empty" class="empty">
+          <strong>再生リストは空です</strong>
+          <p>ライブラリで曲を検索して追加すると、ここに並びます。</p>
+          <button type="button" data-go-tab="library">ライブラリを開く</button>
+        </div>
+      </section>
+
+      <section id="panel-library" class="panel" role="tabpanel" aria-labelledby="tab-library" hidden>
+        <div class="sec-head"><h2>ライブラリ</h2></div>
+        <label class="field"><span>検索</span><input id="filter-query" type="search" placeholder="タイトル・アーティスト・アルバム・作曲者を検索" /></label>
+        <label class="field"><span>アーティスト</span><input id="filter-artist" type="search" list="filter-artist-options" /></label>
+        <datalist id="filter-artist-options"></datalist>
+        <details id="filter-details" class="disclosure">
+          <summary>詳細条件<span class="hint">アルバム・作曲者・年・カテゴリ・リリース種別</span><span class="chev">${iconSvg("down")}</span></summary>
+          <div class="disclosure-body">
+            <label class="field span-2"><span>アルバム</span><input id="filter-album" type="search" list="filter-album-options" /></label>
+            <datalist id="filter-album-options"></datalist>
+            <label class="field span-2"><span>作曲者</span><input id="filter-composer" type="search" list="filter-composer-options" /></label>
+            <datalist id="filter-composer-options"></datalist>
+            <label class="field"><span>年（最小）</span><input id="filter-min-year" type="number" /></label>
+            <label class="field"><span>年（最大）</span><input id="filter-max-year" type="number" /></label>
+            <label class="field"><span>カテゴリ（Genre）</span><input id="filter-genre" type="search" list="filter-genre-options" /></label>
+            <datalist id="filter-genre-options"></datalist>
+            <label class="field"><span>リリース種別</span><input id="filter-release-type" type="search" list="filter-release-type-options" /></label>
+            <datalist id="filter-release-type-options"></datalist>
+            <label class="check-row span-2"><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
+          </div>
+        </details>
+        <div class="btn-row">
+          <button id="search-btn" type="button" disabled>検索</button>
+          <button id="create-queue-btn" class="ghost" type="button" disabled>この条件で再生リストを作る</button>
+        </div>
+        <div class="results-head">
+          <h3>検索結果</h3>
+          <button id="search-add-all-btn" class="ghost sm" type="button" disabled>検索結果をすべて再生リストに追加</button>
+        </div>
+        <p id="search-summary" class="lead"></p>
+        <ul id="search-results" class="result-list"></ul>
+      </section>
+
+      <section id="panel-albums" class="panel" role="tabpanel" aria-labelledby="tab-albums" hidden>
+        <div class="sec-head"><h2>アルバム</h2></div>
         <label class="field"><span>アルバム検索</span><input id="album-search" type="search" placeholder="アルバム名・アーティスト名で検索" /></label>
         <label class="field"><span>並び順</span><select id="album-sort"><option value="artist">アーティスト名順</option><option value="album-asc">アルバム名順（昇順）</option><option value="album-desc">アルバム名順（降順）</option><option value="year-asc">リリース年順（古い順）</option><option value="year-desc">リリース年順（新しい順）</option></select></label>
         <ul id="album-list" class="result-list"></ul>
+      </section>
+
+      <section id="panel-playlists" class="panel" role="tabpanel" aria-labelledby="tab-playlists" hidden>
+        <div class="sec-head"><h2>保存済みプレイリスト</h2></div>
+        <label class="field"><span>プレイリスト名</span><input id="playlist-name" type="text" placeholder="例: ドライブ用" /></label>
+        <div class="btn-row">
+          <button id="save-playlist-btn" type="button">現在の再生リストをプレイリストとして保存</button>
+          <button id="refresh-playlists-btn" class="ghost" type="button">プレイリスト一覧を更新</button>
+        </div>
+        <ul id="playlist-list" class="result-list"></ul>
+      </section>
+
+      <section id="panel-settings" class="panel" role="tabpanel" aria-labelledby="tab-settings" hidden>
+        <div class="sec-head"><h2>設定</h2></div>
+        <details class="disclosure" open>
+          <summary>再生設定<span class="chev">${iconSvg("down")}</span></summary>
+          <div class="settings-list">
+            <div class="setting">
+              <div class="s-main"><label for="fade-out-toggle" class="s-title">手動スキップ/一時停止時にフェードアウトし、再開時にフェードインする</label></div>
+              <input id="fade-out-toggle" type="checkbox" />
+            </div>
+            <div class="setting">
+              <div class="s-main"><label for="crossfade-toggle" class="s-title">曲間をクロスフェードする</label><span id="crossfade-desc" class="s-desc">自然に終わる曲の最後で、次の曲を重ねて鳴らします</span></div>
+              <input id="crossfade-toggle" type="checkbox" aria-describedby="crossfade-desc" />
+            </div>
+            <div class="setting">
+              <div class="s-main"><label for="crossfade-duration-sec" class="s-title">クロスフェードの長さ</label></div>
+              <select id="crossfade-duration-sec">
+                ${CROSSFADE_DURATION_OPTIONS_SEC.map(
+                  (sec) => `<option value="${sec}"${sec === DEFAULT_CROSSFADE_DURATION_SEC ? " selected" : ""}>${sec}秒</option>`
+                ).join("")}
+              </select>
+            </div>
+          </div>
+        </details>
+        <details id="diagnostics-details" class="disclosure">
+          <summary>バックグラウンド再生 診断ログ（調査用）<span class="chev">${iconSvg("down")}</span></summary>
+          <div class="disclosure-body">
+            <p class="span-2">再生が止まる操作（スマホをバックグラウンドにする・Bluetoothの再生ボタン等）を再現した後、下のボタンでログを表示し、内容をコピーして共有してください。</p>
+            <button id="diag-log-show-btn" class="ghost" type="button">診断ログを表示</button>
+            <button id="diag-log-clear-btn" class="ghost" type="button">診断ログをクリア</button>
+            <textarea id="diag-log-output" class="diag-log-output span-2" readonly rows="10" hidden></textarea>
+          </div>
+        </details>
       </section>
     `
         : `<p class="status error">VITE_GOOGLE_CLIENT_ID が未設定です。.env に設定してください。</p>`
@@ -493,7 +551,11 @@ function observeNowPlayingBarHeight(): void {
   const bar = document.querySelector<HTMLElement>(".now-playing-bar");
   if (!bar) return;
   const observer = new ResizeObserver((entries) => {
-    const height = entries[0]?.contentRect.height;
+    // contentRectはパディング・罫線を含まない高さのため、バー自身の上下パディング（8px×2）と上罫線
+    // （1px）ぶん足りず、末尾コンテンツの下端がバーの上端に1px弱食い込んでいた（2026-10-30）。
+    // 罫線・パディングを含むborder-boxの高さを使う（未対応環境ではgetBoundingClientRectで代用）。
+    const entry = entries[0];
+    const height = entry?.borderBoxSize?.[0]?.blockSize ?? entry?.target.getBoundingClientRect().height;
     if (height !== undefined) document.documentElement.style.setProperty("--now-playing-bar-height", `${height}px`);
   });
   observer.observe(bar);
@@ -674,6 +736,52 @@ function handleClearQueue(): void {
   setQueueNavEnabled(false);
   setStatus("再生リストをクリアしました。");
 }
+// 画面上部のタブ（再生リスト / ライブラリ / アルバム / プレイリスト / 設定）。非表示のパネルは
+// hidden属性で隠すだけでDOMには残す（再生リストの描画・検索結果の更新などが、どのタブが
+// 開いているかに関わらず同じ要素を更新し続けられるようにするため）。
+function activateTab(tab: TabId, options: { focus?: boolean } = {}): void {
+  for (const id of TAB_IDS) {
+    const selected = id === tab;
+    const button = el<HTMLButtonElement>(`tab-${id}`);
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+    el<HTMLElement>(`panel-${id}`).hidden = !selected;
+    if (selected && options.focus) button.focus();
+  }
+}
+function wireTabs(): void {
+  for (const id of TAB_IDS) {
+    const button = el<HTMLButtonElement>(`tab-${id}`);
+    button.addEventListener("click", () => activateTab(id));
+    // WAI-ARIAのタブパターン：←→・Home/Endでタブを移り、移った先へフォーカスも移す。
+    button.addEventListener("keydown", (event) => {
+      const next = nextTabForKey(id, event.key);
+      if (next === null) return;
+      event.preventDefault();
+      activateTab(next, { focus: true });
+    });
+  }
+  // 「ライブラリを開く」など、他の場所からタブを開くボタン。
+  document.querySelectorAll<HTMLElement>("[data-go-tab]").forEach((trigger) => {
+    trigger.addEventListener("click", () => {
+      const target = trigger.dataset.goTab;
+      if (isTabId(target)) activateTab(target);
+    });
+  });
+}
+// 「接続・索引」パネル（フォルダID・ログイン・スキャン等）の開閉は端末ごとに覚えておく。初回は開いておく
+// （最初にここで接続しないと何も始まらないため）。localStorageが使えない環境では開いたままにする。
+const CONNECTION_OPEN_STORAGE_KEY = "dusty-jukebox-connection-open";
+function wireConnectionPanel(): void {
+  const panel = el<HTMLDetailsElement>("connection");
+  try {
+    if (localStorage.getItem(CONNECTION_OPEN_STORAGE_KEY) === "0") panel.open = false;
+  } catch { /* 読めなければ既定（開いた状態）のまま */ }
+  panel.addEventListener("toggle", () => {
+    try { localStorage.setItem(CONNECTION_OPEN_STORAGE_KEY, panel.open ? "1" : "0"); } catch { /* 保存できなくても動作に支障は無い */ }
+  });
+}
+
 // 一覧の行の「曲名＋補足」の2行（再生リスト・検索結果・アルバム・プレイリストで共通）。
 // count（「（3曲）」等）は曲名と同じ行の右に控えめに付け、曲名が長くて省略されても見えるようにする。
 function rowTextElements(title: string, sub: string, options: { current?: boolean; count?: string } = {}): HTMLElement[] {
@@ -745,6 +853,10 @@ function renderQueue(): void {
     item.append(checkCell, main, actions);
     list.append(item);
   });
+  const excludedCount = rows.filter((r) => r.excluded).length;
+  el<HTMLSpanElement>("queue-count").textContent = rows.length === 0 ? "" : `${rows.length}曲${excludedCount > 0 ? `（除外 ${excludedCount}）` : ""}`;
+  el<HTMLSpanElement>("queue-badge").textContent = String(rows.length);
+  el<HTMLElement>("queue-empty").hidden = rows.length > 0;
   const currentSong = rows.find((r) => r.isCurrent)?.song;
   el<HTMLParagraphElement>("now-playing").textContent = nowPlayingLabel(currentSong);
   // Bluetoothスピーカー・OSのロック画面に現在再生中の曲名・アーティストを表示する。
@@ -814,6 +926,7 @@ function renderAlbumGroups(groups: AlbumGroup[], sort: AlbumSort): void {
         const songs = catalogSession.createQueue(() => group.songs);
         if (!songs) { setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストを作成してください。", true); return; }
         queue.setList(songs); renderQueue(); setQueueNavEnabled(songs.length > 0);
+        activateTab("queue");
         setStatus(`${group.album}の${songs.length}曲を再生リストに設定しました。`);
         void handleQueuePlayback(() => queue?.playAt(0));
       });
@@ -1077,6 +1190,7 @@ async function handleLoadPlaylistIntoQueue(playlistId: string): Promise<void> {
   queue.setList(songs);
   renderQueue();
   setQueueNavEnabled(songs.length > 0);
+  activateTab("queue");
   const missingCount = orderedFileIds.length - songs.length;
   setStatus(`プレイリストから${songs.length}曲を再生リストに設定しました${missingCount > 0 ? `（${missingCount}曲は現在の索引に見つかりませんでした）` : ""}。`);
   if (songs.length > 0) {
@@ -1233,6 +1347,7 @@ async function loadCatalog(): Promise<void> {
     renderFilterSuggestions(songs);
     el<HTMLButtonElement>("create-queue-btn").disabled = false;
     el<HTMLButtonElement>("search-btn").disabled = false;
+    activateTab("library");
     setStatus(`索引から${songs.length}曲を読み込みました${failedPathCount > 0 ? `（${failedPathCount}件はパス解決に失敗）` : ""}。条件を指定して再生リストを作れます。`);
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
@@ -1266,6 +1381,7 @@ function createQueueFromFilters(): void {
   const songs = selectSongsFromFilters("再生リストを作成");
   if (!songs) return;
   queue.setList(songs); renderQueue(); setQueueNavEnabled(songs.length > 0);
+  activateTab("queue");
   setStatus(`${songs.length}曲の再生リストを作りました。`);
 }
 
@@ -1629,7 +1745,7 @@ function handleNativePlaybackStatus(audio: HTMLAudioElement, eventType: Playback
   if (eventType === "pause" && crossfadeOrchestrator?.isCrossfading()) return;
   const playPauseButton = el<HTMLButtonElement>("play-pause-btn");
   const isPlaying = eventType === "playing";
-  playPauseButton.textContent = isPlaying ? "⏸" : "▶";
+  playPauseButton.innerHTML = iconSvg(isPlaying ? "pause" : "play");
   playPauseButton.setAttribute("aria-label", isPlaying ? "一時停止" : "再生");
   // Bluetoothデバイス・OSのロック画面等に再生/一時停止アイコンの状態を反映する。
   updatePlaybackState(navigator.mediaSession, eventType === "playing" ? "playing" : "paused");
@@ -2805,6 +2921,8 @@ function init(): void {
     void attemptBackgroundPlaybackRecovery();
   });
   if (!CLIENT_ID) return;
+  wireTabs();
+  wireConnectionPanel();
 
   if ("serviceWorker" in navigator) {
     registerStreamAuthResponder(navigator.serviceWorker, () => auth.getAccessToken(), handleStreamTokenRejected, handleStreamTokenIssued);
@@ -3173,7 +3291,7 @@ function init(): void {
       crossfadeOrchestrator?.cancel();
       queue.setRepeatMode(mode);
       const repeatButton = el<HTMLButtonElement>("repeat-btn");
-      repeatButton.textContent = mode === "single" ? "🔂" : "🔁";
+      repeatButton.innerHTML = iconSvg(mode === "single" ? "repeat-one" : "repeat");
       repeatButton.setAttribute("aria-label", `リピート: ${REPEAT_MODE_LABELS[mode]}`);
       repeatButton.classList.toggle("repeat-off", mode === "off");
       if (shouldRerouteNaturalEndAdvance) {
