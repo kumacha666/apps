@@ -564,13 +564,6 @@ export class CrossfadeOrchestrator {
     this.preparing = false;
     this.crossfading = true;
     const myGeneration = this.generation;
-    // ランプ開始前のactive側volumeを記録する（2026-09-14〜、ChatGPTレビュー指摘：P1）。
-    // cancel()・commit失敗でpromotionされずに終わった場合、ランプが変更したこの値を
-    // 復元するために使う。
-    // 進行中のリジューム時フェードインがあれば、ランプ（同じvolumeを書く）と取り合わないよう
-    // 先に止め、目標値へ戻してから「開始前のvolume」を記録する。
-    this.player.activeController().cancelFadeIn?.();
-    this.activeVolumeBeforeRamp = activeAudio.volume;
     // 準備開始からランプ開始までの間、先読み側は無音のまま鳴り続けているため、この時点の
     // currentTimeは既に数秒進んでいる（CROSSFADE_PREPARE_LEAD_MS分）。次の曲は「冒頭から」
     // 重ねて鳴らす設計のため、ランプ開始前に先頭へ巻き戻す。
@@ -608,6 +601,16 @@ export class CrossfadeOrchestrator {
         return;
       }
     }
+    // ランプ開始前のactive側volumeを記録する（2026-09-14〜、ChatGPTレビュー指摘：P1）。
+    // cancel()・commit失敗でpromotionされずに終わった場合、ランプが変更したこの値を
+    // 復元するために使う。
+    // 進行中のリジューム時フェードインがあれば、ランプ（同じvolumeを書く）と取り合わないよう
+    // 先に止め、目標値へ戻してから「開始前のvolume」を記録する。seek完了を確認してランプを
+    // 実際に始めると決まった時点まで遅らせる（レビュー指摘：seekがタイムアウトしてクロスフェード
+    // を諦める場合に、フェードインだけが失われて音量が不連続に飛ぶのを防ぐ。seek待ちの間は
+    // active側のvolumeをランプが書き換えないため、記録もここからで足りる）。
+    this.player.activeController().cancelFadeIn?.();
+    this.activeVolumeBeforeRamp = activeAudio.volume;
     // 退場側が既に自然終了している場合のみ、ランプ自体を省略して直ちに完了値へ進める。
     const rampDurationMs = activeAudio.ended ? 0 : this.durationMsActive;
     await runCrossfade(activeAudio, inactiveAudio, rampDurationMs, {

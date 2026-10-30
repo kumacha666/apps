@@ -814,6 +814,28 @@ describe("CrossfadeOrchestrator", () => {
     expect(discarded).toEqual([1]);
   });
 
+  it("17b. ランプ開始前のseekがタイムアウトしてクロスフェードを諦める場合、リジューム時のフェードインは取り消されず維持される（レビュー指摘：音量の不連続な飛びの防止）", async () => {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, {
+      wait: immediateWait,
+      steps: 1,
+      seekTimeoutMs: 10,
+      withTimeout: (promise, _timeoutMs, message) =>
+        message.includes("seek") ? new Promise((_, reject) => setTimeout(() => reject(new Error(message)), 0)) : promise,
+    });
+    setNearEnd(player);
+    player.activeAudio.volume = 0.1; // フェードイン途中の低い値
+    player.activeControllerInstance.onCancelFadeIn = () => { player.activeAudio.volume = 0.8; };
+    player.inactiveAudio.currentTime = 5; // seek対象にする
+
+    await orchestrator.maybeStart({ enabled: true, durationMs: 3000, manualTransitionInFlight: false });
+
+    expect(orchestrator.isActive()).toBe(false);
+    expect(player.activeControllerInstance.fadeInCancelCalls).toBe(0);
+    expect(player.activeAudio.volume).toBe(0.1);
+  });
+
   it("17. ランプ開始前のseek完了待ちがタイムアウトすると、ランプを開始せずクロスフェードを諦める（P2）", async () => {
     const player = new FakeDualPlayer();
     const queue = new FakeQueue();
