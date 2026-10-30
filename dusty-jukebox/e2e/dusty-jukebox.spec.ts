@@ -3059,10 +3059,10 @@ test("一覧の行は曲名の長さに関わらず操作ボタンが右端に�
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
-  await openTab(page, "albums");
-  await page.locator("#album-list li").filter({ hasText: "Symphony" }).getByRole("button", { name: "このアルバムを再生" }).click();
-  await expect(page.locator("#catalog-list li")).toHaveCount(3);
 
+  // 寸法は「表示されている」一覧でしか測れない（タブで隠れたパネルの要素はgetBoundingClientRect()が
+  // すべて0になり、どの検証も常に通ってしまう。2026-10-30、独立レビュー指摘：P2）。そのため測る前に
+  // 対象のタブを開いて表示を確認し、測定値自体が正の大きさであることも検証する。
   const measure = (listSelector: string) =>
     page.evaluate((selector) => {
       const list = document.querySelector(selector)!.getBoundingClientRect();
@@ -3072,7 +3072,11 @@ test("一覧の行は曲名の長さに関わらず操作ボタンが右端に�
         const buttons = Array.from(li.querySelectorAll(".row-actions button")).map((b) => b.getBoundingClientRect());
         const last = buttons[buttons.length - 1];
         return {
+          listWidth: list.width,
+          rowWidth: row.width,
           rowHeight: row.height,
+          mainWidth: main.width,
+          buttonWidth: last.width,
           // 操作ボタンの右端が一覧（カード）の右端のすぐ内側にあるか。
           gapToListRight: list.right - last.right,
           // 曲名側の右端が最初の操作ボタンの左端を越えていないか（重ならない）。
@@ -3083,22 +3087,40 @@ test("一覧の行は曲名の長さに関わらず操作ボタンが右端に�
         };
       });
     }, listSelector);
+  const expectMeasured = (rows: Awaited<ReturnType<typeof measure>>, count: number) => {
+    expect(rows).toHaveLength(count);
+    for (const m of rows) {
+      expect(m.listWidth).toBeGreaterThan(0);
+      expect(m.rowWidth).toBeGreaterThan(0);
+      expect(m.rowHeight).toBeGreaterThan(0);
+      expect(m.mainWidth).toBeGreaterThan(0);
+      expect(m.buttonWidth).toBeGreaterThan(0);
+      expect(m.gapToListRight).toBeLessThanOrEqual(16);
+      expect(m.mainOverlap).toBeLessThanOrEqual(0.5);
+      expect(m.buttonsInsideRow).toBe(true);
+    }
+  };
 
-  const queueBefore = await measure("#catalog-list");
+  // アルバム一覧（アルバムのタブを表示した状態で測る）。
+  await openTab(page, "albums");
+  await expect(page.locator("#album-list li.row").first()).toBeVisible();
   const albumRows = await measure("#album-list");
+  expectMeasured(albumRows, 2);
+  expect(new Set(albumRows.map((m) => Math.round(m.lastButtonRight))).size).toBe(1);
+
+  // 再生リスト（アルバム再生で再生リストのタブへ移った状態で測る）。
+  await page.locator("#album-list li").filter({ hasText: "Symphony" }).getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+  await expect(page.locator("#panel-queue")).toBeVisible();
+  const queueBefore = await measure("#catalog-list");
+  expectMeasured(queueBefore, 3);
   // 1行だけ区切りの無い非常に長い曲名にする（折り返さず省略表示になるはず）。
   await page.evaluate(() => {
     const t = document.querySelector("#catalog-list li:nth-child(2) .r-title .t");
     if (t) t.textContent = "VeryLongTitle".repeat(30);
   });
   const queueAfter = await measure("#catalog-list");
-
-  expect(queueBefore).toHaveLength(3);
-  for (const m of [...queueAfter, ...albumRows]) {
-    expect(m.gapToListRight).toBeLessThanOrEqual(16);
-    expect(m.mainOverlap).toBeLessThanOrEqual(0.5);
-    expect(m.buttonsInsideRow).toBe(true);
-  }
+  expectMeasured(queueAfter, 3);
   // 長い曲名にした行も含め、再生リストの操作ボタンの右端は全行で同じ位置にそろう。
   expect(new Set(queueAfter.map((m) => Math.round(m.lastButtonRight))).size).toBe(1);
   // 同じ行の高さは、長い曲名にしても変わらない。
