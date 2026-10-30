@@ -2851,8 +2851,11 @@ test("バックグラウンド復帰の対象（B）が未解決のまま2回連
 });
 
 // 一覧の行を「選択 / 曲名＋補足 / 操作」の3列に固定した（2026-10-30、実機UI相談：行ごとにボタンの位置が
-// バラバラで、文字が長いとボタンだけ次の行に落ちていた）。曲名の長さが違う行でも操作ボタンの位置がそろい、
-// 行の高さも変わらないことを、スマホ幅で実際にレイアウトして検証する。
+// バラバラで、文字が長いとボタンだけ次の行に落ちていた）。スマホ幅で実際にレイアウトし、次を検証する：
+// ①操作ボタンが一覧の右端にそろう、②曲名側が操作ボタンに重ならない、③区切りの無い非常に長い曲名にしても
+// 同じ行の高さが変わらない（折り返さない）。行の高さは先頭行と後続行で区切り線1pxぶん違いうる（フォントの
+// 実寸が`min-height`を超える環境）ため、異なる行同士ではなく「同じ行の変更前後」で比較する
+// （2026-10-30、独立レビュー指摘：P2。以前は全行の高さが同一であることを要求しており、環境によって失敗した）。
 test("一覧の行は曲名の長さに関わらず操作ボタンが右端にそろい、折り返して行が高くならない（再生リスト・アルバム）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.setViewportSize({ width: 390, height: 900 });
@@ -2860,30 +2863,48 @@ test("一覧の行は曲名の長さに関わらず操作ボタンが右端に�
   await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await page.locator("#album-list li").filter({ hasText: "Symphony" }).getByRole("button", { name: "このアルバムを再生" }).click();
-  const rows = page.locator("#catalog-list li");
-  await expect(rows).toHaveCount(3);
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
 
+  const measure = (listSelector: string) =>
+    page.evaluate((selector) => {
+      const list = document.querySelector(selector)!.getBoundingClientRect();
+      return Array.from(document.querySelectorAll(`${selector} li.row`)).map((li) => {
+        const row = li.getBoundingClientRect();
+        const main = li.querySelector(".row-main")!.getBoundingClientRect();
+        const buttons = Array.from(li.querySelectorAll(".row-actions button")).map((b) => b.getBoundingClientRect());
+        const last = buttons[buttons.length - 1];
+        return {
+          rowHeight: row.height,
+          // 操作ボタンの右端が一覧（カード）の右端のすぐ内側にあるか。
+          gapToListRight: list.right - last.right,
+          // 曲名側の右端が最初の操作ボタンの左端を越えていないか（重ならない）。
+          mainOverlap: main.right - buttons[0].left,
+          lastButtonRight: last.right,
+          // 操作ボタンが行の外（次の行）へ落ちていないか。
+          buttonsInsideRow: buttons.every((b) => b.top >= row.top - 0.5 && b.bottom <= row.bottom + 0.5),
+        };
+      });
+    }, listSelector);
+
+  const queueBefore = await measure("#catalog-list");
+  const albumRows = await measure("#album-list");
   // 1行だけ区切りの無い非常に長い曲名にする（折り返さず省略表示になるはず）。
   await page.evaluate(() => {
     const t = document.querySelector("#catalog-list li:nth-child(2) .r-title .t");
     if (t) t.textContent = "VeryLongTitle".repeat(30);
   });
-  const metrics = await page.evaluate(() =>
-    Array.from(document.querySelectorAll("#catalog-list li")).map((li) => {
-      const actions = li.querySelector(".row-actions")!.getBoundingClientRect();
-      const row = li.getBoundingClientRect();
-      return { actionsRight: Math.round(actions.right), rowHeight: Math.round(row.height) };
-    })
-  );
-  expect(new Set(metrics.map((m) => m.actionsRight)).size).toBe(1);
-  expect(new Set(metrics.map((m) => m.rowHeight)).size).toBe(1);
+  const queueAfter = await measure("#catalog-list");
 
-  // アルバム一覧の再生ボタンも、再生リストの操作列と同じ右端にそろう。
-  const albumButtonRights = await page.evaluate(() =>
-    Array.from(document.querySelectorAll("#album-list li.row .row-actions")).map((el) => Math.round(el.getBoundingClientRect().right))
-  );
-  expect(albumButtonRights.length).toBeGreaterThan(1);
-  expect(new Set(albumButtonRights).size).toBe(1);
+  expect(queueBefore).toHaveLength(3);
+  for (const m of [...queueAfter, ...albumRows]) {
+    expect(m.gapToListRight).toBeLessThanOrEqual(16);
+    expect(m.mainOverlap).toBeLessThanOrEqual(0.5);
+    expect(m.buttonsInsideRow).toBe(true);
+  }
+  // 長い曲名にした行も含め、再生リストの操作ボタンの右端は全行で同じ位置にそろう。
+  expect(new Set(queueAfter.map((m) => Math.round(m.lastButtonRight))).size).toBe(1);
+  // 同じ行の高さは、長い曲名にしても変わらない。
+  queueAfter.forEach((m, i) => expect(m.rowHeight).toBeCloseTo(queueBefore[i].rowHeight, 1));
   expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
 });
 
