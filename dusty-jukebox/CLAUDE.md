@@ -304,6 +304,14 @@
 - **既知のE2E制限**：E2Eモック（`e2e/google-mocks.ts`）は`HTMLMediaElement.play()`を完全に置き換え、実際のネイティブ再生を一切発生させないため、`audio.paused`は常に`true`のままになる（Media Session対応節の`playbackState`と同じ制約）。フェードは`!audio.paused`をゲートにしているため、この既存モックの下では常にフェード自体が発生せず、E2Eでの実ブラウザ検証ができない。フェード挙動自体はユニットテスト（`playback.test.ts`、`vi.useFakeTimers()`でvolumeが段階的に下がり通過中はsrcが旧曲のままであることを検証、`fade.test.ts`で`fadeOutVolume`自体の段階計算を検証）でカバーし、該当コードを一時的に無効化して実際に失敗することを確認済み。**2026-09-09、実機で動作確認済み**。
 - ユニットテスト：`fade.test.ts`（段階的な減衰・比率計算・durationMs≤0/既にvolume0の場合の即時終了・isCancelledでの中断）、`playback.test.ts`（fadeOut指定時のフェード完了後の曲切り替え・フェード開始前volumeへの復元、再生中でない場合はフェードをスキップしvolumeに触れないこと、fadeOut未指定の通常再生はvolumeに一切触れないこと、フェード中にトークン取得が失敗した場合もフェード開始前volumeへ戻すこと、追い越された古いフェードが新しい再生のvolumeを上書きしないこと、フェード中のネイティブ一時停止を尊重すること）、`queue.test.ts`（`next`/`previous`/`playFileId`がfadeOut引数を`player.play()`のoptionsへそのまま渡すこと、`advanceOnEnded()`は常に`fadeOut=false`でnext()を呼ぶこと、フェード中の自然終了で二重に進まないこと）。
 
+## フェードの音量カーブとリジューム時のフェードイン（2026-10-30）
+
+実機フィードバック「フェードアウトの消え方が急」への対応。音量(振幅)の線形ランプは聴感上、終わり際に急に消えたように聞こえるため、カーブを変更した。
+
+- **手動スキップ/一時停止のフェードアウト**（`fade.ts`の`fadeOutGain`）：指数カーブ（冒頭で素早く下がり細い余韻が長く続く）に変更し、長さを2秒→3秒（`playback.ts`の`FADE_OUT_DURATION_MS`）、段階数を20→60にした。終端は厳密に0。
+- **クロスフェード**（`crossfade.ts`の`crossfadeVolumes`）：進行度を余弦で滑らかにした等電力カーブ（outgoing²+incoming²=1、両端で変化率0）に変更。長いクロスフェード（最大20秒）の段階数は約100ms刻みを保つよう`max(30, durationMs/100)`にした。
+- **リジューム時のフェードイン**：フェードアウトのチェックボックス（`#fade-out-toggle`）がONのとき、再生リストの「再生」ボタンで**途中位置から再開する場合のみ**（position>0）無音から`FADE_IN_DURATION_MS`（1.5秒）でフェードインする。曲の頭からの再生・次へ/前へ・曲名クリック・自然終了では行わない。`PlayOptions.fadeIn`（`playback.ts`）→`PlaybackQueue.resume(..., fadeIn)`→`fadeInVolume`（`fade.ts`）。元のvolumeは`pendingFadeOriginalVolume`に登録し、フェードイン中に一時停止・別の再生に追い越されても既存の`reclaimPendingFadeVolume()`で復元される。**未対応**：Bluetooth/OSメディアキーの再生（ネイティブ`play()`直呼びのため）とキュー外の単曲試聴の再開。
+
 ## クロスフェード（開発体制#42④の残り、2026-09-10）
 
 **クロスフェード長の選択肢は3/5/7/10/20秒**（`crossfade.ts`の`CROSSFADE_DURATION_OPTIONS_SEC`、2026-10-13に20秒を追加。UI・型ガード・秒→ms換算はすべてこの定数から派生するため、選択肢の増減はこの1箇所と`crossfade.test.ts`の確認ケースだけで済む）。先読み準備はランプ開始の`CROSSFADE_PREPARE_LEAD_MS`（5秒）前に始まるため、20秒選択時は曲末尾の約25秒前から次曲の接続確立が始まる。曲自体が25秒未満の場合は準備が即座に始まり、20秒未満ならランプも即座に始まる（既存ゲートの仕様どおり）。

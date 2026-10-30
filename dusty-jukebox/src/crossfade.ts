@@ -93,10 +93,15 @@ export const CROSSFADE_HANDOFF_CATCHUP_TOLERANCE_SEC = 0.05;
 // ままランプを開始するだけ）ため、CROSSFADE_HANDOFF_SEEK_TIMEOUT_MSと同じ短めの値にする。
 export const CROSSFADE_RAMP_SEEK_TIMEOUT_MS = import.meta.env.VITE_E2E === "true" ? 100 : 1000;
 
-// 進行度（0=開始直後、1=完了）に対する退場側/入場側それぞれの音量。単純な線形（合計は常に1）。
+// 進行度（0=開始直後、1=完了）に対する退場側/入場側それぞれの音量。線形（合計振幅1）だと
+// 退場側が終わり際に急に消え、入場側も唐突に立ち上がるため、①進行度を余弦で滑らかにし
+// （両端で変化率0＝音の出入りが自然）、②等電力カーブ（outgoing²+incoming²=1）で中間の
+// 音量の凹みを防ぐ（2026-10-30、ユーザー要望：消え方が急）。
 export function crossfadeVolumes(progress: number): { outgoing: number; incoming: number } {
-  const p = Math.min(1, Math.max(0, progress));
-  return { outgoing: 1 - p, incoming: p };
+  if (!(progress > 0)) return { outgoing: 1, incoming: 0 };
+  if (progress >= 1) return { outgoing: 0, incoming: 1 };
+  const eased = (1 - Math.cos(progress * Math.PI)) / 2;
+  return { outgoing: Math.cos((eased * Math.PI) / 2), incoming: Math.sin((eased * Math.PI) / 2) };
 }
 
 // 退場側（outgoing）を1→0、入場側（incoming）を0→1へ同時にランプする。durationMsが0以下の
@@ -114,7 +119,8 @@ export async function runCrossfade(
     }
     return;
   }
-  const steps = options.steps ?? DEFAULT_STEPS;
+  // 長いクロスフェード（最大20秒）でも約100ms刻みを保ち、音量の段差を聞こえにくくする。
+  const steps = options.steps ?? Math.max(DEFAULT_STEPS, Math.round(durationMs / 100));
   const wait = options.wait ?? defaultWait;
   const stepDuration = durationMs / steps;
   for (let i = 1; i <= steps; i += 1) {

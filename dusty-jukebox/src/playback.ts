@@ -1,4 +1,4 @@
-import { fadeOutVolume } from "./fade";
+import { fadeInVolume, fadeOutVolume } from "./fade";
 
 export type GetValidAccessToken = () => string | null | Promise<string | null>;
 
@@ -8,7 +8,9 @@ export function streamUrl(fileId: string, playbackGeneration?: number): string {
 }
 
 // E2Eでは実時間で2秒待つとテストが遅くなるため、短縮する（他の機能のVITE_E2E分岐と同じ方針）。
-export const FADE_OUT_DURATION_MS = import.meta.env.VITE_E2E === "true" ? 50 : 2000;
+// リジューム再生（途中位置からの再開）時のフェードイン長。フェードアウトON時のみ使う。
+export const FADE_IN_DURATION_MS = import.meta.env.VITE_E2E === "true" ? 50 : 1500;
+export const FADE_OUT_DURATION_MS = import.meta.env.VITE_E2E === "true" ? 50 : 3000;
 
 export interface AudioElementLike {
   src: string;
@@ -45,6 +47,10 @@ export interface PlayOptions {
   // next()呼び出し（advanceOnEnded()経由）では渡さない：将来のクロスフェード機能が
   // この経路を専用に扱うため、フェードアウトと役割を分ける。
   fadeOut?: boolean;
+  // リジューム再生（途中位置からの再開、position>0）の音出しをフェードインする。positionが0
+  // （曲の頭）のときは指定されても無視する（通常再生のまま）。volumeは再生前に一旦0にし、
+  // 再生開始後に再開前の値まで段階的に上げる。
+  fadeIn?: boolean;
   // ロールスワップ再設計（2026-09-14〜、PR2）向け：このコントローラが実際にstream-idを
   // 確定した瞬間（audio.src設定より前）に同期的に呼ばれる。streamId自体（SW送信URL・
   // 認証継続レジストリに使う一意な値）に加えて、`isSuperseded`——「このplay()呼び出しが
@@ -295,7 +301,30 @@ export class PlaybackController {
     // observable contract.
     if (Number.isFinite(position) && position > 0) this.audio.currentTime = position;
     const thisRequestSrc = this.audio.src;
-    await this.audio.play();
+    // リジューム再生のフェードイン：無音から始めるため、再生前にvolumeを0にする。元のvolumeは
+    // pendingFadeOriginalVolumeに登録し、フェード中に追い越されても次の操作の先頭の
+    // reclaimPendingFadeVolume()が必ず元の値へ戻す（フェードアウトと同じ仕組み）。
+    const fadeInTarget =
+      options.fadeIn && Number.isFinite(position) && position > 0 && this.audio.volume > 0 ? this.audio.volume : null;
+    if (fadeInTarget !== null) {
+      this.pendingFadeOriginalVolume = fadeInTarget;
+      this.audio.volume = 0;
+    }
+    try {
+      await this.audio.play();
+    } catch (err) {
+      if (fadeInTarget !== null && !isSuperseded()) {
+        this.audio.volume = fadeInTarget;
+        this.pendingFadeOriginalVolume = null;
+      }
+      throw err;
+    }
+    if (fadeInTarget !== null && !isSuperseded()) {
+      // 再生開始の成否はここまでで確定しているため、フェードの完了は待たない。
+      void fadeInVolume(this.audio, fadeInTarget, FADE_IN_DURATION_MS, { isCancelled: isSuperseded }).then(() => {
+        if (!isSuperseded()) this.pendingFadeOriginalVolume = null;
+      });
+    }
     // ここまで到達した後（audio.src差し替え後、ネイティブaudio.play()の解決待ち中）にも
     // cancelPendingTransition()やpause()等でこの要求が無効化されうる（2026-09-08、Codexレビュー
     // 指摘：P1）。このplay()呼び出し自体はエラーを投げずに解決するため、PlaybackQueue側の

@@ -428,7 +428,7 @@ function render(): void {
         <button id="search-add-all-btn" type="button" disabled>検索結果をすべて再生リストに追加</button>
         <ul id="search-results" class="result-list"></ul>
         <div><button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button> <button id="clear-queue-btn" type="button" disabled>再生リストをクリア</button></div>
-        <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトする</label>
+        <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトし、再開時にフェードインする</label>
         <label><input id="crossfade-toggle" type="checkbox" /> 曲間をクロスフェードする</label>
         <label>長さ
           <select id="crossfade-duration-sec">
@@ -3037,7 +3037,7 @@ function init(): void {
           // Codexレビュー指摘：P1）。以前は固定のaudioPlayer（スロットA）を直接参照していたため、
           // クロスフェードでBへpromotionされた後に一時停止→再生ボタンを押すと、Bの一時停止位置
           // ではなく固定のA（cleanup後は0のことが多い）の位置を渡してしまっていた。
-          return queue.canResumeCurrent() ? queue.resume(queue.currentPlayingFileId()!, playback?.activeAudioElement().currentTime ?? 0) : queue.playAt(0);
+          return queue.canResumeCurrent() ? queue.resume(queue.currentPlayingFileId()!, playback?.activeAudioElement().currentTime ?? 0, undefined, fadeOutEnabled()) : queue.playAt(0);
         }).finally(() => { playPauseButton.disabled = false; });
         return;
       }

@@ -50,10 +50,26 @@ describe("isCrossfadeDurationSec", () => {
 });
 
 describe("crossfadeVolumes", () => {
-  it("進行度に応じて退場側/入場側の音量を線形に計算する", () => {
+  it("始点・終点は厳密に1/0、0/1になる", () => {
     expect(crossfadeVolumes(0)).toEqual({ outgoing: 1, incoming: 0 });
-    expect(crossfadeVolumes(0.5)).toEqual({ outgoing: 0.5, incoming: 0.5 });
     expect(crossfadeVolumes(1)).toEqual({ outgoing: 0, incoming: 1 });
+  });
+
+  it("中間点は等電力（outgoing²+incoming²=1）で、両者は対称", () => {
+    const mid = crossfadeVolumes(0.5);
+    expect(mid.outgoing).toBeCloseTo(Math.SQRT1_2, 10);
+    expect(mid.incoming).toBeCloseTo(Math.SQRT1_2, 10);
+    for (const p of [0.1, 0.25, 0.4, 0.7, 0.9]) {
+      const v = crossfadeVolumes(p);
+      expect(v.outgoing ** 2 + v.incoming ** 2).toBeCloseTo(1, 10);
+    }
+  });
+
+  it("両端で変化がなだらか（退場側が終わり際に急に消えない／入場側が唐突に立ち上がらない）", () => {
+    // 線形なら最初・最後の5%で0.05動くところ、なだらかなカーブではそれより遥かに小さい。
+    expect(1 - crossfadeVolumes(0.05).outgoing).toBeLessThan(0.01);
+    expect(crossfadeVolumes(0.95).outgoing).toBeLessThan(0.02);
+    expect(crossfadeVolumes(0.05).incoming).toBeLessThan(0.02);
   });
 
   it("範囲外の進行度は0〜1へクランプする", () => {
@@ -103,9 +119,9 @@ describe("runCrossfade", () => {
       return callCount > 2;
     };
     await runCrossfade(outgoing2, incoming2, 400, { steps: 4, wait, isCancelled: cancelAfterTwoSteps });
-    // 2ステップ分（0.5進行度）まで反映され、以降は更新されないため0.5のまま。
-    expect(outgoing2.volume).toBe(0.5);
-    expect(incoming2.volume).toBe(0.5);
+    // 2ステップ分（0.5進行度）まで反映され、以降は更新されないため中間点のまま。
+    expect(outgoing2.volume).toBeCloseTo(crossfadeVolumes(0.5).outgoing, 10);
+    expect(incoming2.volume).toBeCloseTo(crossfadeVolumes(0.5).incoming, 10);
   });
 
   // 2026-09-10、Codexレビュー指摘：P2。次の曲（incoming）自体がクロスフェード長より短く、
@@ -592,7 +608,7 @@ describe("CrossfadeOrchestrator", () => {
     const started = orchestrator.maybeStart({ enabled: true, durationMs: 4000, manualTransitionInFlight: false });
     await vi.waitFor(() => expect(orchestrator.isCrossfading()).toBe(true));
     release.fn?.(); // 1/2ステップぶん進める
-    await vi.waitFor(() => expect(player.activeAudio.volume).toBeLessThan(0.6));
+    await vi.waitFor(() => expect(player.activeAudio.volume).not.toBe(0.6));
     expect(player.activeAudio.volume).toBeGreaterThan(0); // ランプ中の中間値のまま
 
     orchestrator.cancel(); // Seek/Next/Previous/Pause/setList相当
