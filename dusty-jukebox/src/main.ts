@@ -27,7 +27,8 @@ import {
   upsertFolderCacheEntries,
   type FolderCacheEntry,
 } from "./folderCache";
-import { PlaybackQueue, REPEAT_MODES, REPEAT_MODE_LABELS, queueRowViews, songDisplayLabel, nowPlayingLabel } from "./queue";
+import { PlaybackQueue, REPEAT_MODES, REPEAT_MODE_LABELS, queueRowViews, songSubLabel, nowPlayingLabel } from "./queue";
+import { iconSvg, type IconName } from "./icons";
 import { QUEUE_SORT_FIELDS, type QueueSortField } from "./queueSort";
 
 // union型の分岐をRecordの網羅性チェックに使う（AI開発ルール4）：QUEUE_SORT_FIELDSに
@@ -357,7 +358,7 @@ function render(): void {
       </label>
       <button id="login-btn" type="button">Googleドライブ（読み取り専用）＋スプレッドシートへログイン</button>
       <button id="scan-btn" type="button" disabled>音楽ファイルをスキャンして索引に反映する</button>
-      <button id="retry-extraction-btn" type="button" disabled>抽出失敗曲の再抽出を試みる</button>
+      <button id="retry-extraction-btn" class="ghost" type="button" disabled>抽出失敗曲の再抽出を試みる</button>
       <label class="field">
         <span>試聴するGoogle DriveファイルID</span>
         <input id="play-file-id" type="text" placeholder="Google DriveファイルID" />
@@ -394,15 +395,15 @@ function render(): void {
         <h2>保存済みプレイリスト</h2>
         <label class="field"><span>プレイリスト名</span><input id="playlist-name" type="text" placeholder="例: ドライブ用" /></label>
         <button id="save-playlist-btn" type="button">現在の再生リストをプレイリストとして保存</button>
-        <button id="refresh-playlists-btn" type="button">プレイリスト一覧を更新</button>
+        <button id="refresh-playlists-btn" class="ghost" type="button">プレイリスト一覧を更新</button>
         <ul id="playlist-list" class="result-list"></ul>
       </section>
       <ul id="result-list" class="result-list"></ul>
       <section class="diagnostics">
         <h2>バックグラウンド再生 診断ログ（調査用）</h2>
         <p>再生が止まる操作（スマホをバックグラウンドにする・Bluetoothの再生ボタン等）を再現した後、下のボタンでログを表示し、内容をコピーして共有してください。</p>
-        <button id="diag-log-show-btn" type="button">診断ログを表示</button>
-        <button id="diag-log-clear-btn" type="button">診断ログをクリア</button>
+        <button id="diag-log-show-btn" class="ghost" type="button">診断ログを表示</button>
+        <button id="diag-log-clear-btn" class="ghost" type="button">診断ログをクリア</button>
         <textarea id="diag-log-output" class="diag-log-output" readonly rows="10" hidden></textarea>
       </section>
       <section class="catalog">
@@ -420,44 +421,53 @@ function render(): void {
         <datalist id="filter-genre-options"></datalist>
         <label class="field"><span>リリース種別</span><input id="filter-release-type" type="search" list="filter-release-type-options" /></label>
         <datalist id="filter-release-type-options"></datalist>
-        <label><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
-        <button id="search-btn" type="button" disabled>検索</button>
-        <button id="create-queue-btn" type="button" disabled>この条件で再生リストを作る</button>
+        <label class="check-row"><input id="filter-unknown-year" type="checkbox" checked /> 年不明も含める</label>
+        <div class="btn-row">
+          <button id="search-btn" type="button" disabled>検索</button>
+          <button id="create-queue-btn" class="ghost" type="button" disabled>この条件で再生リストを作る</button>
+        </div>
         <h3>検索結果</h3>
         <p id="search-summary" class="lead"></p>
-        <button id="search-add-all-btn" type="button" disabled>検索結果をすべて再生リストに追加</button>
+        <button id="search-add-all-btn" class="ghost sm" type="button" disabled>検索結果をすべて再生リストに追加</button>
         <ul id="search-results" class="result-list"></ul>
-        <div><button id="unshuffle-btn" type="button" disabled>シャッフルを元に戻す</button> <button id="clear-queue-btn" type="button" disabled>再生リストをクリア</button></div>
-        <label><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトし、再開時にフェードインする</label>
-        <label><input id="crossfade-toggle" type="checkbox" /> 曲間をクロスフェードする</label>
-        <label>長さ
+        <div class="btn-row">
+          <button id="unshuffle-btn" class="ghost" type="button" disabled>シャッフルを元に戻す</button>
+          <button id="clear-queue-btn" class="ghost danger" type="button" disabled>再生リストをクリア</button>
+        </div>
+        <label class="check-row"><input id="fade-out-toggle" type="checkbox" /> 手動スキップ/一時停止時にフェードアウトし、再開時にフェードインする</label>
+        <label class="check-row"><input id="crossfade-toggle" type="checkbox" /> 曲間をクロスフェードする</label>
+        <label class="check-row">長さ
           <select id="crossfade-duration-sec">
             ${CROSSFADE_DURATION_OPTIONS_SEC.map(
               (sec) => `<option value="${sec}"${sec === DEFAULT_CROSSFADE_DURATION_SEC ? " selected" : ""}>${sec}秒</option>`
             ).join("")}
           </select>
         </label>
-        <div>
-          <label>並び替え
+        <div class="form-grid">
+          <label class="field">並び替え
             <select id="sort-field" disabled>
               ${QUEUE_SORT_FIELDS.map((field) => `<option value="${field}">${QUEUE_SORT_FIELD_LABELS[field]}</option>`).join("")}
             </select>
           </label>
-          <select id="sort-direction" disabled>
-            <option value="asc">昇順</option>
-            <option value="desc">降順</option>
-          </select>
-          <label>第二候補
+          <label class="field">方向
+            <select id="sort-direction" disabled>
+              <option value="asc">昇順</option>
+              <option value="desc">降順</option>
+            </select>
+          </label>
+          <label class="field">第二候補
             <select id="sort-secondary-field" disabled>
               <option value="">（なし）</option>
               ${QUEUE_SORT_FIELDS.map((field) => `<option value="${field}">${QUEUE_SORT_FIELD_LABELS[field]}</option>`).join("")}
             </select>
           </label>
-          <select id="sort-secondary-direction" disabled>
-            <option value="asc">昇順</option>
-            <option value="desc">降順</option>
-          </select>
-          <button id="sort-btn" type="button" disabled>並び替えを適用</button>
+          <label class="field">方向
+            <select id="sort-secondary-direction" disabled>
+              <option value="asc">昇順</option>
+              <option value="desc">降順</option>
+            </select>
+          </label>
+          <button id="sort-btn" class="ghost span-2" type="button" disabled>並び替えを適用</button>
         </div>
         <h3>再生リスト</h3>
         <ul id="catalog-list" class="result-list"></ul>
@@ -664,40 +674,75 @@ function handleClearQueue(): void {
   setQueueNavEnabled(false);
   setStatus("再生リストをクリアしました。");
 }
+// 一覧の行の「曲名＋補足」の2行（再生リスト・検索結果・アルバム・プレイリストで共通）。
+// count（「（3曲）」等）は曲名と同じ行の右に控えめに付け、曲名が長くて省略されても見えるようにする。
+function rowTextElements(title: string, sub: string, options: { current?: boolean; count?: string } = {}): HTMLElement[] {
+  const titleLine = document.createElement("span"); titleLine.className = "r-title";
+  if (options.current) {
+    const eq = document.createElement("span"); eq.className = "eq"; eq.setAttribute("aria-hidden", "true");
+    eq.innerHTML = "<i></i><i></i><i></i>";
+    titleLine.append(eq);
+  }
+  const name = document.createElement("span"); name.className = "t"; name.textContent = title;
+  titleLine.append(name);
+  if (options.count) {
+    const count = document.createElement("span"); count.className = "n"; count.textContent = options.count;
+    titleLine.append(count);
+  }
+  if (!sub) return [titleLine];
+  const subLine = document.createElement("span"); subLine.className = "r-sub"; subLine.textContent = sub;
+  return [titleLine, subLine];
+}
+// 行内の小さな操作ボタン（アイコンのみ、aria-labelが操作名）。
+function iconButton(icon: IconName, label: string, extraClass = ""): HTMLButtonElement {
+  const button = document.createElement("button"); button.type = "button";
+  button.className = `icon-btn${extraClass ? ` ${extraClass}` : ""}`;
+  button.setAttribute("aria-label", label); button.title = label;
+  button.innerHTML = iconSvg(icon);
+  return button;
+}
 function renderQueue(): void {
   const list = el<HTMLUListElement>("catalog-list"); list.innerHTML = "";
   const currentFileId = queue?.currentPlayingFileId() ?? null;
   const rows = queueRowViews(queue?.all() ?? [], (fileId) => queue?.isExcluded(fileId) ?? false, currentFileId);
   rows.forEach((row, index) => {
-    const item = document.createElement("li"); item.className = "queue-item";
-    if (row.isCurrent) item.classList.add("now-playing");
+    const item = document.createElement("li"); item.className = "row queue-item";
+    if (row.isCurrent) { item.classList.add("now-playing"); item.setAttribute("aria-current", "true"); }
+    if (row.excluded) item.classList.add("excluded");
+    const checkCell = document.createElement("label"); checkCell.className = "check";
     const check = document.createElement("input"); check.type = "checkbox"; check.checked = !row.excluded;
+    check.setAttribute("aria-label", `${row.song.title}を再生対象にする`);
     check.addEventListener("change", () => { queue?.exclude(row.song.fileId, !check.checked); renderQueue(); });
-    item.append(check, " ");
-    const label = document.createElement("span"); label.textContent = songDisplayLabel(row.song);
-    if (row.listIndex !== null) {
-      // 除外されていない曲だけクリックで再生できる（除外中の曲はlist()の対象外のため、
-      // 除外を解除してから再生する運用とする）。playAt(row.listIndex)ではなくfileIdを
-      // 渡すqueue.playFileId()を使う（2026-09-08、Codexレビュー指摘：listIndexは描画時点の
-      // スナップショットのため、moveSong()等がpendingMove待機中の間にこの行をクリックすると、
-      // 待機中の並べ替えが先に反映された後の配列に対して古いインデックスが評価され、
-      // クリックした曲と異なる曲が再生されうる。fileIdで探すplayFileId()なら、先に完了した
-      // 並べ替え後の状態を必ず反映する）。
-      label.className = "song-link";
+    checkCell.append(check);
+    // 除外されていない曲だけクリックで再生できる（除外中の曲はlist()の対象外のため、
+    // 除外を解除してから再生する運用とする）。playAt(row.listIndex)ではなくfileIdを
+    // 渡すqueue.playFileId()を使う（2026-09-08、Codexレビュー指摘：listIndexは描画時点の
+    // スナップショットのため、moveSong()等がpendingMove待機中の間にこの行をクリックすると、
+    // 待機中の並べ替えが先に反映された後の配列に対して古いインデックスが評価され、
+    // クリックした曲と異なる曲が再生されうる。fileIdで探すplayFileId()なら、先に完了した
+    // 並べ替え後の状態を必ず反映する）。
+    const playable = row.listIndex !== null;
+    const main = document.createElement(playable ? "button" : "div");
+    main.className = playable ? "row-main song-link" : "row-main";
+    if (main instanceof HTMLButtonElement) main.type = "button";
+    if (row.song.folderPath) main.title = row.song.folderPath;
+    main.append(...rowTextElements(row.song.title, `${songSubLabel(row.song)}${row.excluded ? `${songSubLabel(row.song) ? " · " : ""}除外中` : ""}`, { current: row.isCurrent }));
+    if (playable) {
       const fileId = row.song.fileId;
-      label.addEventListener("click", () => void handleQueuePlayback(() => queue?.playFileId(fileId, fadeOutEnabled())));
+      main.addEventListener("click", () => void handleQueuePlayback(() => queue?.playFileId(fileId, fadeOutEnabled())));
     }
-    item.append(label);
     // 上下ボタン（開発体制#42②、実機フィードバック）：一覧の表示順そのままの隣接行と入れ替える
     // （除外中の行も通常の行として一覧に表示されるため、除外の有無で特別扱いしない）。
     // 並び順を変えるだけで再生を開始する操作ではないためhandleQueuePlayback()は経由しない。
-    const upBtn = document.createElement("button"); upBtn.type = "button"; upBtn.textContent = "↑";
+    const upBtn = iconButton("up", "上へ");
     upBtn.disabled = index === 0;
     upBtn.addEventListener("click", () => { void queue?.moveSong(row.song.fileId, "up").then(() => { renderQueue(); updateUnshuffleEnabled(); }); });
-    const downBtn = document.createElement("button"); downBtn.type = "button"; downBtn.textContent = "↓";
+    const downBtn = iconButton("down", "下へ");
     downBtn.disabled = index === rows.length - 1;
     downBtn.addEventListener("click", () => { void queue?.moveSong(row.song.fileId, "down").then(() => { renderQueue(); updateUnshuffleEnabled(); }); });
-    item.append(" ", upBtn, downBtn);
+    const actions = document.createElement("span"); actions.className = "row-actions";
+    actions.append(upBtn, downBtn);
+    item.append(checkCell, main, actions);
     list.append(item);
   });
   const currentSong = rows.find((r) => r.isCurrent)?.song;
@@ -760,9 +805,10 @@ function refreshFilterSuggestions(): void {
 function renderAlbumGroups(groups: AlbumGroup[], sort: AlbumSort): void {
   const list = el<HTMLUListElement>("album-list"); list.innerHTML = "";
   const appendAlbum = (group: AlbumGroup, showArtist: boolean) => {
-      const item = document.createElement("li");
-      const label = `${group.album}${showArtist ? ` — ${group.albumArtist}` : ""}（${group.songs.length}曲） `;
-      const button = document.createElement("button"); button.type = "button"; button.textContent = "このアルバムを再生";
+      const item = document.createElement("li"); item.className = "row no-lead";
+      const main = document.createElement("div"); main.className = "row-main";
+      main.append(...rowTextElements(group.album, showArtist ? group.albumArtist : "", { count: `（${group.songs.length}曲）` }));
+      const button = iconButton("play", "このアルバムを再生", "fab");
       button.addEventListener("click", () => {
         if (!queue) return;
         const songs = catalogSession.createQueue(() => group.songs);
@@ -771,7 +817,8 @@ function renderAlbumGroups(groups: AlbumGroup[], sort: AlbumSort): void {
         setStatus(`${group.album}の${songs.length}曲を再生リストに設定しました。`);
         void handleQueuePlayback(() => queue?.playAt(0));
       });
-      item.append(label, button); list.append(item);
+      const actions = document.createElement("span"); actions.className = "row-actions"; actions.append(button);
+      item.append(main, actions); list.append(item);
   };
   if (sort !== "artist") {
     for (const group of [...groups].sort(compareAlbumGroups(sort))) appendAlbum(group, true);
@@ -822,23 +869,25 @@ function renderPlaylistList(): void {
   list.innerHTML = "";
   for (const playlist of loadedPlaylists) {
     const trackCount = fileIdsForPlaylist(loadedPlaylistTracks, playlist.playlistId).length;
-    const item = document.createElement("li");
-    const label = document.createElement("span");
-    label.textContent = `${playlist.name}（${trackCount}曲） `;
+    const item = document.createElement("li"); item.className = "row no-lead";
+    const main = document.createElement("div"); main.className = "row-main";
+    main.append(...rowTextElements(playlist.name, "", { count: `（${trackCount}曲）` }));
     const loadButton = document.createElement("button");
     loadButton.type = "button";
-    loadButton.textContent = "読み込んで再生リストにする";
+    loadButton.className = "ghost sm";
+    loadButton.textContent = "読み込む";
+    loadButton.setAttribute("aria-label", "再生リストに読み込む");
     loadButton.addEventListener("click", () => void handleLoadPlaylistIntoQueue(playlist.playlistId));
-    const deleteButton = document.createElement("button");
-    deleteButton.type = "button";
-    deleteButton.textContent = "削除";
+    const deleteButton = iconButton("trash", "削除", "danger");
     deleteButton.addEventListener("click", () => {
       // 元に戻せない操作のため、誤クリックによる意図しない削除を避ける確認を挟む。
       if (window.confirm(`プレイリスト「${playlist.name}」を削除しますか？この操作は取り消せません。`)) {
         void handleDeletePlaylist(playlist.playlistId);
       }
     });
-    item.append(label, loadButton, deleteButton);
+    const actions = document.createElement("span"); actions.className = "row-actions";
+    actions.append(loadButton, deleteButton);
+    item.append(main, actions);
     list.append(item);
   }
 }
@@ -1274,16 +1323,19 @@ function renderSearchResults(): SearchResultView {
   addAll.disabled = view.addableCount === 0;
   addAll.textContent = view.total > 0 ? `ヒットした${view.total}曲をすべて再生リストに追加` : "検索結果をすべて再生リストに追加";
   for (const song of view.shown) {
-    const item = document.createElement("li"); item.className = "queue-item search-result-item";
-    const label = document.createElement("span"); label.textContent = songDisplayLabel(song);
-    const addBtn = document.createElement("button"); addBtn.type = "button";
+    const item = document.createElement("li"); item.className = "row no-lead";
+    const main = document.createElement("div"); main.className = "row-main";
+    if (song.folderPath) main.title = song.folderPath;
+    main.append(...rowTextElements(song.title, songSubLabel(song)));
+    const addBtn = document.createElement("button"); addBtn.type = "button"; addBtn.className = "ghost sm";
     // 再生リストに入っていて除外中の曲は、足し直しても除外のままで再生されない。「追加済み」とは
     // 区別して「除外中」と表示し、再生するには再生リスト側でチェックを入れる。
     const inQueue = inQueueIds.has(song.fileId);
     addBtn.textContent = !inQueue ? "＋追加" : excludedIds.has(song.fileId) ? "除外中" : "追加済み";
     addBtn.disabled = inQueue;
     addBtn.addEventListener("click", () => addSongsToQueue([song]));
-    item.append(label, " ", addBtn);
+    const actions = document.createElement("span"); actions.className = "row-actions"; actions.append(addBtn);
+    item.append(main, actions);
     list.append(item);
   }
   return view;

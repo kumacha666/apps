@@ -758,18 +758,18 @@ test("再生リストの上下ボタンで曲の順番を手動で入れ替え�
   const originalOrder = await items.allTextContents();
 
   // 2番目の行を上へ移動 → 先頭の曲と入れ替わる。
-  await items.nth(1).getByRole("button", { name: "↑", exact: true }).click();
+  await items.nth(1).getByRole("button", { name: "上へ", exact: true }).click();
   const afterUp = await items.allTextContents();
   expect(afterUp[0]).toEqual(originalOrder[1]);
   expect(afterUp[1]).toEqual(originalOrder[0]);
 
   // 先頭行の「↑」は無効化されている（これ以上上へ動かせない）。
-  await expect(items.nth(0).getByRole("button", { name: "↑", exact: true })).toBeDisabled();
+  await expect(items.nth(0).getByRole("button", { name: "上へ", exact: true })).toBeDisabled();
   // 末尾行の「↓」も無効化されている。
-  await expect(items.nth(3).getByRole("button", { name: "↓", exact: true })).toBeDisabled();
+  await expect(items.nth(3).getByRole("button", { name: "下へ", exact: true })).toBeDisabled();
 
   // 先頭の曲（元々2番目だった曲）を下へ動かすと、元の並びに戻る。
-  await items.nth(0).getByRole("button", { name: "↓", exact: true }).click();
+  await items.nth(0).getByRole("button", { name: "下へ", exact: true }).click();
   const afterDown = await items.allTextContents();
   expect(afterDown).toEqual(originalOrder);
 });
@@ -786,7 +786,7 @@ test("並べ替え待機中に曲名をクリックしても、待機中の並�
   await page.getByRole("button", { name: "再生", exact: true }).click();
 
   // 保留中に、2番目の行（song-2）を上へ動かす（[song-1, song-2] → [song-2, song-1]）。
-  await items.nth(1).getByRole("button", { name: "↑", exact: true }).click();
+  await items.nth(1).getByRole("button", { name: "上へ", exact: true }).click();
   // まだ再描画されていない古いDOM上で、"song-2"の行（クリック時点ではindex1）をクリックする。
   await items.nth(1).locator(".song-link").click();
 
@@ -808,7 +808,7 @@ test("並べ替え待機中に保存ボタンを押しても、要求した新�
 
   // 保留中に2番目の行を上へ動かし（[song-1, song-2] → [song-2, song-1]）、
   // 反映を待たずにそのまま保存する。
-  await items.nth(1).getByRole("button", { name: "↑", exact: true }).click();
+  await items.nth(1).getByRole("button", { name: "上へ", exact: true }).click();
   await page.locator("#playlist-name").fill("並べ替え直後保存");
   await page.getByRole("button", { name: "現在の再生リストをプレイリストとして保存" }).click();
 
@@ -818,7 +818,7 @@ test("並べ替え待機中に保存ボタンを押しても、要求した新�
 
   // 保存されたプレイリストを読み込み直し、要求した新しい順序（song-2が先頭）で
   // 保存されたことを確認する（修正前は並べ替え前のスナップショットが保存されていた）。
-  await page.getByRole("button", { name: "読み込んで再生リストにする" }).click();
+  await page.getByRole("button", { name: "再生リストに読み込む" }).click();
   await expect(items).toHaveCount(2);
   await expect(items.nth(0).locator(".song-link")).toContainText("Second song");
   await expect(items.nth(1).locator(".song-link")).toContainText("First song");
@@ -1086,8 +1086,11 @@ test("曲フィルタでアルバム一覧を絞っても再生時は全曲を�
   await expect(page.locator("#album-list .album-artist-heading")).toHaveCount(0);
   const albumRows = page.locator("#album-list > li");
   await expect(albumRows).toHaveCount(2);
-  await expect(albumRows.nth(0)).toContainText("Blue Notes — Quartet");
-  await expect(albumRows.nth(1)).toContainText("Symphony — Orchestra");
+  // フラット表示では曲名行にアルバム名、補足行にアーティスト名が出る（見出しが無いため）。
+  await expect(albumRows.nth(0)).toContainText("Blue Notes");
+  await expect(albumRows.nth(0).locator(".r-sub")).toHaveText("Quartet");
+  await expect(albumRows.nth(1)).toContainText("Symphony");
+  await expect(albumRows.nth(1).locator(".r-sub")).toHaveText("Orchestra");
 });
 
 test("再生リストをプレイリストとして保存し、一覧から読み込み直して再生でき、削除もできる", async ({ context, page }) => {
@@ -1104,7 +1107,7 @@ test("再生リストをプレイリストとして保存し、一覧から読�
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
   await page.getByRole("button", { name: "次へ" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
-  await page.getByRole("button", { name: "読み込んで再生リストにする" }).click();
+  await page.getByRole("button", { name: "再生リストに読み込む" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(2);
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
 
@@ -1158,7 +1161,7 @@ test("読み込んだプレイリストの全曲が索引から消えていた�
   await page.getByRole("button", { name: "プレイリスト一覧を更新" }).click();
   await expect(page.locator("#playlist-list")).toContainText("消えた曲（1曲）");
   const pauseCallsBefore = await page.evaluate(() => (window as unknown as { __e2ePauseCalls: number }).__e2ePauseCalls);
-  await page.getByRole("button", { name: "読み込んで再生リストにする" }).click();
+  await page.getByRole("button", { name: "再生リストに読み込む" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(0);
   // play()を丸ごと差し替えているため、HTMLMediaElement.pausedはこの環境では常にtrueのまま
   // 変化せず検証にならない。代わりにpause()が実際に呼ばれたことをカウンタで確認する
@@ -1275,7 +1278,7 @@ test("曲一覧とプレイリスト一覧が別のスプレッドシートか�
   await page.getByRole("button", { name: "プレイリスト一覧を更新" }).click();
   await expect(page.locator("#playlist-list li")).toHaveCount(1);
 
-  await page.getByRole("button", { name: "読み込んで再生リストにする" }).click();
+  await page.getByRole("button", { name: "再生リストに読み込む" }).click();
   await expect(page.locator("#status")).toContainText("曲一覧とプレイリスト一覧が別のスプレッドシートから読み込まれています");
   // キューは変更されず、直前の状態のまま（除外反映前のカタログ一覧が空のまま）であることを確認する。
   await expect(page.locator("#catalog-list li")).toHaveCount(2);
@@ -2845,4 +2848,76 @@ test("バックグラウンド復帰の対象（B）が未解決のまま2回連
 
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-2(\?|$)/);
   await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /song-1(\?|$)/);
+});
+
+// 一覧の行を「選択 / 曲名＋補足 / 操作」の3列に固定した（2026-10-30、実機UI相談：行ごとにボタンの位置が
+// バラバラで、文字が長いとボタンだけ次の行に落ちていた）。スマホ幅で実際にレイアウトし、次を検証する：
+// ①操作ボタンが一覧の右端にそろう、②曲名側が操作ボタンに重ならない、③区切りの無い非常に長い曲名にしても
+// 同じ行の高さが変わらない（折り返さない）。行の高さは先頭行と後続行で区切り線1pxぶん違いうる（フォントの
+// 実寸が`min-height`を超える環境）ため、異なる行同士ではなく「同じ行の変更前後」で比較する
+// （2026-10-30、独立レビュー指摘：P2。以前は全行の高さが同一であることを要求しており、環境によって失敗した）。
+test("一覧の行は曲名の長さに関わらず操作ボタンが右端にそろい、折り返して行が高くならない（再生リスト・アルバム）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await page.locator("#album-list li").filter({ hasText: "Symphony" }).getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(3);
+
+  const measure = (listSelector: string) =>
+    page.evaluate((selector) => {
+      const list = document.querySelector(selector)!.getBoundingClientRect();
+      return Array.from(document.querySelectorAll(`${selector} li.row`)).map((li) => {
+        const row = li.getBoundingClientRect();
+        const main = li.querySelector(".row-main")!.getBoundingClientRect();
+        const buttons = Array.from(li.querySelectorAll(".row-actions button")).map((b) => b.getBoundingClientRect());
+        const last = buttons[buttons.length - 1];
+        return {
+          rowHeight: row.height,
+          // 操作ボタンの右端が一覧（カード）の右端のすぐ内側にあるか。
+          gapToListRight: list.right - last.right,
+          // 曲名側の右端が最初の操作ボタンの左端を越えていないか（重ならない）。
+          mainOverlap: main.right - buttons[0].left,
+          lastButtonRight: last.right,
+          // 操作ボタンが行の外（次の行）へ落ちていないか。
+          buttonsInsideRow: buttons.every((b) => b.top >= row.top - 0.5 && b.bottom <= row.bottom + 0.5),
+        };
+      });
+    }, listSelector);
+
+  const queueBefore = await measure("#catalog-list");
+  const albumRows = await measure("#album-list");
+  // 1行だけ区切りの無い非常に長い曲名にする（折り返さず省略表示になるはず）。
+  await page.evaluate(() => {
+    const t = document.querySelector("#catalog-list li:nth-child(2) .r-title .t");
+    if (t) t.textContent = "VeryLongTitle".repeat(30);
+  });
+  const queueAfter = await measure("#catalog-list");
+
+  expect(queueBefore).toHaveLength(3);
+  for (const m of [...queueAfter, ...albumRows]) {
+    expect(m.gapToListRight).toBeLessThanOrEqual(16);
+    expect(m.mainOverlap).toBeLessThanOrEqual(0.5);
+    expect(m.buttonsInsideRow).toBe(true);
+  }
+  // 長い曲名にした行も含め、再生リストの操作ボタンの右端は全行で同じ位置にそろう。
+  expect(new Set(queueAfter.map((m) => Math.round(m.lastButtonRight))).size).toBe(1);
+  // 同じ行の高さは、長い曲名にしても変わらない。
+  queueAfter.forEach((m, i) => expect(m.rowHeight).toBeCloseTo(queueBefore[i].rowHeight, 1));
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+});
+
+test("スマホ幅でも絞り込みの年の入力欄・並び替えの選択欄が画面内に収まり、ページが横にはみ出さない（2026-10-30、UI整理での再発防止ガード。実機では「年（最小）」の入力欄と「ライブラリ」見出しが画面外へはみ出して見えたが、ヘッドレスのChromiumでは旧レイアウトでも再現できなかったため、このテストは旧レイアウトの失敗を確認できていない）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await page.setViewportSize({ width: 320, height: 900 });
+  for (const id of ["filter-min-year", "filter-max-year", "sort-field", "sort-direction", "sort-secondary-field", "sort-secondary-direction", "sort-btn"]) {
+    const box = await page.locator(`#${id}`).boundingBox();
+    expect(box, id).not.toBeNull();
+    expect(box!.x, id).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width, id).toBeLessThanOrEqual(320);
+  }
+  const heading = await page.locator(".catalog h2").boundingBox();
+  expect(heading!.x).toBeGreaterThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { PlaybackQueue, queueRowViews, songDisplayLabel, nowPlayingLabel } from "./queue";
+import { PlaybackQueue, queueRowViews, songDisplayLabel, songSubLabel, nowPlayingLabel } from "./queue";
 import { PlaybackAuthenticationRequiredError, PlaybackController, PlaybackInterruptedError, PlaybackPausedError, type AudioElementLike } from "./playback";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { PlaybackContinuationRegistry } from "./playbackContinuation";
@@ -1431,6 +1431,20 @@ describe("songDisplayLabel / nowPlayingLabel", () => {
   test("アーティスト・アルバム・フォルダパスがあれば連結する", () => {
     const full: Song = { fileId: "x", parentId: "p", title: "Title", artist: "Artist", album: "Album", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", releaseType: "", folderPath: "A / B" };
     expect(songDisplayLabel(full)).toBe("Title — Artist / Album [A / B]");
+  });
+
+  test("songSubLabelはアーティストとアルバムを「 · 」で並べ、片方だけならその1つだけを返す", () => {
+    const base: Song = { fileId: "x", parentId: "p", title: "Title", artist: "", album: "", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", releaseType: "" };
+    expect(songSubLabel({ ...base, artist: "Artist", album: "Album" })).toBe("Artist · Album");
+    expect(songSubLabel({ ...base, artist: "Artist" })).toBe("Artist");
+    expect(songSubLabel({ ...base, album: "Album" })).toBe("Album");
+  });
+
+  test("songSubLabelはタグがあればフォルダパスを出さず、アーティストもアルバムも無い曲だけフォルダパスで代用する", () => {
+    const base: Song = { fileId: "x", parentId: "p", title: "Title", artist: "", album: "", composer: "", albumArtist: "", genre: "", releaseYear: "", discNumber: "", trackNumber: "", releaseType: "" };
+    expect(songSubLabel({ ...base, artist: "Artist", album: "Album", folderPath: "A / B" })).toBe("Artist · Album");
+    expect(songSubLabel({ ...base, folderPath: "A / B" })).toBe("A / B");
+    expect(songSubLabel(base)).toBe("");
   });
 
   test("nowPlayingLabelは曲が無ければ空文字列、あれば「再生中: 」を前置する", () => {

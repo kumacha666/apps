@@ -6,6 +6,18 @@
   <title>DustyJukebox</title>
   <link rel="manifest" href="./manifest.json">
   <style>
+    :root {
+      --bg: #17151a;
+      --surface: #1f1c24;
+      --surface-2: #29252f;
+      --line: #342f3c;
+      --fg: #e8e3d8;
+      --muted: #9a9488;
+      --accent: #d9a441;
+      --accent-ink: #17151a;
+      --accent-soft: rgba(217, 164, 65, 0.14);
+      --danger: #e8866b;
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     /* .now-playing-barはposition: fixed; left: 0; right: 0;で画面下に固定しているが、
        モバイルブラウザではページのどこかに横方向のはみ出し（例：長い1単語のフォルダ名等、
@@ -23,10 +35,12 @@
     #app {
       display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
+      align-items: stretch;
+      justify-content: flex-start;
       min-height: 100dvh;
-      text-align: center;
+      max-width: 760px;
+      margin-inline: auto;
+      text-align: left;
       padding: 24px;
       /* 画面下に固定される.now-playing-barぶんの余白。バーの高さは状態（#status文言の
          長さ・#playback-auth-notice表示の有無・OSの文字サイズ拡大等）で変動するため、
@@ -37,6 +51,8 @@
       padding-bottom: calc(var(--now-playing-bar-height, 220px) + 16px);
       gap: 12px;
     }
+    /* 単独で置かれたボタン（ログイン・スキャン等）は幅いっぱいに伸ばさず、文字幅に収める。 */
+    #app > button, .playlists > button, .diagnostics > button, .catalog > button { align-self: flex-start; }
     /* 再生中の操作（シークバー・現在再生中の曲名）・肝心なときに
        見落としやすいステータス/エラーメッセージ（#status）を、再生リストの操作中でも
        スクロールで見失わないよう画面下に固定する（2026-09-09、ユーザー指摘：単曲試聴欄の
@@ -90,49 +106,93 @@
     }
     .mini-player-controls .repeat-off { opacity: 0.65; }
     .mini-player-controls button:disabled { opacity: 0.4; }
-    h1 { font-size: 24px; color: #d9a441; margin-bottom: 8px; }
-    p { color: #9a9488; font-size: 14px; }
+    h1 { font-size: 24px; color: var(--accent); margin-bottom: 8px; }
+    h3 { font-size: 15px; color: var(--fg); margin-top: 8px; }
+    p { color: var(--muted); font-size: 14px; }
     p.lead { max-width: 32em; }
+    :focus-visible { outline: 2px solid #f0c46a; outline-offset: 2px; }
     .field {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
       width: 100%;
-      max-width: 28em;
-      text-align: left;
+      min-width: 0;
       font-size: 13px;
       color: #cfc9bb;
     }
-    input {
-      background: #221f27;
-      border: 1px solid #3a3542;
-      border-radius: 6px;
-      color: #e8e3d8;
-      padding: 8px 10px;
+    input[type="text"], input[type="search"], input[type="number"], select {
+      width: 100%;
+      min-width: 0;
+      min-height: 42px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--fg);
+      padding: 8px 12px;
       font-size: 14px;
     }
+    select { width: auto; }
+    .field select { width: 100%; }
+    /* ボタンは3段階：塗り（既定＝主操作）・枠線（.ghost＝副操作）・アイコン（.icon-btn＝行内の小さな操作）。 */
     button {
-      background: #d9a441;
-      border: none;
-      border-radius: 6px;
-      color: #17151a;
-      padding: 10px 16px;
+      background: var(--accent);
+      border: 1px solid transparent;
+      border-radius: 10px;
+      color: var(--accent-ink);
+      min-height: 42px;
+      padding: 0 16px;
       font-size: 14px;
-      font-weight: 600;
+      font-weight: 700;
       cursor: pointer;
     }
+    button:hover:not(:disabled) { filter: brightness(1.08); }
     button:disabled {
       background: #4a4438;
       color: #8a8578;
       cursor: not-allowed;
     }
+    button.ghost { background: transparent; color: var(--fg); border-color: var(--line); font-weight: 600; }
+    button.ghost:hover:not(:disabled) { background: var(--surface-2); filter: none; }
+    button.ghost:disabled { background: transparent; color: #6f6a78; border-color: var(--line); }
+    button.ghost.danger { color: var(--danger); }
+    button.sm { min-height: 34px; padding: 0 12px; font-size: 13px; border-radius: 8px; }
+    button.icon-btn {
+      width: 36px;
+      height: 36px;
+      min-height: 0;
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+      flex: none;
+      background: transparent;
+      border: 0;
+      border-radius: 8px;
+      color: var(--muted);
+    }
+    button.icon-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--fg); filter: none; }
+    button.icon-btn:disabled { background: transparent; color: var(--muted); opacity: 0.28; }
+    button.icon-btn.danger:hover:not(:disabled) { color: var(--danger); }
+    button.icon-btn.fab { width: 38px; height: 38px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); }
+    button.icon-btn.fab:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); filter: brightness(1.1); }
+    .ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .ic.fill { fill: currentColor; stroke: none; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .btn-row > button { flex: 1 1 auto; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .form-grid > .span-2 { grid-column: 1 / -1; }
+    .check-row { display: flex; align-items: center; gap: 10px; min-height: 36px; font-size: 14px; color: var(--fg); }
+    .check-row select { width: auto; min-height: 36px; padding: 4px 10px; }
     .status { min-height: 1.4em; }
     .status.error { color: #e07a5f; }
+    /* 一覧は共通のカード（.result-list）の中に行（.row）を積む。行は「選択 / 曲名＋補足 / 操作」の
+       3列（選択が無い一覧は2列）に固定し、曲名が長くても操作ボタンが折り返さず右端にそろう。 */
     .result-list {
       list-style: none;
       width: 100%;
-      max-width: 28em;
-      text-align: left;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
       font-size: 13px;
       color: #cfc9bb;
       /* 曲名・フォルダパス（Google Drive由来、区切りに空白を含まない長い1単語が
@@ -141,26 +201,67 @@
          子要素のspan/label等にも及ぶ）。 */
       overflow-wrap: anywhere;
     }
-    .catalog { width: 100%; max-width: 42em; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: left; }
-    .catalog h2 { align-self: flex-start; color: #d9a441; font-size: 18px; }
-    .filter-years { display: flex; gap: 8px; width: 100%; }
-    .filter-years label { flex: 1; font-size: 13px; color: #cfc9bb; }
+    .result-list:empty { display: none; }
+    .result-list > li:not(:first-child) { border-top: 1px solid var(--line); }
+    .result-list > li:not(.row):not(.album-artist-heading) { padding: 10px 14px; }
+    .row {
+      position: relative;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 4px 10px;
+      min-height: 58px;
+      padding: 6px 8px 6px 6px;
+    }
+    .row.no-lead { grid-template-columns: minmax(0, 1fr) auto; padding-left: 14px; }
+    .row.now-playing { background: var(--accent-soft); }
+    .row.now-playing::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); }
+    .row.excluded .row-main { opacity: 0.42; }
+    .row-main {
+      display: block;
+      min-width: 0;
+      padding: 4px 0;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+      background: none;
+      border: 0;
+      border-radius: 0;
+      color: inherit;
+      font: inherit;
+      font-weight: 400;
+      text-align: left;
+      min-height: 0;
+    }
+    button.row-main:hover:not(:disabled) { filter: none; }
+    button.row-main:disabled { background: none; color: inherit; }
+    .song-link { cursor: pointer; }
+    .r-title { display: flex; align-items: center; gap: 8px; font-size: 14.5px; font-weight: 600; line-height: 1.35; color: var(--fg); }
+    .r-title .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .r-title .n { flex: none; font-weight: 400; font-size: 12.5px; color: var(--muted); }
+    .row.now-playing .r-title { color: var(--accent); }
+    .r-sub { display: block; margin-top: 1px; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row-actions { display: flex; align-items: center; gap: 4px; }
+    .row-actions > button.ghost.sm { min-width: 84px; }
+    .eq { display: inline-flex; align-items: flex-end; gap: 2px; width: 14px; height: 12px; flex: none; }
+    .eq i { width: 3px; height: 70%; background: var(--accent); border-radius: 1px; }
+    .eq i:nth-child(1) { height: 45%; }
+    .eq i:nth-child(3) { height: 100%; }
+    .check { display: grid; place-items: center; width: 40px; height: 40px; cursor: pointer; }
+    .check input { appearance: none; margin: 0; width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid #5d5668; background: transparent; display: grid; place-items: center; cursor: pointer; }
+    .check input:checked { background: var(--accent); border-color: var(--accent); }
+    .check input:checked::after { content: ""; width: 10px; height: 5px; border-left: 2px solid var(--accent-ink); border-bottom: 2px solid var(--accent-ink); transform: translateY(-1px) rotate(-45deg); }
+    .catalog, .playlists, .diagnostics { width: 100%; display: flex; flex-direction: column; align-items: stretch; gap: 12px; text-align: left; }
+    .catalog h2, .playlists h2 { color: var(--accent); font-size: 18px; }
+    .filter-years { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; width: 100%; }
+    .filter-years label { min-width: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #cfc9bb; }
     .filter-years input { width: 100%; }
-    #now-playing { font-weight: 600; color: #d9a441; }
-    .queue-item.now-playing { background: #2a2530; border-radius: 4px; }
-    /* 検索結果の行：曲名の長さに関わらず「＋追加」ボタンを右端にそろえる（2026-10-16）。 */
+    #now-playing { font-weight: 600; color: var(--accent); }
     /* 検索結果の一覧は高さに上限を付けて一覧の中でスクロールさせる（200行が並んでも、下のシャッフル・
        クリア・並び替え・再生リスト本体が画面の下へ押し流されないように。2026-10-16、レビュー指摘）。 */
     #search-results { max-height: 40vh; overflow-y: auto; }
-    .search-result-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .search-result-item span { min-width: 0; text-align: left; overflow-wrap: anywhere; }
-    .search-result-item button { flex: none; }
-    .song-link { cursor: pointer; }
-    .song-link:hover { text-decoration: underline; }
-    .album-artist-heading { font-weight: 600; color: #d9a441; margin-top: 8px; list-style: none; }
-    .diagnostics { width: 100%; max-width: 28em; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; }
-    .diagnostics h2 { color: #d9a441; font-size: 16px; }
-    .diag-log-output { width: 100%; font-size: 11px; color: #cfc9bb; background: #221f27; border: 1px solid #3a3542; border-radius: 6px; padding: 8px; }
+    .album-artist-heading { padding: 8px 14px; background: var(--surface-2); color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; list-style: none; }
+    .diagnostics h2 { color: var(--accent); font-size: 16px; }
+    .diag-log-output { width: 100%; font-size: 11px; color: #cfc9bb; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
   </style>
 </head>
 <body>
