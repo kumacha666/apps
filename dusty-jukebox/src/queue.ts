@@ -15,6 +15,7 @@ export interface PlayerLike {
     position?: number,
     options?: {
       fadeOut?: boolean;
+      fadeIn?: boolean;
       // ロールスワップ再設計（2026-09-14〜、PR2）向け：streamIdが実際に確定した瞬間
       // （audio.src設定より前）に同期的に呼ばれる。onBeforePlay()呼び出しをここへ移した
       // 理由はBeforeQueuePlayのコメント参照。
@@ -193,7 +194,8 @@ export class PlaybackQueue {
     generation: number,
     position?: number,
     fadeOut = false,
-    onRegistered?: (streamId: number) => void
+    onRegistered?: (streamId: number) => void,
+    fadeIn = false
   ): Promise<boolean> {
     // このフェード操作自身のトークンを発行する（2026-09-08、Codexレビュー指摘：P1）。
     let myFadeToken: number | null = null;
@@ -205,6 +207,7 @@ export class PlaybackQueue {
     try {
       await this.player.play(fileId, position, {
         fadeOut: fadeOut || undefined,
+        fadeIn: fadeIn || undefined,
         // stream-idが実際に確定した瞬間（native play promiseの解決より前）に呼ばれるため、
         // Register a continuation before the native play promise settles: the
         // initial stream request can receive a 401 while that promise is pending.
@@ -438,10 +441,12 @@ export class PlaybackQueue {
   // ように同じ対象へ短時間に複数回resume()する呼び出し元が、自分自身の呼び出しがもたらした
   // 登録（streamId）を、他の同時進行中の呼び出しの登録と取り違えずに知るための専用の相関
   // 手段。省略時は既存の挙動と完全に同じ（this.onBeforePlayによる共有の登録のみ行う）。
-  resume(fileId: string, position: number, onRegistered?: (streamId: number) => void): Promise<boolean> {
+  // fadeIn：途中位置からの再開を無音からフェードインさせる（「再生」ボタン、フェードアウトON時。
+  // positionが0なら無視される）。
+  resume(fileId: string, position: number, onRegistered?: (streamId: number) => void, fadeIn = false): Promise<boolean> {
     return this.move(async (generation) =>
       this.songs.some((song) => song.fileId === fileId) && !this.isExcluded(fileId)
-        ? this.playAndCommit(fileId, generation, position, false, onRegistered)
+        ? this.playAndCommit(fileId, generation, position, false, onRegistered, fadeIn)
         : false,
       true
     );

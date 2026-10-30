@@ -1178,6 +1178,20 @@ describe("PlaybackQueue", () => {
 // 自分のものと取り違えるバグを持っていた。onRegisteredはこの呼び出し自身のplayAndCommit()が
 // 実際に登録した時にだけ、その呼び出し自身のstreamIdを直接渡す（共有スロット・所有権の考慮が
 // 構造的に不要になったことの検証）。
+describe("PlaybackQueue.resume() fadeIn", () => {
+  test("fadeIn=trueのresume()はplayer.play()のoptionsへfadeInを渡し、省略時は渡さない", async () => {
+    const audio = new Audio();
+    const play = vi.fn().mockResolvedValue(undefined);
+    const queue = new PlaybackQueue({ play }, audio);
+    queue.setList([song("a")]);
+
+    await queue.resume("a", 30, undefined, true);
+    expect(play.mock.calls[0][2]).toMatchObject({ fadeIn: true });
+    await queue.resume("a", 30);
+    expect(play.mock.calls[1][2].fadeIn).toBeUndefined();
+  });
+});
+
 describe("PlaybackQueue.resume() onRegistered", () => {
   test("resume()自身の登録が起きた時、この呼び出し専用のonRegisteredへその呼び出し自身のstreamIdが渡る", async () => {
     const audio = new Audio();

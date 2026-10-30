@@ -195,6 +195,192 @@ describe("PlaybackController", () => {
     expect(audio.volume).toBe(0.6);
   });
 
+  test("fadeIn指定のリジューム再生（position>0）は無音から始まり、再生開始後に元のvolumeまで上がる", async () => {
+    vi.useFakeTimers();
+    try {
+      const audio = new FakeAudio();
+      audio.volume = 0.6;
+      const playback = new PlaybackController(audio, () => "valid-token");
+
+      await playback.play("A", 42, { fadeIn: true });
+      // play()の解決時点ではまだ無音で、フェードインは完了を待たずに進行している。
+      expect(audio.volume).toBe(0);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(audio.volume).toBeGreaterThan(0);
+      expect(audio.volume).toBeLessThan(0.6);
+
+      await vi.runAllTimersAsync();
+      expect(audio.volume).toBeCloseTo(0.6, 10);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("fadeIn指定でも曲の頭（position=0）なら通常再生のまま、volumeに触れない", async () => {
+    const audio = new FakeAudio();
+    audio.volume = 0.6;
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await playback.play("A", 0, { fadeIn: true });
+    expect(audio.volume).toBe(0.6);
+  });
+
+  test("fadeIn指定のplay()がネイティブ再生の失敗で拒否されても、volumeは元の値へ戻る", async () => {
+    const audio = new FakeAudio();
+    audio.volume = 0.6;
+    audio.play = async () => {
+      throw new Error("NotAllowedError");
+    };
+    const playback = new PlaybackController(audio, () => "valid-token");
+
+    await expect(playback.play("A", 42, { fadeIn: true })).rejects.toThrow("NotAllowedError");
+    expect(audio.volume).toBe(0.6);
+  });
+
+  // レビュー指摘（PR #494）：フェードイン中のフェード付き一時停止・スキップで、目標音量へ跳ね上がってから
+  // フェードアウトが始まっていた。現在の（小さい）音量から下げ始め、停止後・切り替え後に目標音量へ戻す。
+  test("フェードイン中のpause(true)は現在の音量から下げ始め（跳ね上がらず）、停止後に目標音量へ戻る", async () => {
+    vi.useFakeTimers();
+    try {
+      const audio = new FakeAudio();
+      audio.volume = 0.6;
+      const playback = new PlaybackController(audio, () => "valid-token");
+
+      await playback.play("A", 42, { fadeIn: true });
+      await vi.advanceTimersByTimeAsync(300);
+      const volumeAtPause = audio.volume;
+      expect(volumeAtPause).toBeGreaterThan(0);
+      expect(volumeAtPause).toBeLessThan(0.6);
+
+      const pausePromise = playback.pause(true);
+      // 呼び出し直後（フェードアウト開始時点）で音量が増えていない。
+      expect(audio.volume).toBeLessThanOrEqual(volumeAtPause);
+      let previous = audio.volume;
+      for (let i = 0; i < 20; i += 1) {
+        await vi.advanceTimersByTimeAsync(100);
+        if (audio.paused) break;
+        expect(audio.volume).toBeLessThanOrEqual(previous + 1e-9);
+        previous = audio.volume;
+      }
+      await vi.runAllTimersAsync();
+      expect(await pausePromise).toBe(true);
+      expect(audio.paused).toBe(true);
+      // 停止後は目標音量へ戻り、古いフェードインのタイマーが後から上書きしていない。
+      expect(audio.volume).toBe(0.6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("フェードイン中のplay(..., { fadeOut: true })は現在の音量から下げ始め、切り替え後は目標音量になる", async () => {
+    vi.useFakeTimers();
+    try {
+      const audio = new FakeAudio();
+      audio.volume = 0.6;
+      const playback = new PlaybackController(audio, () => "valid-token");
+
+      await playback.play("A", 42, { fadeIn: true });
+      await vi.advanceTimersByTimeAsync(300);
+      const volumeAtSkip = audio.volume;
+      expect(volumeAtSkip).toBeLessThan(0.6);
+
+      const srcBefore = audio.src;
+      const skipPromise = playback.play("B", 0, { fadeOut: true });
+      expect(audio.volume).toBeLessThanOrEqual(volumeAtSkip);
+      let previous = audio.volume;
+      for (let i = 0; i < 10; i += 1) {
+        await vi.advanceTimersByTimeAsync(100);
+        if (audio.src !== srcBefore) break;
+        expect(audio.volume).toBeLessThanOrEqual(previous + 1e-9);
+        previous = audio.volume;
+      }
+      await vi.runAllTimersAsync();
+      await skipPromise;
+      expect(audio.src).toBe(streamUrl("B", playback.currentStreamGeneration() ?? undefined));
+      expect(audio.volume).toBe(0.6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("フェードイン中にフェードアウトを伴わない操作（pause()・play()）が来た場合は、音量を目標値へ即座に戻す", async () => {
+    vi.useFakeTimers();
+    try {
+      const audio = new FakeAudio();
+      audio.volume = 0.6;
+      const playback = new PlaybackController(audio, () => "valid-token");
+
+      await playback.play("A", 42, { fadeIn: true });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(audio.volume).toBeLessThan(0.6);
+      await playback.pause();
+      expect(audio.volume).toBe(0.6);
+
+      audio.volume = 0.6;
+      await playback.play("A", 42, { fadeIn: true });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(audio.volume).toBeLessThan(0.6);
+      const pending = playback.play("B");
+      // 同期部分（先頭）で目標値へ戻る。以後フェードインのタイマーは何も書かない。
+      expect(audio.volume).toBe(0.6);
+      await vi.runAllTimersAsync();
+      await pending;
+      expect(audio.volume).toBe(0.6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("cancelFadeIn()は進行中のフェードインを止めてvolumeを目標値へ戻し、以後フェードインはvolumeを書き換えない（クロスフェードのランプと取り合わないため）", async () => {
+    vi.useFakeTimers();
+    try {
+      const audio = new FakeAudio();
+      audio.volume = 0.6;
+      const playback = new PlaybackController(audio, () => "valid-token");
+
+      await playback.play("A", 42, { fadeIn: true });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(audio.volume).toBeLessThan(0.6);
+
+      playback.cancelFadeIn();
+      expect(audio.volume).toBe(0.6);
+
+      // 外部（クロスフェードのランプ）がvolumeを書いた後、残りのフェードインが上書きしない。
+      audio.volume = 0.25;
+      await vi.runAllTimersAsync();
+      expect(audio.volume).toBe(0.25);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("フェードインが進行していない時のcancelFadeIn()は何もしない", () => {
+    const audio = new FakeAudio();
+    audio.volume = 0.4;
+    const playback = new PlaybackController(audio, () => "valid-token");
+    playback.cancelFadeIn();
+    expect(audio.volume).toBe(0.4);
+  });
+
+  test("フェードイン中に一時停止されても、volumeは元の値へ戻る（次の再生が無音のままにならない）", async () => {
+    vi.useFakeTimers();
+    try {
+      const audio = new FakeAudio();
+      audio.volume = 0.6;
+      const playback = new PlaybackController(audio, () => "valid-token");
+
+      await playback.play("A", 42, { fadeIn: true });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(audio.volume).toBeLessThan(0.6);
+
+      await playback.pause();
+      await vi.runAllTimersAsync();
+      expect(audio.volume).toBe(0.6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("再生中でない（一時停止中の）曲へのfadeOut指定はフェードを待たずすぐに切り替え、volumeに触れない", async () => {
     const audio = new FakeAudio();
     const playback = new PlaybackController(audio, () => "valid-token");

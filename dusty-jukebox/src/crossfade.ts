@@ -93,10 +93,15 @@ export const CROSSFADE_HANDOFF_CATCHUP_TOLERANCE_SEC = 0.05;
 // ままランプを開始するだけ）ため、CROSSFADE_HANDOFF_SEEK_TIMEOUT_MSと同じ短めの値にする。
 export const CROSSFADE_RAMP_SEEK_TIMEOUT_MS = import.meta.env.VITE_E2E === "true" ? 100 : 1000;
 
-// 進行度（0=開始直後、1=完了）に対する退場側/入場側それぞれの音量。単純な線形（合計は常に1）。
+// 進行度（0=開始直後、1=完了）に対する退場側/入場側それぞれの音量。線形（合計振幅1）だと
+// 退場側が終わり際に急に消え、入場側も唐突に立ち上がるため、①進行度を余弦で滑らかにし
+// （両端で変化率0＝音の出入りが自然）、②等電力カーブ（outgoing²+incoming²=1）で中間の
+// 音量の凹みを防ぐ（2026-10-30、ユーザー要望：消え方が急）。
 export function crossfadeVolumes(progress: number): { outgoing: number; incoming: number } {
-  const p = Math.min(1, Math.max(0, progress));
-  return { outgoing: 1 - p, incoming: p };
+  if (!(progress > 0)) return { outgoing: 1, incoming: 0 };
+  if (progress >= 1) return { outgoing: 0, incoming: 1 };
+  const eased = (1 - Math.cos(progress * Math.PI)) / 2;
+  return { outgoing: Math.cos((eased * Math.PI) / 2), incoming: Math.sin((eased * Math.PI) / 2) };
 }
 
 // 退場側（outgoing）を1→0、入場側（incoming）を0→1へ同時にランプする。durationMsが0以下の
@@ -114,7 +119,8 @@ export async function runCrossfade(
     }
     return;
   }
-  const steps = options.steps ?? DEFAULT_STEPS;
+  // 長いクロスフェード（最大20秒）でも約100ms刻みを保ち、音量の段差を聞こえにくくする。
+  const steps = options.steps ?? Math.max(DEFAULT_STEPS, Math.round(durationMs / 100));
   const wait = options.wait ?? defaultWait;
   const stepDuration = durationMs / steps;
   for (let i = 1; i <= steps; i += 1) {
@@ -278,6 +284,9 @@ export interface CrossfadePlaybackControllerLike {
     options?: { onStreamIdAllocated?: (streamId: number, isSuperseded: () => boolean) => void }
   ): Promise<void>;
   cancelPendingTransition?(): void;
+  // リジューム時のフェードインが進行中なら止めてvolumeを目標値へ戻す。ランプ開始前に、同じ
+  // active側のvolumeを取り合わないよう呼ぶ。
+  cancelFadeIn?(): void;
   // 退役する旧activeストリームのContinuation無効化に必要（2026-09-14〜、ChatGPTレビュー
   // 指摘：P1「promotion後の旧outgoing streamの遅延401」）。
   currentStreamGeneration?(): number | null;
@@ -555,10 +564,6 @@ export class CrossfadeOrchestrator {
     this.preparing = false;
     this.crossfading = true;
     const myGeneration = this.generation;
-    // ランプ開始前のactive側volumeを記録する（2026-09-14〜、ChatGPTレビュー指摘：P1）。
-    // cancel()・commit失敗でpromotionされずに終わった場合、ランプが変更したこの値を
-    // 復元するために使う。
-    this.activeVolumeBeforeRamp = activeAudio.volume;
     // 準備開始からランプ開始までの間、先読み側は無音のまま鳴り続けているため、この時点の
     // currentTimeは既に数秒進んでいる（CROSSFADE_PREPARE_LEAD_MS分）。次の曲は「冒頭から」
     // 重ねて鳴らす設計のため、ランプ開始前に先頭へ巻き戻す。
@@ -596,6 +601,16 @@ export class CrossfadeOrchestrator {
         return;
       }
     }
+    // ランプ開始前のactive側volumeを記録する（2026-09-14〜、ChatGPTレビュー指摘：P1）。
+    // cancel()・commit失敗でpromotionされずに終わった場合、ランプが変更したこの値を
+    // 復元するために使う。
+    // 進行中のリジューム時フェードインがあれば、ランプ（同じvolumeを書く）と取り合わないよう
+    // 先に止め、目標値へ戻してから「開始前のvolume」を記録する。seek完了を確認してランプを
+    // 実際に始めると決まった時点まで遅らせる（レビュー指摘：seekがタイムアウトしてクロスフェード
+    // を諦める場合に、フェードインだけが失われて音量が不連続に飛ぶのを防ぐ。seek待ちの間は
+    // active側のvolumeをランプが書き換えないため、記録もここからで足りる）。
+    this.player.activeController().cancelFadeIn?.();
+    this.activeVolumeBeforeRamp = activeAudio.volume;
     // 退場側が既に自然終了している場合のみ、ランプ自体を省略して直ちに完了値へ進める。
     const rampDurationMs = activeAudio.ended ? 0 : this.durationMsActive;
     await runCrossfade(activeAudio, inactiveAudio, rampDurationMs, {
