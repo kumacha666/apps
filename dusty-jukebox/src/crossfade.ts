@@ -612,7 +612,11 @@ export class CrossfadeOrchestrator {
     this.player.activeController().cancelFadeIn?.();
     this.activeVolumeBeforeRamp = activeAudio.volume;
     // 退場側が既に自然終了している場合のみ、ランプ自体を省略して直ちに完了値へ進める。
-    const rampDurationMs = activeAudio.ended ? 0 : this.durationMsActive;
+    // 重ねる長さは、設定の秒数と退場側の残りの短い方（設定の秒数は上限。Android版と同じ規則、R16①）。
+    // 終わり際へシークした・先読みの準備が遅れた等でランプ開始時点の残りが設定より短いとき、設定の秒数で
+    // ランプすると、退場側がランプの途中で終わってしまう（残りのランプは無音の退場側を相手にした空ランプになる）。
+    const remainingMs = remainingMsUntilEnd(activeAudio.duration, activeAudio.currentTime) ?? 0;
+    const rampDurationMs = activeAudio.ended ? 0 : Math.min(this.durationMsActive, remainingMs);
     await runCrossfade(activeAudio, inactiveAudio, rampDurationMs, {
       isCancelled: () => this.generation !== myGeneration,
       // 次の曲（入場側）自体がクロスフェード長より短く、ランプ完了前に自然終了した場合。

@@ -921,6 +921,30 @@ describe("CrossfadeOrchestrator", () => {
 // 本来の次曲が再生されない（例：全曲リピートで末尾曲の再生中にAを先読み→曲Cを追加すると、
 // 正しい次曲はCなのにAが昇格する）。commitPreparedFile()は曲が存在するかしか見ないため、
 // オーケストレーター側で先読み対象と最新の次曲（queue.peekNextFileId()）の一致を確認する。
+describe("CrossfadeOrchestrator 重ねる長さ（設定の秒数は上限、R16①）", () => {
+  async function rampLengthFor(currentTime: number, durationMs: number): Promise<number> {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    const waits: number[] = [];
+    const recordingWait: WaitFn = (ms) => { waits.push(ms); return Promise.resolve(); };
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, { wait: recordingWait, steps: 1 });
+    player.activeAudio.duration = 100;
+    player.activeAudio.currentTime = currentTime;
+    await orchestrator.maybeStart({ enabled: true, durationMs, manualTransitionInFlight: false });
+    expect(player.promotions).toBe(1);
+    return waits.reduce((sum, ms) => sum + ms, 0);
+  }
+
+  it("残りが設定の秒数より長ければ、設定の秒数でランプする", async () => {
+    expect(await rampLengthFor(97, 3000)).toBeCloseTo(3000, 6);
+  });
+
+  it("ランプ開始時点の残りが設定より短ければ（終わり際へのシーク・準備の遅れ）、残りの時間でランプする", async () => {
+    expect(await rampLengthFor(99, 3000)).toBeCloseTo(1000, 6);
+    expect(await rampLengthFor(85, 20000)).toBeCloseTo(15000, 6);
+  });
+});
+
 describe("CrossfadeOrchestrator 先読み対象と最新の次曲の一致確認", () => {
   const params = { enabled: true, durationMs: 3000, manualTransitionInFlight: false };
 
