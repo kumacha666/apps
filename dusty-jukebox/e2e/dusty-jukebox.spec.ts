@@ -1156,18 +1156,38 @@ test("アルバム一覧はアーティスト別に見出し付きで表示さ�
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   const albumList = page.locator("#album-list");
-  await expect(albumList.locator(".album-artist-heading")).toHaveText(["Orchestra", "Quartet"]);
+  await expect(albumList.locator(".album-artist-heading .shelf-name")).toHaveText(["Orchestra", "Quartet"]);
+  // 既定の並べ方はアーティストの棚（CDラック、Android版と同じ分け方）。見出しに枚数を出す
+  await expect(page.locator("#album-sort")).toHaveValue("shelf");
+  await expect(page.locator("#album-sort option")).toHaveText(["アーティストの棚（発売順）", "発売の古い順", "発売の新しい順", "アルバム名順"]);
+  await expect(albumList.locator(".album-artist-heading .album-count")).toHaveText(["1枚", "1枚"]);
 
   await openTab(page, "albums");
   await page.locator("#album-search").fill("quartet");
-  await expect(albumList.locator(".album-artist-heading")).toHaveText(["Quartet"]);
+  await expect(albumList.locator(".album-artist-heading .shelf-name")).toHaveText(["Quartet"]);
   await expect(albumList).toContainText("Blue Notes");
   await expect(albumList).not.toContainText("Symphony");
 
   await openTab(page, "albums");
   await page.locator("#album-search").fill("symphony");
-  await expect(albumList.locator(".album-artist-heading")).toHaveText(["Orchestra"]);
+  await expect(albumList.locator(".album-artist-heading .shelf-name")).toHaveText(["Orchestra"]);
   await expect(albumList).toContainText("Symphony");
+});
+
+test("アルバム一覧はCDラックの分け方：CD1/CD2フォルダの2枚組は1枚にまとまり、アルバムアーティストの無い寄せ集めはオムニバスの棚に入る（R14）", async ({ context, page }) => {
+  await installGoogleMocks(context, { rackCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から5曲");
+  await openTab(page, "albums");
+  const albumList = page.locator("#album-list");
+  await expect(albumList.locator(".album-artist-heading .shelf-name")).toHaveText(["Band", "オムニバス"]);
+  await expect(albumList.locator("li.row")).toHaveCount(2);
+  await expect(albumList).toContainText("Double（3曲）");
+  await expect(albumList).toContainText("Hits（2曲）");
+  // 2枚組はディスク（フォルダの番号）→トラックの順に再生リストへ入る
+  await albumList.locator("li").filter({ hasText: "Double（3曲）" }).getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#catalog-list li .t")).toHaveText(["First disc opener", "First disc closer", "Second disc opener"]);
 });
 
 test("曲フィルタでアルバム一覧を絞っても再生時は全曲を保持し、リリース年順ではアーティスト付きフラット表示になる", async ({ context, page }) => {
