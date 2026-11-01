@@ -11,6 +11,8 @@ export function streamUrl(fileId: string, playbackGeneration?: number): string {
 // リジューム再生（途中位置からの再開）時のフェードイン長。フェードアウトON時のみ使う。
 export const FADE_IN_DURATION_MS = import.meta.env.VITE_E2E === "true" ? 50 : 1500;
 export const FADE_OUT_DURATION_MS = import.meta.env.VITE_E2E === "true" ? 50 : 3000;
+// シークバーで移動したとき、移動先へ移ってから音が出るまで（"seeked"）待つ上限。届かなくてもフェードインは始める。
+export const SEEK_FADE_SEEKED_TIMEOUT_MS = import.meta.env.VITE_E2E === "true" ? 200 : 5000;
 
 export interface AudioElementLike {
   src: string;
@@ -173,6 +175,83 @@ export class PlaybackController {
     this.activeFadeInTarget = null;
   }
 
+  // シークバーで移動したときのフェード（Android版と同じ：鳴っているなら3秒かけて下げてから移り、移った先で
+  // 鳴り始めてから1.5秒かけて上げる。止まっているならすぐ移る）。曲は変わらないのでgenerationは進めない
+  // （進めると、解決待ちのplay()を「追い越された」とみなして止めてしまう）。代わりに、generationが変わったら
+  // （次へ・一時停止・別の曲の再生など）このシークは取り消し、その操作の先頭のreclaimPendingFadeVolume()が
+  // 音量を元に戻す。下げている間にもう一度シークしたら、下げ直さずに移動先だけを差し替える。
+  private seekFadeToken = 0;
+  private seekFadeGeneration = -1;
+  private pendingSeekTarget: number | null = null;
+  private seekedWaiter: (() => void) | null = null;
+
+  // 戻り値：実際に移動した位置（取り消された場合はnull）。止まっているときはすぐ移動する。
+  async seekWithFade(position: number): Promise<number | null> {
+    if (this.pendingSeekTarget !== null && this.seekFadeGeneration === this.generation) {
+      this.pendingSeekTarget = position;
+      return null;
+    }
+    const carried = this.reclaimPendingFadeVolume();
+    this.seekFadeToken += 1;
+    const token = this.seekFadeToken;
+    const generation = this.generation;
+    if (this.audio.paused) {
+      this.restoreCarriedVolume(carried);
+      this.pendingSeekTarget = null;
+      this.audio.currentTime = position;
+      return position;
+    }
+    const isCancelled = () => this.seekFadeToken !== token || this.generation !== generation;
+    const preVolume = carried ?? this.audio.volume;
+    this.pendingFadeOriginalVolume = preVolume;
+    this.pendingSeekTarget = position;
+    this.seekFadeGeneration = generation;
+    await fadeOutVolume(this.audio, FADE_OUT_DURATION_MS, { isCancelled });
+    const target = this.pendingSeekTarget ?? position;
+    if (this.seekFadeToken === token) this.pendingSeekTarget = null;
+    // 取り消した操作（次へ・一時停止など）が、自分の先頭でreclaimPendingFadeVolume()により音量を戻している
+    if (isCancelled()) return null;
+    if (this.audio.paused) {
+      // 下げている間にネイティブの一時停止・曲の終わりが来た：音量を戻す。一時停止なら移動だけはしておく
+      this.audio.volume = preVolume;
+      this.pendingFadeOriginalVolume = null;
+      if (this.audio.ended) return null;
+      this.audio.currentTime = target;
+      return target;
+    }
+    // 移り終えるのを待つ間も「フェードイン中」として扱う（この間に次のシークや一時停止が来たら、音量を
+    // 一度上げてから下げ直すのではなく、今の小さい音量のまま引き継がせる。reclaimPendingFadeVolume()参照）
+    this.fadeInToken += 1;
+    const myFadeInToken = this.fadeInToken;
+    this.activeFadeInTarget = preVolume;
+    const seeked = this.waitForSeeked();
+    this.audio.currentTime = target;
+    await seeked;
+    if (isCancelled() || this.fadeInToken !== myFadeInToken) return target;
+    await fadeInVolume(this.audio, preVolume, FADE_IN_DURATION_MS, {
+      isCancelled: () => isCancelled() || this.fadeInToken !== myFadeInToken,
+    });
+    if (this.fadeInToken !== myFadeInToken) return target;
+    this.activeFadeInTarget = null;
+    if (!isCancelled()) this.pendingFadeOriginalVolume = null;
+    return target;
+  }
+
+  // 移動先へ移り終える（"seeked"）か、上限の時間が過ぎるまで待つ。
+  private waitForSeeked(): Promise<void> {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        if (this.seekedWaiter === finish) this.seekedWaiter = null;
+        resolve();
+      };
+      this.seekedWaiter = finish;
+      setTimeout(finish, SEEK_FADE_SEEKED_TIMEOUT_MS);
+    });
+  }
+
   // 戻り値：進行中のリジューム時フェードインを止めた場合、その目標音量（復元すべき本来の音量）。
   // この場合はvolumeを目標値へ即時復元せず、現在の（まだ小さい）音量のままにする：呼び出し元が
   // フェードアウトを始めるなら現在値から下げ（目標値へ跳ね上がってから下げ始めると、消そうと
@@ -224,6 +303,7 @@ export class PlaybackController {
     // 単一コントローラでの既存の挙動・テストには一切影響しない。
     private readonly allocateStreamId: () => number = () => this.generation
   ) {
+    audio.addEventListener("seeked", () => this.seekedWaiter?.());
     audio.addEventListener("error", () => {
       if (this.rejectedGeneration === this.generation) {
         this.rejectedGeneration = null;
