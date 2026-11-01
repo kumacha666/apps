@@ -11,6 +11,10 @@ export function streamUrl(fileId: string, playbackGeneration?: number): string {
 // リジューム再生（途中位置からの再開）時のフェードイン長。フェードアウトON時のみ使う。
 export const FADE_IN_DURATION_MS = import.meta.env.VITE_E2E === "true" ? 50 : 1500;
 export const FADE_OUT_DURATION_MS = import.meta.env.VITE_E2E === "true" ? 50 : 3000;
+// シークバーで移動したとき、移動先へ移ってから音が出るまで（"seeked"）待つ上限。届かなくてもフェードインは始める。
+const HAVE_FUTURE_DATA = 3;
+const PLAYABLE_POLL_MS = 50;
+export const SEEK_FADE_SEEKED_TIMEOUT_MS = import.meta.env.VITE_E2E === "true" ? 200 : 5000;
 
 export interface AudioElementLike {
   src: string;
@@ -40,6 +44,9 @@ export interface AudioElementLike {
   // inactive src attribute instead of emptying it」）。省略可能：テスト用の簡易フェイクは
   // 実装しなくてよく、その場合resetInactive()は従来通り`src = ""`へフォールバックする。
   removeAttribute?(qualifiedName: string): void;
+  // シーク後のフェードイン（seekWithFade）が、移り終えた後に実際に鳴らせるだけのデータがあるか
+  // （HAVE_FUTURE_DATA=3以上）を確かめるために読む。省略時（テスト用の簡易フェイク）は常に鳴らせるとみなす。
+  readonly readyState?: number;
 }
 
 export interface PlayOptions {
@@ -173,6 +180,119 @@ export class PlaybackController {
     this.activeFadeInTarget = null;
   }
 
+  // シークバーで移動したときのフェード（Android版と同じ：鳴っているなら3秒かけて下げてから移り、移った先で
+  // 鳴り始めてから1.5秒かけて上げる。止まっているならすぐ移る）。曲は変わらないのでgenerationは進めない
+  // （進めると、解決待ちのplay()を「追い越された」とみなして止めてしまう）。代わりに、generationが変わったら
+  // （次へ・一時停止・別の曲の再生など）このシークは取り消し、その操作の先頭のreclaimPendingFadeVolume()が
+  // 音量を元に戻す。下げている間にもう一度シークしたら、下げ直さずに移動先だけを差し替える。
+  private seekFadeToken = 0;
+  // 手動の曲移動（play()のfadeOut）が今の曲を下げている間はそのgeneration。この間のシークは受け付けない
+  // （受け付けると、下げ終えて次の曲へ切り替わった後に、今の曲に対して指定した位置を次の曲へ書き込んでしまう）。
+  private transitionFadeGeneration: number | null = null;
+  private seekFadeGeneration = -1;
+  private pendingSeekTarget: number | null = null;
+  private seekedWaiter: (() => void) | null = null;
+
+  // 戻り値：実際に移動した位置（取り消された場合はnull）。止まっているときはすぐ移動する。
+  // onMoved：実際に移動した瞬間（下げ終えてcurrentTimeを書いた直後）に呼ぶ。移動先の差し替えだけで
+  // 終わった呼び出し（戻り値null）では呼ばない（差し替え先の移動は、最初の呼び出しのonMovedで知らせる）。
+  async seekWithFade(position: number, options: { onMoved?: (position: number) => void } = {}): Promise<number | null> {
+    if (this.transitionFadeGeneration === this.generation) return null;
+    if (this.pendingSeekTarget !== null && this.seekFadeGeneration === this.generation) {
+      this.pendingSeekTarget = position;
+      return null;
+    }
+    const carried = this.reclaimPendingFadeVolume();
+    this.seekFadeToken += 1;
+    const token = this.seekFadeToken;
+    const generation = this.generation;
+    if (this.audio.paused) {
+      this.restoreCarriedVolume(carried);
+      this.pendingSeekTarget = null;
+      this.audio.currentTime = position;
+      options.onMoved?.(position);
+      return position;
+    }
+    // 曲（src）が変わったら、このシークは前の曲に対するものなので取り消す
+    const src = this.audio.src;
+    const isCancelled = () => this.seekFadeToken !== token || this.generation !== generation || this.audio.src !== src;
+    const preVolume = carried ?? this.audio.volume;
+    this.pendingFadeOriginalVolume = preVolume;
+    this.pendingSeekTarget = position;
+    this.seekFadeGeneration = generation;
+    await fadeOutVolume(this.audio, FADE_OUT_DURATION_MS, { isCancelled });
+    const target = this.pendingSeekTarget ?? position;
+    if (this.seekFadeToken === token) this.pendingSeekTarget = null;
+    // 取り消した操作（次へ・一時停止など）が、自分の先頭でreclaimPendingFadeVolume()により音量を戻している
+    if (isCancelled()) return null;
+    if (this.audio.paused) {
+      // 下げている間にネイティブの一時停止・曲の終わりが来た：音量を戻す。一時停止なら移動だけはしておく
+      this.audio.volume = preVolume;
+      this.pendingFadeOriginalVolume = null;
+      if (this.audio.ended) return null;
+      this.audio.currentTime = target;
+      options.onMoved?.(target);
+      return target;
+    }
+    // 移り終えるのを待つ間も「フェードイン中」として扱う（この間に次のシークや一時停止が来たら、音量を
+    // 一度上げてから下げ直すのではなく、今の小さい音量のまま引き継がせる。reclaimPendingFadeVolume()参照）
+    this.fadeInToken += 1;
+    const myFadeInToken = this.fadeInToken;
+    this.activeFadeInTarget = preVolume;
+    const seeked = this.waitForSeeked();
+    this.audio.currentTime = target;
+    options.onMoved?.(target);
+    await seeked;
+    if (isCancelled() || this.fadeInToken !== myFadeInToken) return target;
+    // seekedは移り終えた知らせで、続けて鳴らせることまでは保証しない（移動先の先のデータを読み込み中の
+    // こともある）。実際に鳴らせる状態になってから上げる（上げている間に読み込みで止まると、鳴り出した
+    // ときには元の音量になっている）
+    const ready = await this.waitUntilPlayable(() => isCancelled() || this.fadeInToken !== myFadeInToken);
+    if (isCancelled() || this.fadeInToken !== myFadeInToken) return target;
+    if (!ready) {
+      // 待っている間にネイティブで一時停止された：上げずに元の音量へ戻す
+      this.audio.volume = preVolume;
+      this.activeFadeInTarget = null;
+      this.pendingFadeOriginalVolume = null;
+      return target;
+    }
+    await fadeInVolume(this.audio, preVolume, FADE_IN_DURATION_MS, {
+      isCancelled: () => isCancelled() || this.fadeInToken !== myFadeInToken,
+    });
+    if (this.fadeInToken !== myFadeInToken) return target;
+    this.activeFadeInTarget = null;
+    if (!isCancelled()) this.pendingFadeOriginalVolume = null;
+    return target;
+  }
+
+  // 続けて鳴らせるだけのデータがある（readyState>=HAVE_FUTURE_DATA）まで待つ。戻り値：一時停止されたらfalse。
+  // 上限（SEEK_FADE_SEEKED_TIMEOUT_MS）を過ぎたら、無音のまま止まり続けないよう、待つのをやめる（true）。
+  private async waitUntilPlayable(isCancelled: () => boolean): Promise<boolean> {
+    const deadline = Date.now() + SEEK_FADE_SEEKED_TIMEOUT_MS;
+    for (;;) {
+      if (isCancelled()) return true;
+      if (this.audio.paused) return false;
+      if ((this.audio.readyState ?? HAVE_FUTURE_DATA) >= HAVE_FUTURE_DATA) return true;
+      if (Date.now() >= deadline) return true;
+      await new Promise((resolve) => setTimeout(resolve, PLAYABLE_POLL_MS));
+    }
+  }
+
+  // 移動先へ移り終える（"seeked"）か、上限の時間が過ぎるまで待つ。
+  private waitForSeeked(): Promise<void> {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        if (this.seekedWaiter === finish) this.seekedWaiter = null;
+        resolve();
+      };
+      this.seekedWaiter = finish;
+      setTimeout(finish, SEEK_FADE_SEEKED_TIMEOUT_MS);
+    });
+  }
+
   // 戻り値：進行中のリジューム時フェードインを止めた場合、その目標音量（復元すべき本来の音量）。
   // この場合はvolumeを目標値へ即時復元せず、現在の（まだ小さい）音量のままにする：呼び出し元が
   // フェードアウトを始めるなら現在値から下げ（目標値へ跳ね上がってから下げ始めると、消そうと
@@ -224,6 +344,7 @@ export class PlaybackController {
     // 単一コントローラでの既存の挙動・テストには一切影響しない。
     private readonly allocateStreamId: () => number = () => this.generation
   ) {
+    audio.addEventListener("seeked", () => this.seekedWaiter?.());
     audio.addEventListener("error", () => {
       if (this.rejectedGeneration === this.generation) {
         this.rejectedGeneration = null;
@@ -260,6 +381,7 @@ export class PlaybackController {
       // volumeを自分の基準値として取得してしまい、最終的な一時停止音量が本来の値ではなく
       // なる回帰があった）。
       this.pendingFadeOriginalVolume = preFadeVolume;
+      this.transitionFadeGeneration = playGeneration;
       // 現在再生中の音声（これから置き換わる方）に対して行う。src差し替え・トークン確認より前に
       // 行うことで、「まだ次の曲が確定するか分からない段階で無音にしてしまう」事態を避ける
       // （次の曲が実際に見つからずplay()自体が呼ばれない場合はフェードも発生しない、moveSong等と
@@ -267,6 +389,7 @@ export class PlaybackController {
       // フェード完了を待たず別のplay()が既に開始していた場合（Codexレビュー指摘：P1）、
       // そちらのvolume制御を古いフェードのタイマーが上書きしないよう直ちに中断する。
       await fadeOutVolume(this.audio, FADE_OUT_DURATION_MS, { isCancelled: isSuperseded });
+      if (this.transitionFadeGeneration === playGeneration) this.transitionFadeGeneration = null;
       // 2026-09-08、Codexレビュー指摘：P1続き。アプリ内の「一時停止」ボタンは
       // PlaybackController.pause()を直接呼びgenerationを進めるため、この分岐（ネイティブ
       // pauseとは別経路）を通る。以前はここで正常return（voidの成功扱い）していたため、

@@ -8,6 +8,7 @@ class FakeAudio implements AudioElementLike {
   paused = true;
   ended = false;
   duration = NaN;
+  readyState = 4;
   playCount = 0;
   pauseCount = 0;
   private errorListener: (() => void) | undefined;
@@ -30,9 +31,16 @@ class FakeAudio implements AudioElementLike {
     this.ended = true;
   }
 
-  addEventListener(type: "error" | "pause", listener: () => void): void {
+  private seekedListener: (() => void) | undefined;
+
+  addEventListener(type: string, listener: () => void): void {
     if (type === "error") this.errorListener = listener;
     if (type === "pause") this.pauseListener = listener;
+    if (type === "seeked") this.seekedListener = listener;
+  }
+
+  emitSeeked(): void {
+    this.seekedListener?.();
   }
 
   emitError(): void {
@@ -1252,5 +1260,305 @@ describe("PlaybackController", () => {
       expect(playback.currentGeneration()).toBe(1);
       expect(received).toEqual([5000]);
     });
+  });
+});
+
+// シークバーで移動したときのフェード（Android版と同じ：鳴っているなら3秒下げてから移り、移った先で鳴り始めてから1.5秒で上げる）
+describe("PlaybackController.seekWithFade", () => {
+  async function playing(volume = 0.8) {
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+    await playback.play("A");
+    audio.currentTime = 30;
+    audio.volume = volume;
+    return { audio, playback };
+  }
+
+  test("止まっているときは、すぐ移動し音量には触れない", async () => {
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+    audio.volume = 0.7;
+    await expect(playback.seekWithFade(42)).resolves.toBe(42);
+    expect(audio.currentTime).toBe(42);
+    expect(audio.volume).toBe(0.7);
+  });
+
+  test("鳴っているときは、下げきってから移り、移り終えてから元の音量まで上げる", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const done = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(1500);
+      // 下げている途中：まだ元の位置のまま、音量は下がっている
+      expect(audio.currentTime).toBe(30);
+      expect(audio.volume).toBeLessThan(0.8);
+      await vi.advanceTimersByTimeAsync(1600);
+      // 下げきって移動した。移り終える（seeked）まで無音のまま
+      expect(audio.currentTime).toBe(90);
+      expect(audio.volume).toBe(0);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(audio.volume).toBe(0);
+      audio.emitSeeked();
+      await vi.advanceTimersByTimeAsync(700);
+      expect(audio.volume).toBeGreaterThan(0);
+      expect(audio.volume).toBeLessThan(0.8);
+      await vi.runAllTimersAsync();
+      await expect(done).resolves.toBe(90);
+      expect(audio.volume).toBeCloseTo(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("移り終えた知らせ（seeked）が来なくても、上限の時間が過ぎたら上げる", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const done = playback.seekWithFade(90);
+      await vi.runAllTimersAsync();
+      await expect(done).resolves.toBe(90);
+      expect(audio.volume).toBeCloseTo(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("下げている間にもう一度シークしたら、下げ直さずに移動先だけを差し替える", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const first = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(1500);
+      const volumeMidFade = audio.volume;
+      await expect(playback.seekWithFade(120)).resolves.toBeNull();
+      // 音量は上がり直していない（下げ直さない）
+      expect(audio.volume).toBe(volumeMidFade);
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(audio.currentTime).toBe(120);
+      audio.emitSeeked();
+      await vi.runAllTimersAsync();
+      await expect(first).resolves.toBe(120);
+      expect(audio.volume).toBeCloseTo(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("下げている間に別の曲を再生したら、シークは取り消され、音量は元に戻る", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const seek = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(1500);
+      await playback.play("B");
+      await vi.runAllTimersAsync();
+      await expect(seek).resolves.toBeNull();
+      expect(audio.src).toBe(streamUrl("B", playback.currentStreamGeneration() ?? undefined));
+      expect(audio.currentTime).not.toBe(90);
+      expect(audio.volume).toBe(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("下げている間に一時停止したら、シークは取り消され、音量は元に戻る", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const seek = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(1500);
+      await playback.pause(false);
+      await vi.runAllTimersAsync();
+      await expect(seek).resolves.toBeNull();
+      expect(audio.paused).toBe(true);
+      expect(audio.currentTime).toBe(30);
+      expect(audio.volume).toBe(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("下げている間にネイティブで一時停止したら、音量を戻し、止まったまま移動だけする", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const seek = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(1500);
+      audio.pause();
+      // 下げ終えた時点で、移り終える知らせを待たずに音量をすぐ戻す
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(audio.volume).toBe(0.8);
+      await vi.runAllTimersAsync();
+      await expect(seek).resolves.toBe(90);
+      expect(audio.paused).toBe(true);
+      expect(audio.currentTime).toBe(90);
+      expect(audio.volume).toBe(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("下げている間に曲が最後まで鳴り終えたら、音量を戻し、移動しない", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const seek = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(1500);
+      audio.emitEnded();
+      audio.currentTime = 180;
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(audio.volume).toBe(0.8);
+      await vi.runAllTimersAsync();
+      await expect(seek).resolves.toBeNull();
+      expect(audio.currentTime).toBe(180);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("移動した瞬間に一度だけ知らせる（差し替えた移動先で。取り消されたら知らせない）", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const moved: number[] = [];
+      const replaced: number[] = [];
+      const first = playback.seekWithFade(90, { onMoved: (p) => moved.push(p) });
+      await vi.advanceTimersByTimeAsync(1500);
+      await playback.seekWithFade(120, { onMoved: (p) => replaced.push(p) });
+      expect(moved).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(moved).toEqual([120]);
+      expect(audio.currentTime).toBe(120);
+      audio.emitSeeked();
+      await vi.runAllTimersAsync();
+      await first;
+      expect(moved).toEqual([120]);
+      expect(replaced).toEqual([]);
+
+      const cancelledMoves: number[] = [];
+      const cancelled = playback.seekWithFade(30, { onMoved: (p) => cancelledMoves.push(p) });
+      await vi.advanceTimersByTimeAsync(1500);
+      await playback.play("B");
+      await vi.runAllTimersAsync();
+      await expect(cancelled).resolves.toBeNull();
+      expect(cancelledMoves).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("止まっているときも、移動したことを知らせる", async () => {
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+    const moved: number[] = [];
+    await playback.seekWithFade(42, { onMoved: (p) => moved.push(p) });
+    expect(moved).toEqual([42]);
+  });
+
+  test("「次へ」で今の曲を下げている間のシークは受け付けず、次の曲へ持ち越さない", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const next = playback.play("B", 0, { fadeOut: true });
+      await vi.advanceTimersByTimeAsync(1000);
+      await expect(playback.seekWithFade(90)).resolves.toBeNull();
+      await vi.runAllTimersAsync();
+      await next;
+      expect(audio.src).toBe(streamUrl("B", playback.currentStreamGeneration() ?? undefined));
+      expect(audio.currentTime).not.toBe(90);
+      expect(audio.volume).toBeCloseTo(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("移り終えても続きを読み込み中なら、鳴らせるようになってから上げる", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const done = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(3100);
+      audio.readyState = 2; // 移動先の今の位置だけ読めていて、続きを待っている
+      audio.emitSeeked();
+      await vi.advanceTimersByTimeAsync(1700);
+      expect(audio.volume).toBe(0);
+      audio.readyState = 4;
+      await vi.advanceTimersByTimeAsync(800);
+      expect(audio.volume).toBeGreaterThan(0);
+      expect(audio.volume).toBeLessThan(0.8);
+      await vi.runAllTimersAsync();
+      await expect(done).resolves.toBe(90);
+      expect(audio.volume).toBeCloseTo(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("続きの読み込みを待っている間にネイティブで一時停止したら、上げずに元の音量へ戻す", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const done = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(3100);
+      audio.readyState = 2;
+      audio.emitSeeked();
+      await vi.advanceTimersByTimeAsync(200);
+      audio.pause();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(audio.volume).toBe(0.8);
+      await vi.runAllTimersAsync();
+      await expect(done).resolves.toBe(90);
+      expect(audio.volume).toBe(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("移り終えるのを待っている間にもう一度シークしても、音量は元へ跳ね上がらない", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const first = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(3100);
+      // 下げきって移動し、seekedを待っている（無音）
+      expect(audio.volume).toBe(0);
+      const second = playback.seekWithFade(10);
+      expect(audio.volume).toBe(0);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(audio.volume).toBe(0);
+      audio.emitSeeked();
+      await vi.runAllTimersAsync();
+      await expect(first).resolves.toBe(90);
+      await expect(second).resolves.toBe(10);
+      expect(audio.currentTime).toBe(10);
+      expect(audio.volume).toBeCloseTo(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("上げている途中にもう一度シークしても、音量は一度上がらず、今の小さい音量から下げ直して元の音量へ戻る", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const first = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(3100);
+      audio.emitSeeked();
+      await vi.advanceTimersByTimeAsync(500);
+      const volumeMidFadeIn = audio.volume;
+      expect(volumeMidFadeIn).toBeLessThan(0.8);
+      const second = playback.seekWithFade(10);
+      // 元の音量へ跳ね上がらない
+      expect(audio.volume).toBeLessThanOrEqual(volumeMidFadeIn);
+      await vi.advanceTimersByTimeAsync(3100);
+      expect(audio.currentTime).toBe(10);
+      audio.emitSeeked();
+      await vi.runAllTimersAsync();
+      await expect(first).resolves.toBe(90);
+      await expect(second).resolves.toBe(10);
+      expect(audio.volume).toBeCloseTo(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
