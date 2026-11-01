@@ -29,6 +29,7 @@ import {
 } from "./folderCache";
 import { PlaybackQueue, REPEAT_MODES, REPEAT_MODE_LABELS, queueRowViews, songSubLabel, nowPlayingLabel } from "./queue";
 import { iconSvg, type IconName } from "./icons";
+import { marqueeText, startMarquee } from "./marquee";
 import { DEFAULT_TAB, TAB_IDS, TAB_LABELS, isTabId, nextTabForKey, type TabId } from "./tabs";
 import { QUEUE_SORT_FIELDS, type QueueSortField } from "./queueSort";
 
@@ -784,6 +785,7 @@ function wireConnectionPanel(): void {
 
 // 一覧の行の「曲名＋補足」の2行（再生リスト・検索結果・アルバム・プレイリストで共通）。
 // count（「（3曲）」等）は曲名と同じ行の右に控えめに付け、曲名が長くて省略されても見えるようにする。
+// 曲名・補足が枠に収まらないときは、見えている間だけ横に流す（marquee.ts）。
 function rowTextElements(title: string, sub: string, options: { current?: boolean; count?: string } = {}): HTMLElement[] {
   const titleLine = document.createElement("span"); titleLine.className = "r-title";
   if (options.current) {
@@ -791,14 +793,14 @@ function rowTextElements(title: string, sub: string, options: { current?: boolea
     eq.innerHTML = "<i></i><i></i><i></i>";
     titleLine.append(eq);
   }
-  const name = document.createElement("span"); name.className = "t"; name.textContent = title;
+  const name = marqueeText(document.createElement("span"), title); name.classList.add("t");
   titleLine.append(name);
   if (options.count) {
     const count = document.createElement("span"); count.className = "n"; count.textContent = options.count;
     titleLine.append(count);
   }
   if (!sub) return [titleLine];
-  const subLine = document.createElement("span"); subLine.className = "r-sub"; subLine.textContent = sub;
+  const subLine = marqueeText(document.createElement("span"), sub); subLine.classList.add("r-sub");
   return [titleLine, subLine];
 }
 // 行内の小さな操作ボタン（アイコンのみ、aria-labelが操作名）。
@@ -2900,6 +2902,7 @@ function whenPageLoaded(cb: () => void): void {
 function init(): void {
   render();
   observeNowPlayingBarHeight();
+  startMarquee();
   // バックグラウンド再生の不安定さの調査（実機フィードバック、2026-09-14）：ページの
   // 表示状態変化・OSによるページ凍結（Page Lifecycle API、Chrome系のみ・未対応環境では
   // 単に発火しない）を診断ログへ記録する。CLIENT_ID未設定でも意味のある記録のため
