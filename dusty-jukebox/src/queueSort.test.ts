@@ -19,6 +19,43 @@ function makeSong(overrides: Partial<Song> & { fileId: string }): Song {
   };
 }
 
+// 文字列の並び：ライブラリの既定ソート・アルバム一覧・候補（catalog.tsのlocaleCompare）と同じ規則にする。
+// 文字コード順だと、大文字が小文字より先・カタカナがひらがなの後・アクセント付き文字がzの後になってしまう。
+describe("sortSongsForQueue（文字列の比較規則）", () => {
+  const titles = (songs: Song[]) => songs.map((s) => s.title);
+  const byTitle = (list: string[]) => list.map((title, i) => makeSong({ fileId: String(i), title }));
+
+  it("大文字・小文字に関わらず、アルファベット順に並べる", () => {
+    expect(titles(sortSongsForQueue(byTitle(["banana", "Cherry", "apple"]), "title", "asc"))).toEqual(["apple", "banana", "Cherry"]);
+    expect(titles(sortSongsForQueue(byTitle(["apple", "Banana"]), "title", "asc"))).toEqual(["apple", "Banana"]);
+  });
+
+  it("ひらがな・カタカナを区別せず、五十音順に並べる", () => {
+    expect(titles(sortSongsForQueue(byTitle(["う", "イ", "あ"]), "title", "asc"))).toEqual(["あ", "イ", "う"]);
+    expect(titles(sortSongsForQueue(byTitle(["い", "ア"]), "title", "asc"))).toEqual(["ア", "い"]);
+  });
+
+  it("アクセント付きの文字は、元の文字の位置に並べる", () => {
+    expect(titles(sortSongsForQueue(byTitle(["fig", "éclair", "date"]), "title", "asc"))).toEqual(["date", "éclair", "fig"]);
+  });
+
+  it("降順は昇順のちょうど逆（空欄は末尾のまま）", () => {
+    expect(titles(sortSongsForQueue(byTitle(["apple", "", "Banana", "cherry"]), "title", "desc"))).toEqual(["cherry", "Banana", "apple", ""]);
+  });
+
+  it("大文字・小文字だけが違う名前も、入力の順に左右されず毎回同じ並びになる", () => {
+    const a = titles(sortSongsForQueue(byTitle(["Abc", "abc", "ABC"]), "title", "asc"));
+    const b = titles(sortSongsForQueue(byTitle(["ABC", "abc", "Abc"]), "title", "asc"));
+    expect(a).toEqual(b);
+    expect(new Set(a)).toEqual(new Set(["Abc", "abc", "ABC"]));
+  });
+
+  it("アーティスト・アルバムの比較も同じ規則（大文字・小文字に関わらずアルファベット順）", () => {
+    const songs = [makeSong({ fileId: "1", artist: "beta" }), makeSong({ fileId: "2", artist: "Alpha" }), makeSong({ fileId: "3", artist: "Gamma" })];
+    expect(sortSongsForQueue(songs, "artist", "asc").map((s) => s.artist)).toEqual(["Alpha", "beta", "Gamma"]);
+  });
+});
+
 describe("sortSongsForQueue", () => {
   it("sorts by title ascending/descending without mutating the input array", () => {
     const songs = [makeSong({ fileId: "1", title: "Banana" }), makeSong({ fileId: "2", title: "Apple" })];
