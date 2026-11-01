@@ -8,6 +8,7 @@ class FakeAudio implements AudioElementLike {
   paused = true;
   ended = false;
   duration = NaN;
+  readyState = 4;
   playCount = 0;
   pauseCount = 0;
   private errorListener: (() => void) | undefined;
@@ -1452,6 +1453,65 @@ describe("PlaybackController.seekWithFade", () => {
     const moved: number[] = [];
     await playback.seekWithFade(42, { onMoved: (p) => moved.push(p) });
     expect(moved).toEqual([42]);
+  });
+
+  test("「次へ」で今の曲を下げている間のシークは受け付けず、次の曲へ持ち越さない", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const next = playback.play("B", 0, { fadeOut: true });
+      await vi.advanceTimersByTimeAsync(1000);
+      await expect(playback.seekWithFade(90)).resolves.toBeNull();
+      await vi.runAllTimersAsync();
+      await next;
+      expect(audio.src).toBe(streamUrl("B", playback.currentStreamGeneration() ?? undefined));
+      expect(audio.currentTime).not.toBe(90);
+      expect(audio.volume).toBeCloseTo(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("移り終えても続きを読み込み中なら、鳴らせるようになってから上げる", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const done = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(3100);
+      audio.readyState = 2; // 移動先の今の位置だけ読めていて、続きを待っている
+      audio.emitSeeked();
+      await vi.advanceTimersByTimeAsync(1700);
+      expect(audio.volume).toBe(0);
+      audio.readyState = 4;
+      await vi.advanceTimersByTimeAsync(800);
+      expect(audio.volume).toBeGreaterThan(0);
+      expect(audio.volume).toBeLessThan(0.8);
+      await vi.runAllTimersAsync();
+      await expect(done).resolves.toBe(90);
+      expect(audio.volume).toBeCloseTo(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("続きの読み込みを待っている間にネイティブで一時停止したら、上げずに元の音量へ戻す", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const done = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(3100);
+      audio.readyState = 2;
+      audio.emitSeeked();
+      await vi.advanceTimersByTimeAsync(200);
+      audio.pause();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(audio.volume).toBe(0.8);
+      await vi.runAllTimersAsync();
+      await expect(done).resolves.toBe(90);
+      expect(audio.volume).toBe(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("移り終えるのを待っている間にもう一度シークしても、音量は元へ跳ね上がらない", async () => {
