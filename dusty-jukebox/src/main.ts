@@ -14,7 +14,8 @@ import { playbackStatusForEvent, type PlaybackStatusEvent } from "./playbackStat
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { PlaybackContinuationRegistry, type PlaybackContinuation } from "./playbackContinuation";
 import { appendStatusMessage, buildSearchResultView, isSearchSubmitKey, type SearchResultView } from "./searchResults";
-import { parseIndexRows, filterSongs, groupSongsByAlbum, groupAlbumsByArtist, filterAlbumGroups, filterAlbumGroupsBySongs, compareAlbumGroups, sortSongs, distinctFieldValuesForFilters, type AlbumGroup, type AlbumSort, type AutocompleteField, type Song, type SongFilters } from "./catalog";
+import { parseIndexRows, filterSongs, filterAlbumGroupsBySongs, sortSongs, distinctFieldValuesForFilters, type AlbumGroup, type AutocompleteField, type Song, type SongFilters } from "./catalog";
+import { ALBUM_RACK_SORTS, ALBUM_RACK_SORT_LABELS, albumRackRows, annotateAlbumFolders, displayShelf, groupAlbumsForRack, isAlbumRackSort, type AlbumRackSort, type FolderInfo } from "./albumRack";
 import { withTimeout } from "./withTimeout";
 import { CatalogOperationGate } from "./catalogOperationGate";
 import { CatalogSession } from "./catalogSession";
@@ -488,7 +489,7 @@ function render(): void {
       <section id="panel-albums" class="panel" role="tabpanel" aria-labelledby="tab-albums" hidden>
         <div class="sec-head"><h2>アルバム</h2></div>
         <label class="field"><span>アルバム検索</span><input id="album-search" type="search" placeholder="アルバム名・アーティスト名で検索" /></label>
-        <label class="field"><span>並び順</span><select id="album-sort"><option value="artist">アーティスト名順</option><option value="album-asc">アルバム名順（昇順）</option><option value="album-desc">アルバム名順（降順）</option><option value="year-asc">リリース年順（古い順）</option><option value="year-desc">リリース年順（新しい順）</option></select></label>
+        <label class="field"><span>並び順</span><select id="album-sort">${ALBUM_RACK_SORTS.map((sort) => `<option value="${sort}">${ALBUM_RACK_SORT_LABELS[sort]}</option>`).join("")}</select></label>
         <ul id="album-list" class="result-list"></ul>
       </section>
 
@@ -947,14 +948,14 @@ function refreshFilterSuggestions(): void {
   const songs = catalogSession.createQueue((loadedSongs) => loadedSongs);
   if (songs) { renderFilterSuggestions(songs); refreshAlbumGroups(); }
 }
-// アーティスト別の見出し付きで表示する（開発体制#39④UI-3、全アルバムがフラットに
-// 並んでいて探しにくい、という使いづらさへの対応）。
-function renderAlbumGroups(groups: AlbumGroup[], sort: AlbumSort): void {
+// アルバム一覧（部屋のCDラックのイメージ、albumRack.ts。Android版と同じ分け方）。既定はアーティストの棚ごとの
+// 見出しで区切り、棚の中は発売順。検索はアルバム名・棚のアーティスト名の部分一致。
+function renderAlbumGroups(groups: AlbumGroup[], query: string, sort: AlbumRackSort): void {
   const list = el<HTMLUListElement>("album-list"); list.innerHTML = "";
   const appendAlbum = (group: AlbumGroup, showArtist: boolean) => {
       const item = document.createElement("li"); item.className = "row no-lead";
       const main = document.createElement("div"); main.className = "row-main";
-      main.append(...rowTextElements(group.album, showArtist ? group.albumArtist : "", { count: `（${group.songs.length}曲）` }));
+      main.append(...rowTextElements(group.album, showArtist ? displayShelf(group.albumArtist) : "", { count: `（${group.songs.length}曲）` }));
       const button = iconButton("play", "このアルバムを再生", "fab");
       button.addEventListener("click", () => {
         if (!queue) return;
@@ -968,23 +969,20 @@ function renderAlbumGroups(groups: AlbumGroup[], sort: AlbumSort): void {
       const actions = document.createElement("span"); actions.className = "row-actions"; actions.append(button);
       item.append(main, actions); list.append(item);
   };
-  if (sort !== "artist") {
-    for (const group of [...groups].sort(compareAlbumGroups(sort))) appendAlbum(group, true);
-    return;
-  }
-  for (const artistGroup of groupAlbumsByArtist(groups)) {
+  for (const row of albumRackRows(groups, query, sort)) {
+    if (row.kind === "album") { appendAlbum(row.group, row.showArtist); continue; }
     const heading = document.createElement("li"); heading.className = "album-artist-heading";
-    heading.textContent = artistGroup.albumArtist; list.append(heading);
-    for (const group of artistGroup.albums) {
-      appendAlbum(group, false);
-    }
+    const name = document.createElement("span"); name.className = "shelf-name"; name.textContent = row.label;
+    heading.append(name);
+    const count = document.createElement("span"); count.className = "album-count"; count.textContent = `${row.albumCount}枚`;
+    heading.append(count); list.append(heading);
   }
 }
 function refreshAlbumGroups(): void {
   // 曲名のフリーワード検索は曲一覧専用。アルバム一覧には指定された項目別フィルタだけを適用する。
   const groups = filterAlbumGroupsBySongs(loadedAlbumGroups, { ...currentFilterValues(), query: undefined });
-  const searched = filterAlbumGroups(groups, el<HTMLInputElement>("album-search").value);
-  renderAlbumGroups(searched, el<HTMLSelectElement>("album-sort").value as AlbumSort);
+  const sortValue = el<HTMLSelectElement>("album-sort").value;
+  renderAlbumGroups(groups, el<HTMLInputElement>("album-search").value, isAlbumRackSort(sortValue) ? sortValue : "shelf");
 }
 function playlistsSpreadsheetIO(spreadsheetId: string): PlaylistsIO {
   return createPlaylistsIO(spreadsheetId, () => auth.ensureAccessToken());
@@ -1377,7 +1375,12 @@ async function loadCatalog(): Promise<void> {
     // 検索結果は読み込み開始時に破棄済みで、読み込み中は検索も止まっているため、ここで改めて破棄する必要は無い。
     catalogSession.replace(songs);
     loadedCatalogSpreadsheetId = spreadsheetId;
-    loadedAlbumGroups = groupSongsByAlbum(songs);
+    // 何枚組がディスクごとのフォルダに分かれていても1枚にまとめるため、フォルダ名と親フォルダを渡す
+    // （`folders`タブのキャッシュと、今回Driveへ問い合わせた分）
+    const folders = new Map<string, FolderInfo>();
+    for (const [id, entry] of folderCache) folders.set(id, { name: entry.name, parentId: entry.parentId });
+    for (const [id, meta] of newlyResolvedFromDrive) folders.set(id, { name: meta.name, parentId: meta.parentId ?? "" });
+    loadedAlbumGroups = groupAlbumsForRack(annotateAlbumFolders(songs, folders));
     refreshAlbumGroups();
     renderFilterSuggestions(songs);
     el<HTMLButtonElement>("create-queue-btn").disabled = false;

@@ -1,6 +1,7 @@
 import type { BrowserContext, Route } from "@playwright/test";
 import { INDEX_SHEET_HEADER, LEGACY_INDEX_SHEET_HEADER_V3 } from "../src/sheets";
 import { PLAYLISTS_SHEET_HEADER, PLAYLIST_TRACKS_SHEET_HEADER } from "../src/playlists";
+import { FOLDERS_SHEET_HEADER } from "../src/folderCache";
 
 const TOKEN = "e2e-token";
 
@@ -15,6 +16,11 @@ export type MockOptions = {
   rejectFirstStreamToken?: boolean;
   /** Provide multiple albums and deliberately unordered disc/track rows. */
   albumCatalog?: boolean;
+  /**
+   * アルバム一覧（CDラック）の分け方の確認用：CD1/CD2のフォルダに分かれた2枚組（タグのディスク番号なし）と、
+   * アルバムアーティストが空で曲ごとにアーティストが違うオムニバスを、`folders`タブ付きで用意する。
+   */
+  rackCatalog?: boolean;
   /** Give every Symphony track a manual Genre override for catalog/filter coverage. */
   genreOverride?: boolean;
   /** Serve the pre-genre_override 46-column index grid. */
@@ -78,7 +84,13 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const indexRow = (values: Record<string, string>) => INDEX_SHEET_HEADER.map((header) => values[header] ?? "");
   const indexRows: string[][] = options.extractionFailedCount ? Array.from({ length: options.extractionFailedCount }, (_, index) =>
     indexRow({ fileId: `failed-${index}`, extension: "mp3", parentId: "root", extractionFailed: "TRUE" })
-  ) : options.albumCatalog ? [
+  ) : options.rackCatalog ? [
+    indexRow({ fileId: "double-2-1", extension: "mp3", parentId: "disc-2", title: "Second disc opener", artist: "Band", album: "Double", trackNumber: "1", releaseYear: "2001" }),
+    indexRow({ fileId: "double-1-2", extension: "mp3", parentId: "disc-1", title: "First disc closer", artist: "Band", album: "Double", trackNumber: "2", releaseYear: "2001" }),
+    indexRow({ fileId: "double-1-1", extension: "mp3", parentId: "disc-1", title: "First disc opener", artist: "Band", album: "Double", trackNumber: "1", releaseYear: "2001" }),
+    indexRow({ fileId: "comp-1", extension: "mp3", parentId: "comp", title: "Hit A", artist: "Singer A", album: "Hits", trackNumber: "1", releaseYear: "2010" }),
+    indexRow({ fileId: "comp-2", extension: "mp3", parentId: "comp", title: "Hit B", artist: "Singer B feat. C", album: "Hits", trackNumber: "2", releaseYear: "2010" }),
+  ] : options.albumCatalog ? [
     indexRow({ fileId: "album-track-3", extension: "mp3", parentId: "root", title: "Finale", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", genre_override: options.genreOverride ? "Neo Classical" : "", discNumber: "2", trackNumber: "1", releaseYear: "2024", releaseType_override: "Album" }),
     indexRow({ fileId: "other-album", extension: "mp3", parentId: "root", title: "Jazz Song", artist: "Quartet", album: "Blue Notes", composer: "Writer", genre: "Jazz", discNumber: "1", trackNumber: "1", releaseYear: "2020", releaseType_override: "Single" }),
     indexRow({ fileId: "album-track-2", extension: "mp3", parentId: "root", title: "Scherzo", artist: "Soloist", albumArtist: "Orchestra", album: "Symphony", composer: "Beethoven", genre: "Classical", genre_override: options.genreOverride ? "Neo Classical" : "", discNumber: "1", trackNumber: "2", releaseYear: "2024", releaseType_override: "Album" }),
@@ -96,16 +108,18 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   // テスト（sheetsSetup.test.ts）側でカバーする）。
   const seededPlaylistRows = (options.seedPlaylists ?? []).map((p) => [p.playlistId, p.name, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"]);
   const seededTrackRows = (options.seedPlaylists ?? []).flatMap((p) => p.fileIds.map((fileId, i) => [p.playlistId, `1000-${i}-e2e`, fileId]));
-  const sheetData: Record<string, (string | number)[][]> = { index: indexRows, sync: syncRows, playlists: seededPlaylistRows, playlist_tracks: seededTrackRows };
+  const folderRows = options.rackCatalog ? [["disc-1", "CD1", "double"], ["disc-2", "CD2", "double"], ["double", "Double", "root"], ["comp", "Hits", "root"]] : [];
+  const sheetData: Record<string, (string | number)[][]> = { index: indexRows, sync: syncRows, playlists: seededPlaylistRows, playlist_tracks: seededTrackRows, ...(options.rackCatalog ? { folders: folderRows } : {}) };
   const sheetHeaders: Record<string, (string | number)[]> = {
     index: [...(options.legacyIndexGrid ? LEGACY_INDEX_SHEET_HEADER_V3 : INDEX_SHEET_HEADER)],
     sync: options.invalidSyncHeader ? ["wrong", "header"] : ["key", "value"],
     playlists: [...PLAYLISTS_SHEET_HEADER],
     playlist_tracks: [...PLAYLIST_TRACKS_SHEET_HEADER],
+    ...(options.rackCatalog ? { folders: [...FOLDERS_SHEET_HEADER] } : {}),
   };
-  const existingTitles = new Set(["index", "sync", "playlists", "playlist_tracks"]);
-  let nextSheetId = 5;
-  const sheetIds: Record<string, number> = { index: 1, sync: 2, playlists: 3, playlist_tracks: 4 };
+  const existingTitles = new Set(["index", "sync", "playlists", "playlist_tracks", ...(options.rackCatalog ? ["folders"] : [])]);
+  let nextSheetId = 6;
+  const sheetIds: Record<string, number> = { index: 1, sync: 2, playlists: 3, playlist_tracks: 4, ...(options.rackCatalog ? { folders: 5 } : {}) };
 
   const authFailures: string[] = [];
   const streamRequests: string[] = [];
