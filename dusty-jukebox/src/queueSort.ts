@@ -9,9 +9,11 @@ export const QUEUE_SORT_FIELDS = ["title", "artist", "album", "releaseYear", "tr
 export type QueueSortField = (typeof QUEUE_SORT_FIELDS)[number];
 export type QueueSortDirection = "asc" | "desc";
 
-// localeCompareは使わず単純な文字コード順にする（caseNormalization.ts等、本リポジトリの
-// 既存の慣例と同じ理由：localeCompareの結果はICUデータの有無・バージョンに依存し
-// 環境によって変わりうるため）。空欄は昇順・降順どちらでも常に末尾に置く
+// 文字列はlocaleCompareで比べる：ライブラリの既定ソート・アルバム一覧・候補（catalog.ts）と同じ規則
+// （大文字・小文字に関わらずアルファベット順、ひらがな・カタカナを区別しない五十音順、アクセント付きの文字は
+// 元の文字の位置）。以前は文字コード順で、大文字が小文字より先・カタカナがひらがなの後になり、他の一覧と
+// 並びが食い違っていた（Android版は端末ロケールの照合に統一済み）。localeCompareが同じとみなした異なる
+// 文字列は、文字コード順で決める（並びを毎回同じにするため）。空欄は昇順・降順どちらでも常に末尾に置く
 // （アーティスト/アルバム不明の曲がソート方向によって先頭に来ないようにするため）。
 function compareStrings(a: string, b: string, direction: QueueSortDirection): number {
   const aEmpty = a === "";
@@ -20,7 +22,7 @@ function compareStrings(a: string, b: string, direction: QueueSortDirection): nu
   if (aEmpty) return 1;
   if (bEmpty) return -1;
   if (a === b) return 0;
-  const cmp = a < b ? -1 : 1;
+  const cmp = a.localeCompare(b) || (a < b ? -1 : 1);
   return direction === "asc" ? cmp : -cmp;
 }
 

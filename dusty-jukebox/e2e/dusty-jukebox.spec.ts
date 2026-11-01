@@ -3345,3 +3345,36 @@ test("「接続・索引」パネルの開閉は再読み込みしても覚え�
   await page.reload();
   await expect(page.locator("#folder-id")).toBeVisible();
 });
+
+// 長い名前の横スクロール（src/marquee.ts）：枠に収まらない名前だけ、見えている間に流す。
+test("一覧の曲名が枠に収まらないときだけ横に流れ、収まっていれば流れない", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  const title = page.locator("#catalog-list li").filter({ hasText: "Second song" }).locator(".r-title .t");
+  await expect(title).toBeVisible();
+  // 広い画面：曲名は収まっているので流さない（「…」の省略表示のまま）
+  await page.waitForTimeout(300);
+  await expect(title).not.toHaveClass(/mq-on/);
+  expect(await title.evaluate((el) => el.firstElementChild!.getAnimations().length)).toBe(0);
+  // 狭い画面：曲名がはみ出すので、測り直して流す
+  await page.setViewportSize({ width: 240, height: 800 });
+  await expect(title).toHaveClass(/mq-on/);
+  const overflow = await title.evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(overflow).toBeGreaterThan(2);
+  expect(await title.evaluate((el) => el.firstElementChild!.getAnimations().length)).toBe(1);
+  // 広い画面へ戻すと、流すのをやめる
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(title).not.toHaveClass(/mq-on/);
+  expect(await title.evaluate((el) => el.firstElementChild!.getAnimations().length)).toBe(0);
+});
+
+test("動きを減らす設定（prefers-reduced-motion）では、はみ出しても流さない", async ({ context, page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 240, height: 800 });
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  const title = page.locator("#catalog-list li").filter({ hasText: "Second song" }).locator(".r-title .t");
+  await expect(title).toBeVisible();
+  expect(await title.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeGreaterThan(2);
+  await page.waitForTimeout(500);
+  await expect(title).not.toHaveClass(/mq-on/);
+  expect(await title.evaluate((el) => el.firstElementChild!.getAnimations().length)).toBe(0);
+});
