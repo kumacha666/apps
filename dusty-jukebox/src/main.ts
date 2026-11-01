@@ -507,7 +507,7 @@ function render(): void {
           <summary>再生設定<span class="chev">${iconSvg("down")}</span></summary>
           <div class="settings-list">
             <div class="setting">
-              <div class="s-main"><label for="fade-out-toggle" class="s-title">手動スキップ/一時停止時にフェードアウトし、再開時にフェードインする</label></div>
+              <div class="s-main"><label for="fade-out-toggle" class="s-title">手動スキップ・一時停止・シークのときにフェードアウトし、再開・シーク後にフェードインする</label></div>
               <input id="fade-out-toggle" type="checkbox" />
             </div>
             <div class="setting">
@@ -581,10 +581,37 @@ function updateSeekDuration(duration: number): void {
   }
 }
 
+// シークバーで移動したときのフェード（フェードアウトのチェックボックスがONのとき）。下げている間は
+// まだ元の位置で鳴っているので、timeupdateのままだと、つまみが元の位置へ戻ってから移動先へ飛ぶ。
+// 実際に移動するまでは、つまみを移動先に留める。seekFadeInFlightは、まだ移動していないシークの件数
+// （移動先を差し替えただけの呼び出しはすぐ終わるので、最初の呼び出しが移動するまで留め続ける）。
+let seekHoldTarget: number | null = null;
+let seekFadeInFlight = 0;
+
 function updateSeekPosition(currentTime: number): void {
   if (seekBarDragging) return;
-  el<HTMLInputElement>("seek-slider").value = String(currentTime);
-  el<HTMLSpanElement>("seek-current-time").textContent = formatSeekTime(currentTime);
+  const shown = seekHoldTarget ?? currentTime;
+  el<HTMLInputElement>("seek-slider").value = String(shown);
+  el<HTMLSpanElement>("seek-current-time").textContent = formatSeekTime(shown);
+}
+
+// 戻り値のPromiseは、移動を終えるか取り消されたら解決する（呼び出し元は待たなくてよい）。下げている間は
+// manualTransitionCountを上げ、クロスフェードが始まって音量を取り合わないようにする（手動スキップの
+// フェードアウトと同じ扱い）。移動した後のフェードインはcancelFadeIn()でクロスフェードに譲れる。
+function seekWithFadeFromSeekBar(playback: DualAudioPlayer, target: number): Promise<number | null> {
+  seekHoldTarget = target;
+  updateSeekPosition(target);
+  seekFadeInFlight += 1;
+  manualTransitionCount += 1;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    seekFadeInFlight -= 1;
+    manualTransitionCount -= 1;
+    if (seekFadeInFlight === 0) seekHoldTarget = null;
+  };
+  return playback.seekWithFade(target, { onMoved: release }).finally(release);
 }
 
 // ロールスワップ再設計（2026-09-14〜、PR2）：シークバーは「今どちらのaudio要素が主か」で
@@ -609,6 +636,7 @@ function wireSeekBar(playback: DualAudioPlayer): void {
   // 必ずドラッグ状態を解除する。
   playback.addEventListener("emptied", () => {
     seekBarDragging = false;
+    seekHoldTarget = null;
     updateSeekDuration(NaN);
     updateSeekPosition(0);
   });
@@ -630,8 +658,13 @@ function wireSeekBar(playback: DualAudioPlayer): void {
     // 場合は退場側へ復元する」という特別扱いは、role-swapではアクティブ側のsrcが
     // コミット前に変化すること自体が無いため構造的に不要になった。
     crossfadeOrchestrator?.cancel();
-    playback.activeAudioElement().currentTime = Number(slider.value);
+    const target = Number(slider.value);
     seekBarDragging = false;
+    if (fadeOutEnabled()) {
+      void seekWithFadeFromSeekBar(playback, target);
+      return;
+    }
+    playback.activeAudioElement().currentTime = target;
   });
 }
 

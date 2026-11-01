@@ -188,8 +188,8 @@ export class DualAudioPlayer implements PlayerLike, AudioEndedLike, PlaybackCont
   }
 
   // シークバーで移動したときのフェード（PlaybackController.seekWithFade）。シークは今鳴っている側だけに効く。
-  seekWithFade(position: number): Promise<number | null> {
-    return this.activePlaybackController.seekWithFade(position);
+  seekWithFade(position: number, options: { onMoved?: (position: number) => void } = {}): Promise<number | null> {
+    return this.activePlaybackController.seekWithFade(position, options);
   }
 
   // リジューム時のフェードインの取り消し。フェードインはactiveスロット上で動くため、

@@ -1708,6 +1708,99 @@ test("シークバーをドラッグ中に曲が切り替わった後、旧ド�
 });
 
 
+test("フェードアウトがONのとき、鳴っている曲をシークすると下げてから移り、その間つまみは移動先に留まる（R15）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  await openTab(page, "settings");
+  await page.getByRole("checkbox", { name: /シークのときにフェードアウト/ }).check();
+  await page.clock.install();
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.disabled = false;
+    slider.max = "180";
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    // E2Eモックの<audio>は実際には鳴らない（pausedが常にtrue）ため、鳴っている状態をテスト側で作る
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 5;
+    audio.volume = 0.6;
+    slider.value = "42";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    slider.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  // 下げている途中：まだ元の位置で鳴っている。timeupdateが来ても、つまみは移動先に留まる
+  await page.clock.runFor(20);
+  const midFade = await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    audio.dispatchEvent(new Event("timeupdate"));
+    return { time: audio.currentTime, volume: audio.volume, slider: document.querySelector<HTMLInputElement>("#seek-slider")!.value };
+  });
+  expect(midFade.time).toBe(5);
+  expect(midFade.volume).toBeLessThan(0.6);
+  expect(midFade.slider).toBe("42");
+  await expect(page.locator("#seek-current-time")).toHaveText("0:42");
+  // 下げきって移動し、移り終える（seeked）上限を過ぎたら元の音量まで戻る
+  await page.clock.runFor(100);
+  expect(await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime)).toBe(42);
+  await page.clock.runFor(400);
+  await expect.poll(() => page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.volume)).toBeCloseTo(0.6);
+  // 移動した後は、つまみは実際の位置に追従する
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    audio.currentTime = 50;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await expect(page.locator("#seek-current-time")).toHaveText("0:50");
+});
+
+test("曲の終わり近くから戻すシークで下げている間は、元の位置が終わり際でもクロスフェードを始めない（R15）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page); await openSymphonyQueue(page);
+  await openTab(page, "settings");
+  await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
+  await page.getByRole("checkbox", { name: /シークのときにフェードアウト/ }).check();
+  await page.clock.install();
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.disabled = false;
+    slider.max = "180";
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "duration", { value: 180, configurable: true });
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 150;
+    slider.value = "10";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    slider.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await page.clock.runFor(20);
+  // 下げている間に、元の位置が曲の終わり際へ進んだ
+  await page.evaluate(() => {
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    audio.currentTime = 179.99;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await page.clock.runFor(10);
+  expect(await page.evaluate(() => (window as unknown as { __e2e: { isCrossfadeActive(): boolean } }).__e2e.isCrossfadeActive())).toBe(false);
+  await expect(page.locator("#audio-player-b")).not.toHaveAttribute("src");
+});
+
+test("フェードアウトがOFFのときは、シークするとすぐ移る（R15）", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /song-1(\?|$)/);
+  await page.evaluate(() => {
+    const slider = document.querySelector<HTMLInputElement>("#seek-slider")!;
+    slider.disabled = false;
+    slider.max = "180";
+    const audio = document.querySelector<HTMLAudioElement>("#audio-player")!;
+    Object.defineProperty(audio, "paused", { value: false, configurable: true });
+    audio.currentTime = 5;
+    slider.value = "42";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    slider.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(await page.evaluate(() => document.querySelector<HTMLAudioElement>("#audio-player")!.currentTime)).toBe(42);
+});
+
 // ============================================================================
 // クロスフェード ロールスワップ再設計（2026-09-14〜、PR2）
 // ============================================================================

@@ -186,7 +186,9 @@ export class PlaybackController {
   private seekedWaiter: (() => void) | null = null;
 
   // 戻り値：実際に移動した位置（取り消された場合はnull）。止まっているときはすぐ移動する。
-  async seekWithFade(position: number): Promise<number | null> {
+  // onMoved：実際に移動した瞬間（下げ終えてcurrentTimeを書いた直後）に呼ぶ。移動先の差し替えだけで
+  // 終わった呼び出し（戻り値null）では呼ばない（差し替え先の移動は、最初の呼び出しのonMovedで知らせる）。
+  async seekWithFade(position: number, options: { onMoved?: (position: number) => void } = {}): Promise<number | null> {
     if (this.pendingSeekTarget !== null && this.seekFadeGeneration === this.generation) {
       this.pendingSeekTarget = position;
       return null;
@@ -199,6 +201,7 @@ export class PlaybackController {
       this.restoreCarriedVolume(carried);
       this.pendingSeekTarget = null;
       this.audio.currentTime = position;
+      options.onMoved?.(position);
       return position;
     }
     const isCancelled = () => this.seekFadeToken !== token || this.generation !== generation;
@@ -217,6 +220,7 @@ export class PlaybackController {
       this.pendingFadeOriginalVolume = null;
       if (this.audio.ended) return null;
       this.audio.currentTime = target;
+      options.onMoved?.(target);
       return target;
     }
     // 移り終えるのを待つ間も「フェードイン中」として扱う（この間に次のシークや一時停止が来たら、音量を
@@ -226,6 +230,7 @@ export class PlaybackController {
     this.activeFadeInTarget = preVolume;
     const seeked = this.waitForSeeked();
     this.audio.currentTime = target;
+    options.onMoved?.(target);
     await seeked;
     if (isCancelled() || this.fadeInToken !== myFadeInToken) return target;
     await fadeInVolume(this.audio, preVolume, FADE_IN_DURATION_MS, {

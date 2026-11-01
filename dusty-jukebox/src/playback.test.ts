@@ -1384,11 +1384,94 @@ describe("PlaybackController.seekWithFade", () => {
       const seek = playback.seekWithFade(90);
       await vi.advanceTimersByTimeAsync(1500);
       audio.pause();
+      // 下げ終えた時点で、移り終える知らせを待たずに音量をすぐ戻す
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(audio.volume).toBe(0.8);
       await vi.runAllTimersAsync();
       await expect(seek).resolves.toBe(90);
       expect(audio.paused).toBe(true);
       expect(audio.currentTime).toBe(90);
       expect(audio.volume).toBe(0.8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("下げている間に曲が最後まで鳴り終えたら、音量を戻し、移動しない", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const seek = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(1500);
+      audio.emitEnded();
+      audio.currentTime = 180;
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(audio.volume).toBe(0.8);
+      await vi.runAllTimersAsync();
+      await expect(seek).resolves.toBeNull();
+      expect(audio.currentTime).toBe(180);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("移動した瞬間に一度だけ知らせる（差し替えた移動先で。取り消されたら知らせない）", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const moved: number[] = [];
+      const replaced: number[] = [];
+      const first = playback.seekWithFade(90, { onMoved: (p) => moved.push(p) });
+      await vi.advanceTimersByTimeAsync(1500);
+      await playback.seekWithFade(120, { onMoved: (p) => replaced.push(p) });
+      expect(moved).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(moved).toEqual([120]);
+      expect(audio.currentTime).toBe(120);
+      audio.emitSeeked();
+      await vi.runAllTimersAsync();
+      await first;
+      expect(moved).toEqual([120]);
+      expect(replaced).toEqual([]);
+
+      const cancelledMoves: number[] = [];
+      const cancelled = playback.seekWithFade(30, { onMoved: (p) => cancelledMoves.push(p) });
+      await vi.advanceTimersByTimeAsync(1500);
+      await playback.play("B");
+      await vi.runAllTimersAsync();
+      await expect(cancelled).resolves.toBeNull();
+      expect(cancelledMoves).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("止まっているときも、移動したことを知らせる", async () => {
+    const audio = new FakeAudio();
+    const playback = new PlaybackController(audio, () => "valid-token");
+    const moved: number[] = [];
+    await playback.seekWithFade(42, { onMoved: (p) => moved.push(p) });
+    expect(moved).toEqual([42]);
+  });
+
+  test("移り終えるのを待っている間にもう一度シークしても、音量は元へ跳ね上がらない", async () => {
+    vi.useFakeTimers();
+    try {
+      const { audio, playback } = await playing();
+      const first = playback.seekWithFade(90);
+      await vi.advanceTimersByTimeAsync(3100);
+      // 下げきって移動し、seekedを待っている（無音）
+      expect(audio.volume).toBe(0);
+      const second = playback.seekWithFade(10);
+      expect(audio.volume).toBe(0);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(audio.volume).toBe(0);
+      audio.emitSeeked();
+      await vi.runAllTimersAsync();
+      await expect(first).resolves.toBe(90);
+      await expect(second).resolves.toBe(10);
+      expect(audio.currentTime).toBe(10);
+      expect(audio.volume).toBeCloseTo(0.8);
     } finally {
       vi.useRealTimers();
     }
