@@ -1049,6 +1049,19 @@ describe("PlaybackQueue", () => {
       expect(queue.peekNextFileId()).toBe("c");
     });
 
+    test("peekFileIdAfterは、指定した曲の次の曲を（除外を飛ばして）状態を変えずに返す（R16②）", async () => {
+      const audio = new Audio();
+      const queue = new PlaybackQueue({ play: async () => {} }, audio);
+      queue.setList([song("a"), song("b"), song("c"), song("d")]);
+      queue.exclude("c", true);
+      await queue.playAt(0);
+      expect(queue.peekFileIdAfter("b")).toBe("d");
+      expect(queue.peekFileIdAfter("d")).toBeNull();
+      expect(queue.currentPlayingFileId()).toBe("a");
+      queue.setRepeatMode("all");
+      expect(queue.peekFileIdAfter("d")).toBe("a");
+    });
+
     test("次の曲が無ければpeekNextFileIdはnullを返す", async () => {
       const audio = new Audio();
       const queue = new PlaybackQueue({ play: async () => {} }, audio);
