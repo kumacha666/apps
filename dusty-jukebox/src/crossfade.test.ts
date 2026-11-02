@@ -399,6 +399,9 @@ class FakeQueue implements CrossfadeQueueLike {
 
   isSingleRepeat(): boolean { return this.singleRepeat; }
   peekNextFileId(): string | null { return this.nextFileId; }
+  // 引き継ぎ（R16②）の次の曲。既定は無し（従来どおり、入場側が終わったらランプを早めに終える）。
+  fileIdAfter: Record<string, string> = {};
+  peekFileIdAfter(fileId: string): string | null { return this.fileIdAfter[fileId] ?? null; }
   isPlayingFromQueue(): boolean { return this.playingFromQueue; }
   commitPreparedFile(fileId: string): Promise<boolean> {
     this.commitCalls.push(fileId);
@@ -942,6 +945,102 @@ describe("CrossfadeOrchestrator 重ねる長さ（設定の秒数は上限、R16
   it("ランプ開始時点の残りが設定より短ければ（終わり際へのシーク・準備の遅れ）、残りの時間でランプする", async () => {
     expect(await rampLengthFor(99, 3000)).toBeCloseTo(1000, 6);
     expect(await rampLengthFor(85, 20000)).toBeCloseTo(15000, 6);
+  });
+});
+
+describe("CrossfadeOrchestrator 入場側が重なりの途中で終わったら、次の曲へ引き継ぐ（R16②）", () => {
+  // 1/4ステップずつ進め、途中で入場側（next）を終わらせる。
+  function setup(opts: { chainPlayFails?: boolean } = {}) {
+    const player = new FakeDualPlayer();
+    const queue = new FakeQueue();
+    queue.fileIdAfter = { next: "after" };
+    // キューは確定した曲の次を返す（next→after）
+    queue.commitPreparedFile = (fileId: string) => {
+      queue.commitCalls.push(fileId);
+      queue.nextFileId = queue.fileIdAfter[fileId] ?? null;
+      return Promise.resolve(true);
+    };
+    const fallbacks: number[] = [];
+    const discarded: number[] = [];
+    const waits: number[] = [];
+    const release: { fn: (() => void) | null } = { fn: null };
+    const controlledWait: WaitFn = (ms) => { waits.push(ms); return new Promise((resolve) => { release.fn = resolve; }); };
+    const orchestrator = new CrossfadeOrchestrator(player, queue, () => true, {
+      wait: controlledWait,
+      steps: 4,
+      onFallbackToNaturalEnd: () => { fallbacks.push(1); },
+      onPreviewDiscarded: (streamId) => discarded.push(streamId),
+      withTimeout: opts.chainPlayFails
+        ? (promise, _ms, message) => (message.includes("引き継ぎ") ? Promise.reject(new Error(message)) : promise)
+        : undefined,
+    });
+    player.activeAudio.duration = 100;
+    player.activeAudio.currentTime = 96;
+    return { player, queue, fallbacks, discarded, waits, release, orchestrator };
+  }
+
+  it("ランプを止めずに、同じ要素で次の曲を鳴らし始め、終わったら先の曲から順に確定して最後の曲を昇格させる", async () => {
+    const { player, queue, fallbacks, discarded, waits, release, orchestrator } = setup();
+    const previewEl = player.inactiveAudio;
+    const started = orchestrator.maybeStart({ enabled: true, durationMs: 4000, manualTransitionInFlight: false });
+    await vi.waitFor(() => expect(orchestrator.isCrossfading()).toBe(true));
+    release.fn?.(); // 1/4
+    await vi.waitFor(() => expect(previewEl.volume).toBeGreaterThan(0));
+    const volumeWhenEnded = previewEl.volume;
+    previewEl.ended = true; // 入場側（next）が重なりの途中で終わった
+    release.fn?.(); // 2/4：引き継ぎを始める（ランプは終えない）
+    await vi.waitFor(() => expect(player.inactiveControllerInstance.playCalls.map((c) => c.fileId)).toEqual(["next", "after"]));
+    previewEl.ended = false; // 次の曲が鳴り始めた（本物の要素はsrcの差し替えでendedが戻る）
+    expect(previewEl.volume).toBeGreaterThanOrEqual(volumeWhenEnded); // いきなり通常の音量にしない
+    expect(previewEl.volume).toBeLessThan(1);
+    release.fn?.(); // 3/4
+    await vi.waitFor(() => expect(waits.length).toBe(4));
+    release.fn?.(); // 4/4
+    await started;
+
+    expect(waits.length).toBe(4); // ランプを最後まで走らせた
+    expect(queue.commitCalls).toEqual(["next", "after"]);
+    expect(player.promotions).toBe(1);
+    expect(player.activeAudio).toBe(previewEl); // 引き継いだ曲を鳴らしている要素が主役になった
+    expect(fallbacks).toEqual([]);
+    expect(discarded).toEqual([1]); // 先に終わった曲のストリームの継続は無効にした
+  });
+
+  it("次の曲が無ければ、従来どおりランプを早めに終えて昇格し、自然終了フローへ委ねる", async () => {
+    const { player, queue, fallbacks, waits, release, orchestrator } = setup();
+    queue.fileIdAfter = {};
+    const previewEl = player.inactiveAudio;
+    const previewController = player.inactiveControllerInstance;
+    const started = orchestrator.maybeStart({ enabled: true, durationMs: 4000, manualTransitionInFlight: false });
+    await vi.waitFor(() => expect(orchestrator.isCrossfading()).toBe(true));
+    release.fn?.();
+    await vi.waitFor(() => expect(previewEl.volume).toBeGreaterThan(0));
+    previewEl.ended = true;
+    release.fn?.();
+    await started;
+    expect(waits.length).toBe(2);
+    expect(queue.commitCalls).toEqual(["next"]);
+    expect(previewController.playCalls.map((c) => c.fileId)).toEqual(["next"]); // 引き継いでいない
+    expect(fallbacks).toEqual([1]);
+  });
+
+  it("引き継いだ曲を鳴らせなければ、クロスフェードを諦めて退場側の音量を戻す（昇格しない）", async () => {
+    const { player, queue, release, orchestrator } = setup({ chainPlayFails: true });
+    const activeEl = player.activeAudio;
+    const previewEl = player.inactiveAudio;
+    const started = orchestrator.maybeStart({ enabled: true, durationMs: 4000, manualTransitionInFlight: false });
+    await vi.waitFor(() => expect(orchestrator.isCrossfading()).toBe(true));
+    release.fn?.();
+    await vi.waitFor(() => expect(previewEl.volume).toBeGreaterThan(0));
+    previewEl.ended = true;
+    release.fn?.();
+    await vi.waitFor(() => expect(orchestrator.isActive()).toBe(false));
+    release.fn?.(); // 止めたランプの残りの待ちを終わらせる
+    await started;
+    expect(player.promotions).toBe(0);
+    expect(queue.commitCalls).toEqual([]);
+    expect(activeEl.volume).toBe(1); // ランプで下げた退場側の音量を戻した
+    expect(player.resets).toBeGreaterThan(0);
   });
 });
 
