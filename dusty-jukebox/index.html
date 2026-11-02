@@ -228,6 +228,28 @@
       padding: 6px 8px 6px 6px;
     }
     .row.no-lead { grid-template-columns: minmax(0, 1fr) auto; padding-left: 14px; }
+    /* アルバムアート（R17）：一度聞いたアルバムは保存した画像、まだなら頭文字のタイル */
+    .art-tile {
+      flex: none;
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 6px;
+      overflow: hidden;
+      background: hsl(var(--art-hue, 40) 32% 34%);
+      color: #f3efe6;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      user-select: none;
+    }
+    .art-tile.has-art { background: #000; }
+    .art-tile img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .row.album-row { padding-left: 10px; }
+    .now-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .now-row #now-playing { flex: 1; min-width: 0; }
+    .now-art { width: 48px; height: 48px; }
     .row.now-playing { background: var(--accent-soft); }
     .row.now-playing::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); }
     .row.excluded .row-main { opacity: 0.42; }

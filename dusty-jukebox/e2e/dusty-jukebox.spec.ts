@@ -3398,3 +3398,51 @@ test("動きを減らす設定（prefers-reduced-motion）では、はみ出し�
   await expect(title).not.toHaveClass(/mq-on/);
   expect(await title.evaluate((el) => el.firstElementChild!.getAnimations().length)).toBe(0);
 });
+
+test("アルバムアート（R17）：再生中の曲の埋め込み画像を再生バー・OSのメディア操作画面に出し、アルバムとして保存して一覧にも出す", async ({ context, page }) => {
+  // 表紙が埋め込まれているのはScherzo（album-track-2）だけ。Opening（album-track-1）は画像の読めない曲
+  const mock = await installGoogleMocks(context, { albumCatalog: true, coverArtFileIds: ["album-track-2"] });
+  await page.goto("/"); await login(page);
+  await openSymphonyQueue(page);
+  const nowArt = page.locator("#now-playing-art");
+  // 画像の無い曲は、アルバム名の頭文字のタイル
+  await expect(nowArt).toBeVisible();
+  await expect(nowArt).toHaveText("S");
+  await expect(nowArt.locator("img")).toHaveCount(0);
+  await expect.poll(() => mock.pageMediaRequests.filter((u) => u.includes("album-track-1")).length).toBeGreaterThan(0);
+
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-2(\?|$)/);
+  await expect(nowArt.locator("img")).toHaveAttribute("src", /^data:image\/jpeg;base64,/);
+  const artUrl = await nowArt.locator("img").getAttribute("src");
+  await expect.poll(() => page.evaluate(() => {
+    const artwork = navigator.mediaSession.metadata?.artwork ?? [];
+    return artwork[0]?.src ?? null;
+  })).toBe(artUrl);
+
+  // アルバム一覧：聞いたアルバム（Symphony）は保存した画像、まだのアルバムは頭文字
+  await openTab(page, "albums");
+  const symphonyTile = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).locator(".art-tile");
+  await expect(symphonyTile.locator("img")).toHaveAttribute("src", artUrl!);
+  const blueTile = page.locator("#album-list li").filter({ hasText: "Blue Notes" }).locator(".art-tile");
+  await expect(blueTile).toHaveText("B");
+  await expect(blueTile.locator("img")).toHaveCount(0);
+
+  // 同じアルバムの画像の無い曲に戻ると、保存したアルバムの画像を出す（曲のファイルは読み直さない）
+  const openingReads = mock.pageMediaRequests.filter((u) => u.includes("album-track-1")).length;
+  await page.getByRole("button", { name: "前へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  await expect(nowArt.locator("img")).toHaveAttribute("src", artUrl!);
+  expect(mock.pageMediaRequests.filter((u) => u.includes("album-track-1")).length).toBe(openingReads);
+
+  // 開き直しても、保存した画像は（曲を鳴らさずに）一覧に出る
+  const scherzoReads = mock.pageMediaRequests.filter((u) => u.includes("album-track-2")).length;
+  await page.reload(); await login(page);
+  await page.locator("#folder-id").fill("root");
+  await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "albums");
+  await expect(page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).locator(".art-tile img")).toHaveAttribute("src", artUrl!);
+  expect(mock.pageMediaRequests.filter((u) => u.includes("album-track-2")).length).toBe(scherzoReads);
+});
