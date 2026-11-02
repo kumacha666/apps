@@ -386,6 +386,9 @@ export class CrossfadeOrchestrator {
   private chainedFileIds: string[] = [];
   // 引き継いだ次の曲の再生開始を待っている間（その間はランプを早めに終えない）。
   private chainPending = false;
+  // 引き継いだ曲の再生開始の結果（鳴り始めたらtrue、鳴らせず諦めたらfalse）。ランプが先に終わっても、
+  // これが決まるまで確定・昇格しない（開始待ちの曲を主役にしない）
+  private chainStart: Promise<boolean> | null = null;
 
   constructor(
     private readonly player: CrossfadeDualPlayerLike,
@@ -502,6 +505,7 @@ export class CrossfadeOrchestrator {
     if (this.previewedStreamId !== null) this.options.onPreviewDiscarded?.(this.previewedStreamId);
     this.chainedFileIds = [];
     this.chainPending = false;
+    this.chainStart = null;
     this.preparing = false;
     this.previewReady = false;
     this.previewedFileId = null;
@@ -628,6 +632,7 @@ export class CrossfadeOrchestrator {
     const rampDurationMs = activeAudio.ended ? 0 : Math.min(this.durationMsActive, remainingMs);
     this.chainedFileIds = [];
     this.chainPending = false;
+    this.chainStart = null;
     await runCrossfade(activeAudio, inactiveAudio, rampDurationMs, {
       isCancelled: () => this.generation !== myGeneration,
       // 次の曲（入場側）自体がクロスフェード長より短く、ランプ完了前に自然終了した場合。さらに次の曲があれば、
@@ -636,6 +641,10 @@ export class CrossfadeOrchestrator {
       steps: this.options.steps,
       wait: this.options.wait,
     });
+    if (this.generation !== myGeneration) return;
+    // 引き継いだ曲がまだ鳴り始めていなければ、その結果を待ってから確定・昇格する。鳴らせなかった場合は
+    // startChain()の失敗処理が（まだ昇格していない退場側の状態で）諦め・自然送りまで済ませている
+    if (this.chainStart && !(await this.chainStart)) return;
     if (this.generation !== myGeneration) return;
     await this.commit(this.previewedFileId ?? nextFileId, myGeneration);
   }
@@ -662,7 +671,7 @@ export class CrossfadeOrchestrator {
     this.previewedStreamId = null;
     this.chainPending = true;
     const withTimeout = this.options.withTimeout ?? defaultWithTimeoutFn;
-    void withTimeout(
+    this.chainStart = withTimeout(
       this.player.inactiveController().play(next, undefined, {
         onStreamIdAllocated: (streamId) => {
           if (this.generation !== myGeneration) return;
@@ -673,13 +682,19 @@ export class CrossfadeOrchestrator {
       this.options.previewStartTimeoutMs ?? CROSSFADE_PREVIEW_START_TIMEOUT_MS,
       "クロスフェードの引き継ぎ再生がタイムアウトしました"
     ).then(
-      () => { if (this.generation === myGeneration) this.chainPending = false; },
+      () => {
+        if (this.generation !== myGeneration) return false;
+        this.chainPending = false;
+        return true;
+      },
       () => {
         // 引き継いだ曲を鳴らせなかった：このクロスフェードを諦める（ランプを止め、退場側の音量を戻す）。
-        // 退場側が既に終わっていれば、通常の自然終了フローへ委ねる
-        if (this.generation !== myGeneration) return;
+        // 退場側が既に終わっていれば、通常の自然終了フローへ委ねる。昇格はこの結果を待つので、
+        // ここでの「退場側」は必ずまだ主役のまま（開始待ちの曲を主役にしてから失敗することはない）
+        if (this.generation !== myGeneration) return false;
         this.generation += 1;
         this.abandonRamp(this.player.activeAudioElement().ended);
+        return false;
       }
     );
   }

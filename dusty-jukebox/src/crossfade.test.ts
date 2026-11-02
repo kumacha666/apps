@@ -1042,6 +1042,54 @@ describe("CrossfadeOrchestrator 入場側が重なりの途中で終わったら
     expect(activeEl.volume).toBe(1); // ランプで下げた退場側の音量を戻した
     expect(player.resets).toBeGreaterThan(0);
   });
+
+  // ランプを最後まで進め、引き継いだ曲（after）の再生開始だけが終わっていない状態にする
+  async function rampDoneWhileChainPending(t: ReturnType<typeof setup>) {
+    const { player, waits, release, orchestrator } = t;
+    const previewEl = player.inactiveAudio;
+    const started = orchestrator.maybeStart({ enabled: true, durationMs: 4000, manualTransitionInFlight: false });
+    await vi.waitFor(() => expect(orchestrator.isCrossfading()).toBe(true));
+    player.inactiveControllerInstance.autoResolve = false; // ここから先の再生開始（引き継ぎ）は保留する
+    release.fn?.(); // 1/4
+    await vi.waitFor(() => expect(previewEl.volume).toBeGreaterThan(0));
+    previewEl.ended = true;
+    release.fn?.(); // 2/4：引き継ぎを始める
+    await vi.waitFor(() => expect(player.inactiveControllerInstance.playCalls.map((c) => c.fileId)).toEqual(["next", "after"]));
+    previewEl.ended = false;
+    release.fn?.(); // 3/4
+    await vi.waitFor(() => expect(waits.length).toBe(4));
+    release.fn?.(); // 4/4：ランプは終わったが、afterはまだ鳴り始めていない
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    return { started }; // Promiseをそのまま返すと、呼び出し側のawaitが完了まで待ってしまう
+  }
+
+  it("ランプが終わっても、引き継いだ曲が鳴り始めるまでは確定・昇格しない（鳴り始めたら昇格する）", async () => {
+    const t = setup();
+    const previewEl = t.player.inactiveAudio;
+    const { started } = await rampDoneWhileChainPending(t);
+    expect(t.player.promotions).toBe(0);
+    expect(t.queue.commitCalls).toEqual([]);
+    expect(t.orchestrator.isActive()).toBe(true);
+    t.player.inactiveControllerInstance.resolvePending();
+    await started;
+    expect(t.queue.commitCalls).toEqual(["next", "after"]);
+    expect(t.player.promotions).toBe(1);
+    expect(t.player.activeAudio).toBe(previewEl);
+  });
+
+  it("ランプが終わった後に引き継いだ曲を鳴らせなかったら、昇格せず、退場側が終わっていれば自然送りへ進める", async () => {
+    const t = setup();
+    const activeEl = t.player.activeAudio;
+    const { started } = await rampDoneWhileChainPending(t);
+    activeEl.ended = true; // 退場側はランプ中に終わっていた
+    t.player.inactiveControllerInstance.rejectPending(new Error("stream failed"));
+    await started;
+    expect(t.player.promotions).toBe(0);
+    expect(t.queue.commitCalls).toEqual([]);
+    expect(t.player.activeAudio).toBe(activeEl);
+    expect(t.fallbacks).toEqual([1]);
+    expect(t.orchestrator.isActive()).toBe(false);
+  });
 });
 
 describe("CrossfadeOrchestrator 先読み対象と最新の次曲の一致確認", () => {
