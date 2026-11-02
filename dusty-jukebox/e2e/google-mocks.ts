@@ -43,7 +43,28 @@ export type MockOptions = {
    * queue's optimistic render happen before the rejection, masking a real display-staleness bug).
    */
   delayFirstMediaPlay?: boolean;
+  /**
+   * アルバムアート（R17）：これらの曲は、ページからのRange取得（画像の読み出し）に、表紙画像（1×1のPNG）を
+   * 埋め込んだ小さなMP3を返す。Service Worker経由の再生用ストリームはこれまでどおり空の応答のまま。
+   */
+  coverArtFileIds?: string[];
 };
+
+// ID3v2.3のAPICフレーム（表紙、1×1のPNG）＋MPEGフレーム3つの小さなMP3。music-metadataで表紙が読めることを確認済み。
+const COVER_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+function coverArtMp3(): Buffer {
+  const synchsafe = (n: number) => Buffer.from([(n >> 21) & 0x7f, (n >> 14) & 0x7f, (n >> 7) & 0x7f, n & 0x7f]);
+  const body = Buffer.concat([Buffer.from([0]), Buffer.from("image/png\0", "latin1"), Buffer.from([3, 0]), COVER_PNG]);
+  const frameHeader = Buffer.alloc(10);
+  frameHeader.write("APIC", 0, "latin1");
+  frameHeader.writeUInt32BE(body.length, 4);
+  const frames = Buffer.concat([frameHeader, body]);
+  const tag = Buffer.concat([Buffer.from("ID3\x03\x00\x00", "latin1"), synchsafe(frames.length), frames]);
+  const mpegFrame = Buffer.alloc(417);
+  mpegFrame.set([0xff, 0xfb, 0x90, 0x64]);
+  return Buffer.concat([tag, mpegFrame, mpegFrame, mpegFrame]);
+}
+export const COVER_ART_MP3 = coverArtMp3();
 
 type SheetWrite = {
   url: string;
@@ -123,6 +144,8 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
 
   const authFailures: string[] = [];
   const streamRequests: string[] = [];
+  // ページから直接のRange取得（タグ抽出・アルバムアートの読み出し）。再生用のストリーム（streamRequests）とは数えない
+  const pageMediaRequests: string[] = [];
   const driveMetadataRequests: string[] = [];
   let remainingStreamTokenRejections = options.rejectFirstStreamToken ? 1 : 0;
   const sheetsWrites: SheetWrite[] = [];
@@ -201,6 +224,16 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     const url = new URL(route.request().url());
     if (url.pathname.endsWith("/startPageToken")) return json(route, { startPageToken: "page-1" });
     if (url.pathname.endsWith("/changes")) return json(route, { changes: [], newStartPageToken: "page-2" });
+    if (url.searchParams.get("alt") === "media" && route.request().serviceWorker() === null) {
+      pageMediaRequests.push(route.request().url());
+      const mediaId = url.pathname.split("/").pop() ?? "";
+      if (!options.coverArtFileIds?.includes(mediaId)) return route.fulfill({ status: 206, contentType: "audio/mpeg", body: "", headers: { "Accept-Ranges": "bytes" } });
+      const match = /bytes=(\d+)-(\d+)?/.exec(route.request().headers().range ?? "");
+      const start = match ? Number(match[1]) : 0;
+      const end = Math.min(match?.[2] ? Number(match[2]) : COVER_ART_MP3.length - 1, COVER_ART_MP3.length - 1);
+      if (start >= COVER_ART_MP3.length) return route.fulfill({ status: 416, body: "" });
+      return route.fulfill({ status: 206, contentType: "audio/mpeg", body: COVER_ART_MP3.subarray(start, end + 1), headers: { "Accept-Ranges": "bytes", "Content-Range": `bytes ${start}-${end}/${COVER_ART_MP3.length}` } });
+    }
     if (url.searchParams.get("alt") === "media") {
       streamRequests.push(route.request().url());
       if (remainingStreamTokenRejections > 0) {
@@ -214,6 +247,9 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     driveMetadataRequests.push(id ?? "");
     if (id === "root") return json(route, { id, name: "Root", mimeType: "application/vnd.google-apps.folder", parents: [], capabilities: { canEdit: true } });
     if (id === "sheet") return json(route, { id, name: "Sheet", mimeType: "application/vnd.google-apps.spreadsheet", capabilities: { canEdit: options.spreadsheetCanEdit !== false } });
+    if (id && options.coverArtFileIds?.includes(id)) {
+      return json(route, { id, name: `${id}.mp3`, mimeType: "audio/mpeg", size: String(COVER_ART_MP3.length), parents: ["root"], modifiedTime: "2026-01-01T00:00:00Z", trashed: false });
+    }
     if (id?.startsWith("song-") || id?.startsWith("album-track-") || id === "other-album") {
       return json(route, { id, name: `${id}.mp3`, mimeType: "audio/mpeg", size: "1024", parents: ["root"], modifiedTime: "2026-01-01T00:00:00Z", trashed: false });
     }
@@ -345,6 +381,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   return {
     authFailures,
     streamRequests,
+    pageMediaRequests,
     driveMetadataRequests,
     sheetsWrites,
     sheetsReadRanges,

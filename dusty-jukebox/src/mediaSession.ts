@@ -8,16 +8,21 @@
 
 import type { Song } from "./catalog";
 
+export interface MediaImageInit { src: string; sizes?: string; type?: string }
 export interface MediaMetadataInit {
   title: string;
   artist: string;
   album: string;
+  // アルバムアート（R17）。画像がまだ無い曲では付けない。
+  artwork?: MediaImageInit[];
 }
 
 // 曲タイトルが空（抽出失敗等）の場合はfileIdへフォールバックする。catalog.tsのparseIndexRows
 // が同様のフォールバックをfolderPath表示等で行っているのと同じ方針。
-export function mediaMetadataInit(song: Song): MediaMetadataInit {
-  return { title: song.title || song.fileId, artist: song.artist, album: song.album };
+export function mediaMetadataInit(song: Song, artworkUrl?: string | null): MediaMetadataInit {
+  const init: MediaMetadataInit = { title: song.title || song.fileId, artist: song.artist, album: song.album };
+  if (artworkUrl) init.artwork = [{ src: artworkUrl, type: artworkUrl.match(/^data:([^;,]+)/)?.[1] ?? "image/jpeg" }];
+  return init;
 }
 
 export type MediaSessionPlaybackState = "playing" | "paused" | "none";
@@ -36,10 +41,11 @@ export type MediaMetadataConstructorLike = new (init: MediaMetadataInit) => unkn
 export function updateNowPlayingMetadata(
   mediaSession: MediaSessionLike | undefined,
   MediaMetadataCtor: MediaMetadataConstructorLike | undefined,
-  song: Song | undefined
+  song: Song | undefined,
+  artworkUrl?: string | null
 ): void {
   if (!mediaSession) return;
-  mediaSession.metadata = song && MediaMetadataCtor ? new MediaMetadataCtor(mediaMetadataInit(song)) : null;
+  mediaSession.metadata = song && MediaMetadataCtor ? new MediaMetadataCtor(mediaMetadataInit(song, artworkUrl)) : null;
 }
 
 export function updatePlaybackState(mediaSession: MediaSessionLike | undefined, state: MediaSessionPlaybackState): void {

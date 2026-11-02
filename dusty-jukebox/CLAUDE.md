@@ -154,6 +154,17 @@
 - `catalog.ts`の`groupSongsByAlbum`・`groupAlbumsByArtist`・`compareAlbumGroups`・`filterAlbumGroups`は、アルバム一覧では使わなくなった（`queueSort.ts`のリリース年の暗黙グループ化が参照する「アルバムの同一性」の説明は旧キーのまま）。
 - E2E：`installGoogleMocks(context, { rackCatalog: true })`は、CD1/CD2のフォルダに分かれた2枚組と、アルバムアーティストの無いオムニバスを`folders`タブ付きで用意する。
 
+## アルバムアート（R17、2026-11-02、Android版に合わせた）
+
+再生中の曲のファイルに埋め込まれた画像（ID3のAPIC・MP4のcovr・FLACのpicture）を、再生バー（`#now-playing-art`）・アルバム一覧の各行（`.art-tile`）・OSのメディア操作画面（Media Sessionの`artwork`）に出す。索引には画像を持たない。
+- **読み方**：曲が変わったら（`renderQueue()`→`NowArtwork.setCurrent()`）、その曲のアルバムの画像が保存してあればそれを出し、無ければ曲のファイルから読む（`coverArt.ts`の`extractCoverArt`：`files.get`で大きさ・形式を取り、`DriveRangeTokenizer`＋music-metadataを`skipCovers: false`で）。表紙（Cover (front)）を優先。読めた画像は256px以下のJPEGのdata URLに縮め（`albumArtBrowser.ts`の`makeThumbnailDataUrl`、canvas）、アルバムとして保存する。
+- **保存**：ブラウザのIndexedDB（`dusty-jukebox-album-art`、キー＝アルバム名＋まとめる単位のフォルダ＝アルバム一覧の1件と同じ単位、`albumArt.ts`の`albumArtKey`）。すでにあれば上書きしない。読んだ画像は300件までメモリにも持つ。IndexedDBが使えなければ、開いている間だけメモリに持つ。端末・ブラウザごとの保存で、別の端末には引き継がない。
+- **一覧**：一度聞いたアルバムは保存した画像、まだのアルバムはアルバム名の頭文字のタイル（色相はアルバム名から）。全アルバムの画像を読み込み時に取りに行くことはしない（索引の読み込みを重くしないため、ユーザー判断）。画面に入ったタイルだけ保存先を探す（IntersectionObserver）。新しく保存したら、表示中の一覧のタイルも差し替える。
+- **曲と画像の組**：読み出しが終わる前に曲が変わったら読み出しを中断する。中断が間に合わず読めた画像は、読んだ曲のアルバムとして保存し、表示はその曲がまだ再生中のときだけ（Android版で、前の曲の画像を別のアルバムとして保存した不具合が実機で出たため。`NowArtwork`、`albumArt.test.ts`）。
+- **失敗の扱い**：画像は「おまけ」なので、ログインの画面を出したりトークンを捨てたりしない（今のトークンが無ければ読まず、401でも何もしない）。画像の無い曲は、開いている間は読み直さない。読めなかった曲は、次にその曲を鳴らしたときにまた試す。
+- **未対応**：キュー外の単曲試聴（「この曲を再生」）には画像を出さない。
+- E2E：`installGoogleMocks(context, { coverArtFileIds: [...] })`は、その曲へのページからのRange取得に、表紙（1×1のPNG）入りの小さなMP3を返す。ページからの`alt=media`（タグ抽出・画像の読み出し）は`pageMediaRequests`に数え、再生用ストリームの`streamRequests`・`rejectFirstStreamToken`には数えない（`request.serviceWorker()`で見分ける）。
+
 ## フォルダ名キャッシュ（2026-09-03）
 
 **実機利用で判明**：`loadCatalog()`（「索引から曲一覧を読み込む」）は起動のたびに曲ごとフォルダパスをDrive API（`files.get`を祖先方向へ1階層ずつ）で解決していたため、数千フォルダ規模の実ライブラリでは起動のたびに5分以上かかっていた（索引自体の読み込みは1回のSheets API呼び出しで一瞬）。プレイヤーとして実用に耐えないレベルの問題。
@@ -212,7 +223,7 @@
 - `handleNativePlaybackStatus()`（`<audio>`のplaying/pauseイベント）で`updatePlaybackState()`を呼び、`navigator.mediaSession.playbackState`を反映する。
 - ユニットテスト：`mediaSession.test.ts`（`mediaMetadataInit`のフォールバック・各DIラッパーのフェイク`mediaSession`に対する呼び出し内容）。
 - **E2Eでの制限**：`playbackState`（playing/pause）の更新は実ブラウザの`<audio>`ネイティブイベントに連動させているが、E2Eモックの音声は実際にはデコードできないダミーデータのため（`play()`自体もスタブされ即座に解決する）、ネイティブイベントが発火せずE2Eでは検証できない。`updatePlaybackState()`自体のロジックはユニットテストでカバー済み。E2Eでは、ネイティブイベントに依存しない`metadata`側（曲クリック→`renderQueue()`経由）のみを検証する。
-- **既知の制限**：`stop`/`seekto`等の他のMedia Sessionアクションは未対応。カバーアート（`artwork`）も未設定（M4Aファイルの埋め込みカバーアートは抽出済みだが索引スプレッドシートには保存していない、CONCEPT.md 3.3節参照）。
+- **既知の制限**：`stop`/`seekto`等の他のMedia Sessionアクションは未対応。カバーアート（`artwork`）は下記「アルバムアート（R17）」で対応済み。
 - **同日、ChatGPTレビュー指摘（P2）を修正**：`registerActionHandlers()`が4種類のactionを無防備に連続で`setActionHandler()`していたため、`navigator.mediaSession`自体は存在するがaction個別の対応状況にはブラウザ差がある環境で、1つのactionが未対応で例外を投げると残りのaction登録が止まるだけでなく、呼び出し元`init()`内でこの直後に並ぶログイン・スキャン・再生等の通常UIイベント登録まで実行されなくなる問題があった。各actionを個別にtry/catchし、1つの失敗が他のaction登録や`init()`の後続処理を止めないよう修正。ユニットテストに、`previoustrack`のみ例外を投げるfake `MediaSession`で「関数はthrowせず他の3つは登録される」ケースを追加（修正前は実際にテストが失敗することを確認済み）。
 
 ## 検索/絞り込みUI刷新（開発体制#39④、2026-09-05〜）

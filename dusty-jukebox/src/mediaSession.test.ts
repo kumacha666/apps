@@ -25,6 +25,11 @@ describe("mediaMetadataInit", () => {
   test("タイトルが空ならfileIdへフォールバックする", () => {
     expect(mediaMetadataInit(song({ title: "" }))).toEqual({ title: "f1", artist: "Artist", album: "Album" });
   });
+
+  test("アルバムアートがあればartworkに入れ、data URLの形式を種類にする（R17）", () => {
+    expect(mediaMetadataInit(song(), "data:image/png;base64,AAAA").artwork).toEqual([{ src: "data:image/png;base64,AAAA", type: "image/png" }]);
+    expect(mediaMetadataInit(song(), null)).not.toHaveProperty("artwork");
+  });
 });
 
 describe("updateNowPlayingMetadata", () => {

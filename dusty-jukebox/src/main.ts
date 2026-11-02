@@ -44,6 +44,9 @@ const QUEUE_SORT_FIELD_LABELS: Record<QueueSortField, string> = {
   track: "トラック",
 };
 import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState } from "./mediaSession";
+import { albumArtKeyOfGroup, albumArtKeysByFileId, albumInitial, albumTileHue, NowArtwork } from "./albumArt";
+import { createIndexedDbAlbumArtStore, makeThumbnailDataUrl } from "./albumArtBrowser";
+import { extractCoverArt } from "./coverArt";
 import { formatSeekTime, isSeekableDuration } from "./seekBar";
 import { shouldResumeExternalPlayback } from "./externalPlayback";
 import { shouldAttemptBackgroundPlaybackRecovery } from "./backgroundPlaybackRecovery";
@@ -285,6 +288,82 @@ let loadedCatalogSpreadsheetId: string | null = null;
 // アルバム検索欄（#album-search）で入力の都度、索引を再読み込みせずに絞り込み直せるように
 // loadCatalog()成功時点の全アルバムグループを保持する（開発体制#39④UI-3）。
 let loadedAlbumGroups: AlbumGroup[] = [];
+// アルバムアート（R17）：曲→その曲のアルバムのキー（アルバム一覧と同じ分け方。loadCatalog()で作り直す）
+let albumArtKeys = new Map<string, string>();
+const albumArtStore = createIndexedDbAlbumArtStore();
+// 再生バーに出している曲（頭文字のタイルとOSのメディア操作画面の更新に使う）
+let nowArtSong: Song | undefined;
+const nowArtwork = new NowArtwork({
+  keyOf: (fileId) => albumArtKeys.get(fileId) ?? null,
+  store: albumArtStore,
+  extract: (fileId, signal) => extractAlbumArtOf(fileId, signal),
+  makeThumbnail: (data, format) => makeThumbnailDataUrl(data, format),
+  show: (fileId, url) => {
+    const song = nowArtSong && nowArtSong.fileId === fileId ? nowArtSong : undefined;
+    const tile = document.getElementById("now-playing-art");
+    if (tile) fillArtTile(tile, song?.album ?? "", song ? url : null);
+    if (song && url) updateNowPlayingMetadata(navigator.mediaSession, window.MediaMetadata, song, url);
+  },
+  onSaved: (key, url) => {
+    for (const tile of document.querySelectorAll<HTMLElement>("#album-list .art-tile")) {
+      if (tile.dataset.artKey === key) fillArtTile(tile, tile.dataset.album ?? "", url);
+    }
+  },
+});
+// 曲のファイルから埋め込み画像を読む。画像は「おまけ」なので、ログインの画面を出したりトークンを捨てたりしない
+// （今のトークンが無ければ読まず、401でも何もしない。認証の扱いは再生側に任せる）。
+async function extractAlbumArtOf(fileId: string, signal: AbortSignal) {
+  const token = auth.getAccessToken();
+  if (!token) return { kind: "failed" } as const;
+  const currentToken = async () => {
+    const value = auth.getAccessToken();
+    if (!value) throw new Error("no token");
+    return value;
+  };
+  try {
+    const file = await createDriveFileGetFn(currentToken)(fileId);
+    if (!file || signal.aborted) return { kind: "failed" } as const;
+    const size = file.size ? Number(file.size) : undefined;
+    return await extractCoverArt(
+      { id: fileId, size: Number.isFinite(size) ? size : undefined, mimeType: file.mimeType },
+      (rangeSignal) => createDriveFetchRange(fileId, currentToken, { signal: rangeSignal }),
+      signal
+    );
+  } catch {
+    return { kind: "failed" } as const;
+  }
+}
+// アルバムの画像（無ければ頭文字）をタイルに出す。
+function fillArtTile(tile: HTMLElement, album: string, url: string | null): void {
+  if (album.trim()) tile.style.setProperty("--art-hue", String(albumTileHue(album)));
+  else tile.style.removeProperty("--art-hue");
+  if (url) {
+    if (tile.querySelector("img")?.getAttribute("src") === url) return;
+    const img = document.createElement("img");
+    img.alt = ""; img.decoding = "async"; img.src = url;
+    tile.replaceChildren(img);
+    tile.classList.add("has-art");
+  } else {
+    tile.textContent = albumInitial(album);
+    tile.classList.remove("has-art");
+  }
+}
+// 一覧のタイルは、画面に入ったときに保存してある画像を探す（数百枚あっても、見えている分だけ読む）。
+const albumArtObserver = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    const tile = entry.target as HTMLElement;
+    albumArtObserver?.unobserve(tile);
+    loadAlbumTile(tile);
+  }
+}, { rootMargin: "200px" });
+function loadAlbumTile(tile: HTMLElement): void {
+  const key = tile.dataset.artKey;
+  if (!key) return;
+  void albumArtStore.get(key).then((url) => {
+    if (url && tile.isConnected && tile.dataset.artKey === key) fillArtTile(tile, tile.dataset.album ?? "", url);
+  });
+}
 let serviceWorkerReady: Promise<void> | null = null;
 const catalogOperationGate = new CatalogOperationGate();
 // アプリ起動時に1回だけ生成し、以降のプレイリスト保存操作すべてで使い回す
@@ -399,7 +478,10 @@ function render(): void {
           <button id="next-btn" type="button" aria-label="次へ" disabled>${iconSvg("next")}</button>
           <button id="repeat-btn" class="repeat-off" type="button" aria-label="リピート: オフ" disabled>${iconSvg("repeat")}</button>
         </div>
-        <p id="now-playing" class="status"></p>
+        <div class="now-row">
+          <div id="now-playing-art" class="art-tile now-art" aria-hidden="true">♪</div>
+          <p id="now-playing" class="status"></p>
+        </div>
         <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
         <p id="status" class="status"></p>
       </div>
@@ -895,8 +977,13 @@ function renderQueue(): void {
   el<HTMLElement>("queue-empty").hidden = rows.length > 0;
   const currentSong = rows.find((r) => r.isCurrent)?.song;
   el<HTMLParagraphElement>("now-playing").textContent = nowPlayingLabel(currentSong);
-  // Bluetoothスピーカー・OSのロック画面に現在再生中の曲名・アーティストを表示する。
-  updateNowPlayingMetadata(navigator.mediaSession, window.MediaMetadata, currentSong);
+  // アルバムアート（R17）：曲が変わったら画像を用意する（保存してあればそれ、無ければ曲のファイルから読む）
+  nowArtSong = currentSong;
+  void nowArtwork.setCurrent(currentSong?.fileId ?? null);
+  // 曲が無いときも枠（♪）は出したままにする（曲が始まるたびに再生バーの高さが変わり、ボタンの位置がずれないように）
+  fillArtTile(el<HTMLElement>("now-playing-art"), currentSong?.album ?? "", currentSong ? nowArtwork.urlFor(currentSong.fileId) : null);
+  // Bluetoothスピーカー・OSのロック画面に現在再生中の曲名・アーティスト（とアルバムアート）を表示する。
+  updateNowPlayingMetadata(navigator.mediaSession, window.MediaMetadata, currentSong, nowArtwork.urlFor(currentSong?.fileId));
   renderSearchResults();
 }
 // アーティスト/アルバム/作曲者/Genre欄のdatalistへ、索引から読み込んだ曲一覧に実際に
@@ -953,7 +1040,14 @@ function refreshFilterSuggestions(): void {
 function renderAlbumGroups(groups: AlbumGroup[], query: string, sort: AlbumRackSort): void {
   const list = el<HTMLUListElement>("album-list"); list.innerHTML = "";
   const appendAlbum = (group: AlbumGroup, showArtist: boolean) => {
-      const item = document.createElement("li"); item.className = "row no-lead";
+      const item = document.createElement("li"); item.className = "row album-row";
+      // アルバムアート（R17）：一度聞いたアルバムは保存した画像、まだなら頭文字
+      const tile = document.createElement("div"); tile.className = "art-tile"; tile.setAttribute("aria-hidden", "true");
+      tile.dataset.album = group.album;
+      const artKey = albumArtKeyOfGroup(group);
+      if (artKey) tile.dataset.artKey = artKey;
+      fillArtTile(tile, group.album, null);
+      if (artKey) { if (albumArtObserver) albumArtObserver.observe(tile); else loadAlbumTile(tile); }
       const main = document.createElement("div"); main.className = "row-main";
       main.append(...rowTextElements(group.album, showArtist ? displayShelf(group.albumArtist) : "", { count: `（${group.songs.length}曲）` }));
       const button = iconButton("play", "このアルバムを再生", "fab");
@@ -967,7 +1061,7 @@ function renderAlbumGroups(groups: AlbumGroup[], query: string, sort: AlbumRackS
         void handleQueuePlayback(() => queue?.playAt(0));
       });
       const actions = document.createElement("span"); actions.className = "row-actions"; actions.append(button);
-      item.append(main, actions); list.append(item);
+      item.append(tile, main, actions); list.append(item);
   };
   for (const row of albumRackRows(groups, query, sort)) {
     if (row.kind === "album") { appendAlbum(row.group, row.showArtist); continue; }
@@ -1381,6 +1475,7 @@ async function loadCatalog(): Promise<void> {
     for (const [id, entry] of folderCache) folders.set(id, { name: entry.name, parentId: entry.parentId });
     for (const [id, meta] of newlyResolvedFromDrive) folders.set(id, { name: meta.name, parentId: meta.parentId ?? "" });
     loadedAlbumGroups = groupAlbumsForRack(annotateAlbumFolders(songs, folders));
+    albumArtKeys = albumArtKeysByFileId(loadedAlbumGroups);
     refreshAlbumGroups();
     renderFilterSuggestions(songs);
     el<HTMLButtonElement>("create-queue-btn").disabled = false;
