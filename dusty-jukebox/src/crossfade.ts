@@ -311,6 +311,8 @@ export interface CrossfadeDualPlayerLike {
 export interface CrossfadeQueueLike {
   isSingleRepeat(): boolean;
   peekNextFileId(): string | null;
+  // [fileId]の曲の次に再生される曲（R16②の引き継ぎで、入場側の次を探す）。状態は変えない。
+  peekFileIdAfter(fileId: string): string | null;
   isPlayingFromQueue(): boolean;
   // 不変条件：prepared曲が除外済み・別リストへ変更済み・世代不一致ならfalseを返し
   // （commitしない）、trueを返した場合だけ実際にキューのcurrentFileId/isQueuePlaybackが
@@ -379,6 +381,14 @@ export class CrossfadeOrchestrator {
   // promotion成功時は復元不要（0が正しい最終値のため）なのでnullへクリアするだけ、
   // cancel()・commit失敗時はこの値へ復元してからnullへクリアする。
   private activeVolumeBeforeRamp: number | null = null;
+  // 重なりの引き継ぎ（R16②）：ランプ中に入場側の曲が終わり、同じ要素で次の曲を鳴らし始めたときの、
+  // 先に終わった曲（昇格の前に、順にキューへ確定させる）。最後に鳴らしている曲はpreviewedFileId。
+  private chainedFileIds: string[] = [];
+  // 引き継いだ次の曲の再生開始を待っている間（その間はランプを早めに終えない）。
+  private chainPending = false;
+  // 引き継いだ曲の再生開始の結果（鳴り始めたらtrue、鳴らせず諦めたらfalse）。ランプが先に終わっても、
+  // これが決まるまで確定・昇格しない（開始待ちの曲を主役にしない）
+  private chainStart: Promise<boolean> | null = null;
 
   constructor(
     private readonly player: CrossfadeDualPlayerLike,
@@ -493,6 +503,9 @@ export class CrossfadeOrchestrator {
   // ChatGPTレビュー指摘：P1）。
   private discardPreview(): void {
     if (this.previewedStreamId !== null) this.options.onPreviewDiscarded?.(this.previewedStreamId);
+    this.chainedFileIds = [];
+    this.chainPending = false;
+    this.chainStart = null;
     this.preparing = false;
     this.previewReady = false;
     this.previewedFileId = null;
@@ -617,18 +630,91 @@ export class CrossfadeOrchestrator {
     // ランプすると、退場側がランプの途中で終わってしまう（残りのランプは無音の退場側を相手にした空ランプになる）。
     const remainingMs = remainingMsUntilEnd(activeAudio.duration, activeAudio.currentTime) ?? 0;
     const rampDurationMs = activeAudio.ended ? 0 : Math.min(this.durationMsActive, remainingMs);
+    this.chainedFileIds = [];
+    this.chainPending = false;
+    this.chainStart = null;
     await runCrossfade(activeAudio, inactiveAudio, rampDurationMs, {
       isCancelled: () => this.generation !== myGeneration,
-      // 次の曲（入場側）自体がクロスフェード長より短く、ランプ完了前に自然終了した場合。
-      shouldFinishEarly: () => inactiveAudio.ended,
+      // 次の曲（入場側）自体がクロスフェード長より短く、ランプ完了前に自然終了した場合。さらに次の曲があれば、
+      // 同じ要素でその曲を鳴らし始め、重なりを引き継ぐ（ランプは止めない。R16②）。無ければ従来どおり早めに終える。
+      shouldFinishEarly: () => this.shouldFinishRampEarly(inactiveAudio, myGeneration),
       steps: this.options.steps,
       wait: this.options.wait,
     });
     if (this.generation !== myGeneration) return;
-    await this.commit(nextFileId, myGeneration);
+    // 引き継いだ曲がまだ鳴り始めていなければ、その結果を待ってから確定・昇格する。鳴らせなかった場合は
+    // startChain()の失敗処理が（まだ昇格していない退場側の状態で）諦め・自然送りまで済ませている
+    if (this.chainStart && !(await this.chainStart)) return;
+    if (this.generation !== myGeneration) return;
+    await this.commit(this.previewedFileId ?? nextFileId, myGeneration);
+  }
+
+  // ランプの各段階で呼ぶ。入場側が終わったとき、次の曲へ引き継げればランプを続け（false）、引き継げなければ
+  // 従来どおり完了値へ進めて終える（true）。
+  private shouldFinishRampEarly(inactiveAudio: CrossfadeAudioElement, myGeneration: number): boolean {
+    if (this.chainPending) return false; // 引き継いだ曲の再生開始待ち（前の曲のendedが残っている）
+    if (!inactiveAudio.ended) return false;
+    const ended = this.previewedFileId;
+    const next = ended ? this.queue.peekFileIdAfter(ended) : null;
+    if (!ended || !next || next === ended) return true;
+    this.startChain(ended, next, myGeneration);
+    return false;
+  }
+
+  // 入場側の曲（[ended]）が終わった：同じ（非アクティブの）要素で[next]を鳴らし始める。音量はランプが書き続けるので、
+  // 途中の音量から上がっていく。先に終わった曲は、昇格の前に順にキューへ確定させる。
+  private startChain(ended: string, next: string, myGeneration: number): void {
+    // 終わった曲のストリームは昇格しない：その継続は無効にする（遅れて届く401で認証の通知を出さない）
+    if (this.previewedStreamId !== null) this.options.onPreviewDiscarded?.(this.previewedStreamId);
+    this.chainedFileIds.push(ended);
+    this.previewedFileId = next;
+    this.previewedStreamId = null;
+    this.chainPending = true;
+    const withTimeout = this.options.withTimeout ?? defaultWithTimeoutFn;
+    this.chainStart = withTimeout(
+      this.player.inactiveController().play(next, undefined, {
+        onStreamIdAllocated: (streamId) => {
+          if (this.generation !== myGeneration) return;
+          this.previewedStreamId = streamId;
+          this.options.onPreviewStreamAllocated?.(next, streamId);
+        },
+      }),
+      this.options.previewStartTimeoutMs ?? CROSSFADE_PREVIEW_START_TIMEOUT_MS,
+      "クロスフェードの引き継ぎ再生がタイムアウトしました"
+    ).then(
+      () => {
+        if (this.generation !== myGeneration) return false;
+        this.chainPending = false;
+        return true;
+      },
+      () => {
+        // 引き継いだ曲を鳴らせなかった：このクロスフェードを諦める（ランプを止め、退場側の音量を戻す）。
+        // 退場側が既に終わっていれば、通常の自然終了フローへ委ねる。昇格はこの結果を待つので、
+        // ここでの「退場側」は必ずまだ主役のまま（開始待ちの曲を主役にしてから失敗することはない）
+        if (this.generation !== myGeneration) return false;
+        this.generation += 1;
+        this.abandonRamp(this.player.activeAudioElement().ended);
+        return false;
+      }
+    );
   }
 
   private async commit(nextFileId: string, myGeneration: number): Promise<void> {
+    // 重なりを引き継いでいたら（R16②）、先に終わった曲を順にキューへ確定させてから、最後の曲を昇格させる。
+    // それぞれの直前に「次の曲」が変わっていないか確かめる（beginRamp()冒頭の確認と同じ理由）
+    for (const fileId of this.chainedFileIds) {
+      if (this.queue.peekNextFileId() !== fileId) {
+        this.abandonRamp(this.player.activeAudioElement().ended);
+        return;
+      }
+      const committed = await this.queue.commitPreparedFile(fileId);
+      if (this.generation !== myGeneration) return;
+      if (!committed) {
+        this.abandonRamp(this.player.activeAudioElement().ended);
+        return;
+      }
+    }
+    this.chainedFileIds = [];
     // ランプ中にも「次の曲」が変わりうる（beginRamp()冒頭の確認と同じ理由）。コミットの直前に
     // 再確認し、食い違えば昇格させず諦める（abandonRamp()がランプで下げた退場側の音量を復元し、
     // 先読みを破棄する）。peekNextFileId()は同期のため、この確認とcommitPreparedFile()の間に

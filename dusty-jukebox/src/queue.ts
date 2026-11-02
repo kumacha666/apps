@@ -175,13 +175,20 @@ export class PlaybackQueue {
   // クロスフェード向け：次に再生される曲のfileId（無ければnull）。next()と同じ探索ロジックだが
   // 状態を変更しない読み取り専用の先読み。
   private findNext(): Song | undefined {
-    const currentIndex = this.currentFileId === null ? -1 : this.songs.findIndex((song) => song.fileId === this.currentFileId);
+    return this.findNextAfter(this.currentFileId);
+  }
+  private findNextAfter(fileId: string | null): Song | undefined {
+    const currentIndex = fileId === null ? -1 : this.songs.findIndex((song) => song.fileId === fileId);
     const next = this.songs.find((song, index) => index > currentIndex && !this.isExcluded(song.fileId));
     if (next || this.repeatMode() !== "all" || currentIndex < 0) return next;
     return this.songs.find((song, index) => index <= currentIndex && !this.isExcluded(song.fileId));
   }
   peekNextFileId(): string | null {
     return this.findNext()?.fileId ?? null;
+  }
+  // クロスフェードの引き継ぎ向け（R16②）：[fileId]の曲の次に再生される曲（無ければnull）。状態は変えない。
+  peekFileIdAfter(fileId: string): string | null {
+    return this.findNextAfter(fileId)?.fileId ?? null;
   }
   peekAdvanceTarget(): string | null {
     if (this.isSingleRepeat() && this.currentFileId !== null && !this.isExcluded(this.currentFileId)) {
