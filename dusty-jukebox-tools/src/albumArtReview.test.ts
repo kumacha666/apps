@@ -22,6 +22,7 @@ const rec = (album: string, artist: string, source: AlbumArtRecord["source"], ex
   sourceId: "",
   checkedFileId: "",
   updatedAt: "",
+  match: "",
   ...extra,
 });
 
@@ -42,21 +43,46 @@ test("recordsForView：表示の種類ごとに絞り、アーティスト→ア
   expect(recordsForView(records, "all").map((r) => r.album)).toEqual(["D", "A", "C", "E", "F", "B"]);
 });
 
+test("recordsForView：AIが探した表紙は、どう見つけたか（確からしさ）で絞れる。自動・手で選んだものとは分ける", () => {
+  const records = [
+    rec("Auto", "A", "itunes"),
+    rec("Exact", "A", "deezer", { match: "ai-exact" }),
+    rec("Variant", "A", "itunes", { match: "ai-variant" }),
+    rec("Close", "A", "musicbrainz", { match: "ai-close" }),
+    rec("Guess", "A", "deezer", { match: "ai-guess" }),
+    rec("Manual", "A", "musicbrainz", { match: "manual" }),
+    // 外した表紙は、AIが探したものでも外したアルバムの方に出す
+    rec("Gone", "A", "rejected"),
+  ];
+  const albums = (view: Parameters<typeof recordsForView>[1]) => recordsForView(records, view).map((r) => r.album);
+  expect(albums("web")).toEqual(["Auto"]);
+  expect(albums("ai")).toEqual(["Close", "Exact", "Guess", "Variant"]);
+  expect(albums("ai-exact")).toEqual(["Exact"]);
+  expect(albums("ai-variant")).toEqual(["Variant"]);
+  expect(albums("ai-close")).toEqual(["Close"]);
+  expect(albums("ai-guess")).toEqual(["Guess"]);
+  expect(albums("manual")).toEqual(["Manual"]);
+  expect(albums("rejected")).toEqual(["Gone"]);
+});
+
 describe("記録の書き換え", () => {
   test("外す：画像と取得元を消し、rejectedにする（埋め込みの有無・キーはそのまま）", () => {
     const r = rec("A", "Alpha", "itunes", { sourceId: "42" });
-    expect(rejectedRecord(r, "now")).toEqual({ ...r, artFileId: "", source: "rejected", sourceId: "", updatedAt: "now" });
+    expect(rejectedRecord(r, "now")).toEqual({ ...r, artFileId: "", source: "rejected", sourceId: "", updatedAt: "now", match: "" });
+    // AIが探した表紙を外したら、どう見つけたかも消す（外したアルバムとして扱う）
+    expect(rejectedRecord({ ...r, match: "ai-guess" }, "now").match).toBe("");
   });
   test("これにする：選んだ候補の画像・取得元に差し替える", () => {
     const r = rec("D", "", "notfound");
     const chosen = chosenRecord(r, { source: "musicbrainz", sourceId: "rg9", imageUrl: "x" }, "img-new", "now");
-    expect(chosen).toEqual({ ...r, artFileId: "img-new", source: "musicbrainz", sourceId: "rg9", updatedAt: "now" });
+    expect(chosen).toEqual({ ...r, artFileId: "img-new", source: "musicbrainz", sourceId: "rg9", updatedAt: "now", match: "manual" });
   });
 });
 
 test("sourcePageUrl：Webから補完したものだけ取得元のページ", () => {
   expect(sourcePageUrl({ source: "musicbrainz", sourceId: "rg1" })).toBe("https://musicbrainz.org/release-group/rg1");
   expect(sourcePageUrl({ source: "itunes", sourceId: "42" })).toBe("https://music.apple.com/jp/album/42");
+  expect(sourcePageUrl({ source: "deezer", sourceId: "7" })).toBe("https://www.deezer.com/album/7");
   expect(sourcePageUrl({ source: "embedded", sourceId: "" })).toBeNull();
   expect(sourcePageUrl({ source: "itunes", sourceId: "" })).toBeNull();
 });

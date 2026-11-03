@@ -16,6 +16,8 @@ export type MockOptions = {
   folderRows?: string[][];
   /** アルバムアート：albumArtタブの最初の中身（ヘッダー行を含む）。 */
   albumArtRows?: (string | number)[][];
+  /** アルバムアート：AIが探した候補のタブ（albumArtCandidates、ヘッダー行を含む）。 */
+  candidateRows?: (string | number)[][];
 };
 
 // ID3v2.3のAPICフレーム（表紙、1×1のPNG）＋MPEGフレーム3つの小さなMP3（本体dusty-jukeboxのe2e/google-mocks.tsと同じ）。
@@ -95,7 +97,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
 
     // アルバムアート：タブの一覧・albumArtタブの作成と読み書き・foldersタブ
     if (url.includes("?fields=sheets.properties.title")) {
-      const titles = ["index", ...(options.folderRows ? ["folders"] : []), ...(albumArtRows ? ["albumArt"] : [])];
+      const titles = ["index", ...(options.folderRows ? ["folders"] : []), ...(albumArtRows ? ["albumArt"] : []), ...(options.candidateRows ? ["albumArtCandidates"] : [])];
       return json(route, { sheets: titles.map((title) => ({ properties: { title } })) });
     }
     if (url.endsWith(":batchUpdate") && !url.includes("values:batchUpdate") && method === "POST") {
@@ -103,6 +105,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       return json(route, {});
     }
     if (url.includes("values/'folders'!")) return json(route, { values: options.folderRows ?? [] });
+    if (url.includes("values/'albumArtCandidates'!")) return json(route, { values: options.candidateRows ?? [] });
     if (url.includes("values/'albumArt'!")) {
       const rows = albumArtRows ?? [];
       if (url.includes(":append")) {
@@ -210,7 +213,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   });
 
   // アルバムアート：Webの検索（MusicBrainz・iTunes）と画像。"Found"という名前のアルバムだけMusicBrainzに表紙がある
-  await context.route(/https:\/\/(musicbrainz\.org|itunes\.apple\.com|coverartarchive\.org)\/.*/, async (route) => {
+  await context.route(/https:\/\/(musicbrainz\.org|itunes\.apple\.com|coverartarchive\.org|cdn-images\.dzcdn\.net)\/.*/, async (route) => {
     const url = decodeURIComponent(route.request().url());
     webRequests.push(url);
     const cors = { "Access-Control-Allow-Origin": "*" };
@@ -229,6 +232,8 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
         : [];
       return route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify({ results }) });
     }
+    // AIが探した候補の画像：名前に「missing」を含むものは無い
+    if (url.includes("missing")) return route.fulfill({ status: 404, headers: cors, body: "" });
     return route.fulfill({ status: 200, contentType: "image/png", headers: cors, body: COVER_PNG });
   });
 

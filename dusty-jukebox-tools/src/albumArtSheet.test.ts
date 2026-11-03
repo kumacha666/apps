@@ -3,6 +3,7 @@ import {
   ALBUM_ART_SHEET_HEADER,
   albumArtKey,
   albumArtRow,
+  isLegacyAlbumArtHeader,
   isSettled,
   isValidAlbumArtHeader,
   parseAlbumArtRows,
@@ -20,6 +21,7 @@ const record = (fields: Partial<AlbumArtRecord>): AlbumArtRecord => ({
   sourceId: "",
   checkedFileId: "",
   updatedAt: "",
+  match: "",
   ...fields,
 });
 
@@ -34,6 +36,23 @@ describe("albumArtタブ", () => {
   test("知らない値は安全側に読む（sourceはerror＝やり直す、embeddedは空）", () => {
     const parsed = parseAlbumArtRows([["f", "A", "", "maybe", "", "unknown"]]);
     expect(parsed.get(albumArtKey("f", "A"))?.record).toMatchObject({ embedded: "", source: "error" });
+  });
+
+  test("どう見つけたか（match）を読み書きし、知らない値は空（自動で集めた）として読む", () => {
+    const r = record({ albumFolderId: "f1", album: "Blue", artFileId: "img", source: "deezer", sourceId: "42", match: "ai-variant" });
+    expect(albumArtRow(r)).toHaveLength(ALBUM_ART_SHEET_HEADER.length);
+    expect(parseAlbumArtRows([albumArtRow(r)]).get(albumArtKey("f1", "Blue"))?.record).toEqual(r);
+    expect(parseAlbumArtRows([[...albumArtRow(r).slice(0, 9), "maybe"]]).get(albumArtKey("f1", "Blue"))?.record.match).toBe("");
+    // match列を足す前の9列の行は、自動で集めたもの
+    expect(parseAlbumArtRows([albumArtRow(r).slice(0, 9)]).get(albumArtKey("f1", "Blue"))?.record.match).toBe("");
+  });
+
+  test("match列を足す前の見出し（9列）は、見出しを足して使う。それ以外の見出しは別の用途のタブ", () => {
+    const legacy = ALBUM_ART_SHEET_HEADER.slice(0, 9);
+    expect(isLegacyAlbumArtHeader(legacy)).toBe(true);
+    expect(isValidAlbumArtHeader(legacy)).toBe(false);
+    expect(isLegacyAlbumArtHeader([...legacy, "memo"])).toBe(false);
+    expect(isLegacyAlbumArtHeader(["albumFolderId", "album"])).toBe(false);
   });
 
   test("ヘッダーの確認（右に列が増えていてもよい）", () => {
@@ -51,6 +70,7 @@ describe("albumArtタブ", () => {
       embedded: 1,
       musicbrainz: 0,
       itunes: 2,
+      deezer: 0,
       notfound: 0,
       error: 0,
       rejected: 0,
