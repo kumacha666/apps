@@ -378,3 +378,37 @@ test("アルバムアートの確認：記録を書けたか分からない（�
   await page.waitForTimeout(300);
   expect(mocks.driveTrashed).toEqual([]);
 });
+
+test("アルバムアート：見つからなかったアルバムだけを、探し方を広げてもう一度探す（曲のファイルは読み直さない）", async ({ page, context }) => {
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    rows: [
+      makeRow({ fileId: "s1", album: "夏の思い出 [Disc 1]", artist: "ケツメイシ", parentId: "p-s", trackNumber: "1" }),
+      makeRow({ fileId: "n1", album: "Nowhere", artist: "Nobody", parentId: "p-n", trackNumber: "1" }),
+      makeRow({ fileId: "r1", album: "Rejected", artist: "Band", parentId: "p-r", trackNumber: "1" }),
+    ],
+    albumArtRows: [
+      ART_HEADER,
+      ["p-s", "夏の思い出 [Disc 1]", "ケツメイシ", "no", "", "notfound", "", "s1", "u1"],
+      ["p-n", "Nowhere", "Nobody", "no", "", "notfound", "", "n1", "u1"],
+      ["p-r", "Rejected", "Band", "no", "", "rejected", "", "r1", "u1"],
+    ],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  // ふつうの「表紙を集める」では、見つからなかったアルバムは調べ直さない
+  await page.getByRole("button", { name: "表紙を集める" }).click();
+  await expect(page.locator("#status")).toContainText("集め終わっています");
+  expect(mocks.webRequests).toEqual([]);
+
+  await page.getByRole("button", { name: "見つからなかったアルバムをもう一度探す" }).click();
+  await expect(page.locator("#status")).toContainText("見つからなかった2枚を探し直し、1枚の表紙が見つかりました", { timeout: 20_000 });
+  const byAlbum = Object.fromEntries(mocks.getAlbumArtRows()!.slice(1).map((r) => [r[1], r]));
+  // ディスクの印を外して探し、iTunesの「 - Single」も同じアルバムとみなす
+  expect(byAlbum["夏の思い出 [Disc 1]"].slice(3, 8)).toEqual(["no", "art-1", "itunes", "55", "s1"]);
+  expect(byAlbum["Nowhere"][5]).toBe("notfound");
+  expect(byAlbum["Rejected"][5]).toBe("rejected");
+  expect(mocks.webRequests.some((u) => u.includes('releasegroup:"夏の思い出"'))).toBe(true);
+  expect(mocks.webRequests.some((u) => u.includes("Rejected"))).toBe(false);
+  expect(mocks.driveFileRequests).toEqual([]);
+});

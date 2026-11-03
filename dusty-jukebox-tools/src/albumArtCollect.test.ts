@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import type { ArtAlbum } from "./albumArtAlbums";
 import { albumArtKey, type AlbumArtRecord } from "./albumArtSheet";
 import { WebSearchError, type ArtCandidate } from "./albumArtSearch";
-import { albumsToCollect, collectAlbumArt, ImageFetchError, planAlbumArtWrites, runCollection, type CollectDeps } from "./albumArtCollect";
+import { albumsToCollect, collectAlbumArt, ImageFetchError, knownNoEmbeddedOf, planAlbumArtWrites, runCollection, searchArtist, type CollectDeps } from "./albumArtCollect";
 import type { CoverArtResult } from "./coverArt";
 
 const album = (fields: Partial<ArtAlbum> = {}): ArtAlbum => ({
@@ -207,5 +207,52 @@ describe("runCollection", () => {
       })
     ).rejects.toThrow("401");
     expect(flushed).toEqual(["A", "B"]);
+  });
+});
+
+describe("見つからなかったアルバムをもう一度探す", () => {
+  test("searchArtist：サウンドトラックはアルバム名だけ、オムニバスはVarious Artists、不明は探さない", () => {
+    expect(searchArtist(album({ album: "Final Fantasy VIII Original Soundtrack", artist: "浜口史郎" }))).toBe("");
+    expect(searchArtist(album({ album: "Parasite Eve OST", artist: "Yoko Shimomura" }))).toBe("");
+    expect(searchArtist(album({ album: "428 -封鎖された渋谷で", artist: "Soundtrack" }))).toBe("");
+    expect(searchArtist(album({ album: "ストリートファイター IV オリジナル・サウンドトラック", artist: "", shelf: "unknown" }))).toBe("");
+    expect(searchArtist(album({ album: "WILL", artist: "Various Artists" }))).toBe("Various Artists");
+    expect(searchArtist(album({ album: "Mix", artist: "", shelf: "various" }))).toBe("Various Artists");
+    expect(searchArtist(album({ album: "ゲイジツ野郎", artist: "", shelf: "unknown" }))).toBeNull();
+    expect(searchArtist(album({ album: "Ghost", artist: "Band" }))).toBe("Band");
+  });
+
+  test("検索にはディスクの印を外したアルバム名を使う", async () => {
+    const { d, searched } = deps();
+    await collectAlbumArt(album({ album: "Blue [Disc 2]" }), d);
+    expect(searched).toEqual(["mb:Blue:Band", "it:Blue:Band"]);
+  });
+
+  test("albumsToCollect：retryNotFoundなら、見つからなかったアルバムも（外したアルバム・集め終わったアルバムは入れない）", () => {
+    const a = album({ album: "A" });
+    const b = album({ album: "B" });
+    const c = album({ album: "C" });
+    const existing = new Map([
+      [albumArtKey("p1", "A"), { rowNumber: 2, record: rec(a, "notfound") }],
+      [albumArtKey("p1", "B"), { rowNumber: 3, record: rec(b, "rejected") }],
+      [albumArtKey("p1", "C"), { rowNumber: 4, record: rec(c, "itunes") }],
+    ]);
+    expect(albumsToCollect([a, b, c], existing).map((x) => x.album)).toEqual([]);
+    expect(albumsToCollect([a, b, c], existing, { retryNotFound: true }).map((x) => x.album)).toEqual(["A"]);
+  });
+
+  test("前回、曲に表紙が無いと確かめてあれば、曲を読み直さずにWebで探す", async () => {
+    const reads: string[] = [];
+    const { d, searched } = deps({
+      mbResult: [mb],
+      extractEmbedded: async (fileId) => {
+        reads.push(fileId);
+        return { kind: "none" };
+      },
+    });
+    const known = knownNoEmbeddedOf(new Map([[albumArtKey("p1", "Blue"), { rowNumber: 2, record: { ...rec(album(), "notfound"), embedded: "no", checkedFileId: "t1" } }]]));
+    expect(await collectAlbumArt(album(), d, known)).toMatchObject({ embedded: "no", source: "musicbrainz", checkedFileId: "t1" });
+    expect(reads).toEqual([]);
+    expect(searched).toEqual(["mb:Blue:Band"]);
   });
 });

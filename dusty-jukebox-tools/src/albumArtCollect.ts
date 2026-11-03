@@ -7,7 +7,7 @@
 import type { ArtAlbum } from "./albumArtAlbums";
 import { coverCandidateTracks } from "./albumArtAlbums";
 import { albumArtKey, albumArtRow, isSettled, type AlbumArtRecord } from "./albumArtSheet";
-import { WebSearchError, type ArtCandidate, type WebArtSearch } from "./albumArtSearch";
+import { normalizeForMatch, searchTitle, WebSearchError, type ArtCandidate, type WebArtSearch } from "./albumArtSearch";
 import type { CoverArtResult } from "./coverArt";
 
 /** Webの画像が取れなかった（通信の失敗など）。そのアルバムはerrorにして次回やり直す。 */
@@ -25,19 +25,37 @@ export interface CollectDeps {
   now(): string;
 }
 
-/** Webで探すときのアーティスト名（オムニバスは"Various Artists"、不明なら探さない＝null）。 */
+// サウンドトラックの作品名（作曲者の表記が取得元とタグで揃わないことが多いので、アーティストで絞らない）。
+const SOUNDTRACK_TITLE = /soundtrack|\bo\.?s\.?[tv]\b|サウンドトラック|サントラ/i;
+// アーティスト名の代わりに入っている、作品の種類の名前（これで絞ると何も見つからない）。
+const SOUNDTRACK_ARTISTS = new Set(
+  ["Soundtrack", "サウンドトラック", "Original Soundtrack", "Original Game Soundtrack", "Video Game Soundtrack", "Game Soundtrack", "OST", "Score"].map(normalizeForMatch)
+);
+const VARIOUS_ARTISTS = new Set(["Various Artists", "Various", "VA", "V.A.", "オムニバス", "ヴァリアス・アーティスト"].map(normalizeForMatch));
+
+/**
+ * Webで探すときのアーティスト名。空文字は「アルバム名だけで探し、アーティストは比べない」。nullは探さない。
+ * - サウンドトラック（作品名で判断、またはアーティスト欄が「Soundtrack」等）：アルバム名だけで探す
+ * - オムニバス（アーティスト欄が「Various Artists」等、または曲ごとにアーティストが違う）："Various Artists"
+ * - アーティストが分からない（サウンドトラックでもない）：探さない（アルバム名だけでは取り違えが多い）
+ */
 export function searchArtist(album: ArtAlbum): string | null {
+  const name = normalizeForMatch(album.artist);
+  if (SOUNDTRACK_TITLE.test(album.album) || (album.shelf === "artist" && SOUNDTRACK_ARTISTS.has(name))) return "";
+  if (album.shelf === "various" || (album.shelf === "artist" && VARIOUS_ARTISTS.has(name))) return "Various Artists";
   if (album.shelf === "artist") return album.artist;
-  if (album.shelf === "various") return "Various Artists";
   return null;
 }
+
+/** 前回、曲のファイルに表紙が無いと確かめてあるアルバム（もう一度探すときは曲を読み直さない）。値は確かめた曲。 */
+export type KnownNoEmbedded = ReadonlyMap<string, string>;
 
 /** Webの検索・画像の取得の失敗（そのアルバムだけerrorにする）か。 */
 export function isRetryLaterError(err: unknown): boolean {
   return err instanceof ImageFetchError || err instanceof WebSearchError;
 }
 
-export async function collectAlbumArt(album: ArtAlbum, deps: CollectDeps): Promise<AlbumArtRecord> {
+export async function collectAlbumArt(album: ArtAlbum, deps: CollectDeps, knownNoEmbedded?: KnownNoEmbedded): Promise<AlbumArtRecord> {
   const record = (fields: Partial<AlbumArtRecord> & Pick<AlbumArtRecord, "source">): AlbumArtRecord => ({
     albumFolderId: album.albumFolderId,
     album: album.album,
@@ -50,10 +68,11 @@ export async function collectAlbumArt(album: ArtAlbum, deps: CollectDeps): Promi
     ...fields,
   });
 
-  // 1. 埋め込み画像
+  // 1. 埋め込み画像（前回、無いと確かめてあれば読み直さない）
   let readFailed = false;
-  let checkedFileId = "";
-  for (const track of coverCandidateTracks(album)) {
+  const known = knownNoEmbedded?.get(albumArtKey(album.albumFolderId, album.album));
+  let checkedFileId = known ?? "";
+  for (const track of known === undefined ? coverCandidateTracks(album) : []) {
     const result = await deps.extractEmbedded(track.fileId);
     if (result.kind === "failed") {
       readFailed = true;
@@ -76,7 +95,7 @@ export async function collectAlbumArt(album: ArtAlbum, deps: CollectDeps): Promi
   if (artist === null) return record({ embedded: "no", source: "notfound", checkedFileId });
   try {
     for (const find of [deps.search.musicBrainz, deps.search.iTunes]) {
-      const candidates: ArtCandidate[] = await find.call(deps.search, album.album, artist);
+      const candidates: ArtCandidate[] = await find.call(deps.search, searchTitle(album.album), artist);
       for (const candidate of candidates) {
         const image = await deps.fetchImage(candidate.imageUrl);
         if (!image) continue;
@@ -93,9 +112,26 @@ export async function collectAlbumArt(album: ArtAlbum, deps: CollectDeps): Promi
   return record({ embedded: "no", source: "notfound", checkedFileId });
 }
 
-/** これから集めるアルバム（記録が無い、または前回errorだったもの）。 */
-export function albumsToCollect(albums: readonly ArtAlbum[], existing: ReadonlyMap<string, { record: AlbumArtRecord }>): ArtAlbum[] {
-  return albums.filter((a) => !isSettled(existing.get(albumArtKey(a.albumFolderId, a.album))?.record));
+/**
+ * これから集めるアルバム（記録が無い、または前回errorだったもの）。
+ * [retryNotFound]なら、前回Webで見つからなかったアルバムも（探し方を直したときに、見つからなかった分だけ探し直す）。
+ */
+export function albumsToCollect(
+  albums: readonly ArtAlbum[],
+  existing: ReadonlyMap<string, { record: AlbumArtRecord }>,
+  options: { retryNotFound?: boolean } = {}
+): ArtAlbum[] {
+  return albums.filter((a) => {
+    const record = existing.get(albumArtKey(a.albumFolderId, a.album))?.record;
+    return !isSettled(record) || (options.retryNotFound === true && record?.source === "notfound");
+  });
+}
+
+/** 前回、曲に表紙が無いと確かめてあるアルバム（Webで見つからなかったもの）。 */
+export function knownNoEmbeddedOf(existing: ReadonlyMap<string, { record: AlbumArtRecord }>): Map<string, string> {
+  const known = new Map<string, string>();
+  for (const [key, { record }] of existing) if (record.embedded === "no" && record.source === "notfound") known.set(key, record.checkedFileId);
+  return known;
 }
 
 /** 書き込む内容：記録のあるアルバムはその行を上書き、無ければ追記。 */
@@ -119,6 +155,7 @@ export interface RunCollectionOptions {
   /** まとめて書き込む（この件数ごと、と最後に）。 */
   flush(records: AlbumArtRecord[]): Promise<void>;
   flushEvery?: number;
+  knownNoEmbedded?: KnownNoEmbedded;
   concurrency?: number;
   shouldStop(): boolean;
   onProgress(done: number, total: number, last: AlbumArtRecord): void;
@@ -146,7 +183,7 @@ export async function runCollection(options: RunCollectionOptions): Promise<{ do
       const album = albums[index];
       if (!album) return;
       try {
-        const record = await collectAlbumArt(album, deps);
+        const record = await collectAlbumArt(album, deps, options.knownNoEmbedded);
         pending.push(record);
         done += 1;
         onProgress(done, albums.length, record);
