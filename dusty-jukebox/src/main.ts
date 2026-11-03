@@ -45,6 +45,7 @@ const QUEUE_SORT_FIELD_LABELS: Record<QueueSortField, string> = {
 };
 import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState } from "./mediaSession";
 import { albumArtKeyOfGroup, albumArtKeysByFileId, albumInitial, albumTileHue, NowArtwork } from "./albumArt";
+import { albumOpenKey, albumSummary, albumTracks } from "./albumDetail";
 import { createIndexedDbAlbumArtStore, makeThumbnailDataUrl } from "./albumArtBrowser";
 import { extractCoverArt } from "./coverArt";
 import { formatSeekTime, isSeekableDuration } from "./seekBar";
@@ -305,7 +306,7 @@ const nowArtwork = new NowArtwork({
     if (song && url) updateNowPlayingMetadata(navigator.mediaSession, window.MediaMetadata, song, url);
   },
   onSaved: (key, url) => {
-    for (const tile of document.querySelectorAll<HTMLElement>("#album-list .art-tile")) {
+    for (const tile of document.querySelectorAll<HTMLElement>("#album-list .art-tile, #album-detail-art")) {
       if (tile.dataset.artKey === key) fillArtTile(tile, tile.dataset.album ?? "", url);
     }
   },
@@ -569,10 +570,30 @@ function render(): void {
       </section>
 
       <section id="panel-albums" class="panel" role="tabpanel" aria-labelledby="tab-albums" hidden>
-        <div class="sec-head"><h2>アルバム</h2></div>
-        <label class="field"><span>アルバム検索</span><input id="album-search" type="search" placeholder="アルバム名・アーティスト名で検索" /></label>
-        <label class="field"><span>並び順</span><select id="album-sort">${ALBUM_RACK_SORTS.map((sort) => `<option value="${sort}">${ALBUM_RACK_SORT_LABELS[sort]}</option>`).join("")}</select></label>
-        <ul id="album-list" class="result-list"></ul>
+        <div id="album-browse" class="panel-part">
+          <div class="sec-head"><h2>アルバム</h2></div>
+          <label class="field"><span>アルバム検索</span><input id="album-search" type="search" placeholder="アルバム名・アーティスト名で検索" /></label>
+          <label class="field"><span>並び順</span><select id="album-sort">${ALBUM_RACK_SORTS.map((sort) => `<option value="${sort}">${ALBUM_RACK_SORT_LABELS[sort]}</option>`).join("")}</select></label>
+          <ul id="album-list" class="result-list"></ul>
+        </div>
+        <div id="album-detail" class="panel-part" hidden>
+          <div class="sec-head detail-head">
+            <button id="album-detail-back" class="icon-btn" type="button" aria-label="アルバム一覧へ戻る" title="アルバム一覧へ戻る">${iconSvg("back")}</button>
+            <h2>アルバム</h2>
+          </div>
+          <div class="album-detail-top">
+            <div id="album-detail-art" class="art-tile detail-art" aria-hidden="true"></div>
+            <div class="album-detail-info">
+              <p id="album-detail-title" class="album-detail-title"></p>
+              <p id="album-detail-summary" class="album-detail-summary"></p>
+              <div class="btn-row">
+                <button id="album-detail-play" type="button">${iconSvg("play")}<span>再生</span></button>
+                <button id="album-detail-append" class="ghost" type="button">再生リストの最後に追加</button>
+              </div>
+            </div>
+          </div>
+          <ul id="album-detail-tracks" class="result-list"></ul>
+        </div>
       </section>
 
       <section id="panel-playlists" class="panel" role="tabpanel" aria-labelledby="tab-playlists" hidden>
@@ -985,6 +1006,7 @@ function renderQueue(): void {
   // Bluetoothスピーカー・OSのロック画面に現在再生中の曲名・アーティスト（とアルバムアート）を表示する。
   updateNowPlayingMetadata(navigator.mediaSession, window.MediaMetadata, currentSong, nowArtwork.urlFor(currentSong?.fileId));
   renderSearchResults();
+  renderAlbumDetailTracks(); // アルバムの中身を開いていれば「追加済み」の表示を最新にする
 }
 // アーティスト/アルバム/作曲者/Genre欄のdatalistへ、索引から読み込んだ曲一覧に実際に
 // 存在する値だけを候補として反映する（開発体制#39④、スプレッドシートを見ないと何が
@@ -1048,18 +1070,15 @@ function renderAlbumGroups(groups: AlbumGroup[], query: string, sort: AlbumRackS
       if (artKey) tile.dataset.artKey = artKey;
       fillArtTile(tile, group.album, null);
       if (artKey) { if (albumArtObserver) albumArtObserver.observe(tile); else loadAlbumTile(tile); }
-      const main = document.createElement("div"); main.className = "row-main";
+      // アルバム名（行）をタップすると中身（トラック一覧）を開く。▶は従来どおり、このアルバムを再生する（R20）
+      const main = document.createElement("button"); main.type = "button"; main.className = "row-main album-open";
       main.append(...rowTextElements(group.album, showArtist ? displayShelf(group.albumArtist) : "", { count: `（${group.songs.length}曲）` }));
-      const button = iconButton("play", "このアルバムを再生", "fab");
-      button.addEventListener("click", () => {
-        if (!queue) return;
-        const songs = catalogSession.createQueue(() => group.songs);
-        if (!songs) { setStatus("スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから再生リストを作成してください。", true); return; }
-        queue.setList(songs); renderQueue(); setQueueNavEnabled(songs.length > 0);
-        activateTab("queue");
-        setStatus(`${group.album}の${songs.length}曲を再生リストに設定しました。`);
-        void handleQueuePlayback(() => queue?.playAt(0));
+      item.addEventListener("click", (event) => {
+        if ((event.target as Element | null)?.closest(".row-actions")) return;
+        openAlbumDetail(group);
       });
+      const button = iconButton("play", "このアルバムを再生", "fab");
+      button.addEventListener("click", () => playAlbumGroup(group));
       const actions = document.createElement("span"); actions.className = "row-actions"; actions.append(button);
       item.append(tile, main, actions); list.append(item);
   };
@@ -1072,6 +1091,115 @@ function renderAlbumGroups(groups: AlbumGroup[], query: string, sort: AlbumRackS
     heading.append(count); list.append(heading);
   }
 }
+// アルバムを再生する：再生リストをこのアルバムに置き換えて、1曲目から再生する（一覧の▶・中身の「再生」）。
+function playAlbumGroup(group: AlbumGroup): void {
+  if (!queue) return;
+  const songs = catalogSongsOrWarn(group.songs, "再生リストを作成");
+  if (!songs) return;
+  queue.setList(songs); renderQueue(); setQueueNavEnabled(songs.length > 0);
+  activateTab("queue");
+  setStatus(`${group.album}の${songs.length}曲を再生リストに設定しました。`);
+  void handleQueuePlayback(() => queue?.playAt(0));
+}
+// 読み込み済みの曲一覧がまだ有効なら、その曲を返す（スキャン等で無効になっていたら知らせてnull）。
+function catalogSongsOrWarn(songs: Song[], action: string): Song[] | null {
+  const valid = catalogSession.createQueue(() => songs);
+  if (!valid) setStatus(`スキャンにより索引が更新される可能性があるため、曲一覧を再読み込みしてから${action}してください。`, true);
+  return valid;
+}
+
+// アルバムの中身（トラック一覧、R20。Android版の AlbumDetailScreen と同じ）。アルバムのタブの中で、一覧と中身を
+// 切り替える。開いているアルバムは先頭の曲のfileIdで覚え、索引を読み直したら、その曲を含むアルバムを開き直す。
+let openAlbumKey: string | null = null;
+let albumBrowseScrollY = 0;
+function openedAlbumGroup(): AlbumGroup | undefined {
+  const key = openAlbumKey;
+  if (key === null) return undefined;
+  return loadedAlbumGroups.find((group) => group.songs.some((song) => song.fileId === key));
+}
+function openAlbumDetail(group: AlbumGroup): void {
+  const key = albumOpenKey(group);
+  if (key === null) return;
+  openAlbumKey = key;
+  albumBrowseScrollY = window.scrollY;
+  el<HTMLElement>("album-browse").hidden = true;
+  el<HTMLElement>("album-detail").hidden = false;
+  renderAlbumDetail();
+  // 一覧の下の方から開いても、中身の先頭が見えるようにする（上のタブは画面上部に貼り付いている）
+  const tabsHeight = document.querySelector<HTMLElement>(".tabs")?.offsetHeight ?? 0;
+  const top = el<HTMLElement>("panel-albums").getBoundingClientRect().top + window.scrollY - tabsHeight - 8;
+  if (window.scrollY > top) window.scrollTo(0, Math.max(0, top));
+  el<HTMLButtonElement>("album-detail-back").focus({ preventScroll: true });
+}
+function closeAlbumDetail(options: { restoreScroll?: boolean } = {}): void {
+  openAlbumKey = null;
+  el<HTMLElement>("album-detail").hidden = true;
+  el<HTMLElement>("album-browse").hidden = false;
+  el<HTMLUListElement>("album-detail-tracks").replaceChildren();
+  if (options.restoreScroll) window.scrollTo(0, albumBrowseScrollY);
+}
+// 中身の見出し（画像・アルバム名・補足）とトラック一覧を描き直す。索引を読み直したとき・開いたときに呼ぶ。
+function renderAlbumDetail(): void {
+  if (openAlbumKey === null) return;
+  const group = openedAlbumGroup();
+  if (!group) { closeAlbumDetail(); return; }
+  const tile = el<HTMLElement>("album-detail-art");
+  tile.dataset.album = group.album;
+  const artKey = albumArtKeyOfGroup(group);
+  if (artKey) tile.dataset.artKey = artKey; else delete tile.dataset.artKey;
+  fillArtTile(tile, group.album, null);
+  if (artKey) loadAlbumTile(tile);
+  el<HTMLParagraphElement>("album-detail-title").replaceChildren(marqueeText(document.createElement("span"), group.album));
+  el<HTMLParagraphElement>("album-detail-summary").textContent = albumSummary(group);
+  renderAlbumDetailTracks();
+}
+// トラック一覧だけを描き直す。renderQueue()の末尾からも呼ぶ（再生リストに入っているかの表示を最新にするため）。
+function renderAlbumDetailTracks(): void {
+  const list = el<HTMLUListElement>("album-detail-tracks");
+  const group = openAlbumKey === null ? undefined : openedAlbumGroup();
+  if (!group) { list.replaceChildren(); return; }
+  const inQueueIds = new Set<string>();
+  const excludedIds = new Set<string>();
+  for (const song of queue?.all() ?? []) {
+    inQueueIds.add(song.fileId);
+    if (queue?.isExcluded(song.fileId)) excludedIds.add(song.fileId);
+  }
+  list.replaceChildren();
+  for (const track of albumTracks(group)) {
+    const song = track.song;
+    const inQueue = inQueueIds.has(song.fileId);
+    const excluded = excludedIds.has(song.fileId);
+    const item = document.createElement("li"); item.className = "row track-row";
+    const number = document.createElement("span"); number.className = "track-no"; number.textContent = track.number;
+    const main = document.createElement("button"); main.type = "button"; main.className = "row-main";
+    if (song.folderPath) main.title = song.folderPath;
+    main.append(...rowTextElements(song.title, track.artist));
+    // 曲をタップすると、その曲を再生リストの最後に足す（再生は始めない。既に入っている曲は足さない）
+    const add = () => {
+      if (inQueue) {
+        setStatus(excluded
+          ? `「${song.title}」は再生リストで除外中です。再生するには再生リストでチェックを入れてください。`
+          : `「${song.title}」は再生リストに入っています。`);
+        return;
+      }
+      const songs = catalogSongsOrWarn([song], "再生リストに追加");
+      if (songs) addSongsToQueue(songs);
+    };
+    item.addEventListener("click", (event) => {
+      if ((event.target as Element | null)?.closest(".row-actions")) return;
+      add();
+    });
+    const addBtn = document.createElement("button"); addBtn.type = "button"; addBtn.className = "ghost sm";
+    addBtn.textContent = !inQueue ? "＋追加" : excluded ? "除外中" : "追加済み";
+    addBtn.disabled = inQueue;
+    addBtn.setAttribute("aria-label", !inQueue ? `「${song.title}」を再生リストに追加` : addBtn.textContent);
+    addBtn.addEventListener("click", add);
+    const actions = document.createElement("span"); actions.className = "row-actions"; actions.append(addBtn);
+    item.append(number, main, actions);
+    list.append(item);
+  }
+}
+
 function refreshAlbumGroups(): void {
   // 曲名のフリーワード検索は曲一覧専用。アルバム一覧には指定された項目別フィルタだけを適用する。
   const groups = filterAlbumGroupsBySongs(loadedAlbumGroups, { ...currentFilterValues(), query: undefined });
@@ -1477,6 +1605,7 @@ async function loadCatalog(): Promise<void> {
     loadedAlbumGroups = groupAlbumsForRack(annotateAlbumFolders(songs, folders));
     albumArtKeys = albumArtKeysByFileId(loadedAlbumGroups);
     refreshAlbumGroups();
+    renderAlbumDetail();
     renderFilterSuggestions(songs);
     el<HTMLButtonElement>("create-queue-btn").disabled = false;
     el<HTMLButtonElement>("search-btn").disabled = false;
@@ -3386,6 +3515,14 @@ function init(): void {
       refreshAlbumGroups();
     });
     el<HTMLSelectElement>("album-sort").addEventListener("change", refreshAlbumGroups);
+    el<HTMLButtonElement>("album-detail-back").addEventListener("click", () => closeAlbumDetail({ restoreScroll: true }));
+    el<HTMLButtonElement>("album-detail-play").addEventListener("click", () => { const group = openedAlbumGroup(); if (group) playAlbumGroup(group); });
+    el<HTMLButtonElement>("album-detail-append").addEventListener("click", () => {
+      const group = openedAlbumGroup();
+      if (!group) return;
+      const songs = catalogSongsOrWarn(group.songs, "再生リストに追加");
+      if (songs) addSongsToQueue(songs);
+    });
     // 絞り込み欄同士の連動（開発体制#43）：いずれかの欄が変わるたびに、他の欄の候補一覧を
     // 現在の絞り込み条件で絞り込み直す。年欄はtype=numberのため"input"に加え、スピナー
     // 操作やブラウザ差異を考慮し"change"でも拾う。
