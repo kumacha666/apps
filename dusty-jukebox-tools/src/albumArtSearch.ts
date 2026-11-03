@@ -9,9 +9,17 @@ export interface ArtCandidate {
   imageUrl: string;
 }
 
-/** 比べるための形：互換文字をそろえ（全角英数→半角等）、小文字にし、文字・数字以外を除く。 */
+/**
+ * 比べるための形：互換文字をそろえ（全角英数→半角等）、ラテン文字のアクセント記号を外し（Yûzô→Yuzo）、
+ * 小文字にし、文字・数字以外を除く。外すのはラテン文字用の結合記号（U+0300〜U+036F）だけで、濁点・半濁点は残す。
+ */
 export function normalizeForMatch(text: string): string {
-  return text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  return text
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
 // 末尾などの括弧の付記（(Remastered)・[Disc 1]・【初回盤】等）を除いた形。
@@ -19,15 +27,31 @@ function withoutBrackets(text: string): string {
   return text.normalize("NFKC").replace(/\([^)]*\)|\[[^\]]*\]|【[^】]*】|〔[^〕]*〕/g, " ");
 }
 
-/** アルバム名が同じか（そのまま、または括弧の付記を除いて一致）。 */
+// 何枚組のディスクの印（括弧の中の「Disc 2」「DISC 06 : …」、末尾の「, Disk 3」「- CD2」）と、盤の種類の付記（[初回盤]・(Deluxe Edition)等）。
+const DISC_IN_BRACKETS = /\s*[(\[【〔][^)\]】〕]*(?:disc|disk|cd|ディスク)\s*\d+[^)\]】〕]*[)\]】〕]/gi;
+const DISC_AT_END = /\s*[-:,~～]?\s*(?:disc|disk|cd|ディスク)\s*\d{1,2}\s*$/i;
+const EDITION_IN_BRACKETS = /\s*[(\[【〔][^)\]】〕]*(?:初回|通常|限定|盤|edition|remaster)[^)\]】〕]*[)\]】〕]/gi;
+
+/** 検索に使うアルバム名：ディスクの印と盤の種類の付記を外す（タグでは「… Disc 2」でも、取得元では1枚の作品として登録されているため）。 */
+export function searchTitle(album: string): string {
+  const cleaned = album.normalize("NFKC").replace(DISC_IN_BRACKETS, "").replace(EDITION_IN_BRACKETS, "").replace(DISC_AT_END, "").trim();
+  return cleaned || album.trim();
+}
+
+// iTunesの作品名の末尾に付く「 - Single」「 - EP」。
+const STORE_SUFFIX = /\s*-\s*(?:single|ep)\s*$/i;
+
+function titleForms(title: string, storeSide: boolean): Set<string> {
+  const forms = [title, withoutBrackets(title), searchTitle(title)];
+  if (storeSide) forms.push(...forms.map((f) => f.replace(STORE_SUFFIX, "")));
+  return new Set(forms.map(normalizeForMatch).filter((f) => f !== ""));
+}
+
+/** アルバム名が同じか（そのまま、括弧の付記・ディスクの印を除いて、または取得元の「 - Single」「 - EP」を除いて一致）。 */
 export function titleMatches(wanted: string, candidate: string): boolean {
-  const a = normalizeForMatch(wanted);
-  const b = normalizeForMatch(candidate);
-  if (a === "" || b === "") return false;
-  if (a === b) return true;
-  const a2 = normalizeForMatch(withoutBrackets(wanted));
-  const b2 = normalizeForMatch(withoutBrackets(candidate));
-  return a2 !== "" && a2 === b2;
+  const ours = titleForms(wanted, false);
+  for (const form of titleForms(candidate, true)) if (ours.has(form)) return true;
+  return false;
 }
 
 /** アーティストが同じか（片方がもう片方を含めばよい。"feat."・"&"で並んだ名義も拾うため）。探す側が空なら比べない。 */

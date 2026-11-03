@@ -58,7 +58,7 @@ import {
   type ReviewCandidate,
   type ReviewView,
 } from "./albumArtReview";
-import { albumsToCollect, planAlbumArtWrites, runCollection } from "./albumArtCollect";
+import { albumsToCollect, knownNoEmbeddedOf, planAlbumArtWrites, runCollection } from "./albumArtCollect";
 import { createWebArtSearch } from "./albumArtSearch";
 import {
   createArtUploader,
@@ -153,8 +153,8 @@ function render(): void {
       </section>
       <section class="section">
         <h2>アルバムアート</h2>
-        <p>アルバムごとの表紙を集めて、Googleドライブの「DustyJukebox アルバムアート」フォルダに小さな画像（512px）を置き、索引の「albumArt」タブに記録します。曲のファイルに表紙が埋め込まれていればそれを、無ければWeb（MusicBrainz・iTunes）で探したものを使います。音楽ファイルは書き換えません。途中で止めても、次回は続きから集めます（読めなかった・取れなかったアルバムはもう一度試します）。</p>
-        <div><button id="collect-art-btn" type="button" disabled>表紙を集める</button> <button id="stop-art-btn" type="button" disabled>止める</button></div>
+        <p>アルバムごとの表紙を集めて、Googleドライブの「DustyJukebox アルバムアート」フォルダに小さな画像（512px）を置き、索引の「albumArt」タブに記録します。曲のファイルに表紙が埋め込まれていればそれを、無ければWeb（MusicBrainz・iTunes）で探したものを使います。音楽ファイルは書き換えません。途中で止めても、次回は続きから集めます（読めなかった・取れなかったアルバムはもう一度試します）。「見つからなかったアルバムをもう一度探す」は、Webで見つからなかったアルバムだけを、探し方を広げて探し直します（ディスクの番号を外す、サウンドトラックはアルバム名だけで探す等）。</p>
+        <div class="art-review-bar"><button id="collect-art-btn" type="button" disabled>表紙を集める</button> <button id="retry-art-btn" type="button" class="secondary" disabled>見つからなかったアルバムをもう一度探す</button> <button id="stop-art-btn" type="button" disabled>止める</button></div>
         <p id="art-progress"></p>
         <div id="art-results"></div>
         <p>集めた表紙は「確認する」で一覧にできます。違うものは「外す」（表紙なしにし、次に集めるときも入れ直さない）か「別の候補」で選び直してください。見つからなかったアルバムも「別の候補」から探して入れられます。</p>
@@ -880,7 +880,8 @@ function renderArtResults(records: AlbumArtRecord[]): void {
   addList("読めなかった・取れなかったアルバム（次回もう一度試します）", records.filter((r) => r.source === "error"));
 }
 
-async function handleCollectArt(): Promise<void> {
+/** 表紙を集める。[retryNotFound]なら、前回Webで見つからなかったアルバムも探し直す（曲のファイルは読み直さない）。 */
+async function handleCollectArt(retryNotFound = false): Promise<void> {
   const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
   if (!spreadsheetId) {
     setStatus("索引スプレッドシートIDを入力してください", true);
@@ -891,9 +892,11 @@ async function handleCollectArt(): Promise<void> {
     return;
   }
   const collectBtn = el<HTMLButtonElement>("collect-art-btn");
+  const retryBtn = el<HTMLButtonElement>("retry-art-btn");
   const stopBtn = el<HTMLButtonElement>("stop-art-btn");
   const progress = el<HTMLParagraphElement>("art-progress");
   collectBtn.disabled = true;
+  retryBtn.disabled = true;
   stopArtRequested = false;
   try {
     const getToken = () => auth.ensureAccessToken();
@@ -906,16 +909,17 @@ async function handleCollectArt(): Promise<void> {
     await artIO.ensureTab();
     const existing = parseAlbumArtRows(await artIO.readRows());
     const albums = buildArtAlbums(indexRows, parseFolderRows(await artIO.readFolderRows()));
-    const todo = albumsToCollect(albums, existing);
+    const todo = albumsToCollect(albums, existing, { retryNotFound });
     const records = new Map([...existing].map(([key, v]) => [key, v.record]));
     if (todo.length === 0) {
       renderArtResults([...records.values()]);
-      setStatus(`全${albums.length}枚のアルバムは集め終わっています。`);
+      setStatus(retryNotFound ? "見つからなかったアルバムはありません。" : `全${albums.length}枚のアルバムは集め終わっています。`);
       return;
     }
     const folderId = await ensureArtFolder(getToken);
     stopBtn.disabled = false;
     const current: AlbumArtSummary = summarize([]);
+    let skippedCount = 0;
     progress.textContent = `0 / ${todo.length} 枚`;
     const result = await runCollection({
       albums: todo,
@@ -928,11 +932,22 @@ async function handleCollectArt(): Promise<void> {
         now: () => new Date().toISOString(),
       },
       flush: async (batch) => {
-        const { appends, updates } = planAlbumArtWrites(batch, existing);
+        // 書く直前に読み直し、今の行番号で書く。別の画面で変わっていた記録は上書きしない
+        const current = parseAlbumArtRows(await artIO.readRows());
+        const { appends, updates, written, skipped } = planAlbumArtWrites(batch, existing, current);
         await artIO.updateRows(updates);
         await artIO.appendRows(appends);
-        for (const r of batch) records.set(albumArtKey(r.albumFolderId, r.album), r);
+        for (const r of written) records.set(albumArtKey(r.albumFolderId, r.album), r);
+        for (const r of skipped) {
+          skippedCount += 1;
+          const key = albumArtKey(r.albumFolderId, r.album);
+          const now = current.get(key)?.record;
+          if (now) records.set(key, now);
+          // どこにも記録されなかった画像は残さない
+          if (r.artFileId) void trashDriveFile(getToken, r.artFileId).catch(() => {});
+        }
       },
+      knownNoEmbedded: knownNoEmbeddedOf(existing),
       shouldStop: () => stopArtRequested,
       onProgress: (done, total, last) => {
         current[last.source] += 1;
@@ -940,10 +955,14 @@ async function handleCollectArt(): Promise<void> {
       },
     });
     renderArtResults([...records.values()]);
+    const again = retryNotFound ? "見つからなかったアルバムをもう一度探す" : "表紙を集める";
+    const skippedNote = skippedCount > 0 ? `（${skippedCount}枚は別の画面で変更されていたため、書き込みませんでした）` : "";
     setStatus(
-      result.stopped
-        ? `止めました（${result.done}枚まで記録しました）。もう一度「表紙を集める」で続きから集めます。`
-        : `${result.done}枚の表紙を調べました。`
+      (result.stopped
+        ? `止めました（${result.done}枚まで記録しました）。もう一度「${again}」で続きから進めます。`
+        : retryNotFound
+          ? `見つからなかった${result.done}枚を探し直し、${result.done - current.notfound - current.error}枚の表紙が見つかりました。`
+          : `${result.done}枚の表紙を調べました。`) + skippedNote
     );
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
@@ -951,6 +970,7 @@ async function handleCollectArt(): Promise<void> {
   } finally {
     stopBtn.disabled = true;
     collectBtn.disabled = false;
+    retryBtn.disabled = false;
     release();
   }
 }
@@ -1290,6 +1310,7 @@ async function handleLogin(): Promise<void> {
     el<HTMLButtonElement>("check-health-btn").disabled = false;
     el<HTMLButtonElement>("check-missing-btn").disabled = false;
     el<HTMLButtonElement>("collect-art-btn").disabled = false;
+    el<HTMLButtonElement>("retry-art-btn").disabled = false;
     el<HTMLButtonElement>("review-art-btn").disabled = false;
   } catch (err) {
     setStatus(err instanceof AuthError ? err.message : String(err), true);
@@ -1324,6 +1345,7 @@ function init(): void {
   el<HTMLButtonElement>("apply-missing-btn").addEventListener("click", () => void handleApplyMissingFields());
   el<HTMLButtonElement>("revert-missing-btn").addEventListener("click", () => void handleRevertMissingFields());
   el<HTMLButtonElement>("collect-art-btn").addEventListener("click", () => void handleCollectArt());
+  el<HTMLButtonElement>("retry-art-btn").addEventListener("click", () => void handleCollectArt(true));
   const artView = el<HTMLSelectElement>("art-view");
   for (const view of REVIEW_VIEWS) artView.append(new Option(REVIEW_VIEW_LABELS[view], view));
   artView.addEventListener("change", renderArtReview);

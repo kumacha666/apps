@@ -6,6 +6,7 @@ import {
   musicBrainzCandidates,
   musicBrainzSearchUrl,
   normalizeForMatch,
+  searchTitle,
   Throttle,
   titleMatches,
   WebSearchError,
@@ -29,6 +30,34 @@ describe("名前の照合", () => {
     expect(artistMatches("ずっと真夜中でいいのに。", "ずっと真夜中でいいのに")).toBe(true);
     expect(artistMatches("", "anything")).toBe(true);
     expect(artistMatches("A", "")).toBe(false);
+  });
+});
+
+describe("見つからなかったアルバムのための照合（2026-11-03、実データの見つからなかった例から）", () => {
+  test("ラテン文字のアクセント記号は無視し、濁点・半濁点は区別する", () => {
+    expect(normalizeForMatch("Yûzô Koshiro")).toBe(normalizeForMatch("Yuzo Koshiro"));
+    expect(normalizeForMatch("Beyoncé")).toBe("beyonce");
+    expect(normalizeForMatch("バンド")).not.toBe(normalizeForMatch("ハント"));
+    expect(normalizeForMatch("ぱぴぷ")).not.toBe(normalizeForMatch("はひふ"));
+    expect(normalizeForMatch("ガ")).toBe(normalizeForMatch("ｶﾞ"));
+  });
+  test("検索に使うアルバム名：ディスクの印・盤の種類の付記を外す（それ以外の括弧は残す）", () => {
+    expect(searchTitle('"Final Fantasy IX" Original Soundtrack, Disk 3')).toBe('"Final Fantasy IX" Original Soundtrack');
+    expect(searchTitle("ACE COMBAT 5 THE UNSUNG WAR -Original Soundtrack- [Disc 3]")).toBe("ACE COMBAT 5 THE UNSUNG WAR -Original Soundtrack-");
+    expect(searchTitle("biohazard SOUND CHRONICLE BEST TRACK BOX (DISC 06 : biohazard 4 Best Track Collection)")).toBe("biohazard SOUND CHRONICLE BEST TRACK BOX");
+    expect(searchTitle("Parasite Eve OST Disc 1")).toBe("Parasite Eve OST");
+    expect(searchTitle("フレスベルグの少女 ～風花雪月～ [初回盤]")).toBe("フレスベルグの少女 ~風花雪月~");
+    expect(searchTitle("RayForce Original Soundtrack (Zuntata V.C.O. #1)")).toBe("RayForce Original Soundtrack (Zuntata V.C.O. #1)");
+    expect(searchTitle("CD1")).toBe("CD1");
+  });
+  test("ディスクの印・取得元の「 - Single」「 - EP」を除いても一致すれば同じアルバム", () => {
+    expect(titleMatches("Final Fantasy Tactics Original Soundtrack, Disk 2", "Final Fantasy Tactics (Original Soundtrack)")).toBe(true);
+    expect(titleMatches("夏の思い出", "夏の思い出 - Single")).toBe(true);
+    expect(titleMatches("BEAT", "BEAT - EP")).toBe(true);
+    expect(titleMatches("ジュー！ユー！シ！", "ジュー!ユー!シ! - Single")).toBe(true);
+    // 取得元の側の「 - Single」だけを外す（こちらの名前の一部なら外さない）
+    expect(titleMatches("Love - Single", "Love")).toBe(false);
+    expect(titleMatches("夏の思い出", "夏の思い出 2")).toBe(false);
   });
 });
 
@@ -56,7 +85,7 @@ describe("MusicBrainz", () => {
   });
 });
 
-test("iTunes：一致する候補の画像を600×600に指定し直す", () => {
+test("iTunes：一致する候補（末尾の「 - EP」「 - Single」は無視）の画像を600×600に指定し直す", () => {
   const response = {
     results: [
       { collectionId: 1, collectionName: "Other", artistName: "A", artworkUrl100: "https://x/a/100x100bb.jpg" },
@@ -64,7 +93,10 @@ test("iTunes：一致する候補の画像を600×600に指定し直す", () => 
       { collectionId: 3, collectionName: "Blue", artistName: "A & B", artworkUrl100: "https://x/c/100x100bb.jpg" },
     ],
   };
-  expect(iTunesCandidates(response, "Blue", "A")).toEqual([{ source: "itunes", sourceId: "3", imageUrl: "https://x/c/600x600bb.jpg" }]);
+  expect(iTunesCandidates(response, "Blue", "A")).toEqual([
+    { source: "itunes", sourceId: "2", imageUrl: "https://x/b/600x600bb.jpg" },
+    { source: "itunes", sourceId: "3", imageUrl: "https://x/c/600x600bb.jpg" },
+  ]);
 });
 
 test("Throttle：呼び出しの間隔を空ける", async () => {

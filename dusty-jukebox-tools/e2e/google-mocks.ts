@@ -60,6 +60,8 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   // アルバムアート：albumArtタブ（無ければnull）・Driveに置いた画像・Webへの問い合わせ
   let albumArtRows: (string | number)[][] | null = options.albumArtRows ?? null;
   const driveTrashed: string[] = [];
+  // 曲のファイル（表紙の画像以外）への問い合わせ
+  const driveFileRequests: string[] = [];
   // 画像の送信を受けた直後に呼ぶ（送信中にスプレッドシートが変わる場合を作るため）
   let uploadHook: (() => void) | null = null;
   // albumArtタブの行の書き換えを反映したうえで、応答だけ届かなくする（書けたか分からない状態を作るため）
@@ -191,6 +193,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     if (fileId.startsWith("art-") && url.searchParams.get("alt") === "media") {
       return route.fulfill({ status: 200, contentType: "image/png", body: COVER_PNG });
     }
+    driveFileRequests.push(fileId);
     const media = options.coverArtFileIds?.includes(fileId) ? COVER_ART_MP3 : PLAIN_MP3;
     if (url.searchParams.get("alt") === "media") {
       const range = /bytes=(\d+)-(\d+)/.exec(route.request().headers().range ?? "");
@@ -219,8 +222,12 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
           : [];
       return route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify({ "release-groups": groups }) });
     }
-    if (url.startsWith("https://itunes.apple.com/")) {
-      return route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify({ results: [] }) });
+    if (url.startsWith("https://itunes.apple.com/search")) {
+      // 「夏の思い出」だけ、iTunesにシングル（作品名の末尾に「 - Single」）がある
+      const results = url.includes("夏の思い出")
+        ? [{ collectionId: 55, collectionName: "夏の思い出 - Single", artistName: "ケツメイシ", artworkUrl100: "https://itunes.apple.com/art/55/100x100bb.jpg" }]
+        : [];
+      return route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify({ results }) });
     }
     return route.fulfill({ status: 200, contentType: "image/png", headers: cors, body: COVER_PNG });
   });
@@ -230,6 +237,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     driveFolders,
     webRequests,
     driveTrashed,
+    driveFileRequests,
     getAlbumArtRows: () => albumArtRows,
     setAlbumArtRows: (rows: (string | number)[][]) => {
       albumArtRows = rows;
