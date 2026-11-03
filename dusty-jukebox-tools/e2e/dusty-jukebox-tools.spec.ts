@@ -412,3 +412,54 @@ test("アルバムアート：見つからなかったアルバムだけを、�
   expect(mocks.webRequests.some((u) => u.includes("Rejected"))).toBe(false);
   expect(mocks.driveFileRequests).toEqual([]);
 });
+
+test("アルバムアート：もう一度探すのは見つからなかったアルバムだけ。集めている間に行が並べ替えられても、別の画面で変えられても取り違えない", async ({ page, context }) => {
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    rows: [
+      makeRow({ fileId: "s1", album: "夏の思い出", artist: "ケツメイシ", parentId: "p-s", trackNumber: "1" }),
+      makeRow({ fileId: "e1", album: "Errored", artist: "Band", parentId: "p-e", trackNumber: "1" }),
+      makeRow({ fileId: "u1", album: "Uncollected", artist: "Band", parentId: "p-u", trackNumber: "1" }),
+    ],
+    albumArtRows: [
+      ART_HEADER,
+      ["p-s", "夏の思い出", "ケツメイシ", "no", "", "notfound", "", "s1", "u1"],
+      ["p-e", "Errored", "Band", "", "", "error", "", "", "u1"],
+      ["p-o", "Other Album", "Band", "no", "art-x", "itunes", "9", "o1", "u2"],
+    ],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  // 表紙を送っている間に、「夏の思い出」の行と「Other Album」の行が入れ替わる
+  mocks.setUploadHook(() => {
+    const rows = mocks.getAlbumArtRows()!;
+    mocks.setAlbumArtRows([rows[0], rows[3], rows[2], rows[1]]);
+  });
+  await page.getByRole("button", { name: "見つからなかったアルバムをもう一度探す" }).click();
+  await expect(page.locator("#status")).toContainText("見つからなかった1枚を探し直し、1枚の表紙が見つかりました", { timeout: 20_000 });
+  const rows = mocks.getAlbumArtRows()!;
+  expect(rows).toHaveLength(4);
+  const byAlbum = Object.fromEntries(rows.slice(1).map((r) => [r[1], r]));
+  expect(byAlbum["夏の思い出"].slice(4, 7)).toEqual(["art-1", "itunes", "55"]);
+  expect(byAlbum["Other Album"].slice(4, 9)).toEqual(["art-x", "itunes", "9", "o1", "u2"]);
+  // 読めなかった・まだ調べていないアルバムは対象外（曲のファイルにも問い合わせない）
+  expect(byAlbum["Errored"][5]).toBe("error");
+  expect(byAlbum["Uncollected"]).toBeUndefined();
+  expect(mocks.driveFileRequests).toEqual([]);
+});
+
+test("アルバムアート：もう一度探している間に別の画面で外されたアルバムは、上書きせず、置いた画像をゴミ箱へ戻す", async ({ page, context }) => {
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    rows: [makeRow({ fileId: "s1", album: "夏の思い出", artist: "ケツメイシ", parentId: "p-s", trackNumber: "1" })],
+    albumArtRows: [ART_HEADER, ["p-s", "夏の思い出", "ケツメイシ", "no", "", "notfound", "", "s1", "u1"]],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  const rejected = ["p-s", "夏の思い出", "ケツメイシ", "no", "", "rejected", "", "s1", "u9"];
+  mocks.setUploadHook(() => mocks.setAlbumArtRows([ART_HEADER, rejected]));
+  await page.getByRole("button", { name: "見つからなかったアルバムをもう一度探す" }).click();
+  await expect(page.locator("#status")).toContainText("1枚は別の画面で変更されていたため、書き込みませんでした", { timeout: 20_000 });
+  expect(mocks.getAlbumArtRows()![1]).toEqual(rejected);
+  await expect.poll(() => mocks.driveTrashed).toEqual(["art-1"]);
+});

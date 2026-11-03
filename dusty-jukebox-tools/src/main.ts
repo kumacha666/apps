@@ -919,6 +919,7 @@ async function handleCollectArt(retryNotFound = false): Promise<void> {
     const folderId = await ensureArtFolder(getToken);
     stopBtn.disabled = false;
     const current: AlbumArtSummary = summarize([]);
+    let skippedCount = 0;
     progress.textContent = `0 / ${todo.length} 枚`;
     const result = await runCollection({
       albums: todo,
@@ -931,10 +932,20 @@ async function handleCollectArt(retryNotFound = false): Promise<void> {
         now: () => new Date().toISOString(),
       },
       flush: async (batch) => {
-        const { appends, updates } = planAlbumArtWrites(batch, existing);
+        // 書く直前に読み直し、今の行番号で書く。別の画面で変わっていた記録は上書きしない
+        const current = parseAlbumArtRows(await artIO.readRows());
+        const { appends, updates, written, skipped } = planAlbumArtWrites(batch, existing, current);
         await artIO.updateRows(updates);
         await artIO.appendRows(appends);
-        for (const r of batch) records.set(albumArtKey(r.albumFolderId, r.album), r);
+        for (const r of written) records.set(albumArtKey(r.albumFolderId, r.album), r);
+        for (const r of skipped) {
+          skippedCount += 1;
+          const key = albumArtKey(r.albumFolderId, r.album);
+          const now = current.get(key)?.record;
+          if (now) records.set(key, now);
+          // どこにも記録されなかった画像は残さない
+          if (r.artFileId) void trashDriveFile(getToken, r.artFileId).catch(() => {});
+        }
       },
       knownNoEmbedded: knownNoEmbeddedOf(existing),
       shouldStop: () => stopArtRequested,
@@ -945,12 +956,13 @@ async function handleCollectArt(retryNotFound = false): Promise<void> {
     });
     renderArtResults([...records.values()]);
     const again = retryNotFound ? "見つからなかったアルバムをもう一度探す" : "表紙を集める";
+    const skippedNote = skippedCount > 0 ? `（${skippedCount}枚は別の画面で変更されていたため、書き込みませんでした）` : "";
     setStatus(
-      result.stopped
+      (result.stopped
         ? `止めました（${result.done}枚まで記録しました）。もう一度「${again}」で続きから進めます。`
         : retryNotFound
           ? `見つからなかった${result.done}枚を探し直し、${result.done - current.notfound - current.error}枚の表紙が見つかりました。`
-          : `${result.done}枚の表紙を調べました。`
+          : `${result.done}枚の表紙を調べました。`) + skippedNote
     );
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();

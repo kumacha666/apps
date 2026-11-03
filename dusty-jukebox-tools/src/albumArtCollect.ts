@@ -7,6 +7,7 @@
 import type { ArtAlbum } from "./albumArtAlbums";
 import { coverCandidateTracks } from "./albumArtAlbums";
 import { albumArtKey, albumArtRow, isSettled, type AlbumArtRecord } from "./albumArtSheet";
+import { isSameArtRecord } from "./albumArtReview";
 import { normalizeForMatch, searchTitle, WebSearchError, type ArtCandidate, type WebArtSearch } from "./albumArtSearch";
 import type { CoverArtResult } from "./coverArt";
 
@@ -113,8 +114,9 @@ export async function collectAlbumArt(album: ArtAlbum, deps: CollectDeps, knownN
 }
 
 /**
- * これから集めるアルバム（記録が無い、または前回errorだったもの）。
- * [retryNotFound]なら、前回Webで見つからなかったアルバムも（探し方を直したときに、見つからなかった分だけ探し直す）。
+ * これから集めるアルバム。ふつうは記録が無い、または前回errorだったもの。
+ * [retryNotFound]なら、前回Webで見つからなかったアルバムだけ（探し方を直したときに、見つからなかった分だけ探し直す。
+ * 曲のファイルは読み直さない約束なので、まだ調べていない・読めなかったアルバムは入れない）。
  */
 export function albumsToCollect(
   albums: readonly ArtAlbum[],
@@ -123,7 +125,7 @@ export function albumsToCollect(
 ): ArtAlbum[] {
   return albums.filter((a) => {
     const record = existing.get(albumArtKey(a.albumFolderId, a.album))?.record;
-    return !isSettled(record) || (options.retryNotFound === true && record?.source === "notfound");
+    return options.retryNotFound === true ? record?.source === "notfound" : !isSettled(record);
   });
 }
 
@@ -134,19 +136,35 @@ export function knownNoEmbeddedOf(existing: ReadonlyMap<string, { record: AlbumA
   return known;
 }
 
-/** 書き込む内容：記録のあるアルバムはその行を上書き、無ければ追記。 */
+/**
+ * 書き込む内容。書く直前に読み直したタブ（[current]）の行番号で書く（集めている間に行が並べ替えられても取り違えない）。
+ * - 始めたときに記録があったアルバム（[started]）：今の記録が始めたときのまま（`isSameArtRecord`）ならその行を上書き。
+ *   変わっていたら（別の画面で外した・差し替えた等）、見ていない記録を上書きしないよう見送る
+ * - 始めたときに記録が無かったアルバム：今も無ければ追記、別の画面で記録されていたら見送る
+ * 見送った記録で置いた画像は、どこにも記録されていない（呼び出し元がゴミ箱へ戻す）。
+ */
 export function planAlbumArtWrites(
   records: readonly AlbumArtRecord[],
-  existing: ReadonlyMap<string, { rowNumber: number }>
-): { appends: string[][]; updates: { rowNumber: number; row: string[] }[] } {
+  started: ReadonlyMap<string, { record: AlbumArtRecord }>,
+  current: ReadonlyMap<string, { rowNumber: number; record: AlbumArtRecord }>
+): { appends: string[][]; updates: { rowNumber: number; row: string[] }[]; written: AlbumArtRecord[]; skipped: AlbumArtRecord[] } {
   const appends: string[][] = [];
   const updates: { rowNumber: number; row: string[] }[] = [];
+  const written: AlbumArtRecord[] = [];
+  const skipped: AlbumArtRecord[] = [];
   for (const r of records) {
-    const found = existing.get(albumArtKey(r.albumFolderId, r.album));
-    if (found) updates.push({ rowNumber: found.rowNumber, row: albumArtRow(r) });
-    else appends.push(albumArtRow(r));
+    const key = albumArtKey(r.albumFolderId, r.album);
+    const before = started.get(key)?.record;
+    const now = current.get(key);
+    if (before ? now && isSameArtRecord(now.record, before) : !now) {
+      if (now) updates.push({ rowNumber: now.rowNumber, row: albumArtRow(r) });
+      else appends.push(albumArtRow(r));
+      written.push(r);
+    } else {
+      skipped.push(r);
+    }
   }
-  return { appends, updates };
+  return { appends, updates, written, skipped };
 }
 
 export interface RunCollectionOptions {

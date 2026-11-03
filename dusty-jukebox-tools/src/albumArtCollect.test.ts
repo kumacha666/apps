@@ -140,12 +140,28 @@ test("albumsToCollect：記録の無いアルバムと、前回errorだったア
   expect(albumsToCollect([a, b, c], existing).map((x) => x.album)).toEqual(["B", "C"]);
 });
 
-test("planAlbumArtWrites：記録のある行は上書き、無ければ追記", () => {
+test("planAlbumArtWrites：書く直前の行番号で書き、始めたときから変わった記録・別の画面で増えた記録は上書きしない", () => {
   const a = album({ album: "A" });
+  const b = album({ album: "B" });
   const c = album({ album: "C" });
-  const plan = planAlbumArtWrites([rec(a, "embedded"), rec(c, "itunes")], new Map([[albumArtKey("p1", "A"), { rowNumber: 5 }]]));
-  expect(plan.updates.map((u) => [u.rowNumber, u.row[1], u.row[5]])).toEqual([[5, "A", "embedded"]]);
-  expect(plan.appends.map((r) => [r[1], r[5]])).toEqual([["C", "itunes"]]);
+  const d = album({ album: "D" });
+  const started = new Map([
+    [albumArtKey("p1", "A"), { record: rec(a, "notfound") }],
+    [albumArtKey("p1", "B"), { record: rec(b, "notfound") }],
+  ]);
+  const current = new Map([
+    // Aは行が並べ替えられて7行目へ
+    [albumArtKey("p1", "A"), { rowNumber: 7, record: rec(a, "notfound") }],
+    // Bは別の画面で外された
+    [albumArtKey("p1", "B"), { rowNumber: 2, record: { ...rec(b, "rejected"), updatedAt: "later" } }],
+    // Dは集めている間に別の画面で記録された
+    [albumArtKey("p1", "D"), { rowNumber: 9, record: rec(d, "itunes") }],
+  ]);
+  const plan = planAlbumArtWrites([rec(a, "itunes"), rec(b, "musicbrainz"), rec(c, "embedded"), rec(d, "musicbrainz")], started, current);
+  expect(plan.updates.map((u) => [u.rowNumber, u.row[1], u.row[5]])).toEqual([[7, "A", "itunes"]]);
+  expect(plan.appends.map((r) => [r[1], r[5]])).toEqual([["C", "embedded"]]);
+  expect(plan.written.map((r) => r.album)).toEqual(["A", "C"]);
+  expect(plan.skipped.map((r) => r.album)).toEqual(["B", "D"]);
 });
 
 describe("runCollection", () => {
@@ -239,6 +255,12 @@ describe("見つからなかったアルバムをもう一度探す", () => {
     ]);
     expect(albumsToCollect([a, b, c], existing).map((x) => x.album)).toEqual([]);
     expect(albumsToCollect([a, b, c], existing, { retryNotFound: true }).map((x) => x.album)).toEqual(["A"]);
+    // まだ調べていない・読めなかったアルバムは、もう一度探す対象に入れない（曲のファイルを読まない約束のため）
+    const e = album({ album: "E" });
+    const f = album({ album: "F" });
+    const withError = new Map([...existing, [albumArtKey("p1", "F"), { rowNumber: 5, record: rec(f, "error") }]]);
+    expect(albumsToCollect([a, b, c, e, f], withError, { retryNotFound: true }).map((x) => x.album)).toEqual(["A"]);
+    expect(albumsToCollect([a, b, c, e, f], withError).map((x) => x.album)).toEqual(["E", "F"]);
   });
 
   test("前回、曲に表紙が無いと確かめてあれば、曲を読み直さずにWebで探す", async () => {
