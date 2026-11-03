@@ -3446,3 +3446,78 @@ test("アルバムアート（R17）：再生中の曲の埋め込み画像を�
   await expect(page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).locator(".art-tile img")).toHaveAttribute("src", artUrl!);
   expect(mock.pageMediaRequests.filter((u) => u.includes("album-track-2")).length).toBe(scherzoReads);
 });
+
+// アルバムの中身（トラック一覧、R20。Android版と同じ）：アルバム名をタップすると中身を開く。▶は従来どおり再生。
+async function loadAlbumCatalog(page: import("@playwright/test").Page, count: number) {
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText(`索引から${count}曲`);
+  await openTab(page, "albums");
+}
+
+test("アルバム名をタップすると中身（トラック一覧）を開き、曲のタップで再生リストの最後に足し（再生はしない）、戻れる（R20）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await loadAlbumCatalog(page, 4);
+  await page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).locator(".row-main").click();
+  await expect(page.locator("#album-detail")).toBeVisible();
+  await expect(page.locator("#album-browse")).toBeHidden();
+  await expect(page.locator("#album-detail-title")).toHaveText("Symphony");
+  await expect(page.locator("#album-detail-summary")).toHaveText("Orchestra・3曲・2024年");
+  const tracks = page.locator("#album-detail-tracks li");
+  // 何枚組はディスク-トラック、曲のアーティストは棚（Orchestra）と違えば出す
+  await expect(tracks.locator(".track-no")).toHaveText(["1-01", "1-02", "2-01"]);
+  await expect(tracks.locator(".r-title .t")).toHaveText(["Opening", "Scherzo", "Finale"]);
+  await expect(tracks.locator(".r-sub")).toHaveText(["Conductor", "Soloist", "Soloist"]);
+
+  // 曲をタップ → 再生リストの最後に足すだけ（再生は始めない）
+  await tracks.filter({ hasText: "Scherzo" }).locator(".row-main").click();
+  await expect(page.locator("#catalog-list li .t")).toHaveText(["Scherzo"]);
+  await expect(tracks.filter({ hasText: "Scherzo" }).locator(".row-actions button")).toHaveText("追加済み");
+  await expect(tracks.filter({ hasText: "Scherzo" }).locator(".row-actions button")).toBeDisabled();
+  await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /album-track/);
+  // 既に入っている曲は足さない
+  await tracks.filter({ hasText: "Scherzo" }).locator(".row-main").click();
+  await expect(page.locator("#status")).toContainText("「Scherzo」は再生リストに入っています");
+  await expect(page.locator("#catalog-list li")).toHaveCount(1);
+  // ＋追加ボタンでも足せる
+  await tracks.filter({ hasText: "Finale" }).getByRole("button", { name: "「Finale」を再生リストに追加" }).click();
+  await expect(page.locator("#catalog-list li .t")).toHaveText(["Scherzo", "Finale"]);
+  // アルバム全体を最後に追加（入っている曲は足さない）
+  await page.locator("#album-detail-append").click();
+  await expect(page.locator("#catalog-list li .t")).toHaveText(["Scherzo", "Finale", "Opening"]);
+  await expect(tracks.locator(".row-actions button")).toHaveText(["追加済み", "追加済み", "追加済み"]);
+  await expect(page.locator("#panel-albums")).toBeVisible(); // 足しただけではタブを移らない
+
+  // 戻ると一覧に戻る
+  await page.getByRole("button", { name: "アルバム一覧へ戻る" }).click();
+  await expect(page.locator("#album-browse")).toBeVisible();
+  await expect(page.locator("#album-detail")).toBeHidden();
+});
+
+test("アルバムの中身の「再生」は、一覧の▶と同じく再生リストをこのアルバムに置き換えて1曲目から再生する（R20）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await loadAlbumCatalog(page, 4);
+  await page.locator("#album-list li").filter({ hasText: "Blue Notes" }).locator(".row-main").click();
+  await page.locator("#album-detail-tracks li").filter({ hasText: "Jazz Song" }).locator(".row-main").click();
+  await expect(page.locator("#catalog-list li .t")).toHaveText(["Jazz Song"]);
+  await page.getByRole("button", { name: "アルバム一覧へ戻る" }).click();
+  await page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).locator(".row-main").click();
+  await page.locator("#album-detail-play").click();
+  await expect(page.locator("#panel-queue")).toBeVisible();
+  await expect(page.locator("#catalog-list li .t")).toHaveText(["Opening", "Scherzo", "Finale"]);
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+});
+
+test("何枚組の中身はフォルダから分かるディスク番号も含めてディスク-トラックで並び、オムニバスは曲ごとのアーティストを出す（R20）", async ({ context, page }) => {
+  await installGoogleMocks(context, { rackCatalog: true }); await page.goto("/"); await login(page);
+  await loadAlbumCatalog(page, 5);
+  await page.locator("#album-list li").filter({ hasText: "Double（3曲）" }).locator(".art-tile").click();
+  await expect(page.locator("#album-detail-tracks .track-no")).toHaveText(["1-01", "1-02", "2-01"]);
+  await expect(page.locator("#album-detail-tracks .r-title .t")).toHaveText(["First disc opener", "First disc closer", "Second disc opener"]);
+  await expect(page.locator("#album-detail-tracks .r-sub")).toHaveCount(0);
+  await page.getByRole("button", { name: "アルバム一覧へ戻る" }).click();
+  await page.locator("#album-list li").filter({ hasText: "Hits（2曲）" }).locator(".row-main").click();
+  await expect(page.locator("#album-detail-summary")).toHaveText("オムニバス・2曲・2010年");
+  await expect(page.locator("#album-detail-tracks .track-no")).toHaveText(["1", "2"]);
+  await expect(page.locator("#album-detail-tracks .r-sub")).toHaveText(["Singer A", "Singer B feat. C"]);
+});

@@ -246,7 +246,21 @@
     }
     .art-tile.has-art { background: #000; }
     .art-tile img { display: block; width: 100%; height: 100%; object-fit: cover; }
-    .row.album-row { padding-left: 10px; }
+    .row.album-row { padding-left: 10px; cursor: pointer; }
+    .row.album-row:hover, .row.track-row:hover { background: var(--surface-2); }
+    .row.album-row:hover .album-open { filter: none; }
+    /* アルバムの中身（トラック一覧、R20）：一覧と中身はアルバムのタブの中で切り替える */
+    .panel-part { display: flex; flex-direction: column; align-items: stretch; gap: 12px; }
+    .panel-part[hidden] { display: none; }
+    .detail-head { align-items: center; gap: 4px; margin-left: -8px; }
+    .album-detail-top { display: flex; align-items: center; gap: 16px; min-width: 0; }
+    .detail-art { width: 112px; height: 112px; border-radius: 8px; font-size: 40px; }
+    .album-detail-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+    .album-detail-title { margin: 0; font-size: 17px; font-weight: 700; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .album-detail-summary { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+    .album-detail-info .btn-row > button { flex: 0 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+    .row.track-row { cursor: pointer; padding-left: 4px; }
+    .track-no { width: 40px; text-align: right; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
     .now-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
     .now-row #now-playing { flex: 1; min-width: 0; }
     .now-art { width: 48px; height: 48px; }
