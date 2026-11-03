@@ -4,6 +4,7 @@
 // - embedded：曲のファイルに表紙が埋め込まれているか（yes / no。読めなかったら空）
 // - artFileId：Driveに置いた表紙の小さな画像（埋め込みがあればそれを縮めたもの、無ければWebから補完したもの）
 // - source：embedded / musicbrainz / itunes / notfound（Webで見つからない）/ error（読めなかった・取れなかった。次回やり直す）
+//   / rejected（確認画面で「外す」を選んだ。表紙なしのまま、次回も集め直さない）
 // - sourceId：取得元のID（MusicBrainzのrelease-group ID、iTunesのcollectionId）
 // - checkedFileId：表紙を読んだ曲
 
@@ -23,7 +24,7 @@ export const ALBUM_ART_SHEET_HEADER = [
   "updatedAt",
 ] as const;
 
-export const ART_SOURCES = ["embedded", "musicbrainz", "itunes", "notfound", "error"] as const;
+export const ART_SOURCES = ["embedded", "musicbrainz", "itunes", "notfound", "error", "rejected"] as const;
 export type ArtSource = (typeof ART_SOURCES)[number];
 
 export interface AlbumArtRecord {
@@ -94,10 +95,10 @@ export function isSettled(record: AlbumArtRecord | undefined): boolean {
   return record !== undefined && record.source !== "error";
 }
 
-export interface AlbumArtSummary { embedded: number; musicbrainz: number; itunes: number; notfound: number; error: number }
+export type AlbumArtSummary = Record<ArtSource, number>;
 
 export function summarize(records: Iterable<AlbumArtRecord>): AlbumArtSummary {
-  const summary: AlbumArtSummary = { embedded: 0, musicbrainz: 0, itunes: 0, notfound: 0, error: 0 };
+  const summary: AlbumArtSummary = { embedded: 0, musicbrainz: 0, itunes: 0, notfound: 0, error: 0, rejected: 0 };
   for (const r of records) summary[r.source] += 1;
   return summary;
 }

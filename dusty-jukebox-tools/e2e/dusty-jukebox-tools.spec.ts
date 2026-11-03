@@ -237,3 +237,61 @@ test("アルバムアート：埋め込みのある表紙は縮めてDriveへ置
   expect(mocks.webRequests.length).toBe(webBefore);
   expect(mocks.driveUploads).toHaveLength(2);
 });
+
+test("アルバムアートの確認：表紙を一覧にし、外す・別の候補から選び直せる（行を並べ替えられていても取り違えない）", async ({ page, context }) => {
+  const header = ["albumFolderId", "album", "artist", "embedded", "artFileId", "source", "sourceId", "checkedFileId", "updatedAt"];
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    albumArtRows: [
+      header,
+      ["p1", "Web Album", "Band", "no", "art-old", "musicbrainz", "rg-old", "t1", ""],
+      ["p2", "Candidate Me", "Nobody", "no", "", "notfound", "", "t2", ""],
+      ["p3", "Embedded One", "Band", "yes", "art-emb", "embedded", "", "t3", ""],
+    ],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  await page.getByRole("button", { name: "確認する" }).click();
+  await expect(page.locator("#status")).toContainText("3枚の記録を読み込みました");
+
+  // 既定はWebから補完した表紙だけ。Driveの画像をログイン中のトークンで読んで出す
+  const review = page.locator("#art-review");
+  await expect(review).toContainText("Webから補完した表紙：1枚");
+  const tile = review.locator(".art-tile").filter({ hasText: "Web Album" });
+  await expect(tile.locator("img")).toHaveAttribute("src", /^blob:/);
+  expect(await tile.locator("img").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  await expect(tile.getByRole("link", { name: "MusicBrainz" })).toHaveAttribute("href", "https://musicbrainz.org/release-group/rg-old");
+
+  // スプレッドシートで行を並べ替えられても、書く直前に読み直して正しい行に書く
+  const rows = mocks.getAlbumArtRows()!;
+  mocks.setAlbumArtRows([rows[0], rows[3], rows[2], rows[1]]);
+  await tile.getByRole("button", { name: "「Web Album」の表紙を外す" }).click();
+  await expect(page.locator("#status")).toContainText("「Web Album」の表紙を外しました");
+  const afterReject = Object.fromEntries(mocks.getAlbumArtRows()!.slice(1).map((r) => [r[1], r]));
+  expect(afterReject["Web Album"].slice(4, 7)).toEqual(["", "rejected", ""]);
+  expect(afterReject["Embedded One"].slice(4, 6)).toEqual(["art-emb", "embedded"]);
+  await expect.poll(() => mocks.driveTrashed).toEqual(["art-old"]);
+  await expect(review).toContainText("Webから補完した表紙：0枚");
+
+  // 見つからなかったアルバムを、別の候補（照合の緩い検索）から選んで入れる
+  await page.locator("#art-view").selectOption("notfound");
+  await review.getByRole("button", { name: "「Candidate Me」の別の候補" }).click();
+  const candidates = page.locator("#art-candidates");
+  await expect(candidates).toContainText("「Candidate Me」の別の候補");
+  await candidates.getByRole("button", { name: "「Candidate Me (Deluxe)」（MusicBrainz）の表紙にする" }).click();
+  await expect(page.locator("#status")).toContainText("「Candidate Me」の表紙を差し替えました");
+  const afterChoose = Object.fromEntries(mocks.getAlbumArtRows()!.slice(1).map((r) => [r[1], r]));
+  expect(afterChoose["Candidate Me"].slice(3, 7)).toEqual(["no", "art-1", "musicbrainz", "rg-cand"]);
+  expect(mocks.driveUploads.map((u) => u.name)).toEqual(["Candidate Me [p2].jpg"]);
+  await expect(candidates).toBeHidden();
+
+  // 外したアルバムは「外したアルバム」に出る
+  await page.locator("#art-view").selectOption("rejected");
+  await expect(review).toContainText("外したアルバム：1枚");
+  await expect(review.locator(".art-tile")).toContainText("Web Album");
+
+  // スマホの幅でも横にはみ出さない
+  await page.locator("#art-view").selectOption("all");
+  await page.setViewportSize({ width: 320, height: 700 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+});

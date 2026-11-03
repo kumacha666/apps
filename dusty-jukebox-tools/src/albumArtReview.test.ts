@@ -1,0 +1,100 @@
+import { describe, expect, test } from "vitest";
+import type { AlbumArtRecord } from "./albumArtSheet";
+import { WebSearchError } from "./albumArtSearch";
+import {
+  chosenRecord,
+  createReviewSearch,
+  looseITunesCandidates,
+  looseMusicBrainzCandidates,
+  recordsForView,
+  rejectedRecord,
+  sourcePageUrl,
+} from "./albumArtReview";
+
+const rec = (album: string, artist: string, source: AlbumArtRecord["source"], extra: Partial<AlbumArtRecord> = {}): AlbumArtRecord => ({
+  albumFolderId: `f-${album}`,
+  album,
+  artist,
+  embedded: "no",
+  artFileId: source === "notfound" || source === "rejected" ? "" : `img-${album}`,
+  source,
+  sourceId: "",
+  checkedFileId: "",
+  updatedAt: "",
+  ...extra,
+});
+
+test("recordsForView：表示の種類ごとに絞り、アーティスト→アルバム名の順に並べる", () => {
+  const records = [
+    rec("B", "Zeta", "musicbrainz"),
+    rec("A", "Alpha", "itunes"),
+    rec("C", "Alpha", "embedded"),
+    rec("D", "", "notfound"),
+    rec("E", "X", "rejected"),
+    rec("F", "X", "error"),
+  ];
+  expect(recordsForView(records, "web").map((r) => r.album)).toEqual(["A", "B"]);
+  expect(recordsForView(records, "notfound").map((r) => r.album)).toEqual(["D"]);
+  expect(recordsForView(records, "rejected").map((r) => r.album)).toEqual(["E"]);
+  expect(recordsForView(records, "error").map((r) => r.album)).toEqual(["F"]);
+  expect(recordsForView(records, "embedded").map((r) => r.album)).toEqual(["C"]);
+  expect(recordsForView(records, "all").map((r) => r.album)).toEqual(["D", "A", "C", "E", "F", "B"]);
+});
+
+describe("記録の書き換え", () => {
+  test("外す：画像と取得元を消し、rejectedにする（埋め込みの有無・キーはそのまま）", () => {
+    const r = rec("A", "Alpha", "itunes", { sourceId: "42" });
+    expect(rejectedRecord(r, "now")).toEqual({ ...r, artFileId: "", source: "rejected", sourceId: "", updatedAt: "now" });
+  });
+  test("これにする：選んだ候補の画像・取得元に差し替える", () => {
+    const r = rec("D", "", "notfound");
+    const chosen = chosenRecord(r, { source: "musicbrainz", sourceId: "rg9", imageUrl: "x" }, "img-new", "now");
+    expect(chosen).toEqual({ ...r, artFileId: "img-new", source: "musicbrainz", sourceId: "rg9", updatedAt: "now" });
+  });
+});
+
+test("sourcePageUrl：Webから補完したものだけ取得元のページ", () => {
+  expect(sourcePageUrl({ source: "musicbrainz", sourceId: "rg1" })).toBe("https://musicbrainz.org/release-group/rg1");
+  expect(sourcePageUrl({ source: "itunes", sourceId: "42" })).toBe("https://music.apple.com/jp/album/42");
+  expect(sourcePageUrl({ source: "embedded", sourceId: "" })).toBeNull();
+  expect(sourcePageUrl({ source: "itunes", sourceId: "" })).toBeNull();
+});
+
+describe("別の候補（緩い検索）", () => {
+  test("MusicBrainz：照合せずスコア順、小さな画像と選んだときの画像", () => {
+    const list = looseMusicBrainzCandidates({
+      "release-groups": [
+        { id: "a", title: "Other", score: 60, "artist-credit": [{ name: "X" }] },
+        { id: "b", title: "Blue", score: 95, "artist-credit": [{ name: "A" }, { name: " & B" }] },
+        { title: "no id", score: 100 },
+      ],
+    });
+    expect(list.map((c) => [c.sourceId, c.title, c.artist])).toEqual([
+      ["b", "Blue", "A & B"],
+      ["a", "Other", "X"],
+    ]);
+    expect(list[0].previewUrl).toBe("https://coverartarchive.org/release-group/b/front-250");
+    expect(list[0].imageUrl).toBe("https://coverartarchive.org/release-group/b/front-500");
+  });
+  test("iTunes：画像のあるものを並べ、小さな画像は200px・選んだときは600px", () => {
+    const list = looseITunesCandidates({
+      results: [
+        { collectionId: 1, collectionName: "Blue", artistName: "A", artworkUrl100: "https://x/1/100x100bb.jpg" },
+        { collectionId: 2, collectionName: "No art", artistName: "A" },
+      ],
+    });
+    expect(list).toEqual([
+      { source: "itunes", sourceId: "1", imageUrl: "https://x/1/600x600bb.jpg", previewUrl: "https://x/1/200x200bb.jpg", title: "Blue", artist: "A" },
+    ]);
+  });
+  test("片方が失敗しても、もう片方の候補を出す。両方失敗ならWebSearchError", async () => {
+    const onlyItunes = createReviewSearch(async (input) =>
+      String(input).includes("musicbrainz")
+        ? new Response("busy", { status: 503 })
+        : new Response(JSON.stringify({ results: [{ collectionId: 7, collectionName: "Blue", artistName: "A", artworkUrl100: "https://x/7/100x100bb.jpg" }] }))
+    );
+    expect((await onlyItunes("Blue", "A")).map((c) => c.sourceId)).toEqual(["7"]);
+    const none = createReviewSearch(async () => new Response("busy", { status: 503 }));
+    await expect(none("Blue", "A")).rejects.toBeInstanceOf(WebSearchError);
+  });
+});
