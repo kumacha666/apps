@@ -2,13 +2,19 @@
 // 集めた表紙を眺めて、違うものを「外す」か「別の候補」から選び直す。見つからなかったアルバムも、ここで手で探して入れられる。
 // 別の候補は、一括で集めるとき（albumArtSearch.tsの照合）より緩く、検索結果をそのまま並べて人が選ぶ。
 
-import type { AlbumArtRecord, ArtSource } from "./albumArtSheet";
+import { isAiMatch, type AiMatch, type AlbumArtRecord, type ArtMatch, type ArtSource } from "./albumArtSheet";
 import { iTunesSearchUrl, musicBrainzSearchUrl, Throttle, WebSearchError, type ArtCandidate } from "./albumArtSearch";
 
-export const REVIEW_VIEWS = ["web", "notfound", "rejected", "error", "embedded", "all"] as const;
+export const REVIEW_VIEWS = ["web", "ai", "ai-exact", "ai-variant", "ai-close", "ai-guess", "manual", "notfound", "rejected", "error", "embedded", "all"] as const;
 export type ReviewView = (typeof REVIEW_VIEWS)[number];
 export const REVIEW_VIEW_LABELS: Record<ReviewView, string> = {
-  web: "Webから補完した表紙",
+  web: "Webから補完した表紙（自動）",
+  ai: "AIが探した表紙（すべて）",
+  "ai-exact": "AIが探した表紙：名前が一致",
+  "ai-variant": "AIが探した表紙：表記違い",
+  "ai-close": "AIが探した表紙：名前が近い",
+  "ai-guess": "AIが探した表紙：推測（いちばん怪しい）",
+  manual: "確認画面で選んだ表紙",
   notfound: "見つからなかったアルバム",
   rejected: "外したアルバム",
   error: "読めなかった・取れなかったアルバム",
@@ -19,19 +25,50 @@ export function isReviewView(value: string): value is ReviewView {
   return (REVIEW_VIEWS as readonly string[]).includes(value);
 }
 
-const VIEW_SOURCES: Record<Exclude<ReviewView, "all">, readonly ArtSource[]> = {
-  web: ["musicbrainz", "itunes"],
-  notfound: ["notfound"],
-  rejected: ["rejected"],
-  error: ["error"],
-  embedded: ["embedded"],
+/** どう見つけたかの短い名前（確認画面のタイルに出す）。自動で集めたものは出さない。 */
+export const MATCH_LABELS: Record<ArtMatch, string> = {
+  "": "",
+  "ai-exact": "AI：一致",
+  "ai-variant": "AI：表記違い",
+  "ai-close": "AI：近い",
+  "ai-guess": "AI：推測",
+  manual: "手で選んだ",
 };
+
+const WEB_SOURCES: readonly ArtSource[] = ["musicbrainz", "itunes", "deezer"];
+
+function inView(r: AlbumArtRecord, view: ReviewView): boolean {
+  switch (view) {
+    case "all":
+      return true;
+    case "web":
+      return WEB_SOURCES.includes(r.source) && r.match === "";
+    case "ai":
+      return WEB_SOURCES.includes(r.source) && isAiMatch(r.match);
+    case "ai-exact":
+    case "ai-variant":
+    case "ai-close":
+    case "ai-guess":
+      return WEB_SOURCES.includes(r.source) && r.match === (view satisfies AiMatch);
+    case "manual":
+      return WEB_SOURCES.includes(r.source) && r.match === "manual";
+    case "notfound":
+    case "rejected":
+    case "error":
+    case "embedded":
+      return r.source === view;
+    default: {
+      const never: never = view;
+      return never;
+    }
+  }
+}
 
 const compare = (a: string, b: string) => a.localeCompare(b) || (a < b ? -1 : a > b ? 1 : 0);
 
 /** 表示するアルバム（アーティスト→アルバム名の順）。 */
 export function recordsForView(records: Iterable<AlbumArtRecord>, view: ReviewView): AlbumArtRecord[] {
-  const list = [...records].filter((r) => view === "all" || VIEW_SOURCES[view].includes(r.source));
+  const list = [...records].filter((r) => inView(r, view));
   return list.sort((a, b) => compare(a.artist, b.artist) || compare(a.album, b.album) || compare(a.albumFolderId, b.albumFolderId));
 }
 
@@ -47,12 +84,12 @@ export function isSameArtRecord(current: AlbumArtRecord, shown: AlbumArtRecord):
 
 /** 「外す」：表紙なしにし、次回の収集でも入れ直さない。 */
 export function rejectedRecord(record: AlbumArtRecord, now: string): AlbumArtRecord {
-  return { ...record, artFileId: "", source: "rejected", sourceId: "", updatedAt: now };
+  return { ...record, artFileId: "", source: "rejected", sourceId: "", updatedAt: now, match: "" };
 }
 
 /** 「これにする」：選んだ候補の画像に差し替える（埋め込みの有無はそのまま）。 */
 export function chosenRecord(record: AlbumArtRecord, candidate: ArtCandidate, artFileId: string, now: string): AlbumArtRecord {
-  return { ...record, artFileId, source: candidate.source, sourceId: candidate.sourceId, updatedAt: now };
+  return { ...record, artFileId, source: candidate.source, sourceId: candidate.sourceId, updatedAt: now, match: "manual" };
 }
 
 /** 取得元のページ（Webから補完したものだけ）。 */
@@ -60,6 +97,7 @@ export function sourcePageUrl(record: Pick<AlbumArtRecord, "source" | "sourceId"
   if (!record.sourceId) return null;
   if (record.source === "musicbrainz") return `https://musicbrainz.org/release-group/${encodeURIComponent(record.sourceId)}`;
   if (record.source === "itunes") return `https://music.apple.com/jp/album/${encodeURIComponent(record.sourceId)}`;
+  if (record.source === "deezer") return `https://www.deezer.com/album/${encodeURIComponent(record.sourceId)}`;
   return null;
 }
 
@@ -67,6 +105,7 @@ export const SOURCE_LABELS: Record<ArtSource, string> = {
   embedded: "埋め込み",
   musicbrainz: "MusicBrainz",
   itunes: "iTunes",
+  deezer: "Deezer",
   notfound: "見つからない",
   error: "読めなかった",
   rejected: "外した",

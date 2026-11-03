@@ -5,11 +5,18 @@
 // - artFileId：Driveに置いた表紙の小さな画像（埋め込みがあればそれを縮めたもの、無ければWebから補完したもの）
 // - source：embedded / musicbrainz / itunes / notfound（Webで見つからない）/ error（読めなかった・取れなかった。次回やり直す）
 //   / rejected（確認画面で「外す」を選んだ。表紙なしのまま、次回も集め直さない）
-// - sourceId：取得元のID（MusicBrainzのrelease-group ID、iTunesのcollectionId）
+//   / deezer（AIが探した候補から取り込んだもの。AIの候補はmusicbrainz・itunesのこともある）
+// - sourceId：取得元のID（MusicBrainzのrelease-group ID、iTunesのcollectionId、DeezerのアルバムID）
 // - checkedFileId：表紙を読んだ曲
+// - match：どう見つけたか（空＝このツールが自動で集めた、ai-exact / ai-variant / ai-close / ai-guess＝AIが探した候補を取り込んだ
+//   〈下ほど見つけにくかった＝間違っている可能性が高い〉、manual＝確認画面で選んだ）。2026-11-03に足した10列目
+//   （それまでの9列のタブは、開いたときに見出しを足す。本体・アプリ版は先頭9列だけを読む）
 
 import { sheetRange } from "./lib";
 import { columnLetter, createSheetsFetch } from "./sheets";
+
+/** AIが探した表紙の候補のタブ（albumArtImport.ts）。 */
+export const CANDIDATES_SHEET_NAME = "albumArtCandidates";
 
 export const ALBUM_ART_SHEET_NAME = "albumArt";
 export const ALBUM_ART_SHEET_HEADER = [
@@ -22,10 +29,21 @@ export const ALBUM_ART_SHEET_HEADER = [
   "sourceId",
   "checkedFileId",
   "updatedAt",
+  "match",
 ] as const;
+/** 2026-11-03より前の見出し（match列が無い）。 */
+const LEGACY_HEADER_LENGTH = 9;
 
-export const ART_SOURCES = ["embedded", "musicbrainz", "itunes", "notfound", "error", "rejected"] as const;
+export const ART_SOURCES = ["embedded", "musicbrainz", "itunes", "deezer", "notfound", "error", "rejected"] as const;
 export type ArtSource = (typeof ART_SOURCES)[number];
+
+/** AIが探した候補の確からしさ（下ほど見つけにくかった＝間違っている可能性が高い）。 */
+export const AI_MATCHES = ["ai-exact", "ai-variant", "ai-close", "ai-guess"] as const;
+export type AiMatch = (typeof AI_MATCHES)[number];
+export type ArtMatch = "" | AiMatch | "manual";
+export function isAiMatch(value: string): value is AiMatch {
+  return (AI_MATCHES as readonly string[]).includes(value);
+}
 
 export interface AlbumArtRecord {
   albumFolderId: string;
@@ -37,16 +55,26 @@ export interface AlbumArtRecord {
   sourceId: string;
   checkedFileId: string;
   updatedAt: string;
+  match: ArtMatch;
 }
 
 export function isValidAlbumArtHeader(header: readonly (string | number)[]): boolean {
   return header.length >= ALBUM_ART_SHEET_HEADER.length && ALBUM_ART_SHEET_HEADER.every((v, i) => header[i] === v);
 }
 
+/** match列を足す前の見出し（先頭9列だけが一致し、10列目が空）。 */
+export function isLegacyAlbumArtHeader(header: readonly (string | number)[]): boolean {
+  return (
+    ALBUM_ART_SHEET_HEADER.slice(0, LEGACY_HEADER_LENGTH).every((v, i) => header[i] === v) &&
+    header.slice(LEGACY_HEADER_LENGTH).every((v) => String(v).trim() === "")
+  );
+}
+
 export const albumArtKey = (albumFolderId: string, album: string) => JSON.stringify([albumFolderId, album.trim()]);
 
 const asSource = (v: string): ArtSource => ((ART_SOURCES as readonly string[]).includes(v) ? (v as ArtSource) : "error");
 const asEmbedded = (v: string): AlbumArtRecord["embedded"] => (v === "yes" || v === "no" ? v : "");
+const asMatch = (v: string): ArtMatch => (isAiMatch(v) || v === "manual" ? v : "");
 
 /** タブの行（ヘッダーを除く）→ キーごとの記録と行番号（シート上の行番号、2始まり）。同じキーが重なれば先の行を使う。 */
 export function parseAlbumArtRows(rows: readonly (string | number)[][]): Map<string, { rowNumber: number; record: AlbumArtRecord }> {
@@ -70,6 +98,7 @@ export function parseAlbumArtRows(rows: readonly (string | number)[][]): Map<str
         sourceId: s(6),
         checkedFileId: s(7),
         updatedAt: s(8),
+        match: asMatch(s(9)),
       },
     });
   });
@@ -87,6 +116,7 @@ export function albumArtRow(record: AlbumArtRecord): string[] {
     record.sourceId,
     record.checkedFileId,
     record.updatedAt,
+    record.match,
   ];
 }
 
@@ -98,7 +128,7 @@ export function isSettled(record: AlbumArtRecord | undefined): boolean {
 export type AlbumArtSummary = Record<ArtSource, number>;
 
 export function summarize(records: Iterable<AlbumArtRecord>): AlbumArtSummary {
-  const summary: AlbumArtSummary = { embedded: 0, musicbrainz: 0, itunes: 0, notfound: 0, error: 0, rejected: 0 };
+  const summary: AlbumArtSummary = { embedded: 0, musicbrainz: 0, itunes: 0, deezer: 0, notfound: 0, error: 0, rejected: 0 };
   for (const r of records) summary[r.source] += 1;
   return summary;
 }
@@ -111,6 +141,8 @@ export interface AlbumArtSheetIO {
   updateRows(updates: { rowNumber: number; row: string[] }[]): Promise<void>;
   /** foldersタブ（無ければ空）。 */
   readFolderRows(): Promise<(string | number)[][]>;
+  /** AIが探した候補のタブ（見出しを含む。無ければnull）。 */
+  readCandidateRows(): Promise<(string | number)[][] | null>;
 }
 
 export function createAlbumArtSheetIO(spreadsheetId: string, getAccessToken: () => Promise<string>): AlbumArtSheetIO {
@@ -126,6 +158,18 @@ export function createAlbumArtSheetIO(spreadsheetId: string, getAccessToken: () 
     const data = (await res.json()) as { sheets?: { properties?: { title?: string } }[] };
     return (data.sheets ?? []).map((s) => s.properties?.title ?? "");
   };
+  const ensureColumnCount = async (columnCount: number) => {
+    const res = await sheetsFetch(`${base}?fields=${encodeURIComponent("sheets.properties(sheetId,title,gridProperties.columnCount)")}`);
+    const data = (await res.json()) as { sheets?: { properties?: { sheetId?: number; title?: string; gridProperties?: { columnCount?: number } } }[] };
+    const sheet = (data.sheets ?? []).find((s) => s.properties?.title === ALBUM_ART_SHEET_NAME)?.properties;
+    if (sheet?.sheetId === undefined) throw new Error(`「${ALBUM_ART_SHEET_NAME}」タブが見つかりません。`);
+    const current = sheet.gridProperties?.columnCount ?? 0;
+    if (current >= columnCount) return;
+    await sheetsFetch(`${base}:batchUpdate`, {
+      method: "POST",
+      body: JSON.stringify({ requests: [{ appendDimension: { sheetId: sheet.sheetId, dimension: "COLUMNS", length: columnCount - current } }] }),
+    });
+  };
   return {
     async ensureTab() {
       if (!(await listSheetTitles()).includes(ALBUM_ART_SHEET_NAME)) {
@@ -135,7 +179,15 @@ export function createAlbumArtSheetIO(spreadsheetId: string, getAccessToken: () 
         });
       }
       const header = (await readValues(sheetRange(ALBUM_ART_SHEET_NAME, "1:1")))[0] ?? [];
-      if (header.length === 0) {
+      if (header.length > 0 && header.length <= LEGACY_HEADER_LENGTH && isLegacyAlbumArtHeader(header)) {
+        // match列を足す前のタブ：見出しを足すだけ（既存の行のmatchは空＝自動で集めた）。
+        // 使っていない列を消して9列だけになっているタブもあるので、先に列を増やす（範囲外に書くと拒否される）
+        await ensureColumnCount(ALBUM_ART_SHEET_HEADER.length);
+        await sheetsFetch(`${base}/values/${encodeURIComponent(sheetRange(ALBUM_ART_SHEET_NAME, `A1:${lastCol}1`))}?valueInputOption=RAW`, {
+          method: "PUT",
+          body: JSON.stringify({ values: [[...ALBUM_ART_SHEET_HEADER]] }),
+        });
+      } else if (header.length === 0) {
         await sheetsFetch(`${base}/values/${encodeURIComponent(sheetRange(ALBUM_ART_SHEET_NAME, `A1:${lastCol}1`))}?valueInputOption=RAW`, {
           method: "PUT",
           body: JSON.stringify({ values: [[...ALBUM_ART_SHEET_HEADER]] }),
@@ -170,6 +222,10 @@ export function createAlbumArtSheetIO(spreadsheetId: string, getAccessToken: () 
     async readFolderRows() {
       if (!(await listSheetTitles()).includes("folders")) return [];
       return readValues(sheetRange("folders", "A2:C"));
+    },
+    async readCandidateRows() {
+      if (!(await listSheetTitles()).includes(CANDIDATES_SHEET_NAME)) return null;
+      return readValues(sheetRange(CANDIDATES_SHEET_NAME, "A1:G"));
     },
   };
 }

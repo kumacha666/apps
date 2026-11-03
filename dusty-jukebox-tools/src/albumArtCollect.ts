@@ -66,6 +66,7 @@ export async function collectAlbumArt(album: ArtAlbum, deps: CollectDeps, knownN
     sourceId: "",
     checkedFileId: "",
     updatedAt: deps.now(),
+    match: "",
     ...fields,
   });
 
@@ -181,7 +182,31 @@ export interface RunCollectionOptions {
 
 /** アルバムを順に集め、途中経過をこまめに書き込む（止めても、次回は書き込んだ分を飛ばして続けられる）。 */
 export async function runCollection(options: RunCollectionOptions): Promise<{ done: number; stopped: boolean }> {
-  const { albums, deps, flush, shouldStop, onProgress } = options;
+  const { deps, knownNoEmbedded } = options;
+  return runInBatches({
+    ...options,
+    items: options.albums,
+    collect: (album) => collectAlbumArt(album, deps, knownNoEmbedded),
+    onProgress: (done, total, last) => {
+      if (last) options.onProgress(done, total, last);
+    },
+  });
+}
+
+export interface RunInBatchesOptions<T> {
+  items: readonly T[];
+  /** 1件を処理して書き込む記録を返す（nullなら書き込まない）。例外は全体を止める。 */
+  collect(item: T): Promise<AlbumArtRecord | null>;
+  flush(records: AlbumArtRecord[]): Promise<void>;
+  flushEvery?: number;
+  concurrency?: number;
+  shouldStop(): boolean;
+  onProgress(done: number, total: number, last: AlbumArtRecord | null): void;
+}
+
+/** 同時に[concurrency]件ずつ処理し、[flushEvery]件ごと（と最後）に書き込む。書き込みは順に1つずつ。 */
+export async function runInBatches<T>(options: RunInBatchesOptions<T>): Promise<{ done: number; stopped: boolean }> {
+  const { items, collect, flush, shouldStop, onProgress } = options;
   const flushEvery = options.flushEvery ?? 10;
   const concurrency = Math.max(1, options.concurrency ?? 3);
   let next = 0;
@@ -198,13 +223,12 @@ export async function runCollection(options: RunCollectionOptions): Promise<{ do
   const worker = async () => {
     while (fatal === null && !shouldStop()) {
       const index = next++;
-      const album = albums[index];
-      if (!album) return;
+      if (index >= items.length) return;
       try {
-        const record = await collectAlbumArt(album, deps, options.knownNoEmbedded);
-        pending.push(record);
+        const record = await collect(items[index]);
+        if (record) pending.push(record);
         done += 1;
-        onProgress(done, albums.length, record);
+        onProgress(done, items.length, record);
         if (pending.length >= flushEvery) await flushPending();
       } catch (err) {
         fatal ??= err;
@@ -214,5 +238,5 @@ export async function runCollection(options: RunCollectionOptions): Promise<{ do
   await Promise.all(Array.from({ length: concurrency }, worker));
   await flushPending();
   if (fatal !== null) throw fatal;
-  return { done, stopped: done < albums.length };
+  return { done, stopped: done < items.length };
 }

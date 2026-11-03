@@ -218,7 +218,7 @@ test("アルバムアート：埋め込みのある表紙は縮めてDriveへ置
   await expect(page.locator("#art-results")).toContainText("全3枚：埋め込み 1・MusicBrainz 1・iTunes 0・見つからない 1・読めなかった 0");
 
   const rows = mocks.getAlbumArtRows() ?? [];
-  expect(rows[0]).toEqual(["albumFolderId", "album", "artist", "embedded", "artFileId", "source", "sourceId", "checkedFileId", "updatedAt"]);
+  expect(rows[0]).toEqual(["albumFolderId", "album", "artist", "embedded", "artFileId", "source", "sourceId", "checkedFileId", "updatedAt", "match"]);
   const byAlbum = Object.fromEntries(rows.slice(1).map((r) => [r[1], r]));
   // 埋め込みは1曲目に無く、最後の曲（e2）にあった
   expect(byAlbum["Embedded"].slice(0, 8)).toEqual(["p-emb", "Embedded", "Band", "yes", expect.stringMatching(/^art-/), "embedded", "", "e2"]);
@@ -256,7 +256,7 @@ test("アルバムアートの確認：表紙を一覧にし、外す・別の�
 
   // 既定はWebから補完した表紙だけ。Driveの画像をログイン中のトークンで読んで出す
   const review = page.locator("#art-review");
-  await expect(review).toContainText("Webから補完した表紙：1枚");
+  await expect(review).toContainText("Webから補完した表紙（自動）：1枚");
   const tile = review.locator(".art-tile").filter({ hasText: "Web Album" });
   await expect(tile.locator("img")).toHaveAttribute("src", /^blob:/);
   expect(await tile.locator("img").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
@@ -271,7 +271,7 @@ test("アルバムアートの確認：表紙を一覧にし、外す・別の�
   expect(afterReject["Web Album"].slice(4, 7)).toEqual(["", "rejected", ""]);
   expect(afterReject["Embedded One"].slice(4, 6)).toEqual(["art-emb", "embedded"]);
   await expect.poll(() => mocks.driveTrashed).toEqual(["art-old"]);
-  await expect(review).toContainText("Webから補完した表紙：0枚");
+  await expect(review).toContainText("Webから補完した表紙（自動）：0枚");
 
   // 見つからなかったアルバムを、別の候補（照合の緩い検索）から選んで入れる
   await page.locator("#art-view").selectOption("notfound");
@@ -339,7 +339,7 @@ test("アルバムアートの確認：画面に出した後に別の画面で�
   await login(page);
   await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
   await page.getByRole("button", { name: "確認する" }).click();
-  await expect(page.locator("#art-review")).toContainText("Webから補完した表紙：1枚");
+  await expect(page.locator("#art-review")).toContainText("Webから補完した表紙（自動）：1枚");
 
   // 別の画面で差し替えられた
   const changed = ["p1", "Web Album", "Band", "no", "art-elsewhere", "itunes", "77", "t1", "u9"];
@@ -462,4 +462,75 @@ test("アルバムアート：もう一度探している間に別の画面で�
   await expect(page.locator("#status")).toContainText("1枚は別の画面で変更されていたため、書き込みませんでした", { timeout: 20_000 });
   expect(mocks.getAlbumArtRows()![1]).toEqual(rejected);
   await expect.poll(() => mocks.driveTrashed).toEqual(["art-1"]);
+});
+
+test("アルバムアート：AIが探した候補を、いまも見つからないアルバムの分だけ取り込み、確認画面でどう見つけたかで絞れる", async ({ page, context }) => {
+  const CANDIDATE_HEADER = ["albumFolderId", "album", "imageUrl", "source", "sourceId", "match", "note"];
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    rows: [],
+    // match列を足す前（9列）のタブ：開いたときに見出しを足す
+    albumArtRows: [
+      ART_HEADER,
+      ["p-s", "桜坂", "福山雅治", "no", "", "notfound", "", "s1", "u1"],
+      ["p-m", "Missing Cover", "Band", "no", "", "notfound", "", "m1", "u1"],
+      ["p-a", "Already", "Band", "no", "art-x", "itunes", "9", "a1", "u2"],
+      ["p-r", "Rejected", "Band", "no", "", "rejected", "", "r1", "u2"],
+    ],
+    candidateRows: [
+      CANDIDATE_HEADER,
+      ["p-s", "桜坂", "https://cdn-images.dzcdn.net/images/cover/sakura/500x500.jpg", "deezer", "301", "ai-variant", "Sakurazaka"],
+      ["p-m", "Missing Cover", "https://cdn-images.dzcdn.net/images/cover/missing/500x500.jpg", "deezer", "302", "ai-exact", ""],
+      ["p-a", "Already", "https://cdn-images.dzcdn.net/images/cover/already/500x500.jpg", "deezer", "303", "ai-exact", ""],
+      ["p-r", "Rejected", "https://cdn-images.dzcdn.net/images/cover/rejected/500x500.jpg", "deezer", "304", "ai-guess", ""],
+      ["p-x", "Bad Row", "http://insecure/x.jpg", "deezer", "305", "ai-exact", ""],
+    ],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  await page.getByRole("button", { name: "AIが探した候補を取り込む" }).click();
+  await expect(page.locator("#status")).toContainText("1枚の表紙を取り込みました", { timeout: 20_000 });
+  await expect(page.locator("#status")).toContainText("1枚は画像を取れなかったため");
+  await expect(page.locator("#status")).toContainText("1行は形が合わないため");
+  const rows = mocks.getAlbumArtRows()!;
+  expect(rows[0][9]).toBe("match");
+  const byAlbum = Object.fromEntries(rows.slice(1).map((r) => [r[1], r]));
+  expect(byAlbum["桜坂"].slice(3, 8)).toEqual(["no", "art-1", "deezer", "301", "s1"]);
+  expect(byAlbum["桜坂"][9]).toBe("ai-variant");
+  // 画像を取れなかった・既に表紙がある・外したアルバムはそのまま
+  expect(byAlbum["Missing Cover"].slice(4, 6)).toEqual(["", "notfound"]);
+  expect(byAlbum["Already"].slice(4, 7)).toEqual(["art-x", "itunes", "9"]);
+  expect(byAlbum["Rejected"][5]).toBe("rejected");
+  expect(mocks.driveUploads).toHaveLength(1);
+
+  // 確認画面：どう見つけたかで絞る。自動で集めた表紙とは分かれる
+  await page.getByRole("button", { name: "確認する" }).click();
+  await page.locator("#art-view").selectOption("ai-variant");
+  const tiles = page.locator("#art-review .art-tile");
+  await expect(tiles).toHaveCount(1);
+  await expect(tiles.first()).toContainText("桜坂");
+  await expect(tiles.first().locator(".art-source")).toHaveText("Deezer・AI：表記違い");
+  await expect(tiles.first().locator(".art-source a")).toHaveAttribute("href", "https://www.deezer.com/album/301");
+  await page.locator("#art-view").selectOption("web");
+  await expect(tiles).toHaveCount(1);
+  await expect(tiles.first()).toContainText("Already");
+
+  // もう一度押しても、取り込み済み・見つからないままのものだけが対象（画像を取れなかった分を試し直す）
+  await page.getByRole("button", { name: "AIが探した候補を取り込む" }).click();
+  await expect(page.locator("#status")).toContainText("0枚の表紙を取り込みました", { timeout: 20_000 });
+  expect(mocks.driveUploads).toHaveLength(1);
+});
+
+test("アルバムアート：使っていない列を消して9列だけになった旧形式のタブでも、列を足してから見出しを足す", async ({ page, context }) => {
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    rows: [],
+    albumArtGridColumns: 9,
+    albumArtRows: [ART_HEADER, ["p1", "Web Album", "Band", "no", "art-1", "musicbrainz", "rg-1", "t1", "u1"]],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  await page.getByRole("button", { name: "確認する" }).click();
+  await expect(page.locator("#status")).toContainText("1枚の記録を読み込みました");
+  expect(mocks.getAlbumArtRows()![0][9]).toBe("match");
 });

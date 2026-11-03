@@ -50,6 +50,7 @@ import {
   isReviewView,
   recordsForView,
   isSameArtRecord,
+  MATCH_LABELS,
   rejectedRecord,
   REVIEW_VIEW_LABELS,
   REVIEW_VIEWS,
@@ -58,7 +59,8 @@ import {
   type ReviewCandidate,
   type ReviewView,
 } from "./albumArtReview";
-import { albumsToCollect, knownNoEmbeddedOf, planAlbumArtWrites, runCollection } from "./albumArtCollect";
+import { albumsToCollect, knownNoEmbeddedOf, planAlbumArtWrites, runCollection, runInBatches } from "./albumArtCollect";
+import { CANDIDATES_SHEET_NAME, candidatesToImport, importCandidate, parseCandidateRows } from "./albumArtImport";
 import { createWebArtSearch } from "./albumArtSearch";
 import {
   createArtUploader,
@@ -153,8 +155,8 @@ function render(): void {
       </section>
       <section class="section">
         <h2>アルバムアート</h2>
-        <p>アルバムごとの表紙を集めて、Googleドライブの「DustyJukebox アルバムアート」フォルダに小さな画像（512px）を置き、索引の「albumArt」タブに記録します。曲のファイルに表紙が埋め込まれていればそれを、無ければWeb（MusicBrainz・iTunes）で探したものを使います。音楽ファイルは書き換えません。途中で止めても、次回は続きから集めます（読めなかった・取れなかったアルバムはもう一度試します）。「見つからなかったアルバムをもう一度探す」は、Webで見つからなかったアルバムだけを、探し方を広げて探し直します（ディスクの番号を外す、サウンドトラックはアルバム名だけで探す等）。</p>
-        <div class="art-review-bar"><button id="collect-art-btn" type="button" disabled>表紙を集める</button> <button id="retry-art-btn" type="button" class="secondary" disabled>見つからなかったアルバムをもう一度探す</button> <button id="stop-art-btn" type="button" disabled>止める</button></div>
+        <p>アルバムごとの表紙を集めて、Googleドライブの「DustyJukebox アルバムアート」フォルダに小さな画像（512px）を置き、索引の「albumArt」タブに記録します。曲のファイルに表紙が埋め込まれていればそれを、無ければWeb（MusicBrainz・iTunes）で探したものを使います。音楽ファイルは書き換えません。途中で止めても、次回は続きから集めます（読めなかった・取れなかったアルバムはもう一度試します）。「見つからなかったアルバムをもう一度探す」は、Webで見つからなかったアルバムだけを、探し方を広げて探し直します（ディスクの番号を外す、サウンドトラックはアルバム名だけで探す等）。「AIが探した候補を取り込む」は、AI（Claude）がWebで探して索引の「albumArtCandidates」タブに書いた候補のうち、いまも見つからないままのアルバムの分だけを取り込みます（どう見つけたか〈一致・表記違い・近い・推測〉を記録するので、確認画面で怪しい順に見直せます）。</p>
+        <div class="art-review-bar"><button id="collect-art-btn" type="button" disabled>表紙を集める</button> <button id="retry-art-btn" type="button" class="secondary" disabled>見つからなかったアルバムをもう一度探す</button> <button id="import-art-btn" type="button" class="secondary" disabled>AIが探した候補を取り込む</button> <button id="stop-art-btn" type="button" disabled>止める</button></div>
         <p id="art-progress"></p>
         <div id="art-results"></div>
         <p>集めた表紙は「確認する」で一覧にできます。違うものは「外す」（表紙なしにし、次に集めるときも入れ直さない）か「別の候補」で選び直してください。見つからなかったアルバムも「別の候補」から探して入れられます。</p>
@@ -853,7 +855,8 @@ let stopArtRequested = false;
 
 function artSummaryText(summary: AlbumArtSummary): string {
   const rejected = summary.rejected > 0 ? `・外した ${summary.rejected}` : "";
-  return `埋め込み ${summary.embedded}・MusicBrainz ${summary.musicbrainz}・iTunes ${summary.itunes}・見つからない ${summary.notfound}・読めなかった ${summary.error}${rejected}`;
+  const deezer = summary.deezer > 0 ? `・Deezer ${summary.deezer}` : "";
+  return `埋め込み ${summary.embedded}・MusicBrainz ${summary.musicbrainz}・iTunes ${summary.itunes}${deezer}・見つからない ${summary.notfound}・読めなかった ${summary.error}${rejected}`;
 }
 
 function renderArtResults(records: AlbumArtRecord[]): void {
@@ -895,8 +898,10 @@ async function handleCollectArt(retryNotFound = false): Promise<void> {
   const retryBtn = el<HTMLButtonElement>("retry-art-btn");
   const stopBtn = el<HTMLButtonElement>("stop-art-btn");
   const progress = el<HTMLParagraphElement>("art-progress");
+  const importBtn = el<HTMLButtonElement>("import-art-btn");
   collectBtn.disabled = true;
   retryBtn.disabled = true;
+  importBtn.disabled = true;
   stopArtRequested = false;
   try {
     const getToken = () => auth.ensureAccessToken();
@@ -971,6 +976,98 @@ async function handleCollectArt(retryNotFound = false): Promise<void> {
     stopBtn.disabled = true;
     collectBtn.disabled = false;
     retryBtn.disabled = false;
+    importBtn.disabled = false;
+    release();
+  }
+}
+
+/** AIが探した候補（albumArtCandidatesタブ）を取り込む。いまも見つからないままのアルバムの分だけ。 */
+async function handleImportArtCandidates(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId) {
+    setStatus("索引スプレッドシートIDを入力してください", true);
+    return;
+  }
+  if (!tryAcquire()) {
+    setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  const buttons = ["collect-art-btn", "retry-art-btn", "import-art-btn"].map((id) => el<HTMLButtonElement>(id));
+  const stopBtn = el<HTMLButtonElement>("stop-art-btn");
+  const progress = el<HTMLParagraphElement>("art-progress");
+  for (const b of buttons) b.disabled = true;
+  stopArtRequested = false;
+  try {
+    const getToken = () => auth.ensureAccessToken();
+    const artIO = createAlbumArtSheetIO(spreadsheetId, getToken);
+    await artIO.ensureTab();
+    const candidateRows = await artIO.readCandidateRows();
+    if (!candidateRows) {
+      setStatus(`索引に「${CANDIDATES_SHEET_NAME}」タブがありません。`, true);
+      return;
+    }
+    const { candidates, skipped: invalid } = parseCandidateRows(candidateRows);
+    const existing = parseAlbumArtRows(await artIO.readRows());
+    const todo = candidatesToImport(candidates, existing);
+    const records = new Map([...existing].map(([key, v]) => [key, v.record]));
+    if (todo.length === 0) {
+      renderArtResults([...records.values()]);
+      setStatus(`取り込む候補はありません（候補${candidates.length}件は、どれも見つからないままのアルバムではありません）。`);
+      return;
+    }
+    const folderId = await ensureArtFolder(getToken);
+    const deps = {
+      fetchImage: fetchWebImage,
+      makeThumbnail: makeJpegThumbnail,
+      upload: createArtUploader(getToken, folderId),
+      now: () => new Date().toISOString(),
+    };
+    stopBtn.disabled = false;
+    let imported = 0;
+    let failed = 0;
+    let skippedCount = 0;
+    progress.textContent = `0 / ${todo.length} 枚`;
+    const result = await runInBatches({
+      items: todo,
+      collect: (item) => importCandidate(item, deps),
+      flush: async (batch) => {
+        // 書く直前に読み直し、今の行番号で書く。取り込みを始めてから変わった記録（手で入れた・外した等）は上書きしない
+        const current = parseAlbumArtRows(await artIO.readRows());
+        const { appends, updates, written, skipped } = planAlbumArtWrites(batch, existing, current);
+        await artIO.updateRows(updates);
+        await artIO.appendRows(appends);
+        for (const r of written) records.set(albumArtKey(r.albumFolderId, r.album), r);
+        for (const r of skipped) {
+          skippedCount += 1;
+          const key = albumArtKey(r.albumFolderId, r.album);
+          const now = current.get(key)?.record;
+          if (now) records.set(key, now);
+          if (r.artFileId) void trashDriveFile(getToken, r.artFileId).catch(() => {});
+        }
+      },
+      shouldStop: () => stopArtRequested,
+      onProgress: (done, total, last) => {
+        if (last) imported += 1;
+        else failed += 1;
+        progress.textContent = `${done} / ${total} 枚（取り込んだ ${imported}・画像を取れなかった ${failed}）`;
+      },
+    });
+    renderArtResults([...records.values()]);
+    const notes = [
+      failed > 0 ? `${failed}枚は画像を取れなかったため、見つからないままです` : "",
+      skippedCount > 0 ? `${skippedCount}枚は別の画面で変更されていたため、書き込みませんでした` : "",
+      invalid > 0 ? `候補のタブの${invalid}行は形が合わないため読み飛ばしました` : "",
+    ].filter(Boolean);
+    setStatus(
+      (result.stopped ? `止めました（${result.done}枚まで処理しました）。もう一度押すと続きから取り込みます。` : `${imported - skippedCount}枚の表紙を取り込みました。`) +
+        (notes.length > 0 ? `（${notes.join("。")}）` : "")
+    );
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `候補を取り込めませんでした: ${err.message}` : "候補を取り込めませんでした", true);
+  } finally {
+    stopBtn.disabled = true;
+    for (const b of buttons) b.disabled = false;
     release();
   }
 }
@@ -1078,6 +1175,7 @@ function renderArtReview(): void {
     } else {
       source.textContent = SOURCE_LABELS[record.source];
     }
+    if (MATCH_LABELS[record.match]) source.append(`・${MATCH_LABELS[record.match]}`);
     const actions = document.createElement("div");
     actions.className = "art-actions";
     if (record.artFileId) {
@@ -1311,6 +1409,7 @@ async function handleLogin(): Promise<void> {
     el<HTMLButtonElement>("check-missing-btn").disabled = false;
     el<HTMLButtonElement>("collect-art-btn").disabled = false;
     el<HTMLButtonElement>("retry-art-btn").disabled = false;
+    el<HTMLButtonElement>("import-art-btn").disabled = false;
     el<HTMLButtonElement>("review-art-btn").disabled = false;
   } catch (err) {
     setStatus(err instanceof AuthError ? err.message : String(err), true);
@@ -1346,6 +1445,7 @@ function init(): void {
   el<HTMLButtonElement>("revert-missing-btn").addEventListener("click", () => void handleRevertMissingFields());
   el<HTMLButtonElement>("collect-art-btn").addEventListener("click", () => void handleCollectArt());
   el<HTMLButtonElement>("retry-art-btn").addEventListener("click", () => void handleCollectArt(true));
+  el<HTMLButtonElement>("import-art-btn").addEventListener("click", () => void handleImportArtCandidates());
   const artView = el<HTMLSelectElement>("art-view");
   for (const view of REVIEW_VIEWS) artView.append(new Option(REVIEW_VIEW_LABELS[view], view));
   artView.addEventListener("change", renderArtReview);
