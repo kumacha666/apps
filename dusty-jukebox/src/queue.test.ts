@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { PlaybackQueue, queueRowViews, songDisplayLabel, songSubLabel, nowPlayingLabel } from "./queue";
+import { PlaybackQueue, insertNextStatusMessage, planInsertNext, queueRowViews, songDisplayLabel, songSubLabel, nowPlayingLabel } from "./queue";
 import { PlaybackAuthenticationRequiredError, PlaybackController, PlaybackInterruptedError, PlaybackPausedError, type AudioElementLike } from "./playback";
 import { PlaybackAuthenticationGate } from "./playbackAuthGate";
 import { PlaybackContinuationRegistry } from "./playbackContinuation";
@@ -1400,6 +1400,102 @@ describe("PlaybackQueue.appendSongs", () => {
     const many = Array.from({ length: 300_000 }, (_, i) => song(`s${i}`));
     expect(queue.appendSongs(many).added).toBe(300_000);
     expect(queue.all()).toHaveLength(300_001);
+  });
+});
+
+describe("「次に再生」（planInsertNext / PlaybackQueue.insertNext）", () => {
+  const ids = (list: Song[]): string[] => list.map((s) => s.fileId);
+
+  test("今の曲のすぐ次へ、渡した順に入れる", () => {
+    const r = planInsertNext([song("a"), song("b"), song("c")], [song("x"), song("y")], "a");
+    expect(ids(r.songs)).toEqual(["a", "x", "y", "b", "c"]);
+    expect([r.added, r.moved]).toEqual([2, 0]);
+  });
+
+  test("既にある曲は重複させず、その位置から次へ移す（後ろからでも前からでも）", () => {
+    const r = planInsertNext([song("a"), song("b"), song("c"), song("d")], [song("d"), song("a")], "b");
+    expect(ids(r.songs)).toEqual(["b", "d", "a", "c"]);
+    expect([r.added, r.moved]).toEqual([0, 2]);
+    expect(r.movedFileIds).toEqual(["d", "a"]);
+  });
+
+  test("今の曲自身と入力内の重複は入れない", () => {
+    const r = planInsertNext([song("z"), song("a"), song("b")], [song("a"), song("x"), song("x")], "a");
+    expect(ids(r.songs)).toEqual(["z", "a", "x", "b"]);
+    expect([r.added, r.moved]).toEqual([1, 0]);
+  });
+
+  test("今の曲が無い（まだ再生していない）・見つからないときは先頭へ", () => {
+    expect(ids(planInsertNext([song("a"), song("b")], [song("x")], null).songs)).toEqual(["x", "a", "b"]);
+    expect(ids(planInsertNext([song("a"), song("b")], [song("b")], "gone").songs)).toEqual(["b", "a"]);
+    expect(ids(planInsertNext([], [song("x")], null).songs)).toEqual(["x"]);
+  });
+
+  test("再生中の曲の次に入り、next()でその曲へ進む。除外中の曲は除外のまま移し、件数で知らせる", async () => {
+    const played: string[] = [];
+    const queue = new PlaybackQueue({ play: async (fileId: string) => { played.push(fileId); } }, new Audio());
+    queue.setList([song("a"), song("b"), song("c")]);
+    await queue.playAt(0);
+    queue.exclude("c", true);
+    const appendVersion = queue.appendVersion();
+    const result = await queue.insertNext([song("x"), song("c")]);
+    expect(result).toEqual({ done: true, added: 1, moved: 1, alreadyExcluded: 1 });
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "x", "c", "b"]);
+    expect(queue.isExcluded("c")).toBe(true);
+    expect(queue.currentPlayingFileId()).toBe("a");
+    expect(queue.appendVersion()).toBe(appendVersion + 1);
+    await queue.next();
+    expect(played.at(-1)).toBe("x");
+    await queue.next();
+    expect(played.at(-1)).toBe("b"); // 除外中のcは飛ばす
+  });
+
+  // 曲の移動の確定を待ってから入れる：確定前の古い現在曲の後ろへ入れると、確定した曲より前になり、次へで辿り着けない
+  test("次への移動が確定していない間に頼んでも、確定した曲の次へ入る", async () => {
+    let release: () => void = () => {};
+    const played: string[] = [];
+    const queue = new PlaybackQueue({
+      play: (fileId: string) => { played.push(fileId); return fileId === "b" ? new Promise<void>((resolve) => { release = resolve; }) : Promise.resolve(); },
+    }, new Audio());
+    queue.setList([song("a"), song("b"), song("c")]);
+    await queue.playAt(0);
+    const moving = queue.next(); // bへ移る途中（play未解決）
+    const inserting = queue.insertNext([song("x")]);
+    await vi.waitFor(() => expect(played).toContain("b"));
+    release();
+    await moving;
+    await inserting;
+    expect(queue.currentPlayingFileId()).toBe("b");
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "x", "c"]);
+  });
+
+  test("差し込む位置の曲を指定できる（クロスフェードで次の曲を先に鳴らしている間など）", async () => {
+    const queue = new PlaybackQueue({ play: async () => {} }, new Audio());
+    queue.setList([song("a"), song("b"), song("c")]);
+    await queue.playAt(0);
+    await queue.insertNext([song("x")], "b");
+    expect(queue.all().map((s) => s.fileId)).toEqual(["a", "b", "x", "c"]);
+  });
+
+  test("知らせの文言（足した・移した・除外中・何もしなかった）", () => {
+    expect(insertNextStatusMessage("A", { done: true, added: 3, moved: 0, alreadyExcluded: 0 })).toBe("「A」を次に再生します。");
+    expect(insertNextStatusMessage("A", { done: true, added: 0, moved: 1, alreadyExcluded: 0 })).toBe("「A」を次に再生します。再生リストの中から移しました。");
+    expect(insertNextStatusMessage("A", { done: true, added: 2, moved: 1, alreadyExcluded: 1 }))
+      .toBe("「A」を次に再生します。1曲は再生リストの中から移しました。1曲は除外中のため鳴りません（再生リストでチェックを入れてください）。");
+    expect(insertNextStatusMessage("A", { done: false, added: 0, moved: 0, alreadyExcluded: 0 })).toContain("すでに次に再生する位置");
+  });
+
+  test("入れる曲が無ければ何もせず、シャッフル履歴も版数も変えない", async () => {
+    const queue = new PlaybackQueue({ play: async () => {} }, new Audio());
+    queue.setList([song("a"), song("b")]);
+    await queue.playAt(0);
+    await queue.shuffle(() => 0);
+    const appendVersion = queue.appendVersion();
+    expect(await queue.insertNext([song("a")])).toEqual({ done: false, added: 0, moved: 0, alreadyExcluded: 0 });
+    expect(queue.hasShuffleHistory()).toBe(true);
+    expect(queue.appendVersion()).toBe(appendVersion);
+    await queue.insertNext([song("b")]);
+    expect(queue.hasShuffleHistory()).toBe(false); // 手動で並べ替えたので「元に戻す」は消える
   });
 });
 

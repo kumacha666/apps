@@ -1,6 +1,6 @@
 // 一覧の行の操作ボタンに使う小さなインラインSVGアイコン（スプライトを使わないのは、行をDOM APIで
 // 動的に組み立てるため）。名前を増やすと下のRecordがコンパイルエラーで更新漏れを知らせる。
-export type IconName = "play" | "pause" | "prev" | "next" | "shuffle" | "repeat" | "repeat-one" | "up" | "down" | "trash" | "back";
+export type IconName = "play" | "pause" | "prev" | "next" | "shuffle" | "repeat" | "repeat-one" | "up" | "down" | "trash" | "back" | "play-next" | "add";
 
 const ICON_PATHS: Record<IconName, { path: string; filled: boolean }> = {
   play: { path: "M8 5v14l11-7z", filled: true },
@@ -14,6 +14,9 @@ const ICON_PATHS: Record<IconName, { path: string; filled: boolean }> = {
   down: { path: "M6 9l6 6 6-6", filled: false },
   trash: { path: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3", filled: false },
   back: { path: "M15 5l-7 7 7 7", filled: false },
+  // 次に再生：一覧の横線と、差し込む位置を指す三角
+  "play-next": { path: "M4 6h11M4 11h11M4 16h6M15 14l5 3-5 3z", filled: false },
+  add: { path: "M12 5v14M5 12h14", filled: false },
 };
 
 export function iconSvg(name: IconName): string {

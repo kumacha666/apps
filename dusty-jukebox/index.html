@@ -296,6 +296,11 @@
     .mq.mq-on > .mq-inner { display: inline-block; will-change: transform; }
     .row-actions { display: flex; align-items: center; gap: 4px; }
     .row-actions > button.ghost.sm { min-width: 84px; }
+    /* 狭い画面では行の操作アイコンを詰めて、曲名・アルバム名の幅を残す（行に「次に再生」等が増えたため） */
+    @media (max-width: 400px) {
+      .row-actions { gap: 0; }
+      .row-actions > button.icon-btn:not(.fab) { width: 30px; }
+    }
     .eq { display: inline-flex; align-items: flex-end; gap: 2px; width: 14px; height: 12px; flex: none; }
     .eq i { width: 3px; height: 70%; background: var(--accent); border-radius: 1px; }
     .eq i:nth-child(1) { height: 45%; }

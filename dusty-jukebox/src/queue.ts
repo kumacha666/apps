@@ -477,6 +477,27 @@ export class PlaybackQueue {
       return true;
     });
   }
+  // 「次に再生」（Android版に合わせた、2026-11-03）：曲を今の曲（[anchorFileId]を省けば現在曲）のすぐ次へ差し込む。
+  // 既に再生リストにある曲は、その位置から次へ移す（重複させない）。今の曲自身は動かさない。除外中の曲は除外のまま移す。
+  // 現在曲が無ければ（まだ再生していない）先頭へ。並びを変えるので、moveSong()と同じくpendingMoveの直列化チェーンに載せる
+  // （進行中の曲の移動が確定してから、その曲の次へ入れる。確定前の古い現在曲の後ろへ入れると、確定した曲より前になり飛ばされる）。
+  // 手動の並べ替えなのでシャッフル履歴は無効にする。曲が足されたらappendVersion()を進める（保存待機中の検出）。
+  insertNext(songs: Song[], anchorFileId?: string | null): Promise<InsertNextResult> {
+    const result: InsertNextResult = { done: false, added: 0, moved: 0, alreadyExcluded: 0 };
+    return this.move(async () => {
+      const anchor = anchorFileId !== undefined ? anchorFileId : this.currentFileId;
+      const planned = planInsertNext(this.songs, songs, anchor);
+      if (planned.added + planned.moved === 0) return false;
+      this.songs = planned.songs;
+      this.originalOrder = null;
+      if (planned.added > 0) this.appendVersionCounter += 1;
+      result.added = planned.added;
+      result.moved = planned.moved;
+      result.alreadyExcluded = planned.movedFileIds.filter((fileId) => this.excluded.has(fileId)).length;
+      result.done = true;
+      return true;
+    }).then(() => result);
+  }
   // 検索結果などの曲を再生リストの末尾へ足す（2026-10-16、ユーザー要望：検索→追加を何回か
   // 繰り返して好みの再生リストを作りたい。setList()は毎回リストを丸ごと置き換えるため、これが
   // できなかった）。
@@ -512,6 +533,55 @@ export class PlaybackQueue {
     if (added > 0) this.appendVersionCounter += 1;
     return { added, alreadyExcluded };
   }
+}
+
+export interface InsertNextResult {
+  /** 並びを変えたか（setList()で差し替わった・入れる曲が無い等で何もしなかったらfalse）。 */
+  done: boolean;
+  /** 新しく足した曲の数。 */
+  added: number;
+  /** 既に再生リストにあって、次へ移した曲の数。 */
+  moved: number;
+  /** 移した曲のうち、除外中の曲の数（除外のままなので鳴らない）。 */
+  alreadyExcluded: number;
+}
+
+/** 「次に再生」の結果の知らせ（[label]は「曲名」や「アルバム名（n曲）」）。 */
+export function insertNextStatusMessage(label: string, result: InsertNextResult): string {
+  if (!result.done) return `「${label}」は、すでに次に再生する位置にあります（または再生中の曲です）。`;
+  const parts = [`「${label}」を次に再生します。`];
+  if (result.added === 0) parts.push("再生リストの中から移しました。");
+  else if (result.moved > 0) parts.push(`${result.moved}曲は再生リストの中から移しました。`);
+  if (result.alreadyExcluded > 0) parts.push(`${result.alreadyExcluded}曲は除外中のため鳴りません（再生リストでチェックを入れてください）。`);
+  return parts.join("");
+}
+
+/**
+ * 「次に再生」の並び（純粋関数）：[incoming]を[anchorFileId]の曲のすぐ次へ、渡された順に並べる。既にある曲はそこから移す。
+ * [anchorFileId]の曲自身・入力内の重複は入れない。[anchorFileId]がnull・見つからなければ先頭へ。
+ */
+export function planInsertNext(
+  current: Song[],
+  incoming: Song[],
+  anchorFileId: string | null
+): { songs: Song[]; added: number; moved: number; movedFileIds: string[] } {
+  const existing = new Set(current.map((song) => song.fileId));
+  const picked: Song[] = [];
+  const seen = new Set<string>();
+  for (const song of incoming) {
+    if (song.fileId === anchorFileId || seen.has(song.fileId)) continue;
+    seen.add(song.fileId);
+    picked.push(song);
+  }
+  const rest = current.filter((song) => !seen.has(song.fileId));
+  const anchorIndex = anchorFileId === null ? -1 : rest.findIndex((song) => song.fileId === anchorFileId);
+  const at = anchorIndex + 1; // 見つからなければ0（先頭）
+  const songs: Song[] = [];
+  for (let i = 0; i < at; i += 1) songs.push(rest[i]);
+  for (const song of picked) songs.push(song);
+  for (let i = at; i < rest.length; i += 1) songs.push(rest[i]);
+  const movedFileIds = picked.filter((song) => existing.has(song.fileId)).map((song) => song.fileId);
+  return { songs, added: picked.length - movedFileIds.length, moved: movedFileIds.length, movedFileIds };
 }
 
 // 索引ライブラリUI（main.tsのrenderQueue）向けの純粋な表示計算。DOM操作自体はmain.tsに残すが、

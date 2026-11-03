@@ -28,7 +28,7 @@ import {
   upsertFolderCacheEntries,
   type FolderCacheEntry,
 } from "./folderCache";
-import { PlaybackQueue, REPEAT_MODES, REPEAT_MODE_LABELS, queueRowViews, songSubLabel, nowPlayingLabel } from "./queue";
+import { PlaybackQueue, REPEAT_MODES, REPEAT_MODE_LABELS, insertNextStatusMessage, queueRowViews, songSubLabel, nowPlayingLabel } from "./queue";
 import { iconSvg, type IconName } from "./icons";
 import { marqueeText, startMarquee } from "./marquee";
 import { DEFAULT_TAB, TAB_IDS, TAB_LABELS, isTabId, nextTabForKey, type TabId } from "./tabs";
@@ -588,6 +588,7 @@ function render(): void {
               <p id="album-detail-summary" class="album-detail-summary"></p>
               <div class="btn-row">
                 <button id="album-detail-play" type="button">${iconSvg("play")}<span>再生</span></button>
+                <button id="album-detail-next" class="ghost" type="button">次に再生</button>
                 <button id="album-detail-append" class="ghost" type="button">再生リストの最後に追加</button>
               </div>
             </div>
@@ -910,6 +911,7 @@ function wireTabs(): void {
 // 「接続・索引」パネル（フォルダID・ログイン・スキャン等）の開閉は端末ごとに覚えておく。初回は開いておく
 // （最初にここで接続しないと何も始まらないため）。localStorageが使えない環境では開いたままにする。
 const CONNECTION_OPEN_STORAGE_KEY = "dusty-jukebox-connection-open";
+const ALBUM_SORT_STORAGE_KEY = "dusty-jukebox-album-sort";
 function wireConnectionPanel(): void {
   const panel = el<HTMLDetailsElement>("connection");
   try {
@@ -981,6 +983,10 @@ function renderQueue(): void {
     // 上下ボタン（開発体制#42②、実機フィードバック）：一覧の表示順そのままの隣接行と入れ替える
     // （除外中の行も通常の行として一覧に表示されるため、除外の有無で特別扱いしない）。
     // 並び順を変えるだけで再生を開始する操作ではないためhandleQueuePlayback()は経由しない。
+    // 次に再生（Android版に合わせた）：この曲を、いま再生中の曲のすぐ次へ移す。再生中の曲自身には出さない
+    const nextBtn = iconButton("play-next", "次に再生");
+    nextBtn.disabled = row.isCurrent;
+    nextBtn.addEventListener("click", () => insertSongsNext([row.song], row.song.title));
     const upBtn = iconButton("up", "上へ");
     upBtn.disabled = index === 0;
     upBtn.addEventListener("click", () => { void queue?.moveSong(row.song.fileId, "up").then(() => { renderQueue(); updateUnshuffleEnabled(); }); });
@@ -988,7 +994,7 @@ function renderQueue(): void {
     downBtn.disabled = index === rows.length - 1;
     downBtn.addEventListener("click", () => { void queue?.moveSong(row.song.fileId, "down").then(() => { renderQueue(); updateUnshuffleEnabled(); }); });
     const actions = document.createElement("span"); actions.className = "row-actions";
-    actions.append(upBtn, downBtn);
+    actions.append(nextBtn, upBtn, downBtn);
     item.append(checkCell, main, actions);
     list.append(item);
   });
@@ -1079,7 +1085,12 @@ function renderAlbumGroups(groups: AlbumGroup[], query: string, sort: AlbumRackS
       });
       const button = iconButton("play", "このアルバムを再生", "fab");
       button.addEventListener("click", () => playAlbumGroup(group));
-      const actions = document.createElement("span"); actions.className = "row-actions"; actions.append(button);
+      // 再生リストを置き換えずに足す（Android版のアルバム一覧の⋮と同じ）：次に再生・最後に追加
+      const nextBtn = iconButton("play-next", "このアルバムを次に再生");
+      nextBtn.addEventListener("click", () => insertAlbumNext(group));
+      const addBtn = iconButton("add", "このアルバムを最後に追加");
+      addBtn.addEventListener("click", () => appendAlbumToQueue(group));
+      const actions = document.createElement("span"); actions.className = "row-actions"; actions.append(nextBtn, addBtn, button);
       item.append(tile, main, actions); list.append(item);
   };
   for (const row of albumRackRows(groups, query, sort)) {
@@ -1100,6 +1111,29 @@ function playAlbumGroup(group: AlbumGroup): void {
   activateTab("queue");
   setStatus(`${group.album}の${songs.length}曲を再生リストに設定しました。`);
   void handleQueuePlayback(() => queue?.playAt(0));
+}
+// アルバムを、いま再生中の曲のすぐ次へ差し込む（一覧の「次に再生」・中身の「次に再生」）。
+function insertAlbumNext(group: AlbumGroup): void {
+  const songs = catalogSongsOrWarn(group.songs, "再生リストに追加");
+  if (songs) insertSongsNext(songs, `${group.album}（${songs.length}曲）`);
+}
+// アルバム全体を再生リストの最後に足す（一覧の「＋」・中身の「再生リストの最後に追加」）。
+function appendAlbumToQueue(group: AlbumGroup): void {
+  const songs = catalogSongsOrWarn(group.songs, "再生リストに追加");
+  if (songs) addSongsToQueue(songs);
+}
+// 曲を、いま再生中の曲のすぐ次へ差し込む（既に再生リストにある曲はそこから移す）。再生は始めない。
+// 並び替えと同じく、進行中の曲の移動が確定してから入れる（PlaybackQueue.insertNext）。
+function insertSongsNext(songs: Song[], label: string): void {
+  if (!queue || songs.length === 0) return;
+  const target = queue;
+  void target.insertNext(songs).then((result) => {
+    if (queue !== target) return;
+    setQueueNavEnabled(target.all().length > 0);
+    updateUnshuffleEnabled();
+    renderQueue();
+    setStatus(insertNextStatusMessage(label, result));
+  }, (error: unknown) => setStatus(`次に再生できませんでした: ${error instanceof Error ? error.message : String(error)}`, true));
 }
 // 読み込み済みの曲一覧がまだ有効なら、その曲を返す（スキャン等で無効になっていたら知らせてnull）。
 function catalogSongsOrWarn(songs: Song[], action: string): Song[] | null {
@@ -3514,15 +3548,19 @@ function init(): void {
     el<HTMLInputElement>("album-search").addEventListener("input", () => {
       refreshAlbumGroups();
     });
-    el<HTMLSelectElement>("album-sort").addEventListener("change", refreshAlbumGroups);
+    // アルバム一覧の並べ方は、次に開いたときも同じにする（Android版と同じ。端末・ブラウザごとの保存）
+    try {
+      const savedSort = localStorage.getItem(ALBUM_SORT_STORAGE_KEY);
+      if (savedSort && isAlbumRackSort(savedSort)) el<HTMLSelectElement>("album-sort").value = savedSort;
+    } catch { /* 読めなければ既定（アーティストの棚）のまま */ }
+    el<HTMLSelectElement>("album-sort").addEventListener("change", () => {
+      try { localStorage.setItem(ALBUM_SORT_STORAGE_KEY, el<HTMLSelectElement>("album-sort").value); } catch { /* 保存できなくても動作に支障は無い */ }
+      refreshAlbumGroups();
+    });
     el<HTMLButtonElement>("album-detail-back").addEventListener("click", () => closeAlbumDetail({ restoreScroll: true }));
     el<HTMLButtonElement>("album-detail-play").addEventListener("click", () => { const group = openedAlbumGroup(); if (group) playAlbumGroup(group); });
-    el<HTMLButtonElement>("album-detail-append").addEventListener("click", () => {
-      const group = openedAlbumGroup();
-      if (!group) return;
-      const songs = catalogSongsOrWarn(group.songs, "再生リストに追加");
-      if (songs) addSongsToQueue(songs);
-    });
+    el<HTMLButtonElement>("album-detail-next").addEventListener("click", () => { const group = openedAlbumGroup(); if (group) insertAlbumNext(group); });
+    el<HTMLButtonElement>("album-detail-append").addEventListener("click", () => { const group = openedAlbumGroup(); if (group) appendAlbumToQueue(group); });
     // 絞り込み欄同士の連動（開発体制#43）：いずれかの欄が変わるたびに、他の欄の候補一覧を
     // 現在の絞り込み条件で絞り込み直す。年欄はtype=numberのため"input"に加え、スピナー
     // 操作やブラウザ差異を考慮し"change"でも拾う。
