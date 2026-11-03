@@ -384,13 +384,18 @@ function refreshDriveArtTiles(): void {
   if (detail?.dataset.artKey) loadAlbumTile(detail);
   void nowArtwork.refresh();
 }
+// 同じタイルを続けて読み直したとき（albumArtタブが届いた等）、後から始めた読み込みだけを反映する
+const artTileLoads = new WeakMap<HTMLElement, number>();
+let artTileLoadCounter = 0;
 function loadAlbumTile(tile: HTMLElement): void {
   const key = tile.dataset.artKey;
   if (!key) return;
+  const load = ++artTileLoadCounter;
+  artTileLoads.set(tile, load);
   void (async () => {
     const remote = await remoteAlbumArt(key).catch(() => ({ kind: "failed" }) as const);
     const url = remote.kind === "picture" ? remote.url : await albumArtStore.get(key).catch(() => null);
-    if (url && tile.isConnected && tile.dataset.artKey === key) fillArtTile(tile, tile.dataset.album ?? "", url);
+    if (url && tile.isConnected && tile.dataset.artKey === key && artTileLoads.get(tile) === load) fillArtTile(tile, tile.dataset.album ?? "", url);
   })();
 }
 let serviceWorkerReady: Promise<void> | null = null;

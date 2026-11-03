@@ -247,6 +247,37 @@ describe("NowArtwork", () => {
       expect(t.shown.at(-1)).toEqual([null, null]);
     });
 
+    test("埋め込み画像を縮めている間にDriveの表紙が分かったら、保存はするが一覧へは知らせない（Driveの表紙を古い画像で上書きしない）", async () => {
+      let remote: RemoteArtResult = { kind: "none" };
+      const thumb = deferred<string | null>();
+      const store = new MemoryStore();
+      const shown: [string | null, string | null][] = [];
+      const saved: [string, string][] = [];
+      const extract = deferred<CoverArtResult>();
+      const art = new NowArtwork({
+        keyOf: () => "k1",
+        store,
+        extract: () => extract.promise,
+        makeThumbnail: () => thumb.promise,
+        show: (fileId, url) => shown.push([fileId, url]),
+        onSaved: (key, url) => saved.push([key, url]),
+        remote: async () => remote,
+      });
+      const first = art.setCurrent("s1");
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+      extract.resolve(picture("A"));
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+      // 縮めている間に、albumArtタブが届いた
+      remote = { kind: "picture", url: "drive-url" };
+      await art.refresh();
+      expect(shown.at(-1)).toEqual(["s1", "drive-url"]);
+      thumb.resolve("embedded-url");
+      await first;
+      expect(store.map.get("k1")).toBe("embedded-url");
+      expect(saved).toEqual([["k1", "drive-url"]]);
+      expect(shown.at(-1)).toEqual(["s1", "drive-url"]);
+    });
+
     test("探すのが失敗（例外）しても、曲のファイルから読む", async () => {
       const t = setup({ s1: "k1" }, async () => { throw new Error("boom"); });
       const p = t.art.setCurrent("s1");

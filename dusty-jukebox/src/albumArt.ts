@@ -168,7 +168,11 @@ export class NowArtwork {
     const url = await this.deps.makeThumbnail(result.data, result.format).catch(() => null);
     if (!url) return;
     // 画像は読み出した曲（fileId）のアルバムとして保存する。今の曲（this.current）ではない。
-    if (key && (await this.deps.store.putIfAbsent(key, url).catch(() => false))) this.deps.onSaved(key, url);
+    if (key && (await this.deps.store.putIfAbsent(key, url).catch(() => false))) {
+      // 一覧への知らせは、そのアルバムにDriveの表紙が無いときだけ（縮めている間にDriveの表紙が分かっていたら、そちらを残す）
+      const preferred = this.deps.remote ? await this.deps.remote(key).catch((): RemoteArtResult => ({ kind: "failed" })) : null;
+      if (preferred?.kind !== "picture") this.deps.onSaved(key, url);
+    }
     if (generation === this.generation) this.display(fileId, url);
   }
 }
