@@ -4,6 +4,7 @@
 // 判断の部分はalbumArtCollect.ts・albumArtSearch.tsにあり、ここは通信と画像の変換だけ。
 
 import type { ArtAlbum } from "./albumArtAlbums";
+import { AuthError } from "./auth";
 import { ImageFetchError } from "./albumArtCollect";
 import { extractCoverArt, type CoverArtResult } from "./coverArt";
 import type { FetchRangeFn } from "./rangeTokenizer";
@@ -47,25 +48,44 @@ async function driveFetch(getAccessToken: () => Promise<string>, url: string, in
   throw lastError ?? new Error("unreachable");
 }
 
-/** 曲のファイルの埋め込み画像を読む（読めなければfailed。認証エラーも含めて例外にしない＝そのアルバムはerrorで次回やり直す）。 */
+/** 認証のやり直しが要る失敗か（トークンが取れない・Driveが401）。 */
+export function isDriveAuthFailure(err: unknown): boolean {
+  return err instanceof AuthError || (err instanceof DriveHttpError && err.status === 401);
+}
+
+/**
+ * 曲のファイルの埋め込み画像を読む。読めなければfailed（そのアルバムはerrorで次回やり直す）。
+ * ただし認証の失敗（トークンが取れない・401）は、どの曲でも同じく失敗するので例外のまま返し、収集全体を止める
+ * （画面がトークンを捨て、ログインし直してもらう）。Rangeの読み出し中の認証の失敗は、extractCoverArtが
+ * failedに丸めてしまうので、ここで覚えておいて投げ直す。
+ */
 export function createEmbeddedExtractor(getAccessToken: () => Promise<string>): (fileId: string) => Promise<CoverArtResult> {
   return async (fileId) => {
     let meta: { size?: string; mimeType?: string };
     try {
       const res = await driveFetch(getAccessToken, `${DRIVE}/files/${encodeURIComponent(fileId)}?fields=size,mimeType&supportsAllDrives=true`);
       meta = (await res.json()) as { size?: string; mimeType?: string };
-    } catch {
+    } catch (err) {
+      if (isDriveAuthFailure(err)) throw err;
       return { kind: "failed" };
     }
     const size = meta.size !== undefined ? Number(meta.size) : undefined;
+    let authFailure: unknown = null;
     const createFetchRange = (signal: AbortSignal): FetchRangeFn => async (start, end) => {
-      const res = await driveFetch(getAccessToken, `${DRIVE}/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, {
-        headers: { Range: `bytes=${start}-${end}` },
-        signal,
-      });
-      return new Uint8Array(await res.arrayBuffer());
+      try {
+        const res = await driveFetch(getAccessToken, `${DRIVE}/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, {
+          headers: { Range: `bytes=${start}-${end}` },
+          signal,
+        });
+        return new Uint8Array(await res.arrayBuffer());
+      } catch (err) {
+        if (isDriveAuthFailure(err)) authFailure ??= err;
+        throw err;
+      }
     };
-    return extractCoverArt({ id: fileId, size: Number.isFinite(size) ? size : undefined, mimeType: meta.mimeType }, createFetchRange);
+    const result = await extractCoverArt({ id: fileId, size: Number.isFinite(size) ? size : undefined, mimeType: meta.mimeType }, createFetchRange);
+    if (authFailure !== null) throw authFailure;
+    return result;
   };
 }
 
@@ -81,7 +101,12 @@ export async function fetchWebImage(url: string): Promise<{ data: Uint8Array; fo
   if (!res.ok) throw new ImageFetchError(`画像を取れませんでした: ${res.status}`);
   const format = res.headers.get("content-type") ?? "";
   if (!format.startsWith("image/")) return null;
-  return { data: new Uint8Array(await res.arrayBuffer()), format };
+  // fetchはヘッダーを受け取った時点で終わるので、本文の受信中に切れた場合もここで拾う
+  try {
+    return { data: new Uint8Array(await res.arrayBuffer()), format };
+  } catch (err) {
+    throw new ImageFetchError(`画像を取れませんでした: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /** 長い辺を[maxPx]以下に縮めた大きさ（元が小さければそのまま）。 */

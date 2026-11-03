@@ -121,7 +121,12 @@ export function createWebArtSearch(fetchFn: typeof fetch = (...args) => fetch(..
       throw new WebSearchError(`検索に失敗しました: ${err instanceof Error ? err.message : String(err)}`);
     }
     if (!res.ok) throw new WebSearchError(`検索に失敗しました: ${res.status}`);
-    return res.json() as Promise<unknown>;
+    // 本文の受信中に切れた・JSONとして読めない場合も、そのアルバムだけ「取れなかった」にする
+    try {
+      return (await res.json()) as unknown;
+    } catch (err) {
+      throw new WebSearchError(`検索の応答を読めませんでした: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
   return {
     async musicBrainz(album, artist) {
