@@ -42,6 +42,11 @@ import {
   type MissingFieldEntry,
   type MissingFieldWrite,
 } from "./missingFieldFill";
+import { buildArtAlbums, parseFolderRows } from "./albumArtAlbums";
+import { albumArtKey, createAlbumArtSheetIO, parseAlbumArtRows, summarize, type AlbumArtRecord, type AlbumArtSummary } from "./albumArtSheet";
+import { albumsToCollect, planAlbumArtWrites, runCollection } from "./albumArtCollect";
+import { createWebArtSearch } from "./albumArtSearch";
+import { createArtUploader, createEmbeddedExtractor, DriveHttpError, ensureArtFolder, fetchWebImage, makeJpegThumbnail } from "./albumArtDrive";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
@@ -61,7 +66,7 @@ function release(): void {
 }
 
 function isAuthFailure(err: unknown): boolean {
-  return err instanceof AuthError || (err instanceof SheetsHttpError && err.status === 401);
+  return err instanceof AuthError || ((err instanceof SheetsHttpError || err instanceof DriveHttpError) && err.status === 401);
 }
 
 function el<T extends HTMLElement>(id: string): T {
@@ -88,7 +93,7 @@ function render(): void {
         <span>索引スプレッドシートID（indexタブ）</span>
         <input id="spreadsheet-id" type="text" placeholder="スプレッドシートURLの末尾" />
       </label>
-      <button id="login-btn" type="button">スプレッドシートへログイン</button>
+      <button id="login-btn" type="button">Googleへログイン（スプレッドシート・ドライブ）</button>
       <section class="section">
         <h2>表記ゆれ統一</h2>
         <p>アーティスト・アルバムアーティスト・作曲者の大文字小文字の表記ゆれ（例:「AKB48」と「akb48」）を統一します。既に手動補正済みの曲は対象外です。</p>
@@ -122,6 +127,13 @@ function render(): void {
         <button id="check-missing-btn" type="button" disabled>欠落フィールドをチェック</button>
         <div id="missing-field-results"></div>
         <div><button id="apply-missing-btn" type="button" disabled>入力した内容を保存</button> <button id="revert-missing-btn" type="button" disabled>直前の保存を元に戻す</button></div>
+      </section>
+      <section class="section">
+        <h2>アルバムアート</h2>
+        <p>アルバムごとの表紙を集めて、Googleドライブの「DustyJukebox アルバムアート」フォルダに小さな画像（512px）を置き、索引の「albumArt」タブに記録します。曲のファイルに表紙が埋め込まれていればそれを、無ければWeb（MusicBrainz・iTunes）で探したものを使います。音楽ファイルは書き換えません。途中で止めても、次回は続きから集めます（読めなかった・取れなかったアルバムはもう一度試します）。</p>
+        <div><button id="collect-art-btn" type="button" disabled>表紙を集める</button> <button id="stop-art-btn" type="button" disabled>止める</button></div>
+        <p id="art-progress"></p>
+        <div id="art-results"></div>
       </section>
       <p id="status" class="status"></p>
     `
@@ -808,6 +820,113 @@ async function handleRevertMissingFields(): Promise<void> {
   }
 }
 
+// ===== アルバムアート =====
+
+let stopArtRequested = false;
+
+function artSummaryText(summary: AlbumArtSummary): string {
+  return `埋め込み ${summary.embedded}・MusicBrainz ${summary.musicbrainz}・iTunes ${summary.itunes}・見つからない ${summary.notfound}・読めなかった ${summary.error}`;
+}
+
+function renderArtResults(records: AlbumArtRecord[]): void {
+  const container = el<HTMLDivElement>("art-results");
+  container.innerHTML = "";
+  const summary = document.createElement("p");
+  summary.textContent = `全${records.length}枚：${artSummaryText(summarize(records))}`;
+  container.append(summary);
+  const addList = (title: string, items: AlbumArtRecord[]) => {
+    if (items.length === 0) return;
+    const details = document.createElement("details");
+    const label = document.createElement("summary");
+    label.textContent = `${title}（${items.length}枚）`;
+    const list = document.createElement("ul");
+    for (const r of items) {
+      const li = document.createElement("li");
+      li.textContent = r.artist ? `${r.album} — ${r.artist}` : r.album;
+      list.append(li);
+    }
+    details.append(label, list);
+    container.append(details);
+  };
+  addList("見つからなかったアルバム", records.filter((r) => r.source === "notfound"));
+  addList("読めなかった・取れなかったアルバム（次回もう一度試します）", records.filter((r) => r.source === "error"));
+}
+
+async function handleCollectArt(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId) {
+    setStatus("索引スプレッドシートIDを入力してください", true);
+    return;
+  }
+  if (!tryAcquire()) {
+    setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  const collectBtn = el<HTMLButtonElement>("collect-art-btn");
+  const stopBtn = el<HTMLButtonElement>("stop-art-btn");
+  const progress = el<HTMLParagraphElement>("art-progress");
+  collectBtn.disabled = true;
+  stopArtRequested = false;
+  try {
+    const getToken = () => auth.ensureAccessToken();
+    const sheetsIO = createSheetsIndexIO(spreadsheetId, getToken);
+    if (!isReadableIndexHeader(await sheetsIO.readHeaderRow())) {
+      throw new Error("索引スプレッドシートの「index」タブのヘッダー行が想定と一致しません。");
+    }
+    const indexRows = await sheetsIO.listExistingRows();
+    const artIO = createAlbumArtSheetIO(spreadsheetId, getToken);
+    await artIO.ensureTab();
+    const existing = parseAlbumArtRows(await artIO.readRows());
+    const albums = buildArtAlbums(indexRows, parseFolderRows(await artIO.readFolderRows()));
+    const todo = albumsToCollect(albums, existing);
+    const records = new Map([...existing].map(([key, v]) => [key, v.record]));
+    if (todo.length === 0) {
+      renderArtResults([...records.values()]);
+      setStatus(`全${albums.length}枚のアルバムは集め終わっています。`);
+      return;
+    }
+    const folderId = await ensureArtFolder(getToken);
+    stopBtn.disabled = false;
+    const current: AlbumArtSummary = summarize([]);
+    progress.textContent = `0 / ${todo.length} 枚`;
+    const result = await runCollection({
+      albums: todo,
+      deps: {
+        extractEmbedded: createEmbeddedExtractor(getToken),
+        search: createWebArtSearch(),
+        fetchImage: fetchWebImage,
+        makeThumbnail: makeJpegThumbnail,
+        upload: createArtUploader(getToken, folderId),
+        now: () => new Date().toISOString(),
+      },
+      flush: async (batch) => {
+        const { appends, updates } = planAlbumArtWrites(batch, existing);
+        await artIO.updateRows(updates);
+        await artIO.appendRows(appends);
+        for (const r of batch) records.set(albumArtKey(r.albumFolderId, r.album), r);
+      },
+      shouldStop: () => stopArtRequested,
+      onProgress: (done, total, last) => {
+        current[last.source] += 1;
+        progress.textContent = `${done} / ${total} 枚（${artSummaryText(current)}）`;
+      },
+    });
+    renderArtResults([...records.values()]);
+    setStatus(
+      result.stopped
+        ? `止めました（${result.done}枚まで記録しました）。もう一度「表紙を集める」で続きから集めます。`
+        : `${result.done}枚の表紙を調べました。`
+    );
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `表紙を集められませんでした: ${err.message}` : "表紙を集められませんでした", true);
+  } finally {
+    stopBtn.disabled = true;
+    collectBtn.disabled = false;
+    release();
+  }
+}
+
 // ===== ログイン・初期化 =====
 
 async function handleLogin(): Promise<void> {
@@ -822,6 +941,7 @@ async function handleLogin(): Promise<void> {
     el<HTMLButtonElement>("check-garbled-btn").disabled = false;
     el<HTMLButtonElement>("check-health-btn").disabled = false;
     el<HTMLButtonElement>("check-missing-btn").disabled = false;
+    el<HTMLButtonElement>("collect-art-btn").disabled = false;
   } catch (err) {
     setStatus(err instanceof AuthError ? err.message : String(err), true);
   } finally {
@@ -854,6 +974,12 @@ function init(): void {
   el<HTMLButtonElement>("check-missing-btn").addEventListener("click", () => void handleCheckMissingFields());
   el<HTMLButtonElement>("apply-missing-btn").addEventListener("click", () => void handleApplyMissingFields());
   el<HTMLButtonElement>("revert-missing-btn").addEventListener("click", () => void handleRevertMissingFields());
+  el<HTMLButtonElement>("collect-art-btn").addEventListener("click", () => void handleCollectArt());
+  el<HTMLButtonElement>("stop-art-btn").addEventListener("click", () => {
+    stopArtRequested = true;
+    el<HTMLButtonElement>("stop-art-btn").disabled = true;
+    el<HTMLParagraphElement>("art-progress").textContent += "（いま調べている分が終わったら止めます）";
+  });
 }
 
 init();

@@ -1,11 +1,13 @@
 // dusty-jukebox（本体）のsrc/auth.tsを移植。トークンモデル（initTokenClient）・GISの
-// error_callback処理・多重呼び出しガード等はすべて同じ設計。唯一の違いは要求スコープ：
-// このアプリはカタログ補正（表記ゆれ統一・文字化け修復）専用で、Google Driveの音源ファイル
-// 自体には一切アクセスしないため、drive.readonlyは要求せずSPREADSHEETS_SCOPEのみにする
-// （最小権限の原則。ユーザーへの同意画面もその分シンプルになる）。
+// error_callback処理・多重呼び出しガード等はすべて同じ設計。要求スコープ：
+// - spreadsheets：索引（indexタブ等）の読み書き
+// - drive.readonly：アルバムアートの収集で、曲のファイルの埋め込み画像を読む（本体と同じ）
+// - drive.file：アルバムアートの小さな画像を、このツールが作るフォルダへ置く（このアプリが作ったファイルだけを扱える）
 export const SPREADSHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+export const DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+export const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 
-export const OAUTH_SCOPES = SPREADSHEETS_SCOPE;
+export const OAUTH_SCOPES = [SPREADSHEETS_SCOPE, DRIVE_READONLY_SCOPE, DRIVE_FILE_SCOPE].join(" ");
 
 export interface TokenState {
   accessToken: string;

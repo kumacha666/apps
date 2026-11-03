@@ -14,7 +14,7 @@ function makeRow(overrides: Partial<Record<(typeof INDEX_SHEET_HEADER)[number], 
 
 async function login(page: import("@playwright/test").Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: "スプレッドシートへログイン" }).click();
+  await page.getByRole("button", { name: "Googleへログイン" }).click();
   await expect(page.locator("#status")).toContainText("ログイン済み");
 }
 
@@ -192,4 +192,48 @@ test("チェック時と異なるスプレッドシートIDで適用しようと
   await page.locator("#spreadsheet-id").fill("different-sheet");
   await page.getByRole("button", { name: "統一を適用", exact: true }).click();
   await expect(page.locator("#status")).toContainText("チェック時と異なるスプレッドシートID");
+});
+
+test("アルバムアート：埋め込みのある表紙は縮めてDriveへ置き、無いものはWebで探し、どれもalbumArtタブに記録する", async ({ page, context }) => {
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    rows: [
+      makeRow({ fileId: "e1", album: "Embedded", artist: "Band", parentId: "p-emb", trackNumber: "1" }),
+      makeRow({ fileId: "e2", album: "Embedded", artist: "Band", parentId: "p-emb", trackNumber: "2" }),
+      makeRow({ fileId: "f1", album: "Found", artist: "Web Artist", parentId: "p-found", trackNumber: "1" }),
+      // ディスクごとのフォルダ（CD1・CD2）に分かれた2枚組は、上のフォルダで1枚にまとめる
+      makeRow({ fileId: "m1", album: "Missing", artist: "Nobody", parentId: "cd1", trackNumber: "1" }),
+      makeRow({ fileId: "m2", album: "Missing", artist: "Nobody", parentId: "cd2", trackNumber: "1" }),
+    ],
+    coverArtFileIds: ["e2"],
+    folderRows: [
+      ["cd1", "CD1", "p-box"],
+      ["cd2", "CD2", "p-box"],
+    ],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  await page.getByRole("button", { name: "表紙を集める" }).click();
+  await expect(page.locator("#status")).toContainText("3枚の表紙を調べました", { timeout: 20_000 });
+  await expect(page.locator("#art-results")).toContainText("全3枚：埋め込み 1・MusicBrainz 1・iTunes 0・見つからない 1・読めなかった 0");
+
+  const rows = mocks.getAlbumArtRows() ?? [];
+  expect(rows[0]).toEqual(["albumFolderId", "album", "artist", "embedded", "artFileId", "source", "sourceId", "checkedFileId", "updatedAt"]);
+  const byAlbum = Object.fromEntries(rows.slice(1).map((r) => [r[1], r]));
+  // 埋め込みは1曲目に無く、最後の曲（e2）にあった
+  expect(byAlbum["Embedded"].slice(0, 8)).toEqual(["p-emb", "Embedded", "Band", "yes", expect.stringMatching(/^art-/), "embedded", "", "e2"]);
+  expect(byAlbum["Found"].slice(0, 8)).toEqual(["p-found", "Found", "Web Artist", "no", expect.stringMatching(/^art-/), "musicbrainz", "rg-found", "f1"]);
+  expect(byAlbum["Missing"].slice(0, 6)).toEqual(["p-box", "Missing", "Nobody", "no", "", "notfound"]);
+  expect(mocks.driveFolders).toEqual(["folder-1"]);
+  expect(mocks.driveUploads.map((u) => u.parents)).toEqual([["folder-1"], ["folder-1"]]);
+  // 埋め込みのあったアルバムはWebで探さない
+  expect(mocks.webRequests.some((u) => u.includes("Embedded"))).toBe(false);
+  expect(mocks.webRequests.some((u) => u.includes('releasegroup:"Found"'))).toBe(true);
+
+  // もう一度押しても、記録済みのアルバムは調べ直さない
+  const webBefore = mocks.webRequests.length;
+  await page.getByRole("button", { name: "表紙を集める" }).click();
+  await expect(page.locator("#status")).toContainText("全3枚のアルバムは集め終わっています");
+  expect(mocks.webRequests.length).toBe(webBefore);
+  expect(mocks.driveUploads).toHaveLength(2);
 });

@@ -29,6 +29,9 @@ export default defineConfig(({ command }) => ({
       input: { main: "src/main.ts" },
       output: {
         entryFileNames: "app.js",
+        // music-metadata（アルバムアートの埋め込み画像を読む）はフォーマットごとのパーサーを内部でdynamic import()する。
+        // deployはdist/app.js1本だけをコピーする前提なので、分割されたチャンクを1ファイルへまとめる（本体dusty-jukeboxと同じ）。
+        inlineDynamicImports: true,
       },
     },
   },
