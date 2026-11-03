@@ -2,6 +2,7 @@ import type { BrowserContext, Route } from "@playwright/test";
 import { INDEX_SHEET_HEADER, LEGACY_INDEX_SHEET_HEADER_V3 } from "../src/sheets";
 import { PLAYLISTS_SHEET_HEADER, PLAYLIST_TRACKS_SHEET_HEADER } from "../src/playlists";
 import { FOLDERS_SHEET_HEADER } from "../src/folderCache";
+import { ALBUM_ART_SHEET_HEADER } from "../src/albumArtTab";
 
 const TOKEN = "e2e-token";
 
@@ -48,6 +49,12 @@ export type MockOptions = {
    * 埋め込んだ小さなMP3を返す。Service Worker経由の再生用ストリームはこれまでどおり空の応答のまま。
    */
   coverArtFileIds?: string[];
+  /** 管理ツールが書くalbumArtタブ（ヘッダーの下の行）。指定したときだけタブがある。 */
+  albumArtRows?: string[][];
+  /** Driveに置いた表紙の画像（1×1のPNG）として返すファイルID。 */
+  driveArtImageIds?: string[];
+  /** albumArtタブの読み取りへの応答を、releaseAlbumArtTab()を呼ぶまで返さない。 */
+  holdAlbumArtTab?: boolean;
 };
 
 // ID3v2.3のAPICフレーム（表紙、1×1のPNG）＋MPEGフレーム3つの小さなMP3。music-metadataで表紙が読めることを確認済み。
@@ -130,22 +137,25 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const seededPlaylistRows = (options.seedPlaylists ?? []).map((p) => [p.playlistId, p.name, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"]);
   const seededTrackRows = (options.seedPlaylists ?? []).flatMap((p) => p.fileIds.map((fileId, i) => [p.playlistId, `1000-${i}-e2e`, fileId]));
   const folderRows = options.rackCatalog ? [["disc-1", "CD1", "double"], ["disc-2", "CD2", "double"], ["double", "Double", "root"], ["comp", "Hits", "root"]] : [];
-  const sheetData: Record<string, (string | number)[][]> = { index: indexRows, sync: syncRows, playlists: seededPlaylistRows, playlist_tracks: seededTrackRows, ...(options.rackCatalog ? { folders: folderRows } : {}) };
+  const sheetData: Record<string, (string | number)[][]> = { index: indexRows, sync: syncRows, playlists: seededPlaylistRows, playlist_tracks: seededTrackRows, ...(options.rackCatalog ? { folders: folderRows } : {}), ...(options.albumArtRows ? { albumArt: options.albumArtRows } : {}) };
   const sheetHeaders: Record<string, (string | number)[]> = {
     index: [...(options.legacyIndexGrid ? LEGACY_INDEX_SHEET_HEADER_V3 : INDEX_SHEET_HEADER)],
     sync: options.invalidSyncHeader ? ["wrong", "header"] : ["key", "value"],
     playlists: [...PLAYLISTS_SHEET_HEADER],
     playlist_tracks: [...PLAYLIST_TRACKS_SHEET_HEADER],
     ...(options.rackCatalog ? { folders: [...FOLDERS_SHEET_HEADER] } : {}),
+    ...(options.albumArtRows ? { albumArt: [...ALBUM_ART_SHEET_HEADER] } : {}),
   };
-  const existingTitles = new Set(["index", "sync", "playlists", "playlist_tracks", ...(options.rackCatalog ? ["folders"] : [])]);
-  let nextSheetId = 6;
-  const sheetIds: Record<string, number> = { index: 1, sync: 2, playlists: 3, playlist_tracks: 4, ...(options.rackCatalog ? { folders: 5 } : {}) };
+  const existingTitles = new Set(["index", "sync", "playlists", "playlist_tracks", ...(options.rackCatalog ? ["folders"] : []), ...(options.albumArtRows ? ["albumArt"] : [])]);
+  let nextSheetId = 7;
+  const sheetIds: Record<string, number> = { index: 1, sync: 2, playlists: 3, playlist_tracks: 4, ...(options.rackCatalog ? { folders: 5 } : {}), ...(options.albumArtRows ? { albumArt: 6 } : {}) };
 
   const authFailures: string[] = [];
   const streamRequests: string[] = [];
   // ページから直接のRange取得（タグ抽出・アルバムアートの読み出し）。再生用のストリーム（streamRequests）とは数えない
   const pageMediaRequests: string[] = [];
+  // Driveに置いた表紙の画像の取得（driveArtImageIdsに入っていないIDもここに数える）
+  const driveArtRequests: string[] = [];
   const driveMetadataRequests: string[] = [];
   let remainingStreamTokenRejections = options.rejectFirstStreamToken ? 1 : 0;
   const sheetsWrites: SheetWrite[] = [];
@@ -154,6 +164,8 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const pendingPlaylistsAppends: (() => void)[] = [];
   let playlistsAppendsReleased = false;
   let releaseServiceWorker = () => {};
+  let releaseAlbumArtTab = () => {};
+  const albumArtTabGate = options.holdAlbumArtTab ? new Promise<void>((resolve) => { releaseAlbumArtTab = resolve; }) : null;
   const serviceWorkerGate = options.delayServiceWorkerActivation
     ? new Promise<void>((resolve) => { releaseServiceWorker = resolve; })
     : null;
@@ -224,6 +236,12 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     const url = new URL(route.request().url());
     if (url.pathname.endsWith("/startPageToken")) return json(route, { startPageToken: "page-1" });
     if (url.pathname.endsWith("/changes")) return json(route, { changes: [], newStartPageToken: "page-2" });
+    if (url.searchParams.get("alt") === "media" && route.request().serviceWorker() === null && url.pathname.split("/").pop()?.startsWith("art-")) {
+      const artId = url.pathname.split("/").pop() ?? "";
+      driveArtRequests.push(artId);
+      if (!options.driveArtImageIds?.includes(artId)) return json(route, { error: { message: "File not found" } }, 404);
+      return route.fulfill({ status: 200, contentType: "image/png", body: COVER_PNG });
+    }
     if (url.searchParams.get("alt") === "media" && route.request().serviceWorker() === null) {
       pageMediaRequests.push(route.request().url());
       const mediaId = url.pathname.split("/").pop() ?? "";
@@ -318,6 +336,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       const isHeader = url.includes("1:1") || url.includes("A1:");
       if (method === "GET") {
         sheetsReadRanges.push(rangeSegment);
+        if (albumArtTabGate && sheetName === "albumArt") await albumArtTabGate;
         const requestedColumns = requestedColumnCount(rangeSegment);
         const gridColumns = sheetHeaders[sheetName]?.length ?? 26;
         if (requestedColumns !== undefined && requestedColumns > gridColumns) {
@@ -382,6 +401,8 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     authFailures,
     streamRequests,
     pageMediaRequests,
+    driveArtRequests,
+    releaseAlbumArtTab: () => releaseAlbumArtTab(),
     driveMetadataRequests,
     sheetsWrites,
     sheetsReadRanges,

@@ -47,6 +47,7 @@ import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState }
 import { albumArtKeyOfGroup, albumArtKeysByFileId, albumInitial, albumTileHue, NowArtwork } from "./albumArt";
 import { albumOpenKey, albumSummary, albumTracks } from "./albumDetail";
 import { createIndexedDbAlbumArtStore, makeThumbnailDataUrl } from "./albumArtBrowser";
+import { createRemoteAlbumArt, fetchDriveImage, readAlbumArtFileIds } from "./albumArtTab";
 import { extractCoverArt } from "./coverArt";
 import { formatSeekTime, isSeekableDuration } from "./seekBar";
 import { shouldResumeExternalPlayback } from "./externalPlayback";
@@ -291,7 +292,21 @@ let loadedCatalogSpreadsheetId: string | null = null;
 let loadedAlbumGroups: AlbumGroup[] = [];
 // アルバムアート（R17）：曲→その曲のアルバムのキー（アルバム一覧と同じ分け方。loadCatalog()で作り直す）
 let albumArtKeys = new Map<string, string>();
+// 管理ツールがDriveへ置いた表紙（索引のalbumArtタブ）：アルバムのキー→画像のファイルID。loadCatalog()で読み直す
+let driveArtIds = new Map<string, string>();
+// 最後に始めたalbumArtタブの反映（古い読み込みの応答が、後の読み込みの対応表を上書きしないため）
+let albumArtIdsGeneration = 0;
 const albumArtStore = createIndexedDbAlbumArtStore();
+// Driveの表紙を読む。画像は「おまけ」なので、ログインの画面を出したりトークンを捨てたりしない（今のトークンが無ければ読まない）
+const remoteAlbumArt = createRemoteAlbumArt({
+  fileIdOf: (key) => driveArtIds.get(key) ?? null,
+  store: albumArtStore,
+  fetchImage: async (fileId) => {
+    const token = auth.getAccessToken();
+    return token ? fetchDriveImage(fileId, token) : null;
+  },
+  makeThumbnail: (data, format) => makeThumbnailDataUrl(data, format),
+});
 // 再生バーに出している曲（頭文字のタイルとOSのメディア操作画面の更新に使う）
 let nowArtSong: Song | undefined;
 const nowArtwork = new NowArtwork({
@@ -310,6 +325,7 @@ const nowArtwork = new NowArtwork({
       if (tile.dataset.artKey === key) fillArtTile(tile, tile.dataset.album ?? "", url);
     }
   },
+  remote: remoteAlbumArt,
 });
 // 曲のファイルから埋め込み画像を読む。画像は「おまけ」なので、ログインの画面を出したりトークンを捨てたりしない
 // （今のトークンが無ければ読まず、401でも何もしない。認証の扱いは再生側に任せる）。
@@ -358,12 +374,29 @@ const albumArtObserver = typeof IntersectionObserver === "undefined" ? null : ne
     loadAlbumTile(tile);
   }
 }, { rootMargin: "200px" });
+// Driveに置いた表紙があればそれを（まだ聴いていないアルバムにも出る）、無い・取れなければ、聴いた曲から保存してある画像。
+// albumArtタブが届いたとき：表示中の一覧（画面に入っているタイルだけ取りに行く）・アルバムの中身・再生中の曲を探し直す
+function refreshDriveArtTiles(): void {
+  for (const tile of document.querySelectorAll<HTMLElement>("#album-list .art-tile")) {
+    if (tile.dataset.artKey) albumArtObserver?.observe(tile);
+  }
+  const detail = document.getElementById("album-detail-art");
+  if (detail?.dataset.artKey) loadAlbumTile(detail);
+  void nowArtwork.refresh();
+}
+// 同じタイルを続けて読み直したとき（albumArtタブが届いた等）、後から始めた読み込みだけを反映する
+const artTileLoads = new WeakMap<HTMLElement, number>();
+let artTileLoadCounter = 0;
 function loadAlbumTile(tile: HTMLElement): void {
   const key = tile.dataset.artKey;
   if (!key) return;
-  void albumArtStore.get(key).then((url) => {
-    if (url && tile.isConnected && tile.dataset.artKey === key) fillArtTile(tile, tile.dataset.album ?? "", url);
-  });
+  const load = ++artTileLoadCounter;
+  artTileLoads.set(tile, load);
+  void (async () => {
+    const remote = await remoteAlbumArt(key).catch(() => ({ kind: "failed" }) as const);
+    const url = remote.kind === "picture" ? remote.url : await albumArtStore.get(key).catch(() => null);
+    if (url && tile.isConnected && tile.dataset.artKey === key && artTileLoads.get(tile) === load) fillArtTile(tile, tile.dataset.album ?? "", url);
+  })();
 }
 let serviceWorkerReady: Promise<void> | null = null;
 const catalogOperationGate = new CatalogOperationGate();
@@ -1560,6 +1593,8 @@ async function loadCatalog(): Promise<void> {
     const syncState = readCompletedSyncStateForCatalog(await syncIO.readHeaderRow(), await syncIO.readAllRows());
     const rootFolderId = syncState.rootFolderId;
     const songs = parseIndexRows(await sheetsIO.listExistingRows());
+    // 管理ツールが集めた表紙（albumArtタブ）。無い・読めなくても読み込みは続ける（表紙は聴いた曲の埋め込み画像だけになる）
+    const albumArtIdsLoad = readAlbumArtFileIds(spreadsheetId, () => auth.ensureAccessToken()).catch(() => new Map<string, string>());
 
     // フォルダパス解決はfolderCache.tsの`folders`タブ（スキャン・差分同期が書き込むキャッシュ）を
     // 優先し、キャッシュに無い分だけDriveへ問い合わせる（2026-09-03、実機利用で判明：曲ごとに
@@ -1638,6 +1673,14 @@ async function loadCatalog(): Promise<void> {
     for (const [id, meta] of newlyResolvedFromDrive) folders.set(id, { name: meta.name, parentId: meta.parentId ?? "" });
     loadedAlbumGroups = groupAlbumsForRack(annotateAlbumFolders(songs, folders));
     albumArtKeys = albumArtKeysByFileId(loadedAlbumGroups);
+    // 表紙の対応表は待たずに読み込みを終える（表紙の応答が滞っても、曲は使えるようにする）。届いたら反映する
+    const artGeneration = ++albumArtIdsGeneration;
+    driveArtIds = new Map();
+    void albumArtIdsLoad.then((ids) => {
+      if (artGeneration !== albumArtIdsGeneration || loadedCatalogSpreadsheetId !== spreadsheetId) return;
+      driveArtIds = ids;
+      if (ids.size > 0) refreshDriveArtTiles();
+    });
     refreshAlbumGroups();
     renderAlbumDetail();
     renderFilterSuggestions(songs);
