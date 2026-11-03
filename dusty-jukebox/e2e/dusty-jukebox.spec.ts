@@ -3521,3 +3521,48 @@ test("何枚組の中身はフォルダから分かるディスク番号も含�
   await expect(page.locator("#album-detail-tracks .track-no")).toHaveText(["1", "2"]);
   await expect(page.locator("#album-detail-tracks .r-sub")).toHaveText(["Singer A", "Singer B feat. C"]);
 });
+
+// 次に再生（Android版に合わせた）：曲・アルバムを、いま再生中の曲のすぐ次へ差し込む
+test("再生リストの曲の「次に再生」で、その曲を再生中の曲のすぐ次へ移し、次へでその曲へ進む", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await openSymphonyQueue(page); // Opening・Scherzo・Finale、Openingを再生中
+  const rows = page.locator("#catalog-list li");
+  await expect(rows.locator(".r-title .t")).toHaveText(["Opening", "Scherzo", "Finale"]);
+  // 再生中の曲自身には使えない
+  await expect(rows.filter({ hasText: "Opening" }).getByRole("button", { name: "次に再生" })).toBeDisabled();
+  await rows.filter({ hasText: "Finale" }).getByRole("button", { name: "次に再生" }).click();
+  await expect(rows.locator(".r-title .t")).toHaveText(["Opening", "Finale", "Scherzo"]);
+  await expect(page.locator("#status")).toContainText("「Finale」を次に再生します");
+  await page.getByRole("button", { name: "次へ" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-3(\?|$)/);
+});
+
+test("アルバム一覧の「次に再生」「最後に追加」は再生リストを置き換えずに足し、中身の「次に再生」も同じ", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await openSymphonyQueue(page); // Openingを再生中
+  await openTab(page, "albums");
+  const blue = page.locator("#album-list li").filter({ hasText: "Blue Notes" });
+  await blue.getByRole("button", { name: "このアルバムを次に再生" }).click();
+  await expect(page.locator("#catalog-list li .r-title .t")).toHaveText(["Opening", "Jazz Song", "Scherzo", "Finale"]);
+  await expect(page.locator("#status")).toContainText("「Blue Notes（1曲）」を次に再生します");
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/); // 再生中の曲はそのまま
+  // 最後に追加は、入っている曲を足さない（全部入っているので件数は変わらない）
+  await blue.getByRole("button", { name: "このアルバムを最後に追加" }).click();
+  await expect(page.locator("#catalog-list li")).toHaveCount(4);
+  // 中身の「次に再生」：入っている曲は、そこから再生中の曲の次へ移す
+  await page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).locator(".row-main").click();
+  await page.locator("#album-detail-next").click();
+  await expect(page.locator("#catalog-list li .r-title .t")).toHaveText(["Opening", "Scherzo", "Finale", "Jazz Song"]);
+  await expect(page.locator("#status")).toContainText("再生リストの中から移しました");
+});
+
+test("アルバム一覧の並べ方は、開き直しても覚えている", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await expect(page.locator("#status")).toContainText("索引から4曲");
+  await openTab(page, "albums");
+  await page.locator("#album-sort").selectOption("year-desc");
+  await page.reload();
+  await expect(page.locator("#album-sort")).toHaveValue("year-desc");
+});
