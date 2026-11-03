@@ -43,10 +43,33 @@ import {
   type MissingFieldWrite,
 } from "./missingFieldFill";
 import { buildArtAlbums, parseFolderRows } from "./albumArtAlbums";
-import { albumArtKey, createAlbumArtSheetIO, parseAlbumArtRows, summarize, type AlbumArtRecord, type AlbumArtSummary } from "./albumArtSheet";
+import { albumArtKey, albumArtRow, createAlbumArtSheetIO, parseAlbumArtRows, summarize, type AlbumArtRecord, type AlbumArtSummary } from "./albumArtSheet";
+import {
+  chosenRecord,
+  createReviewSearch,
+  isReviewView,
+  recordsForView,
+  isSameArtRecord,
+  rejectedRecord,
+  REVIEW_VIEW_LABELS,
+  REVIEW_VIEWS,
+  SOURCE_LABELS,
+  sourcePageUrl,
+  type ReviewCandidate,
+  type ReviewView,
+} from "./albumArtReview";
 import { albumsToCollect, planAlbumArtWrites, runCollection } from "./albumArtCollect";
 import { createWebArtSearch } from "./albumArtSearch";
-import { createArtUploader, createEmbeddedExtractor, DriveHttpError, ensureArtFolder, fetchWebImage, makeJpegThumbnail } from "./albumArtDrive";
+import {
+  createArtUploader,
+  createEmbeddedExtractor,
+  DriveHttpError,
+  ensureArtFolder,
+  fetchDriveImage,
+  fetchWebImage,
+  makeJpegThumbnail,
+  trashDriveFile,
+} from "./albumArtDrive";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
@@ -134,6 +157,10 @@ function render(): void {
         <div><button id="collect-art-btn" type="button" disabled>表紙を集める</button> <button id="stop-art-btn" type="button" disabled>止める</button></div>
         <p id="art-progress"></p>
         <div id="art-results"></div>
+        <p>集めた表紙は「確認する」で一覧にできます。違うものは「外す」（表紙なしにし、次に集めるときも入れ直さない）か「別の候補」で選び直してください。見つからなかったアルバムも「別の候補」から探して入れられます。</p>
+        <div class="art-review-bar"><select id="art-view" aria-label="表示する表紙"></select> <button id="review-art-btn" type="button" disabled>確認する</button></div>
+        <div id="art-candidates" class="art-candidates" hidden></div>
+        <div id="art-review" class="art-grid"></div>
       </section>
       <p id="status" class="status"></p>
     `
@@ -825,7 +852,8 @@ async function handleRevertMissingFields(): Promise<void> {
 let stopArtRequested = false;
 
 function artSummaryText(summary: AlbumArtSummary): string {
-  return `埋め込み ${summary.embedded}・MusicBrainz ${summary.musicbrainz}・iTunes ${summary.itunes}・見つからない ${summary.notfound}・読めなかった ${summary.error}`;
+  const rejected = summary.rejected > 0 ? `・外した ${summary.rejected}` : "";
+  return `埋め込み ${summary.embedded}・MusicBrainz ${summary.musicbrainz}・iTunes ${summary.itunes}・見つからない ${summary.notfound}・読めなかった ${summary.error}${rejected}`;
 }
 
 function renderArtResults(records: AlbumArtRecord[]): void {
@@ -927,6 +955,326 @@ async function handleCollectArt(): Promise<void> {
   }
 }
 
+// ===== アルバムアートの確認（一覧・外す・別の候補） =====
+
+interface ArtReviewState {
+  spreadsheetId: string;
+  records: Map<string, AlbumArtRecord>;
+}
+let artReview: ArtReviewState | null = null;
+// Driveの表紙 → 表示用のURL（一度読んだ画像は読み直さない）
+const artImageUrls = new Map<string, string>();
+let artImageObserver: IntersectionObserver | null = null;
+const reviewSearch = createReviewSearch();
+
+function getArtToken(): Promise<string> {
+  return auth.ensureAccessToken();
+}
+
+function reviewSpreadsheetIdOrWarn(): string | null {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!artReview || spreadsheetId !== artReview.spreadsheetId) {
+    setStatus("スプレッドシートIDが変わりました。もう一度「確認する」を押してください。", true);
+    return null;
+  }
+  return spreadsheetId;
+}
+
+function loadArtImage(fileId: string, img: HTMLImageElement): void {
+  const cached = artImageUrls.get(fileId);
+  if (cached) {
+    img.src = cached;
+    return;
+  }
+  void fetchDriveImage(getArtToken, fileId).then(
+    (blob) => {
+      const url = URL.createObjectURL(blob);
+      artImageUrls.set(fileId, url);
+      img.src = url;
+    },
+    () => {
+      img.alt = "画像を読めませんでした";
+    }
+  );
+}
+
+function currentReviewView(): ReviewView {
+  const value = el<HTMLSelectElement>("art-view").value;
+  return isReviewView(value) ? value : "web";
+}
+
+function renderArtReview(): void {
+  const container = el<HTMLDivElement>("art-review");
+  container.innerHTML = "";
+  artImageObserver?.disconnect();
+  if (!artReview) return;
+  // 画面に入ったタイルの画像だけを読む（数百枚あっても、一度に全部は取りに行かない）
+  artImageObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const img = entry.target as HTMLImageElement;
+      artImageObserver?.unobserve(img);
+      loadArtImage(img.dataset.fileId ?? "", img);
+    }
+  });
+  const view = currentReviewView();
+  const records = recordsForView(artReview.records.values(), view);
+  const heading = document.createElement("p");
+  heading.className = "art-review-count";
+  heading.textContent = `${REVIEW_VIEW_LABELS[view]}：${records.length}枚`;
+  container.append(heading);
+  for (const record of records) {
+    const key = albumArtKey(record.albumFolderId, record.album);
+    const tile = document.createElement("div");
+    tile.className = "art-tile";
+    if (record.artFileId) {
+      const img = document.createElement("img");
+      img.alt = `${record.album}の表紙`;
+      img.dataset.fileId = record.artFileId;
+      tile.append(img);
+      artImageObserver.observe(img);
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "art-empty";
+      empty.textContent = "表紙なし";
+      tile.append(empty);
+    }
+    const name = document.createElement("p");
+    name.className = "art-name";
+    name.textContent = record.album;
+    const artist = document.createElement("p");
+    artist.className = "art-artist";
+    artist.textContent = record.artist || "（アーティスト不明・オムニバス）";
+    const source = document.createElement("p");
+    source.className = "art-source";
+    const page = sourcePageUrl(record);
+    if (page) {
+      const link = document.createElement("a");
+      link.href = page;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = SOURCE_LABELS[record.source];
+      source.append(link);
+    } else {
+      source.textContent = SOURCE_LABELS[record.source];
+    }
+    const actions = document.createElement("div");
+    actions.className = "art-actions";
+    if (record.artFileId) {
+      const reject = document.createElement("button");
+      reject.type = "button";
+      reject.className = "secondary";
+      reject.textContent = "外す";
+      reject.setAttribute("aria-label", `「${record.album}」の表紙を外す`);
+      reject.addEventListener("click", () => void handleRejectArt(key));
+      actions.append(reject);
+    }
+    const other = document.createElement("button");
+    other.type = "button";
+    other.className = "secondary";
+    other.textContent = "別の候補";
+    other.setAttribute("aria-label", `「${record.album}」の別の候補`);
+    other.addEventListener("click", () => openArtCandidates(key));
+    actions.append(other);
+    tile.append(name, artist, source, actions);
+    container.append(tile);
+  }
+}
+
+async function handleReviewArt(): Promise<void> {
+  const spreadsheetId = el<HTMLInputElement>("spreadsheet-id").value.trim();
+  if (!spreadsheetId) {
+    setStatus("索引スプレッドシートIDを入力してください", true);
+    return;
+  }
+  if (!tryAcquire()) {
+    setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  try {
+    const artIO = createAlbumArtSheetIO(spreadsheetId, getArtToken);
+    await artIO.ensureTab();
+    const parsed = parseAlbumArtRows(await artIO.readRows());
+    artReview = { spreadsheetId, records: new Map([...parsed].map(([key, v]) => [key, v.record])) };
+    closeArtCandidates();
+    renderArtReview();
+    setStatus(parsed.size > 0 ? `${parsed.size}枚の記録を読み込みました。` : "まだ表紙の記録がありません。先に「表紙を集める」を押してください。");
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `表紙の記録を読めませんでした: ${err.message}` : "表紙の記録を読めませんでした", true);
+  } finally {
+    release();
+  }
+}
+
+class StaleArtRecordError extends Error {}
+
+/**
+ * 記録を書き換える。通信の要る準備（画像の送信など）は呼ぶ前に済ませておき、ここでは
+ * 書く直前にタブを読み直して今の行番号で書く（スプレッドシートで行を並べ替えていても取り違えないため）。
+ * 画面に出している記録（[shown]）から変わっていたら（別の画面・端末で直した等）、見ていない記録を書き換えないよう止める。
+ */
+async function writeArtRecord(spreadsheetId: string, key: string, shown: AlbumArtRecord, build: (current: AlbumArtRecord) => AlbumArtRecord): Promise<AlbumArtRecord> {
+  const artIO = createAlbumArtSheetIO(spreadsheetId, getArtToken);
+  const found = parseAlbumArtRows(await artIO.readRows()).get(key);
+  if (!found) throw new StaleArtRecordError("このアルバムの記録が見つかりません。もう一度「確認する」を押してください。");
+  if (!isSameArtRecord(found.record, shown)) {
+    throw new StaleArtRecordError("この表紙は別の画面で変更されています。もう一度「確認する」を押して、今の表紙を見てから選んでください。");
+  }
+  const next = build(found.record);
+  await artIO.updateRows([{ rowNumber: found.rowNumber, row: albumArtRow(next) }]);
+  // 古い表紙はゴミ箱へ（失敗しても記録は書けているので止めない）
+  if (found.record.artFileId && found.record.artFileId !== next.artFileId) {
+    void trashDriveFile(getArtToken, found.record.artFileId).catch(() => {});
+  }
+  artReview?.records.set(key, next);
+  return next;
+}
+
+async function handleRejectArt(key: string): Promise<void> {
+  const spreadsheetId = reviewSpreadsheetIdOrWarn();
+  if (!spreadsheetId) return;
+  if (!tryAcquire()) {
+    setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  try {
+    const shown = artReview?.records.get(key);
+    if (!shown) return;
+    const next = await writeArtRecord(spreadsheetId, key, shown, (current) => rejectedRecord(current, new Date().toISOString()));
+    renderArtReview();
+    setStatus(`「${next.album}」の表紙を外しました。次に集めるときも入れ直しません。`);
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `外せませんでした: ${err.message}` : "外せませんでした", true);
+  } finally {
+    release();
+  }
+}
+
+function closeArtCandidates(): void {
+  const panel = el<HTMLDivElement>("art-candidates");
+  panel.hidden = true;
+  panel.innerHTML = "";
+}
+
+function openArtCandidates(key: string): void {
+  const record = artReview?.records.get(key);
+  if (!record) return;
+  const panel = el<HTMLDivElement>("art-candidates");
+  panel.innerHTML = "";
+  panel.hidden = false;
+  const title = document.createElement("p");
+  title.className = "art-name";
+  title.textContent = `「${record.album}」の別の候補`;
+  const form = document.createElement("div");
+  form.className = "art-search";
+  const albumInput = document.createElement("input");
+  albumInput.value = record.album;
+  albumInput.setAttribute("aria-label", "探すアルバム名");
+  const artistInput = document.createElement("input");
+  artistInput.value = record.artist;
+  artistInput.placeholder = "アーティスト（空でもよい）";
+  artistInput.setAttribute("aria-label", "探すアーティスト");
+  const search = document.createElement("button");
+  search.type = "button";
+  search.textContent = "探す";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "secondary";
+  close.textContent = "閉じる";
+  close.addEventListener("click", closeArtCandidates);
+  form.append(albumInput, artistInput, search, close);
+  const results = document.createElement("div");
+  results.className = "art-grid";
+  const runSearch = async () => {
+    search.disabled = true;
+    results.innerHTML = "";
+    setStatus("候補を探しています…");
+    try {
+      const candidates = await reviewSearch(albumInput.value.trim(), artistInput.value.trim());
+      renderArtCandidates(results, key, candidates);
+      setStatus(candidates.length > 0 ? `${candidates.length}件の候補が見つかりました（画像の無い候補は表示しません）。` : "候補が見つかりませんでした。名前を変えて探してみてください。");
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "候補を探せませんでした", true);
+    } finally {
+      search.disabled = false;
+    }
+  };
+  search.addEventListener("click", () => void runSearch());
+  panel.append(title, form, results);
+  panel.scrollIntoView({ block: "nearest" });
+  void runSearch();
+}
+
+function renderArtCandidates(container: HTMLElement, key: string, candidates: ReviewCandidate[]): void {
+  for (const candidate of candidates) {
+    const tile = document.createElement("div");
+    tile.className = "art-tile";
+    const img = document.createElement("img");
+    img.src = candidate.previewUrl;
+    img.alt = `${candidate.title}の表紙の候補`;
+    img.loading = "lazy";
+    // 表紙が登録されていない候補（MusicBrainzで多い）は出さない
+    img.addEventListener("error", () => tile.remove());
+    const name = document.createElement("p");
+    name.className = "art-name";
+    name.textContent = candidate.title;
+    const artist = document.createElement("p");
+    artist.className = "art-artist";
+    artist.textContent = candidate.artist;
+    const source = document.createElement("p");
+    source.className = "art-source";
+    source.textContent = SOURCE_LABELS[candidate.source];
+    const choose = document.createElement("button");
+    choose.type = "button";
+    choose.textContent = "これにする";
+    choose.setAttribute("aria-label", `「${candidate.title}」（${SOURCE_LABELS[candidate.source]}）の表紙にする`);
+    choose.addEventListener("click", () => void handleChooseArt(key, candidate));
+    tile.append(img, name, artist, source, choose);
+    container.append(tile);
+  }
+}
+
+async function handleChooseArt(key: string, candidate: ReviewCandidate): Promise<void> {
+  const spreadsheetId = reviewSpreadsheetIdOrWarn();
+  if (!spreadsheetId) return;
+  if (!tryAcquire()) {
+    setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  try {
+    setStatus("表紙を差し替えています…");
+    const image = await fetchWebImage(candidate.imageUrl);
+    if (!image) throw new Error("この候補の画像は取れませんでした。別の候補を選んでください。");
+    const thumb = await makeJpegThumbnail(image.data, image.format);
+    if (!thumb) throw new Error("この候補の画像は読めませんでした。別の候補を選んでください。");
+    const shown = artReview?.records.get(key);
+    if (!shown) return;
+    // 画像を先にDriveへ置いてから、記録を書く直前に行を探し直す（送信中に行が並べ替えられても取り違えない）
+    const folderId = await ensureArtFolder(getArtToken);
+    const upload = createArtUploader(getArtToken, folderId);
+    const artFileId = await upload({ albumFolderId: shown.albumFolderId, album: shown.album, artist: shown.artist, shelf: "artist", tracks: [] }, thumb);
+    let next: AlbumArtRecord;
+    try {
+      next = await writeArtRecord(spreadsheetId, key, shown, (current) => chosenRecord(current, candidate, artFileId, new Date().toISOString()));
+    } catch (err) {
+      // 記録に使われていないと確かな場合（書く前に止めた）だけ、送った画像を消す。
+      // 書き込みの応答が届かなかった等で、記録されたか分からない場合は消さない（記録済みの画像を消してしまわないため）
+      if (err instanceof StaleArtRecordError) void trashDriveFile(getArtToken, artFileId).catch(() => {});
+      throw err;
+    }
+    closeArtCandidates();
+    renderArtReview();
+    setStatus(`「${next.album}」の表紙を差し替えました。`);
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `差し替えられませんでした: ${err.message}` : "差し替えられませんでした", true);
+  } finally {
+    release();
+  }
+}
+
 // ===== ログイン・初期化 =====
 
 async function handleLogin(): Promise<void> {
@@ -942,6 +1290,7 @@ async function handleLogin(): Promise<void> {
     el<HTMLButtonElement>("check-health-btn").disabled = false;
     el<HTMLButtonElement>("check-missing-btn").disabled = false;
     el<HTMLButtonElement>("collect-art-btn").disabled = false;
+    el<HTMLButtonElement>("review-art-btn").disabled = false;
   } catch (err) {
     setStatus(err instanceof AuthError ? err.message : String(err), true);
   } finally {
@@ -975,6 +1324,10 @@ function init(): void {
   el<HTMLButtonElement>("apply-missing-btn").addEventListener("click", () => void handleApplyMissingFields());
   el<HTMLButtonElement>("revert-missing-btn").addEventListener("click", () => void handleRevertMissingFields());
   el<HTMLButtonElement>("collect-art-btn").addEventListener("click", () => void handleCollectArt());
+  const artView = el<HTMLSelectElement>("art-view");
+  for (const view of REVIEW_VIEWS) artView.append(new Option(REVIEW_VIEW_LABELS[view], view));
+  artView.addEventListener("change", renderArtReview);
+  el<HTMLButtonElement>("review-art-btn").addEventListener("click", () => void handleReviewArt());
   el<HTMLButtonElement>("stop-art-btn").addEventListener("click", () => {
     stopArtRequested = true;
     el<HTMLButtonElement>("stop-art-btn").disabled = true;

@@ -183,3 +183,18 @@ export function createArtUploader(getAccessToken: () => Promise<string>, folderI
     return ((await res.json()) as { id: string }).id;
   };
 }
+
+/** Driveに置いた表紙を読む（確認画面で表示する。ログイン中のトークンで読むので、画像を公開しなくてよい）。 */
+export async function fetchDriveImage(getAccessToken: () => Promise<string>, fileId: string): Promise<Blob> {
+  const res = await driveFetch(getAccessToken, `${DRIVE}/files/${encodeURIComponent(fileId)}?alt=media`);
+  return res.blob();
+}
+
+/** 差し替え・外した古い表紙をゴミ箱へ移す（このツールが作ったファイルだけ。失敗しても記録は進める）。 */
+export async function trashDriveFile(getAccessToken: () => Promise<string>, fileId: string): Promise<void> {
+  await driveFetch(getAccessToken, `${DRIVE}/files/${encodeURIComponent(fileId)}?fields=id`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ trashed: true }),
+  });
+}

@@ -14,6 +14,8 @@ export type MockOptions = {
   coverArtFileIds?: string[];
   /** アルバムアート：foldersタブの行（folderId, name, parentId）。 */
   folderRows?: string[][];
+  /** アルバムアート：albumArtタブの最初の中身（ヘッダー行を含む）。 */
+  albumArtRows?: (string | number)[][];
 };
 
 // ID3v2.3のAPICフレーム（表紙、1×1のPNG）＋MPEGフレーム3つの小さなMP3（本体dusty-jukeboxのe2e/google-mocks.tsと同じ）。
@@ -56,7 +58,12 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
 
   const authFailures: string[] = [];
   // アルバムアート：albumArtタブ（無ければnull）・Driveに置いた画像・Webへの問い合わせ
-  let albumArtRows: (string | number)[][] | null = null;
+  let albumArtRows: (string | number)[][] | null = options.albumArtRows ?? null;
+  const driveTrashed: string[] = [];
+  // 画像の送信を受けた直後に呼ぶ（送信中にスプレッドシートが変わる場合を作るため）
+  let uploadHook: (() => void) | null = null;
+  // albumArtタブの行の書き換えを反映したうえで、応答だけ届かなくする（書けたか分からない状態を作るため）
+  let dropAlbumArtWriteResponses = false;
   const driveUploads: { name: string; parents: string[] }[] = [];
   const driveFolders: string[] = [];
   const webRequests: string[] = [];
@@ -115,6 +122,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
         const rowNumber = Number(update.range.match(/!A(\d+):/)?.[1]);
         (albumArtRows ?? [])[rowNumber - 1] = update.values[0];
       }
+      if (dropAlbumArtWriteResponses) return route.abort("connectionreset");
       return json(route, {});
     }
 
@@ -164,6 +172,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       const body = route.request().postDataBuffer()?.toString("latin1") ?? "";
       const metadata = JSON.parse(body.slice(body.indexOf("{"), body.indexOf("}\r\n") + 1)) as { name: string; parents: string[] };
       driveUploads.push(metadata);
+      uploadHook?.();
       return json(route, { id: `art-${driveUploads.length}` });
     }
     if (url.pathname === "/drive/v3/files" && method === "GET") {
@@ -174,6 +183,14 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       return json(route, { id: driveFolders[driveFolders.length - 1] });
     }
     const fileId = decodeURIComponent(url.pathname.split("/").pop() ?? "");
+    if (method === "PATCH") {
+      driveTrashed.push(fileId);
+      return json(route, { id: fileId });
+    }
+    // このツールが置いた表紙（art-で始まる）は画像を返す
+    if (fileId.startsWith("art-") && url.searchParams.get("alt") === "media") {
+      return route.fulfill({ status: 200, contentType: "image/png", body: COVER_PNG });
+    }
     const media = options.coverArtFileIds?.includes(fileId) ? COVER_ART_MP3 : PLAIN_MP3;
     if (url.searchParams.get("alt") === "media") {
       const range = /bytes=(\d+)-(\d+)/.exec(route.request().headers().range ?? "");
@@ -195,7 +212,11 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     webRequests.push(url);
     const cors = { "Access-Control-Allow-Origin": "*" };
     if (url.startsWith("https://musicbrainz.org/")) {
-      const groups = url.includes('releasegroup:"Found"') ? [{ id: "rg-found", title: "Found", score: 100, "artist-credit": [{ name: "Web Artist" }] }] : [];
+      const groups = url.includes('releasegroup:"Found"')
+        ? [{ id: "rg-found", title: "Found", score: 100, "artist-credit": [{ name: "Web Artist" }] }]
+        : url.includes('releasegroup:"Candidate Me')
+          ? [{ id: "rg-cand", title: "Candidate Me (Deluxe)", score: 70, "artist-credit": [{ name: "Someone" }] }]
+          : [];
       return route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify({ "release-groups": groups }) });
     }
     if (url.startsWith("https://itunes.apple.com/")) {
@@ -208,7 +229,17 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     driveUploads,
     driveFolders,
     webRequests,
+    driveTrashed,
     getAlbumArtRows: () => albumArtRows,
+    setAlbumArtRows: (rows: (string | number)[][]) => {
+      albumArtRows = rows;
+    },
+    setUploadHook: (hook: (() => void) | null) => {
+      uploadHook = hook;
+    },
+    setDropAlbumArtWriteResponses: (drop: boolean) => {
+      dropAlbumArtWriteResponses = drop;
+    },
     authFailures,
     sheetsWrites,
     sheetsReadRanges,

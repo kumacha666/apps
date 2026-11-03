@@ -77,14 +77,15 @@
 
 ## アルバムアートの収集（2026-11-03）
 
-アルバムごとの表紙を集め、本体`dusty-jukebox`・アプリ版（Android、非公開）がどの端末でも一覧に表紙を出せるようにする。ユーザーとの相談で決めたこと：埋め込み画像のあるアルバムもDriveへ小さな画像を置く（どの端末でも、まだ聴いていないアルバムまで一覧に表紙が出るように）／無いアルバムはWebから一括で補完し、おかしなものは後で個別に直す（個別の差し替え・外すは次のPR）／音楽ファイルは書き換えない。
+アルバムごとの表紙を集め、本体`dusty-jukebox`・アプリ版（Android、非公開）がどの端末でも一覧に表紙を出せるようにする。ユーザーとの相談で決めたこと：埋め込み画像のあるアルバムもDriveへ小さな画像を置く（どの端末でも、まだ聴いていないアルバムまで一覧に表紙が出るように）／無いアルバムはWebから一括で補完し、おかしなものは後で確認画面で個別に直す／音楽ファイルは書き換えない。
 
-- **albumArtタブ**（`src/albumArtSheet.ts`、このツールだけが書き、本体・アプリ版が読む契約）：`albumFolderId, album, artist, embedded, artFileId, source, sourceId, checkedFileId, updatedAt`。1アルバム＝1行。キーは`albumFolderId`＋`album`（本体のアルバム一覧の1件と同じ単位：アルバム名〈override優先〉＋まとめる単位のフォルダ〈ディスクごとのフォルダ`CD1`等は上のフォルダ〉。`src/albumArtAlbums.ts`は本体`albumRack.ts`の分け方を移植したもの。**本体側の分け方を変えたらここも合わせる**）。`embedded`は`yes`/`no`（読めなかったら空）、`source`は`embedded`/`musicbrainz`/`itunes`/`notfound`/`error`。右に列を足してもよい（ヘッダーは先頭9列だけ確認する）
+- **albumArtタブ**（`src/albumArtSheet.ts`、このツールだけが書き、本体・アプリ版が読む契約）：`albumFolderId, album, artist, embedded, artFileId, source, sourceId, checkedFileId, updatedAt`。1アルバム＝1行。キーは`albumFolderId`＋`album`（本体のアルバム一覧の1件と同じ単位：アルバム名〈override優先〉＋まとめる単位のフォルダ〈ディスクごとのフォルダ`CD1`等は上のフォルダ〉。`src/albumArtAlbums.ts`は本体`albumRack.ts`の分け方を移植したもの。**本体側の分け方を変えたらここも合わせる**）。`embedded`は`yes`/`no`（読めなかったら空）、`source`は`embedded`/`musicbrainz`/`itunes`/`notfound`/`error`/`rejected`（確認画面で外した。表紙なしのまま、次回の収集でも入れ直さない）。読む側は`artFileId`が空でなければその画像を使うだけでよい。右に列を足してもよい（ヘッダーは先頭9列だけ確認する）
 - **流れ**（`src/albumArtCollect.ts`、通信・画像処理は引数で受け取る）：アルバムごとに①最初の曲、無ければ最後の曲の埋め込み画像を読む（`coverArt.ts`・`rangeTokenizer.ts`は本体から移植、`music-metadata`依存を追加）。あれば512pxのJPEGに縮めてDriveへ（source=embedded）。②無ければWebで探す（`src/albumArtSearch.ts`：MusicBrainzのrelease-group検索→Cover Art Archiveの500px、無ければiTunes Search〈country=JP〉の600px。アルバム名〈NFKC・大文字小文字・記号を無視、括弧の付記を除いても可〉とアーティスト〈片方が他方を含む〉が一致する候補だけ。オムニバスは"Various Artists"で探し、アーティスト不明なら探さない）。③曲が読めない・検索や画像の取得に失敗したら（応答の本文の受信中に切れた場合も）error（次回やり直す）。認証の失敗（トークンが取れない・Driveの401。曲の読み出し中も含む）・Driveへの書き込み・スプレッドシートの失敗は全体を止める（どのアルバムでも同じく失敗するため。画面がトークンを捨てる）
 - **置き場所**（`src/albumArtDrive.ts`）：マイドライブ直下の「DustyJukebox アルバムアート」フォルダ（`appProperties`の`dustyJukeboxRole=albumArtFolder`で見分ける。無ければ作る）。ファイル名は「アルバム名 [フォルダIDの先頭8文字].jpg」
 - **再実行**：記録が無いアルバムと`error`のアルバムだけを集める（`albumsToCollect`）。10枚ごとに書き込むので、止めても続きから集められる。MusicBrainzは1.1秒、iTunesは3.1秒に1回まで（`Throttle`）。同時に3枚まで
-- **既知の制限**：曲のファイルの埋め込み画像を後から差し替えても、記録済みのアルバムは読み直さない（行を消せば次回集め直す）。画像の取得元によっては取り違えがありうる（個別に直すUIは次のPR）。Driveへの画像の送信を5xxでやり直したとき、同じ画像が2つ置かれることがある（記録されるのは1つ）
-- ユニットテスト：`albumArtAlbums.test.ts`・`albumArtSheet.test.ts`・`albumArtSearch.test.ts`・`albumArtCollect.test.ts`・`albumArtDrive.test.ts`（主要な判断を一時的に壊すと失敗することを確認済み）。E2E「アルバムアート：…」は、Drive・Web検索・Cover Art Archiveもモックし（`e2e/google-mocks.ts`の`coverArtFileIds`・`folderRows`）、2枚組のまとめ方・最後の曲の埋め込み・MusicBrainzの補完・見つからない・再実行で調べ直さないことを確かめる（画像の縮小を壊すと失敗することを確認済み）
+- **既知の制限**：曲のファイルの埋め込み画像を後から差し替えても、記録済みのアルバムは読み直さない（行を消せば次回集め直す）。画像の取得元によっては取り違えがありうる（確認画面で直す）。Driveへの画像の送信を5xxでやり直したとき、同じ画像が2つ置かれることがある（記録されるのは1つ）
+- **確認画面**（2026-11-03、ユーザーの要望：Driveのフォルダを見ても、どの画像がどのアルバムか判別しづらい）：「確認する」で`albumArt`タブを読み、表紙をタイルで並べる（アルバム名・アーティスト・取得元〈MusicBrainz・iTunesはページへのリンク〉）。表示は「Webから補完した表紙」（既定）／見つからなかった／外した／読めなかった／埋め込み／すべて（`src/albumArtReview.ts`の`recordsForView`）。画像はDriveからログイン中のトークンで読み（`fetchDriveImage`、画像を公開しなくてよい）、画面に入ったタイルだけ読む（IntersectionObserver）。「外す」は`rejected`にして画像を消す。「別の候補」はアルバム名・アーティスト（直せる）でMusicBrainz・iTunesを照合せずに検索し（`createReviewSearch`、片方が失敗してももう片方を出す）、候補の小さな画像を並べ、選んだら縮めてDriveへ置いて差し替える。見つからなかったアルバムも同じ操作で入れられる。差し替え・外した古い画像はゴミ箱へ（`trashDriveFile`、失敗しても記録は進める）。**書く直前にタブを読み直して今の行番号で書く**（スプレッドシートで行を並べ替えられていても取り違えないため。「これにする」は画像をDriveへ送り終えてから読み直す〈送信中の並べ替えでも取り違えない〉）。**読み直した記録が画面に出した記録（表紙・取得元・更新日時、`isSameArtRecord`）と違えば、外す・差し替えをせず「確認する」からやり直してもらう**（別の画面・端末で直した表紙を、見ないまま外したり上書きしたりしないため。この場合だけ、差し替えで送った画像はゴミ箱へ戻す。書き込みの応答が届かず記録されたか分からないときは、記録済みの画像を消さないよう残す）
+- ユニットテスト：`albumArtAlbums.test.ts`・`albumArtSheet.test.ts`・`albumArtSearch.test.ts`・`albumArtCollect.test.ts`・`albumArtDrive.test.ts`（主要な判断を一時的に壊すと失敗することを確認済み）。E2E「アルバムアート：…」は、Drive・Web検索・Cover Art Archiveもモックし（`e2e/google-mocks.ts`の`coverArtFileIds`・`folderRows`）、2枚組のまとめ方・最後の曲の埋め込み・MusicBrainzの補完・見つからない・再実行で調べ直さないことを確かめる（画像の縮小を壊すと失敗することを確認済み）。E2E「アルバムアートの確認：…」は、一覧の画像の読み込み・取得元のリンク・外す（行を並べ替えた後でも正しい行に書くこと、古い画像をゴミ箱へ移すこと）・別の候補から選ぶ・外したアルバムの表示・幅320pxではみ出さないこと（候補パネルの長いアルバム名を含む）・画像の送信中に行が並べ替えられても正しい行に書くこと・別の画面で変わった表紙は外さず差し替えないこと・書き込みの応答が届かないときに送った画像を消さないことを確かめる（読み直しの省略・画面の記録との照合の省略・候補パネルの折り返しの削除をそれぞれ試すと失敗することを確認済み）。ユニットテストは`albumArtReview.test.ts`も
 
 ## UI
 
@@ -107,7 +108,7 @@
 - `npm run build` — テスト（prebuild）→ E2E（`scripts/test-e2e-if-chromium.mjs`経由）→ ビルド（tsc + vite build）。2026-09-07、本体と同じPlaywright E2E gateを追加した
 - `npm run deploy` — ビルド → `scripts/copy-dist-app.mjs`で`dist/app.js`をルート直下にコピー（本体と同じくWindows対応のためNode標準の`fs.copyFileSync`を使用、`cp`コマンドは使わない）
 - PWA化していない（`manifest.json`/`sw.js`なし）。管理者本人がその場で開いて使うツールのため、オフライン対応・ホーム画面追加は不要と判断
-- `app.js`は334.09kB（2026-11-03、アルバムアートの収集で`music-metadata`を足して262.51kBから増えた。Genre表記ゆれ統一機能追加前は256.16kB。本体の499kB見込みから、必要な時しか読み込まれないこのアプリへ完全に分離できた）
+- `app.js`は約340kB（2026-11-03、アルバムアートの収集で`music-metadata`を足して262.51kBから増えた。Genre表記ゆれ統一機能追加前は256.16kB。本体の499kB見込みから、必要な時しか読み込まれないこのアプリへ完全に分離できた）
 - 環境変数`VITE_GOOGLE_CLIENT_ID`は本体`dusty-jukebox`と同じ値を使う（Codex Cloud Environment・Claude Code実行セッションのいずれにも既に設定済み、`apps/CLAUDE.md`「dusty-jukebox」節参照）
 
 ## 次の実装ステップ
@@ -120,4 +121,4 @@
 - Latin-1→SJIS方向の文字化け修復（実データで実際に多数見つかった方向）をこのアプリのUI機能として実装するかどうかは未定。ユーザーの意向次第（今回は一度きりの大量データ対応だったため使い捨てツールで対応したが、今後も同種の文字化けが継続的に見つかるようであればアプリ化を検討）
 - Genreの文字化け修復（トークン分解が必要な点は表記ゆれ統一と同様だが、こちらは未着手のまま据え置き）
 - 外部LLM/Web検索による補完（ユーザーとの相談で明示的にスコープ外、別途改めて設計相談する。アルバムアートだけは2026-11-03にWebから補完することにした、上記「アルバムアートの収集」節）
-- アルバムアートの個別の差し替え・外す（次のPR）。本体`dusty-jukebox`・アプリ版がalbumArtタブの画像を一覧に出す（別PR）
+- ~~アルバムアートの個別の差し替え・外す~~（2026-11-03、確認画面として実装済み）。本体`dusty-jukebox`・アプリ版がalbumArtタブの画像を一覧に出す（別PR）

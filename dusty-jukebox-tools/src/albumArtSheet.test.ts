@@ -46,12 +46,14 @@ describe("albumArtタブ", () => {
     expect(isSettled(undefined)).toBe(false);
     expect(isSettled(record({ source: "error" }))).toBe(false);
     expect(isSettled(record({ source: "notfound" }))).toBe(true);
+    expect(isSettled(record({ source: "rejected" }))).toBe(true);
     expect(summarize([record({ source: "embedded" }), record({ source: "itunes" }), record({ source: "itunes" })])).toEqual({
       embedded: 1,
       musicbrainz: 0,
       itunes: 2,
       notfound: 0,
       error: 0,
+      rejected: 0,
     });
   });
 
