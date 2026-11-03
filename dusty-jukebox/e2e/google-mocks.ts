@@ -53,6 +53,8 @@ export type MockOptions = {
   albumArtRows?: string[][];
   /** Driveに置いた表紙の画像（1×1のPNG）として返すファイルID。 */
   driveArtImageIds?: string[];
+  /** albumArtタブの読み取りへの応答を、releaseAlbumArtTab()を呼ぶまで返さない。 */
+  holdAlbumArtTab?: boolean;
 };
 
 // ID3v2.3のAPICフレーム（表紙、1×1のPNG）＋MPEGフレーム3つの小さなMP3。music-metadataで表紙が読めることを確認済み。
@@ -162,6 +164,8 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const pendingPlaylistsAppends: (() => void)[] = [];
   let playlistsAppendsReleased = false;
   let releaseServiceWorker = () => {};
+  let releaseAlbumArtTab = () => {};
+  const albumArtTabGate = options.holdAlbumArtTab ? new Promise<void>((resolve) => { releaseAlbumArtTab = resolve; }) : null;
   const serviceWorkerGate = options.delayServiceWorkerActivation
     ? new Promise<void>((resolve) => { releaseServiceWorker = resolve; })
     : null;
@@ -332,6 +336,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       const isHeader = url.includes("1:1") || url.includes("A1:");
       if (method === "GET") {
         sheetsReadRanges.push(rangeSegment);
+        if (albumArtTabGate && sheetName === "albumArt") await albumArtTabGate;
         const requestedColumns = requestedColumnCount(rangeSegment);
         const gridColumns = sheetHeaders[sheetName]?.length ?? 26;
         if (requestedColumns !== undefined && requestedColumns > gridColumns) {
@@ -397,6 +402,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     streamRequests,
     pageMediaRequests,
     driveArtRequests,
+    releaseAlbumArtTab: () => releaseAlbumArtTab(),
     driveMetadataRequests,
     sheetsWrites,
     sheetsReadRanges,

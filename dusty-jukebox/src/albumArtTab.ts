@@ -28,16 +28,22 @@ export function isReadableAlbumArtHeader(header: readonly (string | number)[]): 
   return ALBUM_ART_SHEET_HEADER.every((name, i) => String(header[i] ?? "").trim() === name);
 }
 
-/** タブの行（ヘッダーを含む）→アルバムのキー→画像のファイルID。ヘッダーが違えば空。同じキーが2行あれば先の行。 */
+/**
+ * タブの行（ヘッダーを含む）→アルバムのキー→画像のファイルID。ヘッダーが違えば空。
+ * 同じアルバムが2行あれば、画像の有無によらず先の行を使う（ツールの`parseAlbumArtRows`と同じ。先の行で外した表紙を、後の古い行で復活させない）。
+ */
 export function parseAlbumArtTab(values: readonly (readonly (string | number)[])[]): Map<string, string> {
   const ids = new Map<string, string>();
   const [header, ...rows] = values;
   if (!header || !isReadableAlbumArtHeader(header)) return ids;
+  const seen = new Set<string>();
   for (const row of rows) {
-    const key = albumArtKey(String(row[1] ?? ""), String(row[0] ?? "").trim());
+    const albumFolderId = String(row[0] ?? "").trim();
+    const key = albumFolderId ? albumArtKey(String(row[1] ?? ""), albumFolderId) : null;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
     const artFileId = String(row[4] ?? "").trim();
-    if (!key || !artFileId || ids.has(key)) continue;
-    ids.set(key, artFileId);
+    if (artFileId) ids.set(key, artFileId);
   }
   return ids;
 }

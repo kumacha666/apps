@@ -232,6 +232,21 @@ describe("NowArtwork", () => {
       expect(t.art.urlFor("s2")).toBe("drive-2");
     });
 
+    test("refresh：あとからDriveの表紙が分かったら、今の曲の画像を探し直す（それまでの表示は消さない）", async () => {
+      let remote: RemoteArtResult = { kind: "none" };
+      const t = setup({ s1: "k1" }, async () => remote);
+      t.store.map.set("k1", "embedded-url");
+      await t.art.setCurrent("s1");
+      expect(t.shown.at(-1)).toEqual(["s1", "embedded-url"]);
+      const shownBefore = t.shown.length;
+      remote = { kind: "picture", url: "drive-url" };
+      await t.art.refresh();
+      expect(t.shown.slice(shownBefore)).toEqual([["s1", "drive-url"]]);
+      await t.art.setCurrent(null);
+      await t.art.refresh();
+      expect(t.shown.at(-1)).toEqual([null, null]);
+    });
+
     test("探すのが失敗（例外）しても、曲のファイルから読む", async () => {
       const t = setup({ s1: "k1" }, async () => { throw new Error("boom"); });
       const p = t.art.setCurrent("s1");

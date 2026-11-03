@@ -28,6 +28,11 @@ describe("albumArtタブ", () => {
     ]);
   });
 
+  test("同じアルバムの先の行に画像が無ければ（外した等）、後の古い行の画像は使わない。フォルダの無い行は飛ばす", () => {
+    const ids = parseAlbumArtTab([header, row("f1", "Symphony", "", "rejected"), row("f1", "Symphony", "art-old", "itunes"), row("", "NoFolder", "img")]);
+    expect(ids.size).toBe(0);
+  });
+
   test("ヘッダーが違えば何も使わない。同じアルバムが2行あれば先の行", () => {
     expect(parseAlbumArtTab([["x"], row("f1", "A", "img")]).size).toBe(0);
     expect(parseAlbumArtTab([]).size).toBe(0);

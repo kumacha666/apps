@@ -107,6 +107,18 @@ export class NowArtwork {
     return fileId && fileId === this.shownFileId ? this.shownUrl : null;
   }
 
+  /**
+   * 今の曲の画像を探し直す（索引を読み直してDriveの表紙が分かったときなど）。表示は、見つかるまで今のまま。
+   * 曲が無ければ何もしない。
+   */
+  refresh(): Promise<void> {
+    if (this.current === null) return Promise.resolve();
+    this.generation += 1;
+    this.abort?.abort();
+    this.abort = null;
+    return this.prepare(this.current, this.generation);
+  }
+
   setCurrent(fileId: string | null): Promise<void> {
     if (fileId === this.current) return Promise.resolve();
     this.current = fileId;

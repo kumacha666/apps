@@ -3484,6 +3484,28 @@ test("アルバムアート：管理ツールがDriveに置いた表紙（albumA
   expect(mock.driveArtRequests.filter((id) => id === "art-symphony")).toEqual(["art-symphony"]);
 });
 
+test("アルバムアート：albumArtタブの応答が滞っても索引の読み込みは終わり、届いたら一覧の表紙を差し替える。同じアルバムの先の行で外した表紙は、後の古い行で復活させない", async ({ context, page }) => {
+  const artRow = (album: string, artFileId: string, source: string) => ["root", album, "", "no", artFileId, source, "", "", "2026-11-03T00:00:00Z"];
+  const mock = await installGoogleMocks(context, {
+    albumCatalog: true,
+    albumArtRows: [artRow("Symphony", "art-symphony", "itunes"), artRow("Blue Notes", "", "rejected"), artRow("Blue Notes", "art-old", "itunes")],
+    driveArtImageIds: ["art-symphony", "art-old"],
+    holdAlbumArtTab: true,
+  });
+  await page.goto("/"); await login(page);
+  await loadAlbumCatalog(page, 4);
+  // 表紙の対応表を待たずに、曲は使える
+  await expect(page.getByRole("button", { name: "索引から曲一覧を読み込む" })).toBeEnabled();
+  await expect(page.locator("#search-btn")).toBeEnabled();
+  const symphonyTile = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).locator(".art-tile");
+  await expect(symphonyTile).toHaveText("S");
+  mock.releaseAlbumArtTab();
+  await expect(symphonyTile.locator("img")).toHaveAttribute("src", /^data:image\/jpeg;base64,/);
+  const blueTile = page.locator("#album-list li").filter({ hasText: "Blue Notes" }).locator(".art-tile");
+  await expect(blueTile).toHaveText("B");
+  expect(mock.driveArtRequests).toEqual(["art-symphony"]);
+});
+
 test("アルバムアート：albumArtタブが無ければ作らず、これまでどおり聴いた曲の埋め込み画像を使う", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { albumCatalog: true, coverArtFileIds: ["album-track-1"] });
   await page.goto("/"); await login(page);

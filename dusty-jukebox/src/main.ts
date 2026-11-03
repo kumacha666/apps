@@ -294,6 +294,8 @@ let loadedAlbumGroups: AlbumGroup[] = [];
 let albumArtKeys = new Map<string, string>();
 // 管理ツールがDriveへ置いた表紙（索引のalbumArtタブ）：アルバムのキー→画像のファイルID。loadCatalog()で読み直す
 let driveArtIds = new Map<string, string>();
+// 最後に始めたalbumArtタブの反映（古い読み込みの応答が、後の読み込みの対応表を上書きしないため）
+let albumArtIdsGeneration = 0;
 const albumArtStore = createIndexedDbAlbumArtStore();
 // Driveの表紙を読む。画像は「おまけ」なので、ログインの画面を出したりトークンを捨てたりしない（今のトークンが無ければ読まない）
 const remoteAlbumArt = createRemoteAlbumArt({
@@ -373,6 +375,15 @@ const albumArtObserver = typeof IntersectionObserver === "undefined" ? null : ne
   }
 }, { rootMargin: "200px" });
 // Driveに置いた表紙があればそれを（まだ聴いていないアルバムにも出る）、無い・取れなければ、聴いた曲から保存してある画像。
+// albumArtタブが届いたとき：表示中の一覧（画面に入っているタイルだけ取りに行く）・アルバムの中身・再生中の曲を探し直す
+function refreshDriveArtTiles(): void {
+  for (const tile of document.querySelectorAll<HTMLElement>("#album-list .art-tile")) {
+    if (tile.dataset.artKey) albumArtObserver?.observe(tile);
+  }
+  const detail = document.getElementById("album-detail-art");
+  if (detail?.dataset.artKey) loadAlbumTile(detail);
+  void nowArtwork.refresh();
+}
 function loadAlbumTile(tile: HTMLElement): void {
   const key = tile.dataset.artKey;
   if (!key) return;
@@ -1657,7 +1668,14 @@ async function loadCatalog(): Promise<void> {
     for (const [id, meta] of newlyResolvedFromDrive) folders.set(id, { name: meta.name, parentId: meta.parentId ?? "" });
     loadedAlbumGroups = groupAlbumsForRack(annotateAlbumFolders(songs, folders));
     albumArtKeys = albumArtKeysByFileId(loadedAlbumGroups);
-    driveArtIds = await albumArtIdsLoad;
+    // 表紙の対応表は待たずに読み込みを終える（表紙の応答が滞っても、曲は使えるようにする）。届いたら反映する
+    const artGeneration = ++albumArtIdsGeneration;
+    driveArtIds = new Map();
+    void albumArtIdsLoad.then((ids) => {
+      if (artGeneration !== albumArtIdsGeneration || loadedCatalogSpreadsheetId !== spreadsheetId) return;
+      driveArtIds = ids;
+      if (ids.size > 0) refreshDriveArtTiles();
+    });
     refreshAlbumGroups();
     renderAlbumDetail();
     renderFilterSuggestions(songs);
