@@ -47,6 +47,7 @@ import { registerActionHandlers, updateNowPlayingMetadata, updatePlaybackState }
 import { albumArtKeyOfGroup, albumArtKeysByFileId, albumInitial, albumTileHue, NowArtwork } from "./albumArt";
 import { albumOpenKey, albumSummary, albumTracks } from "./albumDetail";
 import { createIndexedDbAlbumArtStore, makeThumbnailDataUrl } from "./albumArtBrowser";
+import { createRemoteAlbumArt, fetchDriveImage, readAlbumArtFileIds } from "./albumArtTab";
 import { extractCoverArt } from "./coverArt";
 import { formatSeekTime, isSeekableDuration } from "./seekBar";
 import { shouldResumeExternalPlayback } from "./externalPlayback";
@@ -291,7 +292,19 @@ let loadedCatalogSpreadsheetId: string | null = null;
 let loadedAlbumGroups: AlbumGroup[] = [];
 // アルバムアート（R17）：曲→その曲のアルバムのキー（アルバム一覧と同じ分け方。loadCatalog()で作り直す）
 let albumArtKeys = new Map<string, string>();
+// 管理ツールがDriveへ置いた表紙（索引のalbumArtタブ）：アルバムのキー→画像のファイルID。loadCatalog()で読み直す
+let driveArtIds = new Map<string, string>();
 const albumArtStore = createIndexedDbAlbumArtStore();
+// Driveの表紙を読む。画像は「おまけ」なので、ログインの画面を出したりトークンを捨てたりしない（今のトークンが無ければ読まない）
+const remoteAlbumArt = createRemoteAlbumArt({
+  fileIdOf: (key) => driveArtIds.get(key) ?? null,
+  store: albumArtStore,
+  fetchImage: async (fileId) => {
+    const token = auth.getAccessToken();
+    return token ? fetchDriveImage(fileId, token) : null;
+  },
+  makeThumbnail: (data, format) => makeThumbnailDataUrl(data, format),
+});
 // 再生バーに出している曲（頭文字のタイルとOSのメディア操作画面の更新に使う）
 let nowArtSong: Song | undefined;
 const nowArtwork = new NowArtwork({
@@ -310,6 +323,7 @@ const nowArtwork = new NowArtwork({
       if (tile.dataset.artKey === key) fillArtTile(tile, tile.dataset.album ?? "", url);
     }
   },
+  remote: remoteAlbumArt,
 });
 // 曲のファイルから埋め込み画像を読む。画像は「おまけ」なので、ログインの画面を出したりトークンを捨てたりしない
 // （今のトークンが無ければ読まず、401でも何もしない。認証の扱いは再生側に任せる）。
@@ -358,12 +372,15 @@ const albumArtObserver = typeof IntersectionObserver === "undefined" ? null : ne
     loadAlbumTile(tile);
   }
 }, { rootMargin: "200px" });
+// Driveに置いた表紙があればそれを（まだ聴いていないアルバムにも出る）、無い・取れなければ、聴いた曲から保存してある画像。
 function loadAlbumTile(tile: HTMLElement): void {
   const key = tile.dataset.artKey;
   if (!key) return;
-  void albumArtStore.get(key).then((url) => {
+  void (async () => {
+    const remote = await remoteAlbumArt(key).catch(() => ({ kind: "failed" }) as const);
+    const url = remote.kind === "picture" ? remote.url : await albumArtStore.get(key).catch(() => null);
     if (url && tile.isConnected && tile.dataset.artKey === key) fillArtTile(tile, tile.dataset.album ?? "", url);
-  });
+  })();
 }
 let serviceWorkerReady: Promise<void> | null = null;
 const catalogOperationGate = new CatalogOperationGate();
@@ -1560,6 +1577,8 @@ async function loadCatalog(): Promise<void> {
     const syncState = readCompletedSyncStateForCatalog(await syncIO.readHeaderRow(), await syncIO.readAllRows());
     const rootFolderId = syncState.rootFolderId;
     const songs = parseIndexRows(await sheetsIO.listExistingRows());
+    // 管理ツールが集めた表紙（albumArtタブ）。無い・読めなくても読み込みは続ける（表紙は聴いた曲の埋め込み画像だけになる）
+    const albumArtIdsLoad = readAlbumArtFileIds(spreadsheetId, () => auth.ensureAccessToken()).catch(() => new Map<string, string>());
 
     // フォルダパス解決はfolderCache.tsの`folders`タブ（スキャン・差分同期が書き込むキャッシュ）を
     // 優先し、キャッシュに無い分だけDriveへ問い合わせる（2026-09-03、実機利用で判明：曲ごとに
@@ -1638,6 +1657,7 @@ async function loadCatalog(): Promise<void> {
     for (const [id, meta] of newlyResolvedFromDrive) folders.set(id, { name: meta.name, parentId: meta.parentId ?? "" });
     loadedAlbumGroups = groupAlbumsForRack(annotateAlbumFolders(songs, folders));
     albumArtKeys = albumArtKeysByFileId(loadedAlbumGroups);
+    driveArtIds = await albumArtIdsLoad;
     refreshAlbumGroups();
     renderAlbumDetail();
     renderFilterSuggestions(songs);

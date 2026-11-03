@@ -3447,6 +3447,53 @@ test("アルバムアート（R17）：再生中の曲の埋め込み画像を�
   expect(mock.pageMediaRequests.filter((u) => u.includes("album-track-2")).length).toBe(scherzoReads);
 });
 
+test("アルバムアート：管理ツールがDriveに置いた表紙（albumArtタブ）を、曲を鳴らさずに一覧へ出し、再生中も曲のファイルより先に使う", async ({ context, page }) => {
+  const artRow = (album: string, artFileId: string, source: string) => ["root", album, "", source === "embedded" ? "yes" : "no", artFileId, source, "", "", "2026-11-03T00:00:00Z"];
+  // Blue Notesは表紙の画像が取れない（Driveに無い）。Symphonyの曲には別の画像が埋め込まれている
+  const mock = await installGoogleMocks(context, {
+    albumCatalog: true,
+    coverArtFileIds: ["album-track-1"],
+    albumArtRows: [artRow("Symphony", "art-symphony", "itunes"), artRow("Blue Notes", "art-gone", "musicbrainz")],
+    driveArtImageIds: ["art-symphony"],
+  });
+  await page.goto("/"); await login(page);
+  await loadAlbumCatalog(page, 4);
+  const symphonyTile = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).locator(".art-tile");
+  await expect(symphonyTile.locator("img")).toHaveAttribute("src", /^data:image\/jpeg;base64,/);
+  const driveArt = await symphonyTile.locator("img").getAttribute("src");
+  // 取れなかったアルバムは頭文字のまま（画面が壊れない）
+  const blueTile = page.locator("#album-list li").filter({ hasText: "Blue Notes" }).locator(".art-tile");
+  await expect.poll(() => mock.driveArtRequests.includes("art-gone")).toBe(true);
+  await expect(blueTile).toHaveText("B");
+  await expect(blueTile.locator("img")).toHaveCount(0);
+  // 曲を鳴らしていないので、曲のファイルは読んでいない
+  expect(mock.pageMediaRequests).toEqual([]);
+
+  // アルバムの中身の画像も同じ
+  await page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).locator(".row-main").click();
+  await expect(page.locator("#album-detail-art img")).toHaveAttribute("src", driveArt!);
+  await page.getByRole("button", { name: "アルバム一覧へ戻る" }).click();
+
+  // 再生中：曲のファイルの埋め込み画像（Opening）より、Driveの表紙を出す。曲のファイルは画像のために読まない
+  await page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).getByRole("button", { name: "このアルバムを再生" }).click();
+  await expect(page.locator("#audio-player")).toHaveAttribute("src", /album-track-1(\?|$)/);
+  await expect(page.locator("#now-playing-art img")).toHaveAttribute("src", driveArt!);
+  await expect.poll(() => page.evaluate(() => navigator.mediaSession.metadata?.artwork?.[0]?.src ?? null)).toBe(driveArt);
+  expect(mock.pageMediaRequests.filter((u) => u.includes("album-track-1"))).toEqual([]);
+  // 同じ画像はブラウザに保存してあるので、Driveへは1回だけ取りに行く
+  expect(mock.driveArtRequests.filter((id) => id === "art-symphony")).toEqual(["art-symphony"]);
+});
+
+test("アルバムアート：albumArtタブが無ければ作らず、これまでどおり聴いた曲の埋め込み画像を使う", async ({ context, page }) => {
+  const mock = await installGoogleMocks(context, { albumCatalog: true, coverArtFileIds: ["album-track-1"] });
+  await page.goto("/"); await login(page);
+  await openSymphonyQueue(page);
+  await expect(page.locator("#now-playing-art img")).toHaveAttribute("src", /^data:image\/jpeg;base64,/);
+  expect(mock.driveArtRequests).toEqual([]);
+  expect(mock.sheetsReadRanges.some((r) => r.includes("albumArt"))).toBe(false);
+  expect(mock.sheetsWrites.some((w) => w.sheet === "albumArt")).toBe(false);
+});
+
 // アルバムの中身（トラック一覧、R20。Android版と同じ）：アルバム名をタップすると中身を開く。▶は従来どおり再生。
 async function loadAlbumCatalog(page: import("@playwright/test").Page, count: number) {
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");

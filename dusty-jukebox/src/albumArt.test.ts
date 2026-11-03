@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { albumArtKey, albumArtKeyOfGroup, albumArtKeysByFileId, albumInitial, albumTileHue, NowArtwork, thumbnailSize, type AlbumArtStore, type NowArtworkDeps } from "./albumArt";
+import { albumArtKey, albumArtKeyOfGroup, albumArtKeysByFileId, albumInitial, albumTileHue, NowArtwork, thumbnailSize, type AlbumArtStore, type NowArtworkDeps, type RemoteArtResult } from "./albumArt";
 import { annotateAlbumFolders, groupAlbumsForRack, type FolderInfo } from "./albumRack";
 import type { Song } from "./catalog";
 import type { CoverArtResult } from "./coverArt";
@@ -78,7 +78,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function setup(keys: Record<string, string | null>) {
+function setup(keys: Record<string, string | null>, remote?: (key: string) => Promise<RemoteArtResult>) {
   const store = new MemoryStore();
   const shown: [string | null, string | null][] = [];
   const saved: [string, string][] = [];
@@ -94,6 +94,7 @@ function setup(keys: Record<string, string | null>) {
     makeThumbnail: async (data) => `thumb:${new TextDecoder().decode(data)}`,
     show: (fileId, url) => shown.push([fileId, url]),
     onSaved: (key, url) => saved.push([key, url]),
+    ...(remote ? { remote } : {}),
   };
   return { art: new NowArtwork(deps), store, shown, saved, extracts };
 }
@@ -194,5 +195,50 @@ describe("NowArtwork", () => {
     expect(t.store.map.get("k1")).toBe("other");
     expect(t.saved).toEqual([]);
     expect(t.shown.at(-1)).toEqual(["s1", "thumb:A"]);
+  });
+
+  describe("Driveに置いた表紙（管理ツールが集めたもの）", () => {
+    test("あれば、保存してある画像・曲のファイルより先に出す（確認画面で選び直した表紙を反映する）", async () => {
+      const t = setup({ s1: "k1" }, async (key) => (key === "k1" ? { kind: "picture", url: "drive-url" } : { kind: "none" }));
+      t.store.map.set("k1", "embedded-url");
+      await t.art.setCurrent("s1");
+      expect(t.extracts).toHaveLength(0);
+      expect(t.shown.at(-1)).toEqual(["s1", "drive-url"]);
+      expect(t.saved).toEqual([["k1", "drive-url"]]);
+    });
+
+    test("無い・取れなければ、これまでどおり保存してある画像、それも無ければ曲のファイルから", async () => {
+      const results: Record<string, RemoteArtResult> = { k1: { kind: "none" }, k2: { kind: "failed" } };
+      const t = setup({ s1: "k1", s2: "k2" }, async (key) => results[key]);
+      t.store.map.set("k1", "embedded-url");
+      await t.art.setCurrent("s1");
+      expect(t.shown.at(-1)).toEqual(["s1", "embedded-url"]);
+      const p = t.art.setCurrent("s2");
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+      expect(t.extracts.map((e) => e.fileId)).toEqual(["s2"]);
+      t.extracts[0].result.resolve(picture("B"));
+      await p;
+      expect(t.shown.at(-1)).toEqual(["s2", "thumb:B"]);
+    });
+
+    test("取っている間に曲が変わったら、前の曲の表紙は出さない", async () => {
+      const pending = deferred<RemoteArtResult>();
+      const t = setup({ s1: "k1", s2: "k2" }, (key) => (key === "k1" ? pending.promise : Promise.resolve({ kind: "picture", url: "drive-2" })));
+      const first = t.art.setCurrent("s1");
+      await t.art.setCurrent("s2");
+      pending.resolve({ kind: "picture", url: "drive-1" });
+      await first;
+      expect(t.shown.at(-1)).toEqual(["s2", "drive-2"]);
+      expect(t.art.urlFor("s2")).toBe("drive-2");
+    });
+
+    test("探すのが失敗（例外）しても、曲のファイルから読む", async () => {
+      const t = setup({ s1: "k1" }, async () => { throw new Error("boom"); });
+      const p = t.art.setCurrent("s1");
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+      t.extracts[0].result.resolve(picture("A"));
+      await p;
+      expect(t.shown.at(-1)).toEqual(["s1", "thumb:A"]);
+    });
   });
 });

@@ -65,6 +65,9 @@ export interface AlbumArtStore {
   putIfAbsent(key: string, url: string): Promise<boolean>;
 }
 
+/** Driveに置いた表紙（管理ツールが集めたもの）を探した結果。`none`はalbumArtタブに無い、`failed`は取れなかった。 */
+export type RemoteArtResult = { kind: "none" } | { kind: "picture"; url: string } | { kind: "failed" };
+
 export interface NowArtworkDeps {
   /** 曲が入っているアルバムのキー（アルバム名が無い・索引に無い曲はnull）。 */
   keyOf(fileId: string): string | null;
@@ -77,11 +80,16 @@ export interface NowArtworkDeps {
   show(fileId: string | null, url: string | null): void;
   /** アルバムの画像を新しく保存した（表示中のアルバム一覧を差し替えるため）。 */
   onSaved(key: string, url: string): void;
+  /**
+   * Driveに置いた表紙を探す（あれば、保存してある画像・曲のファイルより先に使う。確認画面で選び直した表紙を反映するため）。
+   * 無い・取れなければ、これまでどおり保存してある画像→曲のファイルの順。
+   */
+  remote?(key: string): Promise<RemoteArtResult>;
 }
 
 /**
  * 再生中の曲のアルバムアートを用意する。曲が変わるたびに[setCurrent]を呼ぶ（同じ曲なら何もしない）。
- * 保存済みのアルバムならそれを出し、無ければ曲のファイルから読んで小さく保存する。
+ * Driveに置いた表紙があればそれを、無ければ保存済みのアルバムの画像を出し、それも無ければ曲のファイルから読んで小さく保存する。
  */
 export class NowArtwork {
   private current: string | null = null;
@@ -118,6 +126,15 @@ export class NowArtwork {
 
   private async prepare(fileId: string, generation: number): Promise<void> {
     const key = this.deps.keyOf(fileId);
+    if (key && this.deps.remote) {
+      const remote = await this.deps.remote(key).catch((): RemoteArtResult => ({ kind: "failed" }));
+      if (generation !== this.generation) return;
+      if (remote.kind === "picture") {
+        this.deps.onSaved(key, remote.url);
+        this.display(fileId, remote.url);
+        return;
+      }
+    }
     if (key) {
       const cached = await this.deps.store.get(key).catch(() => null);
       if (generation !== this.generation) return;
