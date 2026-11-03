@@ -60,6 +60,8 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   // アルバムアート：albumArtタブ（無ければnull）・Driveに置いた画像・Webへの問い合わせ
   let albumArtRows: (string | number)[][] | null = options.albumArtRows ?? null;
   const driveTrashed: string[] = [];
+  // 画像の送信を受けた直後に呼ぶ（送信中にスプレッドシートが変わる場合を作るため）
+  let uploadHook: (() => void) | null = null;
   const driveUploads: { name: string; parents: string[] }[] = [];
   const driveFolders: string[] = [];
   const webRequests: string[] = [];
@@ -167,6 +169,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       const body = route.request().postDataBuffer()?.toString("latin1") ?? "";
       const metadata = JSON.parse(body.slice(body.indexOf("{"), body.indexOf("}\r\n") + 1)) as { name: string; parents: string[] };
       driveUploads.push(metadata);
+      uploadHook?.();
       return json(route, { id: `art-${driveUploads.length}` });
     }
     if (url.pathname === "/drive/v3/files" && method === "GET") {
@@ -208,7 +211,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     if (url.startsWith("https://musicbrainz.org/")) {
       const groups = url.includes('releasegroup:"Found"')
         ? [{ id: "rg-found", title: "Found", score: 100, "artist-credit": [{ name: "Web Artist" }] }]
-        : url.includes('releasegroup:"Candidate Me"')
+        : url.includes('releasegroup:"Candidate Me')
           ? [{ id: "rg-cand", title: "Candidate Me (Deluxe)", score: 70, "artist-credit": [{ name: "Someone" }] }]
           : [];
       return route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify({ "release-groups": groups }) });
@@ -227,6 +230,9 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     getAlbumArtRows: () => albumArtRows,
     setAlbumArtRows: (rows: (string | number)[][]) => {
       albumArtRows = rows;
+    },
+    setUploadHook: (hook: (() => void) | null) => {
+      uploadHook = hook;
     },
     authFailures,
     sheetsWrites,

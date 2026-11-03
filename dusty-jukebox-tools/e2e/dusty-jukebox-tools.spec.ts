@@ -295,3 +295,67 @@ test("アルバムアートの確認：表紙を一覧にし、外す・別の�
   await page.setViewportSize({ width: 320, height: 700 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
 });
+
+const ART_HEADER = ["albumFolderId", "album", "artist", "embedded", "artFileId", "source", "sourceId", "checkedFileId", "updatedAt"];
+
+test("アルバムアートの確認：画像の送信中に行が並べ替えられても、選んだアルバムの行に書く（長い名前でもはみ出さない）", async ({ page, context }) => {
+  const longName = `Candidate Me${"X".repeat(100)}`;
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    albumArtRows: [
+      ART_HEADER,
+      ["p2", longName, "Nobody", "no", "", "notfound", "", "t2", "u1"],
+      ["p4", "Other Album", "Band", "no", "art-x", "itunes", "9", "t4", "u2"],
+    ],
+  });
+  await page.setViewportSize({ width: 320, height: 700 });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  await page.getByRole("button", { name: "確認する" }).click();
+  await expect(page.locator("#status")).toContainText("2枚の記録を読み込みました");
+  await page.locator("#art-view").selectOption("notfound");
+  await page.locator("#art-review").getByRole("button", { name: `「${longName}」の別の候補` }).click();
+  const candidates = page.locator("#art-candidates");
+  await expect(candidates.getByRole("button", { name: /の表紙にする$/ })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+
+  // 画像をDriveへ送っている間に、スプレッドシートの行が入れ替わる
+  mocks.setUploadHook(() => {
+    const rows = mocks.getAlbumArtRows()!;
+    mocks.setAlbumArtRows([rows[0], rows[2], rows[1]]);
+  });
+  await candidates.getByRole("button", { name: /の表紙にする$/ }).click();
+  await expect(page.locator("#status")).toContainText("の表紙を差し替えました");
+  const byAlbum = Object.fromEntries(mocks.getAlbumArtRows()!.slice(1).map((r) => [r[1], r]));
+  expect(byAlbum[longName].slice(4, 7)).toEqual(["art-1", "musicbrainz", "rg-cand"]);
+  expect(byAlbum["Other Album"].slice(4, 9)).toEqual(["art-x", "itunes", "9", "t4", "u2"]);
+});
+
+test("アルバムアートの確認：画面に出した後に別の画面で表紙が変わっていたら、外さず・差し替えず知らせる", async ({ page, context }) => {
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    albumArtRows: [ART_HEADER, ["p1", "Web Album", "Band", "no", "art-old", "musicbrainz", "rg-old", "t1", "u1"]],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  await page.getByRole("button", { name: "確認する" }).click();
+  await expect(page.locator("#art-review")).toContainText("Webから補完した表紙：1枚");
+
+  // 別の画面で差し替えられた
+  const changed = ["p1", "Web Album", "Band", "no", "art-elsewhere", "itunes", "77", "t1", "u9"];
+  mocks.setAlbumArtRows([ART_HEADER, changed]);
+
+  await page.getByRole("button", { name: "「Web Album」の表紙を外す" }).click();
+  await expect(page.locator("#status")).toContainText("別の画面で変更されています");
+  expect(mocks.getAlbumArtRows()![1]).toEqual(changed);
+  expect(mocks.driveTrashed).toEqual([]);
+
+  // 別の候補から選んでも書かず、送った画像はゴミ箱へ戻す
+  await page.getByRole("button", { name: "「Web Album」の別の候補" }).click();
+  await page.locator("#art-candidates input").first().fill("Candidate Me");
+  await page.locator("#art-candidates").getByRole("button", { name: "探す" }).click();
+  await page.locator("#art-candidates").getByRole("button", { name: /の表紙にする$/ }).click();
+  await expect(page.locator("#status")).toContainText("別の画面で変更されています");
+  expect(mocks.getAlbumArtRows()![1]).toEqual(changed);
+  await expect.poll(() => mocks.driveTrashed).toEqual(["art-1"]);
+});

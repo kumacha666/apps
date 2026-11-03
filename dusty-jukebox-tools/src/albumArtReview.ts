@@ -35,6 +35,16 @@ export function recordsForView(records: Iterable<AlbumArtRecord>, view: ReviewVi
   return list.sort((a, b) => compare(a.artist, b.artist) || compare(a.album, b.album) || compare(a.albumFolderId, b.albumFolderId));
 }
 
+/** 画面に出した記録から変わっていないか（表紙・取得元・更新日時）。変わっていたら、見ていない記録を書き換えないよう操作を止める。 */
+export function isSameArtRecord(current: AlbumArtRecord, shown: AlbumArtRecord): boolean {
+  return (
+    current.artFileId === shown.artFileId &&
+    current.source === shown.source &&
+    current.sourceId === shown.sourceId &&
+    current.updatedAt === shown.updatedAt
+  );
+}
+
 /** 「外す」：表紙なしにし、次回の収集でも入れ直さない。 */
 export function rejectedRecord(record: AlbumArtRecord, now: string): AlbumArtRecord {
   return { ...record, artFileId: "", source: "rejected", sourceId: "", updatedAt: now };

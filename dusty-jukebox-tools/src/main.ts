@@ -49,6 +49,7 @@ import {
   createReviewSearch,
   isReviewView,
   recordsForView,
+  isSameArtRecord,
   rejectedRecord,
   REVIEW_VIEW_LABELS,
   REVIEW_VIEWS,
@@ -1106,12 +1107,21 @@ async function handleReviewArt(): Promise<void> {
   }
 }
 
-/** 記録を書き換える。書く直前にタブを読み直し、今の行番号で書く（スプレッドシートで行を並べ替えていても取り違えないため）。 */
-async function writeArtRecord(spreadsheetId: string, key: string, update: (current: AlbumArtRecord) => Promise<AlbumArtRecord>): Promise<AlbumArtRecord> {
+class StaleArtRecordError extends Error {}
+
+/**
+ * 記録を書き換える。通信の要る準備（画像の送信など）は呼ぶ前に済ませておき、ここでは
+ * 書く直前にタブを読み直して今の行番号で書く（スプレッドシートで行を並べ替えていても取り違えないため）。
+ * 画面に出している記録（[shown]）から変わっていたら（別の画面・端末で直した等）、見ていない記録を書き換えないよう止める。
+ */
+async function writeArtRecord(spreadsheetId: string, key: string, shown: AlbumArtRecord, build: (current: AlbumArtRecord) => AlbumArtRecord): Promise<AlbumArtRecord> {
   const artIO = createAlbumArtSheetIO(spreadsheetId, getArtToken);
   const found = parseAlbumArtRows(await artIO.readRows()).get(key);
-  if (!found) throw new Error("このアルバムの記録が見つかりません。もう一度「確認する」を押してください。");
-  const next = await update(found.record);
+  if (!found) throw new StaleArtRecordError("このアルバムの記録が見つかりません。もう一度「確認する」を押してください。");
+  if (!isSameArtRecord(found.record, shown)) {
+    throw new StaleArtRecordError("この表紙は別の画面で変更されています。もう一度「確認する」を押して、今の表紙を見てから選んでください。");
+  }
+  const next = build(found.record);
   await artIO.updateRows([{ rowNumber: found.rowNumber, row: albumArtRow(next) }]);
   // 古い表紙はゴミ箱へ（失敗しても記録は書けているので止めない）
   if (found.record.artFileId && found.record.artFileId !== next.artFileId) {
@@ -1129,7 +1139,9 @@ async function handleRejectArt(key: string): Promise<void> {
     return;
   }
   try {
-    const next = await writeArtRecord(spreadsheetId, key, async (current) => rejectedRecord(current, new Date().toISOString()));
+    const shown = artReview?.records.get(key);
+    if (!shown) return;
+    const next = await writeArtRecord(spreadsheetId, key, shown, (current) => rejectedRecord(current, new Date().toISOString()));
     renderArtReview();
     setStatus(`「${next.album}」の表紙を外しました。次に集めるときも入れ直しません。`);
   } catch (err) {
@@ -1237,12 +1249,20 @@ async function handleChooseArt(key: string, candidate: ReviewCandidate): Promise
     if (!image) throw new Error("この候補の画像は取れませんでした。別の候補を選んでください。");
     const thumb = await makeJpegThumbnail(image.data, image.format);
     if (!thumb) throw new Error("この候補の画像は読めませんでした。別の候補を選んでください。");
-    const next = await writeArtRecord(spreadsheetId, key, async (current) => {
-      const folderId = await ensureArtFolder(getArtToken);
-      const upload = createArtUploader(getArtToken, folderId);
-      const artFileId = await upload({ albumFolderId: current.albumFolderId, album: current.album, artist: current.artist, shelf: "artist", tracks: [] }, thumb);
-      return chosenRecord(current, candidate, artFileId, new Date().toISOString());
-    });
+    const shown = artReview?.records.get(key);
+    if (!shown) return;
+    // 画像を先にDriveへ置いてから、記録を書く直前に行を探し直す（送信中に行が並べ替えられても取り違えない）
+    const folderId = await ensureArtFolder(getArtToken);
+    const upload = createArtUploader(getArtToken, folderId);
+    const artFileId = await upload({ albumFolderId: shown.albumFolderId, album: shown.album, artist: shown.artist, shelf: "artist", tracks: [] }, thumb);
+    let next: AlbumArtRecord;
+    try {
+      next = await writeArtRecord(spreadsheetId, key, shown, (current) => chosenRecord(current, candidate, artFileId, new Date().toISOString()));
+    } catch (err) {
+      // 記録に使われなかった画像は残さない
+      void trashDriveFile(getArtToken, artFileId).catch(() => {});
+      throw err;
+    }
     closeArtCandidates();
     renderArtReview();
     setStatus(`「${next.album}」の表紙を差し替えました。`);

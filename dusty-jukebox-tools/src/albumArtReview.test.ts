@@ -4,6 +4,7 @@ import { WebSearchError } from "./albumArtSearch";
 import {
   chosenRecord,
   createReviewSearch,
+  isSameArtRecord,
   looseITunesCandidates,
   looseMusicBrainzCandidates,
   recordsForView,
@@ -97,4 +98,13 @@ describe("別の候補（緩い検索）", () => {
     const none = createReviewSearch(async () => new Response("busy", { status: 503 }));
     await expect(none("Blue", "A")).rejects.toBeInstanceOf(WebSearchError);
   });
+});
+
+test("isSameArtRecord：表紙・取得元・更新日時のどれかが変わっていれば別物", () => {
+  const shown = rec("A", "Alpha", "itunes", { sourceId: "42", updatedAt: "t1" });
+  expect(isSameArtRecord({ ...shown, artist: "renamed" }, shown)).toBe(true);
+  expect(isSameArtRecord({ ...shown, artFileId: "img-other" }, shown)).toBe(false);
+  expect(isSameArtRecord({ ...shown, source: "rejected" }, shown)).toBe(false);
+  expect(isSameArtRecord({ ...shown, sourceId: "43" }, shown)).toBe(false);
+  expect(isSameArtRecord({ ...shown, updatedAt: "t2" }, shown)).toBe(false);
 });
