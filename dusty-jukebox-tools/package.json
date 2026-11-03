@@ -13,7 +13,9 @@
     "deploy": "npm run build && node scripts/copy-dist-app.mjs && echo 'Deploy complete. Commit and push to deploy.'"
   },
   "dependencies": {
-    "encoding-japanese": "^2.3.0"
+    "encoding-japanese": "^2.3.0",
+    "music-metadata": "^10.6.4",
+    "strtok3": "^10.2.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

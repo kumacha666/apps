@@ -4,8 +4,8 @@
 
 `dusty-jukebox`（Googleドライブ音楽プレイヤー）本体のカタログ補正機能（表記ゆれ統一・文字化け修復）を分離した、必要な時だけ起動する管理ツール。2026-09-06、開発体制#41で表記ゆれ統一に続けて文字化け修復に着手したところ、修復に必要な`encoding-japanese`ライブラリ（CP932変換テーブルを内包、圧縮前で約230KB）の追加で本体の`app.js`が約270kB→499kBへ倍増する見込みとなった（本体は`music-metadata`の都合で`vite.config.js`に`inlineDynamicImports: true`を設定しており、遅延読み込みができない制約があるため）。カタログ補正系機能は普段使わない機能のため、ユーザーとの相談の結果、本体プレイヤーアプリのバンドルから完全に切り離し、この独立アプリへ分離した。
 
-- スキャン・タグ抽出・再生機能は一切持たない。既存の索引スプレッドシート（`index`タブ）を読み書きするだけの単機能ツール
-- OAuthクライアントIDは本体`dusty-jukebox`と共用する（Google Identity Servicesのトークンモデルは「承認済みJavaScript生成元」＝オリジン単位で認可するため、同一ドメイン配下の別パス`honeypawlab.com/dusty-jukebox-tools/`は追加のGoogle Cloud Console設定なしで共用できる）。要求スコープは本体と異なり`spreadsheets`のみ（`drive.readonly`は要求しない。音源ファイルには一切アクセスしないため最小権限にした）
+- スキャン・タグ抽出・再生機能は持たない。既存の索引スプレッドシート（`index`タブ）を読み書きする。例外として、アルバムアートの収集（下記「アルバムアートの収集」節）だけは曲のファイルの埋め込み画像を読み、Driveへ小さな画像を置く
+- OAuthクライアントIDは本体`dusty-jukebox`と共用する（Google Identity Servicesのトークンモデルは「承認済みJavaScript生成元」＝オリジン単位で認可するため、同一ドメイン配下の別パス`honeypawlab.com/dusty-jukebox-tools/`は追加のGoogle Cloud Console設定なしで共用できる）。要求スコープは`spreadsheets`・`drive.readonly`（埋め込み画像を読む）・`drive.file`（このツールが作ったファイルだけを扱える。表紙の画像を置く）。2026-11-03、アルバムアートの収集を入れたときに`drive.readonly`・`drive.file`を足した（それまでは`spreadsheets`のみ）
 - ランディングページには非掲載・URL直踏み運用（本体`dusty-jukebox`や`enblo`/`combrawl`と同じ理由。管理者本人が必要な時だけ使うツールのため）
 
 **現在の状態（2026-09-07）**：初版をPR #423としてマージ済み（`main` `9015d50`）。ChatGPTレビュー1件（P2: `garbledResolved`列を意図的に未使用とする方針の明記、下記「文字化け修復」節参照）に対応済み。**2026-09-07、実際のユーザーライブラリ（約1万曲）に対して文字化け対応を実施**（詳細は下記「実ライブラリでの文字化け対応（2026-09-07）」節参照）。この過程で、下記「文字化け修復」節に記載していた誤デコードの向きが**実データでは逆だった**ことが判明した（修正済み、後述）。続けて**ライブラリ健全性チェック機能を実装しPR #425としてマージ済み**（`main` `56ce99f`。下記「ライブラリ健全性チェック」節参照）。マージまでにChatGPTレビュー3ラウンドで3件の指摘（①④のグルーピング・年判定が本体`catalog.ts`の`effective()`override規約と不一致だった点、`releaseYear_override="(none)"`の扱いを含む、②過半数判定の同数境界、③グルーピングキーが空白区切りの単純連結で異なるアルバム同士が衝突しうる点）に対応済み（`healthCheck.ts`のテストは17件、計87件全通過）。**2026-09-07、Playwright E2Eを新規整備し実ブラウザでの動作確認を実施済み**（表記ゆれ統一・文字化け修復・ライブラリ健全性チェックの3機能すべて。詳細は下記「テスト」節参照）。続けて**欠落フィールドの一括見直しUI（title/artist/albumの手入力保存）を実装しChatGPTレビュー・再レビュー計5件（P1×1・P2×4）に対応済み**（詳細は下記「欠落フィールドの一括見直し」節参照。`app.js`は256.00kB）。**2026-09-16、緊急修正：`npm install`がどの環境でも失敗する状態になっていたため、Claude Codeが直接修正**（本体`dusty-jukebox`と共通の原因・対応。詳細は`dusty-jukebox/CLAUDE.md`の該当節参照。要点：`vitest: "^4.1.9"`の必須ピア依存`vite: "^6.0.0 || ^7.0.0 || ^8.0.0"`と本アプリの`vite: "^5.4.0"`が噛み合わず`npm install`が必ず失敗していた〈`package-lock.json`はgitignore対象のため固定されていない〉。`vitest`を`^3.2.7`へ引き下げ、`tsconfig.json`に`skipLibCheck: true`を追加して解消。`npm install`・`npm test`（101件）・`tsc --noEmit`・`vite build`をクリーンに確認済み。ビルド後の`app.js`は既存のコミット済みファイルとサイズがわずかに異なった（256.00kB→256.16kB、ミニファイア内部の変数名採番の非決定性による差とみられ、テスト・型チェックはいずれもクリーンで機能的な差では無いと判断）が、`src/`配下は一切変更していないためこのPRでは`app.js`を再コミットしていない）。**2026-09-19、本体`dusty-jukebox`にPR #470で`genre_override`列が追加されたことを受け、Genreのトークン単位（`" / "`区切り）の大文字小文字表記ゆれ統一機能をPR #471として実装済み**（`src/genreNormalization.ts`、下記「Genre表記ゆれ統一」節参照。`app.js`は262.51kB）。
@@ -75,9 +75,20 @@
 - **Codexレビュー指摘1件（P2）に対応**：Genreチェックのヘッダー検証に他の4機能と同じ`isReadableIndexHeader`（現行ヘッダーと直前世代の旧46列ヘッダーを両方許容、PR #470参照）を使っていたが、`genre_override`列は旧46列ヘッダーには存在しないため、まだスキャンしていないユーザーがチェックを実行すると候補が表示され、適用時に存在しない列への書き込みで失敗する（またはグリッドが偶然広い場合は無関係な列に誤って書き込む）恐れがあった。書き込みを伴うこの機能だけは`isValidIndexHeader`（現行スキーマとの完全一致のみ許容）に変更し、旧ヘッダーの場合はエラーメッセージで本体でのスキャン実行を促すよう修正。
 - ユニットテスト：`src/genreNormalization.test.ts`（9件。1曲に複数の正規化対象トークンが含まれる場合に1件の書き込みでまとめて正規化されること、順序保持、ステール検知、「元に戻す」の正常系・ステール系を含む）。E2Eに「Genre表記ゆれをトークン単位で統一し、元に戻せる」「46列のレガシーindexグリッドではGenre表記ゆれチェックを拒否する」を追加。
 
+## アルバムアートの収集（2026-11-03）
+
+アルバムごとの表紙を集め、本体`dusty-jukebox`・アプリ版（Android、非公開）がどの端末でも一覧に表紙を出せるようにする。ユーザーとの相談で決めたこと：埋め込み画像のあるアルバムもDriveへ小さな画像を置く（どの端末でも、まだ聴いていないアルバムまで一覧に表紙が出るように）／無いアルバムはWebから一括で補完し、おかしなものは後で個別に直す（個別の差し替え・外すは次のPR）／音楽ファイルは書き換えない。
+
+- **albumArtタブ**（`src/albumArtSheet.ts`、このツールだけが書き、本体・アプリ版が読む契約）：`albumFolderId, album, artist, embedded, artFileId, source, sourceId, checkedFileId, updatedAt`。1アルバム＝1行。キーは`albumFolderId`＋`album`（本体のアルバム一覧の1件と同じ単位：アルバム名〈override優先〉＋まとめる単位のフォルダ〈ディスクごとのフォルダ`CD1`等は上のフォルダ〉。`src/albumArtAlbums.ts`は本体`albumRack.ts`の分け方を移植したもの。**本体側の分け方を変えたらここも合わせる**）。`embedded`は`yes`/`no`（読めなかったら空）、`source`は`embedded`/`musicbrainz`/`itunes`/`notfound`/`error`。右に列を足してもよい（ヘッダーは先頭9列だけ確認する）
+- **流れ**（`src/albumArtCollect.ts`、通信・画像処理は引数で受け取る）：アルバムごとに①最初の曲、無ければ最後の曲の埋め込み画像を読む（`coverArt.ts`・`rangeTokenizer.ts`は本体から移植、`music-metadata`依存を追加）。あれば512pxのJPEGに縮めてDriveへ（source=embedded）。②無ければWebで探す（`src/albumArtSearch.ts`：MusicBrainzのrelease-group検索→Cover Art Archiveの500px、無ければiTunes Search〈country=JP〉の600px。アルバム名〈NFKC・大文字小文字・記号を無視、括弧の付記を除いても可〉とアーティスト〈片方が他方を含む〉が一致する候補だけ。オムニバスは"Various Artists"で探し、アーティスト不明なら探さない）。③曲が読めない・検索や画像の取得に失敗したらerror（次回やり直す）。Driveへの書き込み・スプレッドシートの失敗（認証切れ等）は全体を止める
+- **置き場所**（`src/albumArtDrive.ts`）：マイドライブ直下の「DustyJukebox アルバムアート」フォルダ（`appProperties`の`dustyJukeboxRole=albumArtFolder`で見分ける。無ければ作る）。ファイル名は「アルバム名 [フォルダIDの先頭8文字].jpg」
+- **再実行**：記録が無いアルバムと`error`のアルバムだけを集める（`albumsToCollect`）。10枚ごとに書き込むので、止めても続きから集められる。MusicBrainzは1.1秒、iTunesは3.1秒に1回まで（`Throttle`）。同時に3枚まで
+- **既知の制限**：曲のファイルの埋め込み画像を後から差し替えても、記録済みのアルバムは読み直さない（行を消せば次回集め直す）。画像の取得元によっては取り違えがありうる（個別に直すUIは次のPR）。Driveへの画像の送信を5xxでやり直したとき、同じ画像が2つ置かれることがある（記録されるのは1つ）
+- ユニットテスト：`albumArtAlbums.test.ts`・`albumArtSheet.test.ts`・`albumArtSearch.test.ts`・`albumArtCollect.test.ts`・`albumArtDrive.test.ts`（主要な判断を一時的に壊すと失敗することを確認済み）。E2E「アルバムアート：…」は、Drive・Web検索・Cover Art Archiveもモックし（`e2e/google-mocks.ts`の`coverArtFileIds`・`folderRows`）、2枚組のまとめ方・最後の曲の埋め込み・MusicBrainzの補完・見つからない・再実行で調べ直さないことを確かめる（画像の縮小を壊すと失敗することを確認済み）
+
 ## UI
 
-`index.html`単一ページ。ログイン（スプレッドシートIDへの`spreadsheets`スコープ）→「表記ゆれ統一」「Genre表記ゆれ統一」「文字化け修復」「ライブラリ健全性チェック」「欠落フィールドの一括見直し」の5セクション。健全性チェック以外はチェック→適用（保存）→元に戻す、の流れ。健全性チェックはチェックのみ（書き込みなし）。5機能とも同じ`index`タブを読み書きするため、単純な排他フラグ（`operationInProgress`、本体の`CatalogOperationGate`ほど複雑な調整は不要なため簡略化）で同時実行を防ぐ。
+`index.html`単一ページ。ログイン（`spreadsheets`・`drive.readonly`・`drive.file`）→「表記ゆれ統一」「Genre表記ゆれ統一」「文字化け修復」「ライブラリ健全性チェック」「欠落フィールドの一括見直し」「アルバムアート」の6セクション。健全性チェック以外はチェック→適用（保存）→元に戻す、の流れ。健全性チェックはチェックのみ（書き込みなし）。5機能とも同じ`index`タブを読み書きするため、単純な排他フラグ（`operationInProgress`、本体の`CatalogOperationGate`ほど複雑な調整は不要なため簡略化）で同時実行を防ぐ。
 
 ## テスト
 
@@ -96,7 +107,7 @@
 - `npm run build` — テスト（prebuild）→ E2E（`scripts/test-e2e-if-chromium.mjs`経由）→ ビルド（tsc + vite build）。2026-09-07、本体と同じPlaywright E2E gateを追加した
 - `npm run deploy` — ビルド → `scripts/copy-dist-app.mjs`で`dist/app.js`をルート直下にコピー（本体と同じくWindows対応のためNode標準の`fs.copyFileSync`を使用、`cp`コマンドは使わない）
 - PWA化していない（`manifest.json`/`sw.js`なし）。管理者本人がその場で開いて使うツールのため、オフライン対応・ホーム画面追加は不要と判断
-- `app.js`は262.51kB（Genre表記ゆれ統一機能追加前は256.16kB。本体の499kB見込みから、必要な時しか読み込まれないこのアプリへ完全に分離できた）
+- `app.js`は334.09kB（2026-11-03、アルバムアートの収集で`music-metadata`を足して262.51kBから増えた。Genre表記ゆれ統一機能追加前は256.16kB。本体の499kB見込みから、必要な時しか読み込まれないこのアプリへ完全に分離できた）
 - 環境変数`VITE_GOOGLE_CLIENT_ID`は本体`dusty-jukebox`と同じ値を使う（Codex Cloud Environment・Claude Code実行セッションのいずれにも既に設定済み、`apps/CLAUDE.md`「dusty-jukebox」節参照）
 
 ## 次の実装ステップ
@@ -108,4 +119,5 @@
 - ~~Genreの表記ゆれ統一（トークン単位）~~（2026-09-19、PR #471で実装済み。本体`dusty-jukebox`のPR #470で`genre_override`列が追加されたことで対応可能になった。上記「Genre表記ゆれ統一」節参照）
 - Latin-1→SJIS方向の文字化け修復（実データで実際に多数見つかった方向）をこのアプリのUI機能として実装するかどうかは未定。ユーザーの意向次第（今回は一度きりの大量データ対応だったため使い捨てツールで対応したが、今後も同種の文字化けが継続的に見つかるようであればアプリ化を検討）
 - Genreの文字化け修復（トークン分解が必要な点は表記ゆれ統一と同様だが、こちらは未着手のまま据え置き）
-- 外部LLM/Web検索による補完（ユーザーとの相談で明示的にスコープ外、別途改めて設計相談する）
+- 外部LLM/Web検索による補完（ユーザーとの相談で明示的にスコープ外、別途改めて設計相談する。アルバムアートだけは2026-11-03にWebから補完することにした、上記「アルバムアートの収集」節）
+- アルバムアートの個別の差し替え・外す（次のPR）。本体`dusty-jukebox`・アプリ版がalbumArtタブの画像を一覧に出す（別PR）

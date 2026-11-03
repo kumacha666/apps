@@ -50,8 +50,12 @@ function installFakeGis(): {
 }
 
 describe("auth", () => {
-  test("OAUTH_SCOPES: dusty-jukebox本体と異なりspreadsheetsのみを要求する（Drive音源には一切アクセスしない）", () => {
-    expect(OAUTH_SCOPES).toBe(SPREADSHEETS_SCOPE);
+  test("OAUTH_SCOPES: spreadsheets・drive.readonly（埋め込み画像を読む）・drive.file（表紙を置く）を要求する", () => {
+    expect(OAUTH_SCOPES.split(" ")).toEqual([
+      SPREADSHEETS_SCOPE,
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/drive.file",
+    ]);
   });
 
   test("computeExpiresAt: expires_in秒後のepoch msを返す", () => {
