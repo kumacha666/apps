@@ -158,6 +158,18 @@ export function createAlbumArtSheetIO(spreadsheetId: string, getAccessToken: () 
     const data = (await res.json()) as { sheets?: { properties?: { title?: string } }[] };
     return (data.sheets ?? []).map((s) => s.properties?.title ?? "");
   };
+  const ensureColumnCount = async (columnCount: number) => {
+    const res = await sheetsFetch(`${base}?fields=${encodeURIComponent("sheets.properties(sheetId,title,gridProperties.columnCount)")}`);
+    const data = (await res.json()) as { sheets?: { properties?: { sheetId?: number; title?: string; gridProperties?: { columnCount?: number } } }[] };
+    const sheet = (data.sheets ?? []).find((s) => s.properties?.title === ALBUM_ART_SHEET_NAME)?.properties;
+    if (sheet?.sheetId === undefined) throw new Error(`「${ALBUM_ART_SHEET_NAME}」タブが見つかりません。`);
+    const current = sheet.gridProperties?.columnCount ?? 0;
+    if (current >= columnCount) return;
+    await sheetsFetch(`${base}:batchUpdate`, {
+      method: "POST",
+      body: JSON.stringify({ requests: [{ appendDimension: { sheetId: sheet.sheetId, dimension: "COLUMNS", length: columnCount - current } }] }),
+    });
+  };
   return {
     async ensureTab() {
       if (!(await listSheetTitles()).includes(ALBUM_ART_SHEET_NAME)) {
@@ -168,7 +180,9 @@ export function createAlbumArtSheetIO(spreadsheetId: string, getAccessToken: () 
       }
       const header = (await readValues(sheetRange(ALBUM_ART_SHEET_NAME, "1:1")))[0] ?? [];
       if (header.length > 0 && header.length <= LEGACY_HEADER_LENGTH && isLegacyAlbumArtHeader(header)) {
-        // match列を足す前のタブ：見出しを足すだけ（既存の行のmatchは空＝自動で集めた）
+        // match列を足す前のタブ：見出しを足すだけ（既存の行のmatchは空＝自動で集めた）。
+        // 使っていない列を消して9列だけになっているタブもあるので、先に列を増やす（範囲外に書くと拒否される）
+        await ensureColumnCount(ALBUM_ART_SHEET_HEADER.length);
         await sheetsFetch(`${base}/values/${encodeURIComponent(sheetRange(ALBUM_ART_SHEET_NAME, `A1:${lastCol}1`))}?valueInputOption=RAW`, {
           method: "PUT",
           body: JSON.stringify({ values: [[...ALBUM_ART_SHEET_HEADER]] }),

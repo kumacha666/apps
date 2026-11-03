@@ -16,6 +16,8 @@ export type MockOptions = {
   folderRows?: string[][];
   /** アルバムアート：albumArtタブの最初の中身（ヘッダー行を含む）。 */
   albumArtRows?: (string | number)[][];
+  /** アルバムアート：albumArtタブのグリッドの列数（指定すると、それを超える列への書き込みを拒否する。既定26列）。 */
+  albumArtGridColumns?: number;
   /** アルバムアート：AIが探した候補のタブ（albumArtCandidates、ヘッダー行を含む）。 */
   candidateRows?: (string | number)[][];
 };
@@ -61,6 +63,15 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const authFailures: string[] = [];
   // アルバムアート：albumArtタブ（無ければnull）・Driveに置いた画像・Webへの問い合わせ
   let albumArtRows: (string | number)[][] | null = options.albumArtRows ?? null;
+  let albumArtGridColumns = options.albumArtGridColumns ?? 26;
+  // A1:J1 等の書き込みが、グリッドの列数を超えていないか（列文字→列数）
+  const exceedsAlbumArtGrid = (range: string) => {
+    const last = range.match(/:([A-Z]+)\d*$/)?.[1] ?? range.match(/!([A-Z]+)\d+$/)?.[1];
+    if (!last) return false;
+    let n = 0;
+    for (const ch of last) n = n * 26 + (ch.charCodeAt(0) - 64);
+    return n > albumArtGridColumns;
+  };
   const driveTrashed: string[] = [];
   // 曲のファイル（表紙の画像以外）への問い合わせ
   const driveFileRequests: string[] = [];
@@ -100,7 +111,16 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
       const titles = ["index", ...(options.folderRows ? ["folders"] : []), ...(albumArtRows ? ["albumArt"] : []), ...(options.candidateRows ? ["albumArtCandidates"] : [])];
       return json(route, { sheets: titles.map((title) => ({ properties: { title } })) });
     }
+    if (url.includes("?fields=sheets.properties(sheetId")) {
+      return json(route, { sheets: albumArtRows ? [{ properties: { sheetId: 6, title: "albumArt", gridProperties: { columnCount: albumArtGridColumns } } }] : [] });
+    }
     if (url.endsWith(":batchUpdate") && !url.includes("values:batchUpdate") && method === "POST") {
+      const body = JSON.parse(route.request().postData() ?? "{}") as { requests?: { appendDimension?: { length: number } }[] };
+      const append = body.requests?.[0]?.appendDimension;
+      if (append) {
+        albumArtGridColumns += append.length;
+        return json(route, {});
+      }
       albumArtRows = [];
       return json(route, {});
     }
@@ -114,6 +134,8 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
         return json(route, {});
       }
       if (method === "PUT") {
+        const range = url.split("values/")[1]?.split("?")[0] ?? "";
+        if (exceedsAlbumArtGrid(range)) return json(route, { error: { message: "Range exceeds grid limits" } }, 400);
         const body = JSON.parse(route.request().postData() ?? "{}") as { values: (string | number)[][] };
         rows[0] = body.values[0];
         return json(route, {});

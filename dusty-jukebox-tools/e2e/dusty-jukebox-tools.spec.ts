@@ -520,3 +520,17 @@ test("アルバムアート：AIが探した候補を、いまも見つからな
   await expect(page.locator("#status")).toContainText("0枚の表紙を取り込みました", { timeout: 20_000 });
   expect(mocks.driveUploads).toHaveLength(1);
 });
+
+test("アルバムアート：使っていない列を消して9列だけになった旧形式のタブでも、列を足してから見出しを足す", async ({ page, context }) => {
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    rows: [],
+    albumArtGridColumns: 9,
+    albumArtRows: [ART_HEADER, ["p1", "Web Album", "Band", "no", "art-1", "musicbrainz", "rg-1", "t1", "u1"]],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  await page.getByRole("button", { name: "確認する" }).click();
+  await expect(page.locator("#status")).toContainText("1枚の記録を読み込みました");
+  expect(mocks.getAlbumArtRows()![0][9]).toBe("match");
+});
