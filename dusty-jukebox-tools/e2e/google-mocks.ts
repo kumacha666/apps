@@ -62,6 +62,8 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   const driveTrashed: string[] = [];
   // 画像の送信を受けた直後に呼ぶ（送信中にスプレッドシートが変わる場合を作るため）
   let uploadHook: (() => void) | null = null;
+  // albumArtタブの行の書き換えを反映したうえで、応答だけ届かなくする（書けたか分からない状態を作るため）
+  let dropAlbumArtWriteResponses = false;
   const driveUploads: { name: string; parents: string[] }[] = [];
   const driveFolders: string[] = [];
   const webRequests: string[] = [];
@@ -120,6 +122,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
         const rowNumber = Number(update.range.match(/!A(\d+):/)?.[1]);
         (albumArtRows ?? [])[rowNumber - 1] = update.values[0];
       }
+      if (dropAlbumArtWriteResponses) return route.abort("connectionreset");
       return json(route, {});
     }
 
@@ -233,6 +236,9 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
     },
     setUploadHook: (hook: (() => void) | null) => {
       uploadHook = hook;
+    },
+    setDropAlbumArtWriteResponses: (drop: boolean) => {
+      dropAlbumArtWriteResponses = drop;
     },
     authFailures,
     sheetsWrites,

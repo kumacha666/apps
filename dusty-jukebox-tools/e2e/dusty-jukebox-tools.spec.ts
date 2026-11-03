@@ -359,3 +359,22 @@ test("アルバムアートの確認：画面に出した後に別の画面で�
   expect(mocks.getAlbumArtRows()![1]).toEqual(changed);
   await expect.poll(() => mocks.driveTrashed).toEqual(["art-1"]);
 });
+
+test("アルバムアートの確認：記録を書けたか分からない（応答が届かない）ときは、送った画像を消さない", async ({ page, context }) => {
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    albumArtRows: [ART_HEADER, ["p2", "Candidate Me", "Nobody", "no", "", "notfound", "", "t2", "u1"]],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  await page.getByRole("button", { name: "確認する" }).click();
+  await page.locator("#art-view").selectOption("notfound");
+  await page.locator("#art-review").getByRole("button", { name: "「Candidate Me」の別の候補" }).click();
+  mocks.setDropAlbumArtWriteResponses(true);
+  await page.locator("#art-candidates").getByRole("button", { name: /の表紙にする$/ }).click();
+  await expect(page.locator("#status")).toContainText("差し替えられませんでした", { timeout: 20_000 });
+  // 書き込み自体はシートに反映されている。その画像はゴミ箱へ移さない
+  expect(mocks.getAlbumArtRows()![1].slice(4, 6)).toEqual(["art-1", "musicbrainz"]);
+  await page.waitForTimeout(300);
+  expect(mocks.driveTrashed).toEqual([]);
+});

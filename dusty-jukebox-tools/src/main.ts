@@ -1259,8 +1259,9 @@ async function handleChooseArt(key: string, candidate: ReviewCandidate): Promise
     try {
       next = await writeArtRecord(spreadsheetId, key, shown, (current) => chosenRecord(current, candidate, artFileId, new Date().toISOString()));
     } catch (err) {
-      // 記録に使われなかった画像は残さない
-      void trashDriveFile(getArtToken, artFileId).catch(() => {});
+      // 記録に使われていないと確かな場合（書く前に止めた）だけ、送った画像を消す。
+      // 書き込みの応答が届かなかった等で、記録されたか分からない場合は消さない（記録済みの画像を消してしまわないため）
+      if (err instanceof StaleArtRecordError) void trashDriveFile(getArtToken, artFileId).catch(() => {});
       throw err;
     }
     closeArtCandidates();
