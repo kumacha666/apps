@@ -22,6 +22,7 @@ const record = (fields: Partial<AlbumArtRecord>): AlbumArtRecord => ({
   checkedFileId: "",
   updatedAt: "",
   match: "",
+  reviewedAt: "",
   ...fields,
 });
 
@@ -43,14 +44,20 @@ describe("albumArtタブ", () => {
     expect(albumArtRow(r)).toHaveLength(ALBUM_ART_SHEET_HEADER.length);
     expect(parseAlbumArtRows([albumArtRow(r)]).get(albumArtKey("f1", "Blue"))?.record).toEqual(r);
     expect(parseAlbumArtRows([[...albumArtRow(r).slice(0, 9), "maybe"]]).get(albumArtKey("f1", "Blue"))?.record.match).toBe("");
+    // 確かめた印を読み書きする
+    const seen = { ...r, reviewedAt: "2026-11-04T00:00:00Z" };
+    expect(parseAlbumArtRows([albumArtRow(seen)]).get(albumArtKey("f1", "Blue"))?.record.reviewedAt).toBe("2026-11-04T00:00:00Z");
     // match列を足す前の9列の行は、自動で集めたもの
     expect(parseAlbumArtRows([albumArtRow(r).slice(0, 9)]).get(albumArtKey("f1", "Blue"))?.record.match).toBe("");
   });
 
-  test("match列を足す前の見出し（9列）は、見出しを足して使う。それ以外の見出しは別の用途のタブ", () => {
+  test("列を足す前の見出し（9列・10列）は、見出しを足して使う。それ以外の見出しは別の用途のタブ", () => {
     const legacy = ALBUM_ART_SHEET_HEADER.slice(0, 9);
     expect(isLegacyAlbumArtHeader(legacy)).toBe(true);
     expect(isValidAlbumArtHeader(legacy)).toBe(false);
+    expect(isLegacyAlbumArtHeader(ALBUM_ART_SHEET_HEADER.slice(0, 10))).toBe(true);
+    expect(isValidAlbumArtHeader(ALBUM_ART_SHEET_HEADER.slice(0, 10))).toBe(false);
+    expect(isLegacyAlbumArtHeader([...ALBUM_ART_SHEET_HEADER.slice(0, 10), "memo"])).toBe(false);
     expect(isLegacyAlbumArtHeader([...legacy, "memo"])).toBe(false);
     expect(isLegacyAlbumArtHeader(["albumFolderId", "album"])).toBe(false);
   });

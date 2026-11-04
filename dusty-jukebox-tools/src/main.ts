@@ -51,7 +51,9 @@ import {
   recordsForView,
   isSameArtRecord,
   MATCH_LABELS,
+  planReviewedWrites,
   rejectedRecord,
+  reviewedRecord,
   REVIEW_VIEW_LABELS,
   REVIEW_VIEWS,
   SOURCE_LABELS,
@@ -159,8 +161,9 @@ function render(): void {
         <div class="art-review-bar"><button id="collect-art-btn" type="button" disabled>表紙を集める</button> <button id="retry-art-btn" type="button" class="secondary" disabled>見つからなかったアルバムをもう一度探す</button> <button id="import-art-btn" type="button" class="secondary" disabled>AIが探した候補を取り込む</button> <button id="stop-art-btn" type="button" disabled>止める</button></div>
         <p id="art-progress"></p>
         <div id="art-results"></div>
-        <p>集めた表紙は「確認する」で一覧にできます。違うものは「外す」（表紙なしにし、次に集めるときも入れ直さない）か「別の候補」で選び直してください。見つからなかったアルバムも「別の候補」から探して入れられます。</p>
+        <p>集めた表紙は「確認する」で一覧にできます。違うものは「外す」（表紙なしにし、次に集めるときも入れ直さない）か「別の候補」で選び直してください。見つからなかったアルバムも「別の候補」から探して入れられます。合っている表紙は「OK」を押すと確認済みになり、「未確認の表紙だけ表示」のときは一覧に出なくなります（外した・選び直した表紙も確認済みになります。何度取り込んでも、まだ見ていない表紙だけを見直せます）。</p>
         <div class="art-review-bar"><select id="art-view" aria-label="表示する表紙"></select> <button id="review-art-btn" type="button" disabled>確認する</button></div>
+        <div class="art-review-bar"><label><input type="checkbox" id="art-unreviewed" checked> 未確認の表紙だけ表示</label> <button id="art-mark-all-btn" type="button" class="secondary" disabled>表示中の未確認をすべてOKにする</button></div>
         <div id="art-candidates" class="art-candidates" hidden></div>
         <div id="art-review" class="art-grid"></div>
       </section>
@@ -1135,10 +1138,15 @@ function renderArtReview(): void {
     }
   });
   const view = currentReviewView();
-  const records = recordsForView(artReview.records.values(), view);
+  const unreviewedOnly = el<HTMLInputElement>("art-unreviewed").checked;
+  const records = recordsForView(artReview.records.values(), view, { unreviewedOnly });
+  const unreviewedCount = records.filter((r) => r.artFileId && !r.reviewedAt).length;
+  el<HTMLButtonElement>("art-mark-all-btn").disabled = unreviewedCount === 0;
   const heading = document.createElement("p");
   heading.className = "art-review-count";
-  heading.textContent = `${REVIEW_VIEW_LABELS[view]}：${records.length}枚`;
+  // 表紙の無いアルバムの表示（見つからなかった・外した・読めなかった）には、確かめる表紙が無いので「未確認」と付けない
+  const imageView = view !== "notfound" && view !== "rejected" && view !== "error";
+  heading.textContent = `${REVIEW_VIEW_LABELS[view]}${unreviewedOnly && imageView ? "（未確認）" : ""}：${records.length}枚`;
   container.append(heading);
   for (const record of records) {
     const key = albumArtKey(record.albumFolderId, record.album);
@@ -1176,8 +1184,17 @@ function renderArtReview(): void {
       source.textContent = SOURCE_LABELS[record.source];
     }
     if (MATCH_LABELS[record.match]) source.append(`・${MATCH_LABELS[record.match]}`);
+    if (record.artFileId && record.reviewedAt) source.append("・確認済み");
     const actions = document.createElement("div");
     actions.className = "art-actions";
+    if (record.artFileId && !record.reviewedAt) {
+      const ok = document.createElement("button");
+      ok.type = "button";
+      ok.textContent = "OK";
+      ok.setAttribute("aria-label", `「${record.album}」の表紙をOKにする`);
+      ok.addEventListener("click", () => void handleMarkArtReviewed(key));
+      actions.append(ok);
+    }
     if (record.artFileId) {
       const reject = document.createElement("button");
       reject.type = "button";
@@ -1265,6 +1282,56 @@ async function handleRejectArt(key: string): Promise<void> {
   } catch (err) {
     if (isAuthFailure(err)) auth.clearToken();
     setStatus(err instanceof Error ? `外せませんでした: ${err.message}` : "外せませんでした", true);
+  } finally {
+    release();
+  }
+}
+
+// 「OK」：この表紙を確かめた印を付ける（未確認だけを表示していれば、一覧から消える）
+async function handleMarkArtReviewed(key: string): Promise<void> {
+  const spreadsheetId = reviewSpreadsheetIdOrWarn();
+  if (!spreadsheetId) return;
+  if (!tryAcquire()) {
+    setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  try {
+    const shown = artReview?.records.get(key);
+    if (!shown) return;
+    const next = await writeArtRecord(spreadsheetId, key, shown, (current) => reviewedRecord(current, new Date().toISOString()));
+    renderArtReview();
+    setStatus(`「${next.album}」の表紙をOKにしました。`);
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `OKにできませんでした: ${err.message}` : "OKにできませんでした", true);
+  } finally {
+    release();
+  }
+}
+
+// 表示中のまだ確かめていない表紙を、まとめてOKにする。書く直前に読み直し、別の画面で変わった表紙には印を付けない
+async function handleMarkAllArtReviewed(): Promise<void> {
+  const spreadsheetId = reviewSpreadsheetIdOrWarn();
+  if (!spreadsheetId || !artReview) return;
+  if (!tryAcquire()) {
+    setStatus("他の操作が進行中です。完了してからもう一度お試しください。", true);
+    return;
+  }
+  try {
+    const shown = recordsForView(artReview.records.values(), currentReviewView(), { unreviewedOnly: el<HTMLInputElement>("art-unreviewed").checked });
+    const artIO = createAlbumArtSheetIO(spreadsheetId, getArtToken);
+    const current = parseAlbumArtRows(await artIO.readRows());
+    const { updates, skipped } = planReviewedWrites(shown, current, new Date().toISOString());
+    await artIO.updateRows(updates.map(({ rowNumber, record }) => ({ rowNumber, row: albumArtRow(record) })));
+    for (const { record } of updates) artReview.records.set(albumArtKey(record.albumFolderId, record.album), record);
+    renderArtReview();
+    setStatus(
+      `${updates.length}枚の表紙をOKにしました。` +
+        (skipped > 0 ? `（${skipped}枚は別の画面で変更されていたため、OKにしませんでした。もう一度「確認する」を押して見直してください）` : "")
+    );
+  } catch (err) {
+    if (isAuthFailure(err)) auth.clearToken();
+    setStatus(err instanceof Error ? `OKにできませんでした: ${err.message}` : "OKにできませんでした", true);
   } finally {
     release();
   }
@@ -1449,6 +1516,8 @@ function init(): void {
   const artView = el<HTMLSelectElement>("art-view");
   for (const view of REVIEW_VIEWS) artView.append(new Option(REVIEW_VIEW_LABELS[view], view));
   artView.addEventListener("change", renderArtReview);
+  el<HTMLInputElement>("art-unreviewed").addEventListener("change", renderArtReview);
+  el<HTMLButtonElement>("art-mark-all-btn").addEventListener("click", () => void handleMarkAllArtReviewed());
   el<HTMLButtonElement>("review-art-btn").addEventListener("click", () => void handleReviewArt());
   el<HTMLButtonElement>("stop-art-btn").addEventListener("click", () => {
     stopArtRequested = true;

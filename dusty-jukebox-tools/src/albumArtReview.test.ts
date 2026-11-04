@@ -1,11 +1,15 @@
 import { describe, expect, test } from "vitest";
-import type { AlbumArtRecord } from "./albumArtSheet";
+import { albumArtKey, type AlbumArtRecord } from "./albumArtSheet";
+
+const key = (r: AlbumArtRecord) => albumArtKey(r.albumFolderId, r.album);
 import { WebSearchError } from "./albumArtSearch";
 import {
   chosenRecord,
   createReviewSearch,
   isSameArtRecord,
   looseITunesCandidates,
+  planReviewedWrites,
+  reviewedRecord,
   looseMusicBrainzCandidates,
   recordsForView,
   rejectedRecord,
@@ -23,6 +27,7 @@ const rec = (album: string, artist: string, source: AlbumArtRecord["source"], ex
   checkedFileId: "",
   updatedAt: "",
   match: "",
+  reviewedAt: "",
   ...extra,
 });
 
@@ -68,14 +73,14 @@ test("recordsForView：AIが探した表紙は、どう見つけたか（確か�
 describe("記録の書き換え", () => {
   test("外す：画像と取得元を消し、rejectedにする（埋め込みの有無・キーはそのまま）", () => {
     const r = rec("A", "Alpha", "itunes", { sourceId: "42" });
-    expect(rejectedRecord(r, "now")).toEqual({ ...r, artFileId: "", source: "rejected", sourceId: "", updatedAt: "now", match: "" });
+    expect(rejectedRecord(r, "now")).toEqual({ ...r, artFileId: "", source: "rejected", sourceId: "", updatedAt: "now", match: "", reviewedAt: "now" });
     // AIが探した表紙を外したら、どう見つけたかも消す（外したアルバムとして扱う）
     expect(rejectedRecord({ ...r, match: "ai-guess" }, "now").match).toBe("");
   });
   test("これにする：選んだ候補の画像・取得元に差し替える", () => {
     const r = rec("D", "", "notfound");
     const chosen = chosenRecord(r, { source: "musicbrainz", sourceId: "rg9", imageUrl: "x" }, "img-new", "now");
-    expect(chosen).toEqual({ ...r, artFileId: "img-new", source: "musicbrainz", sourceId: "rg9", updatedAt: "now", match: "manual" });
+    expect(chosen).toEqual({ ...r, artFileId: "img-new", source: "musicbrainz", sourceId: "rg9", updatedAt: "now", match: "manual", reviewedAt: "now" });
   });
 });
 
@@ -133,4 +138,44 @@ test("isSameArtRecord：表紙・取得元・更新日時のどれかが変わ�
   expect(isSameArtRecord({ ...shown, source: "rejected" }, shown)).toBe(false);
   expect(isSameArtRecord({ ...shown, sourceId: "43" }, shown)).toBe(false);
   expect(isSameArtRecord({ ...shown, updatedAt: "t2" }, shown)).toBe(false);
+});
+
+describe("確かめた印（OK）", () => {
+  test("recordsForView：未確認だけにすると、確かめた表紙は出さない（表紙の無いアルバムはそのまま出す）", () => {
+    const records = [
+      rec("Seen", "A", "itunes", { reviewedAt: "t1" }),
+      rec("New", "A", "deezer", { match: "ai-exact" }),
+      rec("Gone", "A", "rejected", { reviewedAt: "t1" }),
+      rec("Missing", "A", "notfound"),
+    ];
+    const albums = (view: Parameters<typeof recordsForView>[1], unreviewedOnly: boolean) => recordsForView(records, view, { unreviewedOnly }).map((r) => r.album);
+    expect(albums("all", true)).toEqual(["Gone", "Missing", "New"]);
+    expect(albums("all", false)).toEqual(["Gone", "Missing", "New", "Seen"]);
+    expect(albums("web", true)).toEqual([]);
+    expect(albums("ai", true)).toEqual(["New"]);
+  });
+
+  test("reviewedRecord：表紙・取得元・更新日時は変えず、印だけを付ける", () => {
+    const r = rec("A", "Alpha", "itunes", { updatedAt: "u1" });
+    expect(reviewedRecord(r, "now")).toEqual({ ...r, reviewedAt: "now" });
+    expect(isSameArtRecord(reviewedRecord(r, "now"), r)).toBe(true);
+  });
+
+  test("planReviewedWrites：今の行番号で書き、別の画面で変わった・消えた表紙には印を付けない。確かめ済み・表紙の無いものは書かない", () => {
+    const a = rec("A", "X", "itunes", { updatedAt: "u1" });
+    const b = rec("B", "X", "deezer", { updatedAt: "u1", match: "ai-guess" });
+    const c = rec("C", "X", "itunes", { updatedAt: "u1" });
+    const d = rec("D", "X", "itunes", { updatedAt: "u1" });
+    const seen = rec("E", "X", "itunes", { reviewedAt: "t0" });
+    const none = rec("F", "X", "notfound");
+    const current = new Map([
+      [key(a), { rowNumber: 9, record: a }],
+      [key(b), { rowNumber: 3, record: { ...b, artFileId: "img-other", updatedAt: "u2" } }], // 別の画面で差し替えた
+      // cは行が消えた
+      [key(d), { rowNumber: 5, record: { ...d, reviewedAt: "t-elsewhere" } }], // 別の画面で確かめ済み
+    ]);
+    const { updates, skipped } = planReviewedWrites([a, b, c, d, seen, none], current, "now");
+    expect(updates).toEqual([{ rowNumber: 9, record: { ...a, reviewedAt: "now" } }]);
+    expect(skipped).toBe(2);
+  });
 });

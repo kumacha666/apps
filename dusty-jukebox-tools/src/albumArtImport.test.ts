@@ -24,6 +24,7 @@ const rec = (album: string, fields: Partial<AlbumArtRecord> = {}): AlbumArtRecor
   checkedFileId: "t1",
   updatedAt: "before",
   match: "",
+  reviewedAt: "",
   ...fields,
 });
 const existing = (...records: AlbumArtRecord[]) => new Map(records.map((r, i) => [albumArtKey(r.albumFolderId, r.album), { rowNumber: i + 2, record: r }]));

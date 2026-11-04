@@ -2,7 +2,7 @@
 // 集めた表紙を眺めて、違うものを「外す」か「別の候補」から選び直す。見つからなかったアルバムも、ここで手で探して入れられる。
 // 別の候補は、一括で集めるとき（albumArtSearch.tsの照合）より緩く、検索結果をそのまま並べて人が選ぶ。
 
-import { isAiMatch, type AiMatch, type AlbumArtRecord, type ArtMatch, type ArtSource } from "./albumArtSheet";
+import { albumArtKey, isAiMatch, type AiMatch, type AlbumArtRecord, type ArtMatch, type ArtSource } from "./albumArtSheet";
 import { iTunesSearchUrl, musicBrainzSearchUrl, Throttle, WebSearchError, type ArtCandidate } from "./albumArtSearch";
 
 export const REVIEW_VIEWS = ["web", "ai", "ai-exact", "ai-variant", "ai-close", "ai-guess", "manual", "notfound", "rejected", "error", "embedded", "all"] as const;
@@ -66,9 +66,12 @@ function inView(r: AlbumArtRecord, view: ReviewView): boolean {
 
 const compare = (a: string, b: string) => a.localeCompare(b) || (a < b ? -1 : a > b ? 1 : 0);
 
-/** 表示するアルバム（アーティスト→アルバム名の順）。 */
-export function recordsForView(records: Iterable<AlbumArtRecord>, view: ReviewView): AlbumArtRecord[] {
-  const list = [...records].filter((r) => inView(r, view));
+/**
+ * 表示するアルバム（アーティスト→アルバム名の順）。[unreviewedOnly]なら、表紙のあるアルバムはまだ確かめていないものだけ
+ * （表紙の無いアルバム〈見つからなかった・外した・読めなかった〉は確かめる表紙が無いので、そのまま出す）。
+ */
+export function recordsForView(records: Iterable<AlbumArtRecord>, view: ReviewView, options: { unreviewedOnly?: boolean } = {}): AlbumArtRecord[] {
+  const list = [...records].filter((r) => inView(r, view) && !(options.unreviewedOnly && r.artFileId && r.reviewedAt));
   return list.sort((a, b) => compare(a.artist, b.artist) || compare(a.album, b.album) || compare(a.albumFolderId, b.albumFolderId));
 }
 
@@ -84,12 +87,41 @@ export function isSameArtRecord(current: AlbumArtRecord, shown: AlbumArtRecord):
 
 /** 「外す」：表紙なしにし、次回の収集でも入れ直さない。 */
 export function rejectedRecord(record: AlbumArtRecord, now: string): AlbumArtRecord {
-  return { ...record, artFileId: "", source: "rejected", sourceId: "", updatedAt: now, match: "" };
+  return { ...record, artFileId: "", source: "rejected", sourceId: "", updatedAt: now, match: "", reviewedAt: now };
 }
 
 /** 「これにする」：選んだ候補の画像に差し替える（埋め込みの有無はそのまま）。 */
 export function chosenRecord(record: AlbumArtRecord, candidate: ArtCandidate, artFileId: string, now: string): AlbumArtRecord {
-  return { ...record, artFileId, source: candidate.source, sourceId: candidate.sourceId, updatedAt: now, match: "manual" };
+  return { ...record, artFileId, source: candidate.source, sourceId: candidate.sourceId, updatedAt: now, match: "manual", reviewedAt: now };
+}
+
+/** 「OK」：表紙はそのままで、確かめた印だけを付ける（表紙の記録・更新日時は変えない）。 */
+export function reviewedRecord(record: AlbumArtRecord, now: string): AlbumArtRecord {
+  return { ...record, reviewedAt: now };
+}
+
+/**
+ * 表示中のうち、まだ確かめていない表紙をまとめて「OK」にする書き込み。書く直前に読み直したタブ（[current]）の行番号で書き、
+ * 画面に出した記録（[shown]）から変わっていた表紙（別の画面で差し替えた等）は、見ていないので印を付けない。
+ */
+export function planReviewedWrites(
+  shown: readonly AlbumArtRecord[],
+  current: ReadonlyMap<string, { rowNumber: number; record: AlbumArtRecord }>,
+  now: string
+): { updates: { rowNumber: number; record: AlbumArtRecord }[]; skipped: number } {
+  const updates: { rowNumber: number; record: AlbumArtRecord }[] = [];
+  let skipped = 0;
+  for (const r of shown) {
+    if (!r.artFileId || r.reviewedAt) continue;
+    const now_ = current.get(albumArtKey(r.albumFolderId, r.album));
+    if (!now_ || !isSameArtRecord(now_.record, r)) {
+      skipped += 1;
+      continue;
+    }
+    if (now_.record.reviewedAt) continue; // 別の画面で確かめ済み
+    updates.push({ rowNumber: now_.rowNumber, record: reviewedRecord(now_.record, now) });
+  }
+  return { updates, skipped };
 }
 
 /** 取得元のページ（Webから補完したものだけ）。 */

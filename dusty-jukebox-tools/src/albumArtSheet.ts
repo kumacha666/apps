@@ -11,6 +11,8 @@
 // - match：どう見つけたか（空＝このツールが自動で集めた、ai-exact / ai-variant / ai-close / ai-guess＝AIが探した候補を取り込んだ
 //   〈下ほど見つけにくかった＝間違っている可能性が高い〉、manual＝確認画面で選んだ）。2026-11-03に足した10列目
 //   （それまでの9列のタブは、開いたときに見出しを足す。本体・アプリ版は先頭9列だけを読む）
+// - reviewedAt：確認画面で人が見て確かめた日時（空＝まだ）。「OK」・「外す」・「別の候補」で選んだときに入る。
+//   取り込み・収集で新しく入れた表紙は空（2026-11-04に足した11列目。確認画面は既定で未確認だけを出す）
 
 import { sheetRange } from "./lib";
 import { columnLetter, createSheetsFetch } from "./sheets";
@@ -30,9 +32,10 @@ export const ALBUM_ART_SHEET_HEADER = [
   "checkedFileId",
   "updatedAt",
   "match",
+  "reviewedAt",
 ] as const;
-/** 2026-11-03より前の見出し（match列が無い）。 */
-const LEGACY_HEADER_LENGTH = 9;
+/** 古い見出しの列数（9列＝match列を足す前、10列＝reviewedAt列を足す前）。開いたときに見出しを足す。 */
+const LEGACY_HEADER_LENGTHS = [9, 10];
 
 export const ART_SOURCES = ["embedded", "musicbrainz", "itunes", "deezer", "notfound", "error", "rejected"] as const;
 export type ArtSource = (typeof ART_SOURCES)[number];
@@ -56,17 +59,19 @@ export interface AlbumArtRecord {
   checkedFileId: string;
   updatedAt: string;
   match: ArtMatch;
+  /** 確認画面で人が確かめた日時（空＝まだ）。 */
+  reviewedAt: string;
 }
 
 export function isValidAlbumArtHeader(header: readonly (string | number)[]): boolean {
   return header.length >= ALBUM_ART_SHEET_HEADER.length && ALBUM_ART_SHEET_HEADER.every((v, i) => header[i] === v);
 }
 
-/** match列を足す前の見出し（先頭9列だけが一致し、10列目が空）。 */
+/** 列を足す前の古い見出し（先頭の9列または10列だけが一致し、その先が空）。 */
 export function isLegacyAlbumArtHeader(header: readonly (string | number)[]): boolean {
-  return (
-    ALBUM_ART_SHEET_HEADER.slice(0, LEGACY_HEADER_LENGTH).every((v, i) => header[i] === v) &&
-    header.slice(LEGACY_HEADER_LENGTH).every((v) => String(v).trim() === "")
+  return LEGACY_HEADER_LENGTHS.some(
+    (length) =>
+      ALBUM_ART_SHEET_HEADER.slice(0, length).every((v, i) => header[i] === v) && header.slice(length).every((v) => String(v).trim() === "")
   );
 }
 
@@ -99,6 +104,7 @@ export function parseAlbumArtRows(rows: readonly (string | number)[][]): Map<str
         checkedFileId: s(7),
         updatedAt: s(8),
         match: asMatch(s(9)),
+        reviewedAt: s(10),
       },
     });
   });
@@ -117,6 +123,7 @@ export function albumArtRow(record: AlbumArtRecord): string[] {
     record.checkedFileId,
     record.updatedAt,
     record.match,
+    record.reviewedAt,
   ];
 }
 
@@ -179,8 +186,8 @@ export function createAlbumArtSheetIO(spreadsheetId: string, getAccessToken: () 
         });
       }
       const header = (await readValues(sheetRange(ALBUM_ART_SHEET_NAME, "1:1")))[0] ?? [];
-      if (header.length > 0 && header.length <= LEGACY_HEADER_LENGTH && isLegacyAlbumArtHeader(header)) {
-        // match列を足す前のタブ：見出しを足すだけ（既存の行のmatchは空＝自動で集めた）。
+      if (header.length > 0 && header.length < ALBUM_ART_SHEET_HEADER.length && isLegacyAlbumArtHeader(header)) {
+        // 列を足す前のタブ：見出しを足すだけ（既存の行のmatch・reviewedAtは空＝自動で集めた・まだ確かめていない）。
         // 使っていない列を消して9列だけになっているタブもあるので、先に列を増やす（範囲外に書くと拒否される）
         await ensureColumnCount(ALBUM_ART_SHEET_HEADER.length);
         await sheetsFetch(`${base}/values/${encodeURIComponent(sheetRange(ALBUM_ART_SHEET_NAME, `A1:${lastCol}1`))}?valueInputOption=RAW`, {
