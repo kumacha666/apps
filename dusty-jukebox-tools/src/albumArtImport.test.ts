@@ -35,6 +35,7 @@ describe("parseCandidateRows", () => {
       header,
       row("A"),
       row("B", { source: "itunes", match: "ai-guess" }),
+      row("W", { source: "web", match: "ai-close" }),
       row("C", { imageUrl: "http://insecure/c.jpg" }),
       row("D", { source: "google" }),
       row("E", { match: "sure" }),
@@ -44,6 +45,7 @@ describe("parseCandidateRows", () => {
     expect(candidates.map((c) => [c.album, c.source, c.match])).toEqual([
       ["A", "deezer", "ai-exact"],
       ["B", "itunes", "ai-guess"],
+      ["W", "web", "ai-close"],
     ]);
     expect(candidates[0]).toMatchObject({ albumFolderId: "f1", sourceId: "id-A", note: "メモ" });
     expect(skipped).toBe(4);

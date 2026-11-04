@@ -35,7 +35,7 @@ export const MATCH_LABELS: Record<ArtMatch, string> = {
   manual: "手で選んだ",
 };
 
-const WEB_SOURCES: readonly ArtSource[] = ["musicbrainz", "itunes", "deezer"];
+const WEB_SOURCES: readonly ArtSource[] = ["musicbrainz", "itunes", "deezer", "web"];
 
 function inView(r: AlbumArtRecord, view: ReviewView): boolean {
   switch (view) {
@@ -130,6 +130,8 @@ export function sourcePageUrl(record: Pick<AlbumArtRecord, "source" | "sourceId"
   if (record.source === "musicbrainz") return `https://musicbrainz.org/release-group/${encodeURIComponent(record.sourceId)}`;
   if (record.source === "itunes") return `https://music.apple.com/jp/album/${encodeURIComponent(record.sourceId)}`;
   if (record.source === "deezer") return `https://www.deezer.com/album/${encodeURIComponent(record.sourceId)}`;
+  // 画像検索で見つけたページ：記録したURLそのもの（https以外は出さない）
+  if (record.source === "web") return /^https:\/\//i.test(record.sourceId) ? record.sourceId : null;
   return null;
 }
 
@@ -138,6 +140,7 @@ export const SOURCE_LABELS: Record<ArtSource, string> = {
   musicbrainz: "MusicBrainz",
   itunes: "iTunes",
   deezer: "Deezer",
+  web: "Web",
   notfound: "見つからない",
   error: "読めなかった",
   rejected: "外した",

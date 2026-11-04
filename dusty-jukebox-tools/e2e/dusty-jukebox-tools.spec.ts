@@ -476,6 +476,7 @@ test("アルバムアート：AIが探した候補を、いまも見つからな
       ["p-m", "Missing Cover", "Band", "no", "", "notfound", "", "m1", "u1"],
       ["p-a", "Already", "Band", "no", "art-x", "itunes", "9", "a1", "u2"],
       ["p-r", "Rejected", "Band", "no", "", "rejected", "", "r1", "u2"],
+      ["p-w", "Shop Only", "Band", "no", "", "notfound", "", "w1", "u1"],
     ],
     candidateRows: [
       CANDIDATE_HEADER,
@@ -484,27 +485,37 @@ test("アルバムアート：AIが探した候補を、いまも見つからな
       ["p-a", "Already", "https://cdn-images.dzcdn.net/images/cover/already/500x500.jpg", "deezer", "303", "ai-exact", ""],
       ["p-r", "Rejected", "https://cdn-images.dzcdn.net/images/cover/rejected/500x500.jpg", "deezer", "304", "ai-guess", ""],
       ["p-x", "Bad Row", "http://insecure/x.jpg", "deezer", "305", "ai-exact", ""],
+      // 画像検索で見つけたショップのページの画像（取得元はWeb、sourceIdはページのURL）
+      ["p-w", "Shop Only", "https://m.media-amazon.com/images/I/shop.jpg", "web", "https://shop.example/item/1", "ai-close", ""],
     ],
   });
   await login(page);
   await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
   await page.getByRole("button", { name: "AIが探した候補を取り込む" }).click();
-  await expect(page.locator("#status")).toContainText("1枚の表紙を取り込みました", { timeout: 20_000 });
+  await expect(page.locator("#status")).toContainText("2枚の表紙を取り込みました", { timeout: 20_000 });
   await expect(page.locator("#status")).toContainText("1枚は画像を取れなかったため");
   await expect(page.locator("#status")).toContainText("1行は形が合わないため");
   const rows = mocks.getAlbumArtRows()!;
   expect(rows[0][9]).toBe("match");
   const byAlbum = Object.fromEntries(rows.slice(1).map((r) => [r[1], r]));
-  expect(byAlbum["桜坂"].slice(3, 8)).toEqual(["no", "art-1", "deezer", "301", "s1"]);
+  // 同時に取り込むので、どちらが先にDriveへ置かれるかは決まらない
+  expect(byAlbum["桜坂"].slice(3, 8)).toEqual(["no", expect.stringMatching(/^art-[12]$/), "deezer", "301", "s1"]);
   expect(byAlbum["桜坂"][9]).toBe("ai-variant");
   // 画像を取れなかった・既に表紙がある・外したアルバムはそのまま
   expect(byAlbum["Missing Cover"].slice(4, 6)).toEqual(["", "notfound"]);
   expect(byAlbum["Already"].slice(4, 7)).toEqual(["art-x", "itunes", "9"]);
   expect(byAlbum["Rejected"][5]).toBe("rejected");
-  expect(mocks.driveUploads).toHaveLength(1);
+  // 画像検索で見つけたショップの画像も取り込める（取得元はWeb、sourceIdはページのURL）
+  expect(byAlbum["Shop Only"].slice(5, 7)).toEqual(["web", "https://shop.example/item/1"]);
+  expect(byAlbum["Shop Only"][9]).toBe("ai-close");
+  expect(mocks.driveUploads).toHaveLength(2);
 
   // 確認画面：どう見つけたかで絞る。自動で集めた表紙とは分かれる
   await page.getByRole("button", { name: "確認する" }).click();
+  await page.locator("#art-view").selectOption("ai-close");
+  const webTile = page.locator("#art-review .art-tile").filter({ hasText: "Shop Only" });
+  await expect(webTile.locator(".art-source")).toHaveText("Web・AI：近い");
+  await expect(webTile.locator(".art-source a")).toHaveAttribute("href", "https://shop.example/item/1");
   await page.locator("#art-view").selectOption("ai-variant");
   const tiles = page.locator("#art-review .art-tile");
   await expect(tiles).toHaveCount(1);
@@ -518,7 +529,7 @@ test("アルバムアート：AIが探した候補を、いまも見つからな
   // もう一度押しても、取り込み済み・見つからないままのものだけが対象（画像を取れなかった分を試し直す）
   await page.getByRole("button", { name: "AIが探した候補を取り込む" }).click();
   await expect(page.locator("#status")).toContainText("0枚の表紙を取り込みました", { timeout: 20_000 });
-  expect(mocks.driveUploads).toHaveLength(1);
+  expect(mocks.driveUploads).toHaveLength(2);
 });
 
 test("アルバムアート：使っていない列を消して9列だけになった旧形式のタブでも、列を足してから見出しを足す", async ({ page, context }) => {

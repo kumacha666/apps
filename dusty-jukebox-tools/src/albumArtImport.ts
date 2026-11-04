@@ -10,7 +10,7 @@ import { albumArtKey, CANDIDATES_SHEET_NAME, isAiMatch, type AiMatch, type Album
 export { CANDIDATES_SHEET_NAME };
 export const CANDIDATES_SHEET_HEADER = ["albumFolderId", "album", "imageUrl", "source", "sourceId", "match", "note"] as const;
 
-const CANDIDATE_SOURCES = ["musicbrainz", "itunes", "deezer"] as const;
+const CANDIDATE_SOURCES = ["musicbrainz", "itunes", "deezer", "web"] as const;
 type CandidateSource = (typeof CANDIDATE_SOURCES)[number];
 
 export interface ImportCandidate {
