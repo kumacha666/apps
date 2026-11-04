@@ -88,6 +88,9 @@ test("sourcePageUrl：Webから補完したものだけ取得元のページ", (
   expect(sourcePageUrl({ source: "musicbrainz", sourceId: "rg1" })).toBe("https://musicbrainz.org/release-group/rg1");
   expect(sourcePageUrl({ source: "itunes", sourceId: "42" })).toBe("https://music.apple.com/jp/album/42");
   expect(sourcePageUrl({ source: "deezer", sourceId: "7" })).toBe("https://www.deezer.com/album/7");
+  // 画像検索で見つけたページは、記録したURLそのもの（https以外は出さない）
+  expect(sourcePageUrl({ source: "web", sourceId: "https://shop.example/item/1" })).toBe("https://shop.example/item/1");
+  expect(sourcePageUrl({ source: "web", sourceId: "javascript:alert(1)" })).toBeNull();
   expect(sourcePageUrl({ source: "embedded", sourceId: "" })).toBeNull();
   expect(sourcePageUrl({ source: "itunes", sourceId: "" })).toBeNull();
 });

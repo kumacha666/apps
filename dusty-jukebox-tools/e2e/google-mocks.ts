@@ -235,7 +235,7 @@ export async function installGoogleMocks(context: BrowserContext, options: MockO
   });
 
   // アルバムアート：Webの検索（MusicBrainz・iTunes）と画像。"Found"という名前のアルバムだけMusicBrainzに表紙がある
-  await context.route(/https:\/\/(musicbrainz\.org|itunes\.apple\.com|coverartarchive\.org|cdn-images\.dzcdn\.net)\/.*/, async (route) => {
+  await context.route(/https:\/\/(musicbrainz\.org|itunes\.apple\.com|coverartarchive\.org|cdn-images\.dzcdn\.net|m\.media-amazon\.com)\/.*/, async (route) => {
     const url = decodeURIComponent(route.request().url());
     webRequests.push(url);
     const cors = { "Access-Control-Allow-Origin": "*" };

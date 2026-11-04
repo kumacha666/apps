@@ -78,6 +78,7 @@ describe("albumArtタブ", () => {
       musicbrainz: 0,
       itunes: 2,
       deezer: 0,
+      web: 0,
       notfound: 0,
       error: 0,
       rejected: 0,

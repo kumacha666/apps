@@ -858,7 +858,7 @@ let stopArtRequested = false;
 
 function artSummaryText(summary: AlbumArtSummary): string {
   const rejected = summary.rejected > 0 ? `・外した ${summary.rejected}` : "";
-  const deezer = summary.deezer > 0 ? `・Deezer ${summary.deezer}` : "";
+  const deezer = (summary.deezer > 0 ? `・Deezer ${summary.deezer}` : "") + (summary.web > 0 ? `・Web ${summary.web}` : "");
   return `埋め込み ${summary.embedded}・MusicBrainz ${summary.musicbrainz}・iTunes ${summary.itunes}${deezer}・見つからない ${summary.notfound}・読めなかった ${summary.error}${rejected}`;
 }
 
