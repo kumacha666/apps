@@ -44,6 +44,9 @@ describe("albumArtタブ", () => {
     expect(albumArtRow(r)).toHaveLength(ALBUM_ART_SHEET_HEADER.length);
     expect(parseAlbumArtRows([albumArtRow(r)]).get(albumArtKey("f1", "Blue"))?.record).toEqual(r);
     expect(parseAlbumArtRows([[...albumArtRow(r).slice(0, 9), "maybe"]]).get(albumArtKey("f1", "Blue"))?.record.match).toBe("");
+    // 手元の画像ファイルを入れた記録も読み書きできる（知らない取得元としてerrorにしない）
+    const fromFile = { ...r, source: "file" as const, sourceId: "cover.png", match: "manual" as const };
+    expect(parseAlbumArtRows([albumArtRow(fromFile)]).get(albumArtKey("f1", "Blue"))?.record).toEqual(fromFile);
     // 確かめた印を読み書きする
     const seen = { ...r, reviewedAt: "2026-11-04T00:00:00Z" };
     expect(parseAlbumArtRows([albumArtRow(seen)]).get(albumArtKey("f1", "Blue"))?.record.reviewedAt).toBe("2026-11-04T00:00:00Z");
@@ -79,6 +82,7 @@ describe("albumArtタブ", () => {
       itunes: 2,
       deezer: 0,
       web: 0,
+      file: 0,
       notfound: 0,
       error: 0,
       rejected: 0,
