@@ -46,6 +46,7 @@ import { buildArtAlbums, parseFolderRows } from "./albumArtAlbums";
 import { albumArtKey, albumArtRow, createAlbumArtSheetIO, parseAlbumArtRows, summarize, type AlbumArtRecord, type AlbumArtSummary } from "./albumArtSheet";
 import {
   chosenRecord,
+  uploadedRecord,
   createReviewSearch,
   isReviewView,
   recordsForView,
@@ -161,7 +162,7 @@ function render(): void {
         <div class="art-review-bar"><button id="collect-art-btn" type="button" disabled>表紙を集める</button> <button id="retry-art-btn" type="button" class="secondary" disabled>見つからなかったアルバムをもう一度探す</button> <button id="import-art-btn" type="button" class="secondary" disabled>AIが探した候補を取り込む</button> <button id="stop-art-btn" type="button" disabled>止める</button></div>
         <p id="art-progress"></p>
         <div id="art-results"></div>
-        <p>集めた表紙は「確認する」で一覧にできます。違うものは「外す」（表紙なしにし、次に集めるときも入れ直さない）か「別の候補」で選び直してください。見つからなかったアルバムも「別の候補」から探して入れられます。合っている表紙は「OK」を押すと確認済みになり、「未確認の表紙だけ表示」のときは一覧に出なくなります（外した・選び直した表紙も確認済みになります。何度取り込んでも、まだ見ていない表紙だけを見直せます）。</p>
+        <p>集めた表紙は「確認する」で一覧にできます。違うものは「外す」（表紙なしにし、次に集めるときも入れ直さない）か「別の候補」で選び直してください。見つからなかったアルバムも「別の候補」から探して入れられます。候補に無ければ、「別の候補」の「画像ファイルから入れる」で手元の画像（自分で保存したジャケット画像など）を選べます。合っている表紙は「OK」を押すと確認済みになり、「未確認の表紙だけ表示」のときは一覧に出なくなります（外した・選び直した表紙も確認済みになります。何度取り込んでも、まだ見ていない表紙だけを見直せます）。</p>
         <div class="art-review-bar"><select id="art-view" aria-label="表示する表紙"></select> <button id="review-art-btn" type="button" disabled>確認する</button></div>
         <div class="art-review-bar"><label><input type="checkbox" id="art-unreviewed" checked> 未確認の表紙だけ表示</label> <button id="art-mark-all-btn" type="button" class="secondary" disabled>表示中の未確認をすべてOKにする</button></div>
         <div id="art-candidates" class="art-candidates" hidden></div>
@@ -858,7 +859,7 @@ let stopArtRequested = false;
 
 function artSummaryText(summary: AlbumArtSummary): string {
   const rejected = summary.rejected > 0 ? `・外した ${summary.rejected}` : "";
-  const deezer = (summary.deezer > 0 ? `・Deezer ${summary.deezer}` : "") + (summary.web > 0 ? `・Web ${summary.web}` : "");
+  const deezer = (summary.deezer > 0 ? `・Deezer ${summary.deezer}` : "") + (summary.web > 0 ? `・Web ${summary.web}` : "") + (summary.file > 0 ? `・画像ファイル ${summary.file}` : "");
   return `埋め込み ${summary.embedded}・MusicBrainz ${summary.musicbrainz}・iTunes ${summary.itunes}${deezer}・見つからない ${summary.notfound}・読めなかった ${summary.error}${rejected}`;
 }
 
@@ -1387,7 +1388,23 @@ function openArtCandidates(key: string): void {
     }
   };
   search.addEventListener("click", () => void runSearch());
-  panel.append(title, form, results);
+  // 候補に無ければ、手元の画像ファイルを選んで入れる
+  const fileRow = document.createElement("div");
+  fileRow.className = "art-file";
+  const fileLabel = document.createElement("label");
+  fileLabel.textContent = "画像ファイルから入れる：";
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = "image/*";
+  fileInput.setAttribute("aria-label", `「${record.album}」の表紙にする画像ファイル`);
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    fileInput.value = "";
+    if (file) void handleUploadArt(key, file);
+  });
+  fileLabel.append(fileInput);
+  fileRow.append(fileLabel);
+  panel.append(title, form, fileRow, results);
   panel.scrollIntoView({ block: "nearest" });
   void runSearch();
 }
@@ -1421,7 +1438,15 @@ function renderArtCandidates(container: HTMLElement, key: string, candidates: Re
   }
 }
 
-async function handleChooseArt(key: string, candidate: ReviewCandidate): Promise<void> {
+/**
+ * 表紙を差し替える（別の候補・画像ファイルで共通）。[makeImage]で縮めた画像を作り、先にDriveへ置いてから、
+ * 記録を書く直前に行を探し直す（送信中に行が並べ替えられても取り違えない）。
+ */
+async function replaceArt(
+  key: string,
+  makeImage: () => Promise<Blob>,
+  build: (current: AlbumArtRecord, artFileId: string, now: string) => AlbumArtRecord
+): Promise<void> {
   const spreadsheetId = reviewSpreadsheetIdOrWarn();
   if (!spreadsheetId) return;
   if (!tryAcquire()) {
@@ -1430,19 +1455,15 @@ async function handleChooseArt(key: string, candidate: ReviewCandidate): Promise
   }
   try {
     setStatus("表紙を差し替えています…");
-    const image = await fetchWebImage(candidate.imageUrl);
-    if (!image) throw new Error("この候補の画像は取れませんでした。別の候補を選んでください。");
-    const thumb = await makeJpegThumbnail(image.data, image.format);
-    if (!thumb) throw new Error("この候補の画像は読めませんでした。別の候補を選んでください。");
+    const thumb = await makeImage();
     const shown = artReview?.records.get(key);
     if (!shown) return;
-    // 画像を先にDriveへ置いてから、記録を書く直前に行を探し直す（送信中に行が並べ替えられても取り違えない）
     const folderId = await ensureArtFolder(getArtToken);
     const upload = createArtUploader(getArtToken, folderId);
     const artFileId = await upload({ albumFolderId: shown.albumFolderId, album: shown.album, artist: shown.artist, shelf: "artist", tracks: [] }, thumb);
     let next: AlbumArtRecord;
     try {
-      next = await writeArtRecord(spreadsheetId, key, shown, (current) => chosenRecord(current, candidate, artFileId, new Date().toISOString()));
+      next = await writeArtRecord(spreadsheetId, key, shown, (current) => build(current, artFileId, new Date().toISOString()));
     } catch (err) {
       // 記録に使われていないと確かな場合（書く前に止めた）だけ、送った画像を消す。
       // 書き込みの応答が届かなかった等で、記録されたか分からない場合は消さない（記録済みの画像を消してしまわないため）
@@ -1458,6 +1479,33 @@ async function handleChooseArt(key: string, candidate: ReviewCandidate): Promise
   } finally {
     release();
   }
+}
+
+function handleChooseArt(key: string, candidate: ReviewCandidate): Promise<void> {
+  return replaceArt(
+    key,
+    async () => {
+      const image = await fetchWebImage(candidate.imageUrl);
+      if (!image) throw new Error("この候補の画像は取れませんでした。別の候補を選んでください。");
+      const thumb = await makeJpegThumbnail(image.data, image.format);
+      if (!thumb) throw new Error("この候補の画像は読めませんでした。別の候補を選んでください。");
+      return thumb;
+    },
+    (current, artFileId, now) => chosenRecord(current, candidate, artFileId, now)
+  );
+}
+
+// 手元の画像ファイル（検索で見つからない表紙を、自分で保存した画像から入れる）
+function handleUploadArt(key: string, file: File): Promise<void> {
+  return replaceArt(
+    key,
+    async () => {
+      const thumb = await makeJpegThumbnail(new Uint8Array(await file.arrayBuffer()), file.type);
+      if (!thumb) throw new Error("この画像ファイルは読めませんでした。JPEG・PNG・WebPなどの画像を選んでください。");
+      return thumb;
+    },
+    (current, artFileId, now) => uploadedRecord(current, artFileId, file.name, now)
+  );
 }
 
 // ===== ログイン・初期化 =====

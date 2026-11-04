@@ -7,10 +7,11 @@
 //   / rejected（確認画面で「外す」を選んだ。表紙なしのまま、次回も集め直さない）
 //   / deezer（AIが探した候補から取り込んだもの。AIの候補はmusicbrainz・itunesのこともある）
 //   / web（AIが画像検索で見つけた、配信サービス以外のページ〈ショップ等〉の画像。sourceIdはそのページのURL）
+//   / file（確認画面で、手元の画像ファイルを選んで入れた。sourceIdはそのファイル名）
 // - sourceId：取得元のID（MusicBrainzのrelease-group ID、iTunesのcollectionId、DeezerのアルバムID）
 // - checkedFileId：表紙を読んだ曲
 // - match：どう見つけたか（空＝このツールが自動で集めた、ai-exact / ai-variant / ai-close / ai-guess＝AIが探した候補を取り込んだ
-//   〈下ほど見つけにくかった＝間違っている可能性が高い〉、manual＝確認画面で選んだ）。2026-11-03に足した10列目
+//   〈下ほど見つけにくかった＝間違っている可能性が高い〉、manual＝確認画面で選んだ・画像ファイルを入れた）。2026-11-03に足した10列目
 //   （それまでの9列のタブは、開いたときに見出しを足す。本体・アプリ版は先頭9列だけを読む）
 // - reviewedAt：確認画面で人が見て確かめた日時（空＝まだ）。「OK」・「外す」・「別の候補」で選んだときに入る。
 //   取り込み・収集で新しく入れた表紙は空（2026-11-04に足した11列目。確認画面は既定で未確認だけを出す）
@@ -38,7 +39,7 @@ export const ALBUM_ART_SHEET_HEADER = [
 /** 古い見出しの列数（9列＝match列を足す前、10列＝reviewedAt列を足す前）。開いたときに見出しを足す。 */
 const LEGACY_HEADER_LENGTHS = [9, 10];
 
-export const ART_SOURCES = ["embedded", "musicbrainz", "itunes", "deezer", "web", "notfound", "error", "rejected"] as const;
+export const ART_SOURCES = ["embedded", "musicbrainz", "itunes", "deezer", "web", "file", "notfound", "error", "rejected"] as const;
 export type ArtSource = (typeof ART_SOURCES)[number];
 
 /** AIが探した候補の確からしさ（下ほど見つけにくかった＝間違っている可能性が高い）。 */
@@ -136,7 +137,7 @@ export function isSettled(record: AlbumArtRecord | undefined): boolean {
 export type AlbumArtSummary = Record<ArtSource, number>;
 
 export function summarize(records: Iterable<AlbumArtRecord>): AlbumArtSummary {
-  const summary: AlbumArtSummary = { embedded: 0, musicbrainz: 0, itunes: 0, deezer: 0, web: 0, notfound: 0, error: 0, rejected: 0 };
+  const summary: AlbumArtSummary = { embedded: 0, musicbrainz: 0, itunes: 0, deezer: 0, web: 0, file: 0, notfound: 0, error: 0, rejected: 0 };
   for (const r of records) summary[r.source] += 1;
   return summary;
 }

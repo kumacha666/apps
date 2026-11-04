@@ -14,6 +14,7 @@ import {
   recordsForView,
   rejectedRecord,
   sourcePageUrl,
+  uploadedRecord,
 } from "./albumArtReview";
 
 const rec = (album: string, artist: string, source: AlbumArtRecord["source"], extra: Partial<AlbumArtRecord> = {}): AlbumArtRecord => ({
@@ -56,6 +57,7 @@ test("recordsForView：AIが探した表紙は、どう見つけたか（確か�
     rec("Close", "A", "musicbrainz", { match: "ai-close" }),
     rec("Guess", "A", "deezer", { match: "ai-guess" }),
     rec("Manual", "A", "musicbrainz", { match: "manual" }),
+    rec("Uploaded", "A", "file", { match: "manual" }),
     // 外した表紙は、AIが探したものでも外したアルバムの方に出す
     rec("Gone", "A", "rejected"),
   ];
@@ -66,11 +68,27 @@ test("recordsForView：AIが探した表紙は、どう見つけたか（確か�
   expect(albums("ai-variant")).toEqual(["Variant"]);
   expect(albums("ai-close")).toEqual(["Close"]);
   expect(albums("ai-guess")).toEqual(["Guess"]);
-  expect(albums("manual")).toEqual(["Manual"]);
+  // 手元の画像ファイルを入れたものも、確認画面で選んだ表紙に出す（自動・AIの表示には出さない）
+  expect(albums("manual")).toEqual(["Manual", "Uploaded"]);
   expect(albums("rejected")).toEqual(["Gone"]);
 });
 
 describe("記録の書き換え", () => {
+  test("画像ファイルを入れる：画像を差し替え、取得元はファイル（名前を残す）、手で入れたので確認済み", () => {
+    const r = rec("A", "Alpha", "notfound", { embedded: "no", checkedFileId: "song-1" });
+    expect(uploadedRecord(r, "img-up", "cover.jpg", "now")).toEqual({
+      ...r,
+      artFileId: "img-up",
+      source: "file",
+      sourceId: "cover.jpg",
+      updatedAt: "now",
+      match: "manual",
+      reviewedAt: "now",
+    });
+    // 取得元のページは無い（ファイル名はリンクにしない）
+    expect(sourcePageUrl({ source: "file", sourceId: "https://example.com/x.jpg" })).toBeNull();
+  });
+
   test("外す：画像と取得元を消し、rejectedにする（埋め込みの有無・キーはそのまま）", () => {
     const r = rec("A", "Alpha", "itunes", { sourceId: "42" });
     expect(rejectedRecord(r, "now")).toEqual({ ...r, artFileId: "", source: "rejected", sourceId: "", updatedAt: "now", match: "", reviewedAt: "now" });

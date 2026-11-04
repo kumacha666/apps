@@ -1,5 +1,6 @@
 // アルバムアートの確認画面（画面・通信に依存しない部分）。
 // 集めた表紙を眺めて、違うものを「外す」か「別の候補」から選び直す。見つからなかったアルバムも、ここで手で探して入れられる。
+// 候補に無ければ、手元の画像ファイルを選んで入れることもできる（uploadedRecord）。
 // 別の候補は、一括で集めるとき（albumArtSearch.tsの照合）より緩く、検索結果をそのまま並べて人が選ぶ。
 
 import { albumArtKey, isAiMatch, type AiMatch, type AlbumArtRecord, type ArtMatch, type ArtSource } from "./albumArtSheet";
@@ -14,7 +15,7 @@ export const REVIEW_VIEW_LABELS: Record<ReviewView, string> = {
   "ai-variant": "AIが探した表紙：表記違い",
   "ai-close": "AIが探した表紙：名前が近い",
   "ai-guess": "AIが探した表紙：推測（いちばん怪しい）",
-  manual: "確認画面で選んだ表紙",
+  manual: "確認画面で選んだ表紙（画像ファイルを含む）",
   notfound: "見つからなかったアルバム",
   rejected: "外したアルバム",
   error: "読めなかった・取れなかったアルバム",
@@ -51,7 +52,7 @@ function inView(r: AlbumArtRecord, view: ReviewView): boolean {
     case "ai-guess":
       return WEB_SOURCES.includes(r.source) && r.match === (view satisfies AiMatch);
     case "manual":
-      return WEB_SOURCES.includes(r.source) && r.match === "manual";
+      return (WEB_SOURCES.includes(r.source) || r.source === "file") && r.match === "manual";
     case "notfound":
     case "rejected":
     case "error":
@@ -93,6 +94,11 @@ export function rejectedRecord(record: AlbumArtRecord, now: string): AlbumArtRec
 /** 「これにする」：選んだ候補の画像に差し替える（埋め込みの有無はそのまま）。 */
 export function chosenRecord(record: AlbumArtRecord, candidate: ArtCandidate, artFileId: string, now: string): AlbumArtRecord {
   return { ...record, artFileId, source: candidate.source, sourceId: candidate.sourceId, updatedAt: now, match: "manual", reviewedAt: now };
+}
+
+/** 手元の画像ファイルを表紙にする（人が選んだので確認済み。sourceIdはファイル名）。 */
+export function uploadedRecord(record: AlbumArtRecord, artFileId: string, fileName: string, now: string): AlbumArtRecord {
+  return { ...record, artFileId, source: "file", sourceId: fileName, updatedAt: now, match: "manual", reviewedAt: now };
 }
 
 /** 「OK」：表紙はそのままで、確かめた印だけを付ける（表紙の記録・更新日時は変えない）。 */
@@ -141,6 +147,7 @@ export const SOURCE_LABELS: Record<ArtSource, string> = {
   itunes: "iTunes",
   deezer: "Deezer",
   web: "Web",
+  file: "画像ファイル",
   notfound: "見つからない",
   error: "読めなかった",
   rejected: "外した",

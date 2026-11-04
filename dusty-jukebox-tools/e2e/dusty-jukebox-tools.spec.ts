@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { installGoogleMocks } from "./google-mocks";
+import { ALBUM_ART_TEST_PNG, installGoogleMocks } from "./google-mocks";
 import { INDEX_SHEET_HEADER } from "../src/sheets";
 
 const SPREADSHEET_ID = "sheet-1";
@@ -297,6 +297,52 @@ test("アルバムアートの確認：表紙を一覧にし、外す・別の�
 });
 
 const ART_HEADER = ["albumFolderId", "album", "artist", "embedded", "artFileId", "source", "sourceId", "checkedFileId", "updatedAt"];
+
+test("アルバムアートの確認：候補に無い表紙は、手元の画像ファイルを選んで入れられる（画像でないファイルは入れない）", async ({ page, context }) => {
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    albumArtRows: [
+      ART_HEADER,
+      ["p4", "Other Album", "Band", "no", "art-x", "itunes", "9", "t4", "u2"],
+      ["p2", "No Cover", "Nobody", "no", "", "notfound", "", "t2", "u1"],
+    ],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  await page.getByRole("button", { name: "確認する" }).click();
+  await page.locator("#art-view").selectOption("notfound");
+  await page.locator("#art-review").getByRole("button", { name: "「No Cover」の別の候補" }).click();
+  const fileInput = page.getByLabel("「No Cover」の表紙にする画像ファイル");
+
+  // 画像でないファイルは、Driveへ送らず記録も変えない
+  await fileInput.setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not an image") });
+  await expect(page.locator("#status")).toContainText("この画像ファイルは読めませんでした");
+  expect(mocks.driveUploads).toHaveLength(0);
+  expect(mocks.getAlbumArtRows()!.find((r) => r[1] === "No Cover")!.slice(4, 6)).toEqual(["", "notfound"]);
+
+  // 書く直前に読み直して正しい行に書く（行を並べ替えられていても取り違えない）
+  const rows = mocks.getAlbumArtRows()!;
+  mocks.setAlbumArtRows([rows[0], rows[2], rows[1]]);
+  await fileInput.setInputFiles({ name: "my cover.png", mimeType: "image/png", buffer: ALBUM_ART_TEST_PNG });
+  await expect(page.locator("#status")).toContainText("「No Cover」の表紙を差し替えました");
+  const after = Object.fromEntries(mocks.getAlbumArtRows()!.slice(1).map((r) => [r[1], r]));
+  expect(after["No Cover"].slice(0, 7)).toEqual(["p2", "No Cover", "Nobody", "no", "art-1", "file", "my cover.png"]);
+  // 手で入れたので確認済み（どう見つけたか＝手で選んだ）
+  expect(after["No Cover"][9]).toBe("manual");
+  expect(String(after["No Cover"][10])).toMatch(/^\d{4}-/);
+  expect(after["Other Album"].slice(4, 6)).toEqual(["art-x", "itunes"]);
+  expect(mocks.driveUploads.map((u) => u.name)).toEqual(["No Cover [p2].jpg"]);
+  await expect(page.locator("#art-candidates")).toBeHidden();
+
+  // 確認画面で選んだ表紙の表示に出る（確認済みなので、未確認だけの表示では出ない。取得元は「画像ファイル」、リンクにしない）
+  await page.locator("#art-view").selectOption("manual");
+  await expect(page.locator("#art-review")).toContainText("確認画面で選んだ表紙（画像ファイルを含む）（未確認）：0枚");
+  await page.locator("#art-unreviewed").uncheck();
+  const tile = page.locator("#art-review .art-tile").filter({ hasText: "No Cover" });
+  await expect(tile).toContainText("画像ファイル・手で選んだ・確認済み");
+  await expect(tile.getByRole("link")).toHaveCount(0);
+});
+
 
 test("アルバムアートの確認：画像の送信中に行が並べ替えられても、選んだアルバムの行に書く（長い名前でもはみ出さない）", async ({ page, context }) => {
   const longName = `Candidate Me${"X".repeat(100)}`;
