@@ -128,6 +128,7 @@ const rec = (a: ArtAlbum, source: AlbumArtRecord["source"]): AlbumArtRecord => (
   checkedFileId: "",
   updatedAt: "",
   match: "",
+  reviewedAt: "",
 });
 
 test("albumsToCollect：記録の無いアルバムと、前回errorだったアルバムだけ", () => {

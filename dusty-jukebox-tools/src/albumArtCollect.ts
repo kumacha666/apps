@@ -67,6 +67,7 @@ export async function collectAlbumArt(album: ArtAlbum, deps: CollectDeps, knownN
     checkedFileId: "",
     updatedAt: deps.now(),
     match: "",
+    reviewedAt: "",
     ...fields,
   });
 

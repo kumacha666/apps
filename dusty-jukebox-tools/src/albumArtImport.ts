@@ -92,5 +92,5 @@ export async function importCandidate(item: { candidate: ImportCandidate; record
   const thumb = await deps.makeThumbnail(image.data, image.format);
   if (!thumb) return null;
   const artFileId = await deps.upload({ albumFolderId: record.albumFolderId, album: record.album, artist: record.artist, shelf: "artist", tracks: [] }, thumb);
-  return { ...record, artFileId, source: candidate.source, sourceId: candidate.sourceId, match: candidate.match, updatedAt: deps.now() };
+  return { ...record, artFileId, source: candidate.source, sourceId: candidate.sourceId, match: candidate.match, updatedAt: deps.now(), reviewedAt: "" };
 }

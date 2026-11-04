@@ -218,7 +218,7 @@ test("アルバムアート：埋め込みのある表紙は縮めてDriveへ置
   await expect(page.locator("#art-results")).toContainText("全3枚：埋め込み 1・MusicBrainz 1・iTunes 0・見つからない 1・読めなかった 0");
 
   const rows = mocks.getAlbumArtRows() ?? [];
-  expect(rows[0]).toEqual(["albumFolderId", "album", "artist", "embedded", "artFileId", "source", "sourceId", "checkedFileId", "updatedAt", "match"]);
+  expect(rows[0]).toEqual(["albumFolderId", "album", "artist", "embedded", "artFileId", "source", "sourceId", "checkedFileId", "updatedAt", "match", "reviewedAt"]);
   const byAlbum = Object.fromEntries(rows.slice(1).map((r) => [r[1], r]));
   // 埋め込みは1曲目に無く、最後の曲（e2）にあった
   expect(byAlbum["Embedded"].slice(0, 8)).toEqual(["p-emb", "Embedded", "Band", "yes", expect.stringMatching(/^art-/), "embedded", "", "e2"]);
@@ -256,7 +256,7 @@ test("アルバムアートの確認：表紙を一覧にし、外す・別の�
 
   // 既定はWebから補完した表紙だけ。Driveの画像をログイン中のトークンで読んで出す
   const review = page.locator("#art-review");
-  await expect(review).toContainText("Webから補完した表紙（自動）：1枚");
+  await expect(review).toContainText("Webから補完した表紙（自動）（未確認）：1枚");
   const tile = review.locator(".art-tile").filter({ hasText: "Web Album" });
   await expect(tile.locator("img")).toHaveAttribute("src", /^blob:/);
   expect(await tile.locator("img").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
@@ -271,7 +271,7 @@ test("アルバムアートの確認：表紙を一覧にし、外す・別の�
   expect(afterReject["Web Album"].slice(4, 7)).toEqual(["", "rejected", ""]);
   expect(afterReject["Embedded One"].slice(4, 6)).toEqual(["art-emb", "embedded"]);
   await expect.poll(() => mocks.driveTrashed).toEqual(["art-old"]);
-  await expect(review).toContainText("Webから補完した表紙（自動）：0枚");
+  await expect(review).toContainText("Webから補完した表紙（自動）（未確認）：0枚");
 
   // 見つからなかったアルバムを、別の候補（照合の緩い検索）から選んで入れる
   await page.locator("#art-view").selectOption("notfound");
@@ -339,7 +339,7 @@ test("アルバムアートの確認：画面に出した後に別の画面で�
   await login(page);
   await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
   await page.getByRole("button", { name: "確認する" }).click();
-  await expect(page.locator("#art-review")).toContainText("Webから補完した表紙（自動）：1枚");
+  await expect(page.locator("#art-review")).toContainText("Webから補完した表紙（自動）（未確認）：1枚");
 
   // 別の画面で差し替えられた
   const changed = ["p1", "Web Album", "Band", "no", "art-elsewhere", "itunes", "77", "t1", "u9"];
@@ -533,4 +533,51 @@ test("アルバムアート：使っていない列を消して9列だけにな�
   await page.getByRole("button", { name: "確認する" }).click();
   await expect(page.locator("#status")).toContainText("1枚の記録を読み込みました");
   expect(mocks.getAlbumArtRows()![0][9]).toBe("match");
+});
+
+test("アルバムアートの確認：OKを押した表紙は確認済みになり、未確認だけの表示から消える。表示中の未確認はまとめてOKにできる", async ({ page, context }) => {
+  const mocks = await installGoogleMocks(context, {
+    currentHeader: true,
+    rows: [],
+    // match列・reviewedAt列を足す前（10列）のタブ：開いたときに見出しを足す
+    albumArtRows: [
+      [...ART_HEADER, "match"],
+      ["p1", "Seen Before", "Band", "no", "art-a", "itunes", "1", "t1", "u1", "ai-exact"],
+      ["p2", "Guess One", "Band", "no", "art-b", "deezer", "2", "t2", "u1", "ai-guess"],
+      ["p3", "Guess Two", "Band", "no", "art-c", "deezer", "3", "t3", "u1", "ai-guess"],
+      ["p4", "Close One", "Band", "no", "art-d", "itunes", "4", "t4", "u1", "ai-close"],
+    ],
+  });
+  await login(page);
+  await page.locator("#spreadsheet-id").fill(SPREADSHEET_ID);
+  await page.getByRole("button", { name: "確認する" }).click();
+  await expect(page.locator("#status")).toContainText("4枚の記録を読み込みました");
+  expect(mocks.getAlbumArtRows()![0].slice(9)).toEqual(["match", "reviewedAt"]);
+  const review = page.locator("#art-review");
+  await page.locator("#art-view").selectOption("ai");
+  await expect(review).toContainText("AIが探した表紙（すべて）（未確認）：4枚");
+
+  // 1枚だけOK：記録に印が付き、未確認だけの表示から消える（表紙・取得元はそのまま）
+  await review.getByRole("button", { name: "「Seen Before」の表紙をOKにする" }).click();
+  await expect(page.locator("#status")).toContainText("「Seen Before」の表紙をOKにしました");
+  await expect(review).toContainText("AIが探した表紙（すべて）（未確認）：3枚");
+  const byAlbum = () => Object.fromEntries(mocks.getAlbumArtRows()!.slice(1).map((r) => [r[1], r]));
+  expect(byAlbum()["Seen Before"].slice(4, 10)).toEqual(["art-a", "itunes", "1", "t1", "u1", "ai-exact"]);
+  expect(byAlbum()["Seen Before"][10]).toMatch(/^\d{4}-/);
+
+  // 推測だけを表示して、まとめてOK。表示していない「近い」には印を付けない
+  await page.locator("#art-view").selectOption("ai-guess");
+  await expect(review).toContainText("（未確認）：2枚");
+  await page.getByRole("button", { name: "表示中の未確認をすべてOKにする" }).click();
+  await expect(page.locator("#status")).toContainText("2枚の表紙をOKにしました");
+  await expect(review).toContainText("（未確認）：0枚");
+  expect(byAlbum()["Guess One"][10]).toMatch(/^\d{4}-/);
+  expect(byAlbum()["Guess Two"][10]).toMatch(/^\d{4}-/);
+  expect(byAlbum()["Close One"][10] ?? "").toBe("");
+
+  // 未確認だけの表示を外すと、確認済みの表紙も「確認済み」と出る
+  await page.locator("#art-unreviewed").uncheck();
+  await expect(review).toContainText("推測（いちばん怪しい）：2枚");
+  await expect(review.locator(".art-tile").filter({ hasText: "Guess One" }).locator(".art-source")).toContainText("確認済み");
+  await expect(review.getByRole("button", { name: "「Guess One」の表紙をOKにする" })).toHaveCount(0);
 });
