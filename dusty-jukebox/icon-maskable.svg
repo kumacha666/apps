@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="12 12 84 84">
+<!-- Android版のアプリと同じレコード盤。端まで塗る（ホーム画面で丸・角丸に切り抜かれる用。レコード盤は中央80%の安全領域に収まる） -->
+  <defs>
+    <radialGradient id="bg" cx="54" cy="41" r="92" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E24A37"/>
+      <stop offset="1" stop-color="#A82A1E"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="108" height="108" fill="url(#bg)"/>
+  <!-- 盤 -->
+  <circle cx="54" cy="54" r="30" fill="#121212" stroke="#2C2C2C" stroke-width="1.4"/>
+  <!-- 溝 -->
+  <circle cx="54" cy="54" r="25.5" fill="none" stroke="#2A2A2A" stroke-width="0.9"/>
+  <circle cx="54" cy="54" r="21.5" fill="none" stroke="#2A2A2A" stroke-width="0.9"/>
+  <circle cx="54" cy="54" r="17.5" fill="none" stroke="#2A2A2A" stroke-width="0.9"/>
+  <!-- 反射 -->
+  <path d="M31,43A27,27 0 0,1 45,29" fill="none" stroke="#FFFFFF" stroke-opacity="0.38" stroke-width="2.2" stroke-linecap="round"/>
+  <!-- ラベル -->
+  <circle cx="54" cy="54" r="11" fill="#F4E8C8"/>
+  <circle cx="54" cy="54" r="8.2" fill="none" stroke="#CF3A2C" stroke-width="1"/>
+  <circle cx="54" cy="54" r="2.4" fill="#A82A1E"/>
+  <!-- 針 -->
+  <path d="M75,33L65,46" stroke="#F4E8C8" stroke-width="3.2" stroke-linecap="round"/>
+  <circle cx="75" cy="33" r="3.6" fill="#F4E8C8"/>
+</svg>
