@@ -1,6 +1,6 @@
-const CACHE_NAME = "dusty-jukebox-v0.1.199";
+const CACHE_NAME = "dusty-jukebox-v0.1.200";
 const CACHE_PREFIX = "dusty-jukebox-";
-const ASSETS = ["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg"];
+const ASSETS = ["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg", "./icon-maskable.svg"];
 const APP_SHELL_URLS = new Set(ASSETS.map((asset) => new URL(asset, self.location.href).href));
 const STREAM_PATH_PREFIX = new URL("stream/", self.registration.scope).pathname;
 const TOKEN_TIMEOUT_MS = 5_000;

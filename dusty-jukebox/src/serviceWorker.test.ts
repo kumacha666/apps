@@ -121,7 +121,7 @@ describe("service worker", () => {
     await dispatchLifecycle(harness, "install");
     await dispatchLifecycle(harness, "activate");
 
-    expect(harness.cachePuts).toEqual(["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg"]);
+    expect(harness.cachePuts).toEqual(["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg", "./icon-maskable.svg"]);
     expect(harness.deleted).toEqual(
       harness.cacheKeys.filter((key) => key.startsWith(harness.cachePrefix) && key !== harness.cacheName)
     );
