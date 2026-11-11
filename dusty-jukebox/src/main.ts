@@ -31,6 +31,7 @@ import {
 import { PlaybackQueue, REPEAT_MODES, REPEAT_MODE_LABELS, insertNextStatusMessage, queueRowViews, songSubLabel, nowPlayingLabel } from "./queue";
 import { iconSvg, type IconName } from "./icons";
 import { marqueeText, startMarquee } from "./marquee";
+import { PLAYBACK_SETTINGS_STORAGE_KEY, parsePlaybackSettings, serializePlaybackSettings } from "./playbackSettings";
 import { DEFAULT_TAB, TAB_IDS, TAB_LABELS, isTabId, nextTabForKey, type TabId } from "./tabs";
 import { QUEUE_SORT_FIELDS, type QueueSortField } from "./queueSort";
 
@@ -810,8 +811,7 @@ function wireSeekBar(playback: DualAudioPlayer): void {
 function numberOrUndefined(value: string): number | undefined { const n = Number(value); return value.trim() === "" || !Number.isFinite(n) ? undefined : n; }
 // 手動スキップ（次へ/前へ/曲名クリック/Bluetooth・OSメディアキー）・一時停止（開発体制#45、
 // 2026-09-09にユーザー要望で追加）時のフェードアウト設定（開発体制#42④の一部）。
-// チェックボックスの現在値をそのまま読む（永続化はしない、他のUIトグルと同じくセッション
-// 内限定）。曲の自然終了時（advanceOnEnded()経由）には適用しない——将来のクロスフェード
+// チェックボックスの現在値をそのまま読む（値は次に開いたときも引き継ぐ。initPlaybackSettings()参照）。曲の自然終了時（advanceOnEnded()経由）には適用しない——将来のクロスフェード
 // 機能（曲間で2曲が重なる本格版、別PR）がこの経路を専用に扱うため。
 function fadeOutEnabled(): boolean {
   return el<HTMLInputElement>("fade-out-toggle").checked;
@@ -833,6 +833,37 @@ function crossfadeDurationMs(): number {
   const raw = Number(el<HTMLSelectElement>("crossfade-duration-sec").value);
   const sec = isCrossfadeDurationSec(raw) ? raw : DEFAULT_CROSSFADE_DURATION_SEC;
   return crossfadeDurationMsForSeconds(sec);
+}
+
+// フェード・クロスフェードの設定を、次に開いたときも引き継ぐ（2026-11-11、ユーザー要望。端末・ブラウザ
+// ごとの保存、playbackSettings.ts）。保存を読んでチェックボックス・長さへ反映し、変えるたびに保存する。
+// localStorageが使えない環境では、これまでどおり開いている間だけの設定になる。
+function initPlaybackSettings(): void {
+  const fadeOut = el<HTMLInputElement>("fade-out-toggle");
+  const crossfade = el<HTMLInputElement>("crossfade-toggle");
+  const duration = el<HTMLSelectElement>("crossfade-duration-sec");
+  try {
+    const saved = parsePlaybackSettings(localStorage.getItem(PLAYBACK_SETTINGS_STORAGE_KEY));
+    fadeOut.checked = saved.fadeOut;
+    crossfade.checked = saved.crossfade;
+    duration.value = String(saved.crossfadeSec);
+  } catch { /* 読めなければ既定のまま */ }
+  const save = () => {
+    const raw = Number(duration.value);
+    try {
+      localStorage.setItem(
+        PLAYBACK_SETTINGS_STORAGE_KEY,
+        serializePlaybackSettings({
+          fadeOut: fadeOut.checked,
+          crossfade: crossfade.checked,
+          crossfadeSec: isCrossfadeDurationSec(raw) ? raw : DEFAULT_CROSSFADE_DURATION_SEC,
+        })
+      );
+    } catch { /* 保存できなくても動作に支障は無い */ }
+  };
+  fadeOut.addEventListener("change", save);
+  crossfade.addEventListener("change", save);
+  duration.addEventListener("change", save);
 }
 
 // 明示的な手動遷移（次へ/前へ/曲名クリック/シャッフル等キュー由来の操作、および「一時停止」
@@ -3591,6 +3622,7 @@ function init(): void {
     el<HTMLInputElement>("album-search").addEventListener("input", () => {
       refreshAlbumGroups();
     });
+    initPlaybackSettings();
     // アルバム一覧の並べ方は、次に開いたときも同じにする（Android版と同じ。端末・ブラウザごとの保存）
     try {
       const savedSort = localStorage.getItem(ALBUM_SORT_STORAGE_KEY);
