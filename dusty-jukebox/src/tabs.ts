@@ -14,7 +14,9 @@ export const TAB_LABELS: Record<TabId, string> = {
   settings: "設定",
 };
 
-export const DEFAULT_TAB: TabId = "queue";
+// 起動時は設定タブ（接続・索引の読み込みがここにあり、曲一覧を読み込むまで他のタブは空のため）。
+// 索引の読み込みに成功するとライブラリのタブへ移る（main.tsのloadCatalog()）。
+export const DEFAULT_TAB: TabId = "settings";
 
 export function isTabId(value: unknown): value is TabId {
   return typeof value === "string" && (TAB_IDS as readonly string[]).includes(value);
@@ -36,4 +38,14 @@ export function nextTabForKey(current: TabId, key: string): TabId | null {
     default:
       return null;
   }
+}
+
+// タブ列（横スクロール）で、選んだタブが見えるようにするためのscrollLeft。
+// すでに全体が見えていれば今の値のまま、左にはみ出していれば左端を、右にはみ出していれば右端を合わせる。
+// 狭い画面では右端の「設定」タブが初期表示で隠れるため（2026-11-11、ChatGPTレビュー指摘：P2）。
+export function scrollLeftToReveal(scrollLeft: number, viewWidth: number, itemLeft: number, itemWidth: number): number {
+  const itemRight = itemLeft + itemWidth;
+  if (itemLeft < scrollLeft) return itemLeft;
+  if (itemRight > scrollLeft + viewWidth) return Math.min(itemLeft, itemRight - viewWidth);
+  return scrollLeft;
 }

@@ -32,7 +32,7 @@ import { PlaybackQueue, REPEAT_MODES, REPEAT_MODE_LABELS, insertNextStatusMessag
 import { iconSvg, type IconName } from "./icons";
 import { marqueeText, startMarquee } from "./marquee";
 import { PLAYBACK_SETTINGS_STORAGE_KEY, parsePlaybackSettings, serializePlaybackSettings } from "./playbackSettings";
-import { DEFAULT_TAB, TAB_IDS, TAB_LABELS, isTabId, nextTabForKey, type TabId } from "./tabs";
+import { DEFAULT_TAB, TAB_IDS, TAB_LABELS, isTabId, nextTabForKey, scrollLeftToReveal, type TabId } from "./tabs";
 import { QUEUE_SORT_FIELDS, type QueueSortField } from "./queueSort";
 
 // union型の分岐をRecordの網羅性チェックに使う（AI開発ルール4）：QUEUE_SORT_FIELDSに
@@ -457,39 +457,17 @@ function waitForServiceWorkerControl(): Promise<void> {
   });
 }
 
+// 起動時に開いているタブ以外のパネルはhiddenにしておく（activateTab()と同じ見え方）。
+function panelHidden(tab: TabId): string {
+  return tab === DEFAULT_TAB ? "" : " hidden";
+}
+
 function render(): void {
   const app = el<HTMLDivElement>("app");
   app.innerHTML = `
-    <h1>DustyJukebox</h1>
-    <p class="lead">Googleドライブの音源ライブラリを索引化する準備段階です。</p>
     ${
       CLIENT_ID
         ? `
-      <details id="connection" class="disclosure" open>
-        <summary>接続・索引<span class="hint">ログイン・スキャン・曲一覧の読み込み</span><span class="chev">${iconSvg("down")}</span></summary>
-        <div class="disclosure-body stack">
-          <label class="field">
-            <span>スキャン対象フォルダID</span>
-            <input id="folder-id" type="text" placeholder="Google DriveのフォルダURLの末尾" />
-          </label>
-          <label class="field">
-            <span>索引スプレッドシートID（indexタブ＋ヘッダー行を事前に作成済みのもの）</span>
-            <input id="spreadsheet-id" type="text" placeholder="スプレッドシートURLの末尾" />
-          </label>
-          <button id="login-btn" type="button">Googleドライブ（読み取り専用）＋スプレッドシートへログイン</button>
-          <div class="btn-row">
-            <button id="load-catalog-btn" type="button" disabled>索引から曲一覧を読み込む</button>
-            <button id="scan-btn" class="ghost" type="button" disabled>音楽ファイルをスキャンして索引に反映する</button>
-            <button id="retry-extraction-btn" class="ghost" type="button" disabled>抽出失敗曲の再抽出を試みる</button>
-          </div>
-          <ul id="result-list" class="result-list"></ul>
-          <label class="field">
-            <span>試聴するGoogle DriveファイルID</span>
-            <input id="play-file-id" type="text" placeholder="Google DriveファイルID" />
-          </label>
-          <button id="play-btn" class="ghost" type="button" disabled>この曲を再生</button>
-        </div>
-      </details>
       <div class="now-playing-bar">
         <audio id="audio-player"></audio>
         <!-- 旧ハンドオフ方式（PR #442〜448）が使っていた一時的な第二audio要素。ロールスワップ
@@ -518,7 +496,10 @@ function render(): void {
           <p id="now-playing" class="status"></p>
         </div>
         <p id="playback-auth-notice" class="status error" hidden>認証の更新が必要です。クリックして続行してください。 <button id="playback-auth-refresh-btn" type="button">認証を更新して続行</button></p>
-        <p id="status" class="status"></p>
+        <div class="status-row">
+          <p id="status" class="status"></p>
+          <span class="brand" aria-hidden="true">DustyJukebox</span>
+        </div>
       </div>
       <div class="tabs" role="tablist" aria-label="画面">
         ${TAB_IDS.map(
@@ -527,7 +508,7 @@ function render(): void {
         ).join("")}
       </div>
 
-      <section id="panel-queue" class="panel" role="tabpanel" aria-labelledby="tab-queue">
+      <section id="panel-queue" class="panel" role="tabpanel" aria-labelledby="tab-queue"${panelHidden("queue")}>
         <div class="sec-head"><h2>再生リスト</h2><span id="queue-count" class="count"></span></div>
         <div class="btn-row">
           <button id="unshuffle-btn" class="ghost" type="button" disabled>シャッフルを元に戻す</button>
@@ -570,7 +551,7 @@ function render(): void {
         </div>
       </section>
 
-      <section id="panel-library" class="panel" role="tabpanel" aria-labelledby="tab-library" hidden>
+      <section id="panel-library" class="panel" role="tabpanel" aria-labelledby="tab-library"${panelHidden("library")}>
         <div class="sec-head"><h2>ライブラリ</h2></div>
         <label class="field"><span>検索</span><input id="filter-query" type="search" placeholder="タイトル・アーティスト・アルバム・作曲者を検索" /></label>
         <label class="field"><span>アーティスト</span><input id="filter-artist" type="search" list="filter-artist-options" /></label>
@@ -603,7 +584,7 @@ function render(): void {
         <ul id="search-results" class="result-list"></ul>
       </section>
 
-      <section id="panel-albums" class="panel" role="tabpanel" aria-labelledby="tab-albums" hidden>
+      <section id="panel-albums" class="panel" role="tabpanel" aria-labelledby="tab-albums"${panelHidden("albums")}>
         <div id="album-browse" class="panel-part">
           <div class="sec-head"><h2>アルバム</h2></div>
           <label class="field"><span>アルバム検索</span><input id="album-search" type="search" placeholder="アルバム名・アーティスト名で検索" /></label>
@@ -631,7 +612,7 @@ function render(): void {
         </div>
       </section>
 
-      <section id="panel-playlists" class="panel" role="tabpanel" aria-labelledby="tab-playlists" hidden>
+      <section id="panel-playlists" class="panel" role="tabpanel" aria-labelledby="tab-playlists"${panelHidden("playlists")}>
         <div class="sec-head"><h2>保存済みプレイリスト</h2></div>
         <label class="field"><span>プレイリスト名</span><input id="playlist-name" type="text" placeholder="例: ドライブ用" /></label>
         <div class="btn-row">
@@ -641,8 +622,33 @@ function render(): void {
         <ul id="playlist-list" class="result-list"></ul>
       </section>
 
-      <section id="panel-settings" class="panel" role="tabpanel" aria-labelledby="tab-settings" hidden>
+      <section id="panel-settings" class="panel" role="tabpanel" aria-labelledby="tab-settings"${panelHidden("settings")}>
         <div class="sec-head"><h2>設定</h2></div>
+        <details id="connection" class="disclosure" open>
+          <summary>接続・索引<span class="hint">ログイン・スキャン・曲一覧の読み込み</span><span class="chev">${iconSvg("down")}</span></summary>
+          <div class="disclosure-body stack">
+            <label class="field">
+              <span>スキャン対象フォルダID</span>
+              <input id="folder-id" type="text" placeholder="Google DriveのフォルダURLの末尾" />
+            </label>
+            <label class="field">
+              <span>索引スプレッドシートID（indexタブ＋ヘッダー行を事前に作成済みのもの）</span>
+              <input id="spreadsheet-id" type="text" placeholder="スプレッドシートURLの末尾" />
+            </label>
+            <button id="login-btn" type="button">Googleドライブ（読み取り専用）＋スプレッドシートへログイン</button>
+            <div class="btn-row">
+              <button id="load-catalog-btn" type="button" disabled>索引から曲一覧を読み込む</button>
+              <button id="scan-btn" class="ghost" type="button" disabled>音楽ファイルをスキャンして索引に反映する</button>
+              <button id="retry-extraction-btn" class="ghost" type="button" disabled>抽出失敗曲の再抽出を試みる</button>
+            </div>
+            <ul id="result-list" class="result-list"></ul>
+            <label class="field">
+              <span>試聴するGoogle DriveファイルID</span>
+              <input id="play-file-id" type="text" placeholder="Google DriveファイルID" />
+            </label>
+            <button id="play-btn" class="ghost" type="button" disabled>この曲を再生</button>
+          </div>
+        </details>
         <details class="disclosure" open>
           <summary>再生設定<span class="chev">${iconSvg("down")}</span></summary>
           <div class="settings-list">
@@ -949,8 +955,17 @@ function activateTab(tab: TabId, options: { focus?: boolean } = {}): void {
     button.setAttribute("aria-selected", String(selected));
     button.tabIndex = selected ? 0 : -1;
     el<HTMLElement>(`panel-${id}`).hidden = !selected;
+    if (selected) revealTab(button);
     if (selected && options.focus) button.focus();
   }
+}
+// 選んだタブをタブ列（狭い画面では横スクロール）の見える範囲へ入れる。ページ全体は動かさない。
+function revealTab(button: HTMLElement): void {
+  const strip = button.parentElement;
+  if (!strip) return;
+  const stripRect = strip.getBoundingClientRect();
+  const itemLeft = button.getBoundingClientRect().left - stripRect.left + strip.scrollLeft;
+  strip.scrollLeft = scrollLeftToReveal(strip.scrollLeft, strip.clientWidth, itemLeft, button.offsetWidth);
 }
 function wireTabs(): void {
   for (const id of TAB_IDS) {
@@ -3293,6 +3308,8 @@ function init(): void {
   });
   if (!CLIENT_ID) return;
   wireTabs();
+  // 起動時のタブ（設定＝右端）を、狭い画面でもタブ列の見える範囲へ入れる。
+  activateTab(DEFAULT_TAB);
   wireConnectionPanel();
 
   if ("serviceWorker" in navigator) {

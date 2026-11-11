@@ -2,13 +2,13 @@ import { expect, test } from "@playwright/test";
 import { installGoogleMocks } from "./google-mocks";
 
 async function login(page: import("@playwright/test").Page) {
-  await page.getByRole("button", { name: /ログイン/ }).click();
+  await ensureSettingsTab(page); await page.getByRole("button", { name: /ログイン/ }).click();
   await expect(page.locator("#status")).toContainText("ログイン済み");
 }
 async function openCatalog(page: import("@playwright/test").Page) {
-  await page.locator("#folder-id").fill("root");
-  await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root");
+  await ensureSettingsTab(page); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から2曲");
   await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
@@ -20,6 +20,11 @@ async function openTab(page: import("@playwright/test").Page, tab: Tab) {
   await page.locator(`#tab-${tab}`).click();
   await expect(page.locator(`#panel-${tab}`)).toBeVisible();
 }
+// 接続・索引の操作（ログイン・読み込み・スキャン・単曲試聴）は設定タブの中にある。
+// 他のタブへ移った後に触るときは、設定タブが隠れていれば開く（開いていれば何もしない）。
+async function ensureSettingsTab(page: import("@playwright/test").Page) {
+  if (await page.locator("#panel-settings").isHidden()) await openTab(page, "settings");
+}
 // 折りたたみ（<details>）が閉じていれば開く。
 async function openDetails(page: import("@playwright/test").Page, selector: string) {
   const details = page.locator(selector);
@@ -28,9 +33,9 @@ async function openDetails(page: import("@playwright/test").Page, selector: stri
 }
 
 async function openSymphonyQueue(page: import("@playwright/test").Page) {
-  await page.locator("#folder-id").fill("root");
-  await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root");
+  await ensureSettingsTab(page); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "albums");
   await page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).getByRole("button", { name: "このアルバムを再生" }).click();
@@ -248,8 +253,8 @@ test("クロスフェードのランプ中に退場側が自然終了してか�
 test("ログインからスキャンして索引を書き込める", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { initialScanCompleted: false });
   await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: /スキャンして索引/ }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: /スキャンして索引/ }).click();
   await expect(page.locator("#result-list")).toContainText("音楽ファイル: 1件");
   await expect(page.locator("#status")).toContainText("スキャン完了");
   expect(mock.sheetsWrites).toContainEqual(expect.objectContaining({
@@ -262,16 +267,16 @@ test("ログインからスキャンして索引を書き込める", async ({ co
 test("抽出失敗曲が0件なら再抽出不要のメッセージを表示する", async ({ context, page }) => {
   await installGoogleMocks(context);
   await page.goto("/"); await login(page);
-  await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "抽出失敗曲の再抽出を試みる" }).click();
+  await ensureSettingsTab(page); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "抽出失敗曲の再抽出を試みる" }).click();
   await expect(page.locator("#status")).toHaveText("抽出失敗として記録されている曲はありません。");
 });
 
 test("再抽出は編集権限をタグ取得前に検証する", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { extractionFailedCount: 1, spreadsheetCanEdit: false });
   await page.goto("/"); await login(page);
-  await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "抽出失敗曲の再抽出を試みる" }).click();
+  await ensureSettingsTab(page); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "抽出失敗曲の再抽出を試みる" }).click();
   await expect(page.locator("#status")).toContainText("索引スプレッドシートへの編集権限がありません");
   expect(mock.driveMetadataRequests).toEqual(["sheet"]);
 });
@@ -285,7 +290,7 @@ test("次へを素早く二回押しても同じ曲を重複要求しない", as
 test("初回制御前の再生もService Worker準備後にストリームへ到達する", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { delayServiceWorkerActivation: true }); await page.goto("/"); await login(page);
   await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller === null)).toBe(true);
-  await page.locator("#play-file-id").fill("song-1"); await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.locator("#play-file-id").fill("song-1"); await page.getByRole("button", { name: "この曲を再生" }).click();
   await expect(page.locator("#audio-player")).not.toHaveAttribute("src", /stream\/song-1(\?|$)/);
   mock.releaseServiceWorker();
   await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
@@ -300,14 +305,14 @@ test("Service Workerの制御待ちがタイムアウトした場合、固まら
   // releaseServiceWorker()を一度も呼ばない＝Service Workerの制御が永久に来ない状態を再現する。
   await installGoogleMocks(context, { delayServiceWorkerActivation: true });
   await page.goto("/"); await login(page);
-  await page.locator("#play-file-id").fill("song-1"); await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.locator("#play-file-id").fill("song-1"); await page.getByRole("button", { name: "この曲を再生" }).click();
   await expect(page.locator("#status")).toContainText("Service Workerの準備がタイムアウトしました", { timeout: 5000 });
 });
 
 test("Service Worker制御待ちが一度タイムアウトしても、その後実際に制御を取得できればページを再読み込みせず次の再生が成功する（2026-09-08 ChatGPTレビュー指摘：タイムアウト結果をserviceWorkerReady自体に固定してしまうと、初回インストール時の低速回線等で8秒を超えて制御を取得できた場合でも、その後の再生がリロードするまで永久に失敗し続けてしまっていた）", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { delayServiceWorkerActivation: true });
   await page.goto("/"); await login(page);
-  await page.locator("#play-file-id").fill("song-1"); await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.locator("#play-file-id").fill("song-1"); await page.getByRole("button", { name: "この曲を再生" }).click();
   await expect(page.locator("#status")).toContainText("Service Workerの準備がタイムアウトしました", { timeout: 5000 });
 
   // タイムアウト後に、実際にはService Workerの制御を取得できたとする。
@@ -315,7 +320,7 @@ test("Service Worker制御待ちが一度タイムアウトしても、その後
   await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
 
   // ページを再読み込みせず、同じセッションのまま再度「この曲を再生」を押す。
-  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "この曲を再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/song-1(\?|$)/);
   await expect.poll(() => mock.streamRequests.length).toBeGreaterThan(0);
 });
@@ -323,8 +328,8 @@ test("Service Worker制御待ちが一度タイムアウトしても、その後
 test("Driveが期限前のトークンを拒否しても、明示的な認証継続で保留した再生を再開できる", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { rejectFirstStreamToken: true });
   await page.goto("/"); await login(page);
-  await page.locator("#play-file-id").fill("song-1");
-  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.locator("#play-file-id").fill("song-1");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "この曲を再生" }).click();
 
   await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeVisible();
   await expect.poll(() => mock.streamRequests.length).toBe(1);
@@ -337,15 +342,15 @@ test("Driveが期限前のトークンを拒否しても、明示的な認証継
 
 test("スキャン中のカタログ読み込みは相互排他で拒否される", async ({ context, page }) => {
   await installGoogleMocks(context, { delaySheetsReads: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: /スキャンして索引/ }).click();
-  await expect(page.getByRole("button", { name: "索引から曲一覧を読み込む" })).toBeDisabled();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: /スキャンして索引/ }).click();
+  await expect(page.locator("#load-catalog-btn")).toBeDisabled();
 });
 
 test("不正なsyncヘッダーは誤った設定を使わずエラーになる", async ({ context, page }) => {
   await installGoogleMocks(context, { invalidSyncHeader: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: /スキャンして索引/ }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: /スキャンして索引/ }).click();
   await expect(page.locator("#status")).toContainText("sync");
 });
 
@@ -403,8 +408,8 @@ test("索引読み込み後、アーティスト/Genre欄の候補一覧（datal
 
 test("genre_overrideを曲一覧・Genre絞り込み・アルバム一覧へ反映する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true, genreOverride: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
 
   await expect(page.locator("#filter-genre-options option")).toHaveText(["Jazz", "Neo Classical"]);
   await openTab(page, "library");
@@ -436,8 +441,8 @@ test("再生バーの高さが認証通知＋長いステータス文言で伸�
   await installGoogleMocks(context, { rejectFirstStreamToken: true });
   await page.goto("/"); await login(page); await openCatalog(page);
   await page.setViewportSize({ width: 320, height: 700 });
-  await page.locator("#play-file-id").fill("song-1");
-  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.locator("#play-file-id").fill("song-1");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "この曲を再生" }).click();
   await expect(page.getByRole("button", { name: "認証を更新して続行" })).toBeVisible();
   // 実際のAPI/ネットワークエラーで文言が長くなるケースを模擬する（#playback-auth-noticeと
   // 同時に表示された最悪ケースの高さで検証するため、テスト側から直接注入する）。
@@ -517,8 +522,8 @@ test("再生中の曲名（#now-playing）に折り返し点の無い長い1単�
 
 test("絞り込み欄同士が連動し、アーティストを選ぶとアルバム欄の候補がそのアーティストのものだけに絞られる（開発体制#43）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   // 絞り込み前はSoloist（Symphony）とQuartet（Blue Notes）の両方のアルバムが候補に出る。
@@ -605,8 +610,8 @@ test("再生リストの曲クリックがDrive側401で保留になっても、
 
 test("検索で曲を絞り込み、アルバムをdisc/track順のキューに設定して再生できる", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   await openTab(page, "library");
@@ -627,8 +632,8 @@ test("検索で曲を絞り込み、アルバムをdisc/track順のキューに�
 
 test("リリース種別欄の候補一覧が反映され、絞り込みができる（開発体制#39④UI-5）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await expect(page.locator("#filter-release-type-options option")).toHaveText(["Album", "Single"]);
 
@@ -643,8 +648,8 @@ test("リリース種別欄の候補一覧が反映され、絞り込みがで�
 
 test("再生中にシャッフルしても現在曲は維持され、次へで残り曲を1曲も失わず辿れる", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   await openTab(page, "albums");
@@ -675,8 +680,8 @@ test("再生中にシャッフルしても現在曲は維持され、次へで�
 
 test("「シャッフルを元に戻す」でシャッフル前の並び順に戻る", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   await openTab(page, "albums");
@@ -705,8 +710,8 @@ test("「シャッフルを元に戻す」でシャッフル前の並び順に�
 
 test("並び替え機能でタイトル順（昇順/降順）に並べ替えられる", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   await openTab(page, "library");
@@ -747,8 +752,8 @@ test("並び替え機能でタイトル順（昇順/降順）に並べ替えら�
 
 test("並び替えは再生中の曲を含むリスト全体を対象にする（開発体制#42、以前は再生中の曲より前を固定していた）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   // アルバム再生で自動的に先頭曲（Opening、disc1/track1）が再生される。
@@ -785,8 +790,8 @@ test("並び替えは再生中の曲を含むリスト全体を対象にする�
 
 test("並び替えの第二候補を指定すると、第一候補が同値の曲同士を第二候補で並べ替える（開発体制#42）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   await openTab(page, "library");
@@ -822,8 +827,8 @@ test("並び替えの第二候補を指定すると、第一候補が同値の�
 
 test("再生リストの上下ボタンで曲の順番を手動で入れ替えられる（開発体制#42②）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   await openTab(page, "library");
@@ -928,8 +933,8 @@ test("保存ボタンの待機中に一部の曲だけチェックを外した�
   // 状況を再現する。
   await installGoogleMocks(context, { albumCatalog: true, delayFirstMediaPlay: true });
   await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "library");
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
@@ -956,8 +961,8 @@ test("保存ボタンの待機中に一部の曲だけチェックを外した�
 test("保存ボタンの待機中に検索結果を再生リストへ追加した場合も、保存は中止され意図しない曲は保存されない（2026-10-16、appendVersionによる検出）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true, delayFirstMediaPlay: true });
   await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "library");
   await page.locator("#filter-artist").fill("Soloist");
@@ -994,8 +999,8 @@ test("保存ボタンの待機中に検索結果を再生リストへ追加し�
 test("再生リストに入っていて除外中の曲は、検索結果で「除外中」と区別され、足し直しても除外のまま再生されない旨が案内される（2026-10-16）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true });
   await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   // 再生リストを「Scherzo」1曲だけで作り、その曲を除外（チェックを外す）する
   await openTab(page, "library");
@@ -1030,8 +1035,8 @@ test("再生リストに入っていて除外中の曲は、検索結果で「�
 
 test("「再生」ボタンで先頭曲から再生でき、一時停止中の曲は同じ位置から再開する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   // 「この条件で再生リストを作る」は自動再生しない（アルバム再生・プレイリスト読み込みとは
@@ -1062,8 +1067,8 @@ test("キュー曲再生中に「この曲を再生」でキュー外の単曲�
 
   // キュー外の単曲試聴（開発時の疎通確認用）に切り替える。currentPlayingFileId()自体は
   // "song-2"のまま温存されるため、この状態を区別しないとcanResumeCurrent()が誤ってtrueになる。
-  await page.locator("#play-file-id").fill("song-1");
-  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.locator("#play-file-id").fill("song-1");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "この曲を再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/song-1(\?|$)/);
 
   // 修正前は、外部試聴中の再生位置のままキューの古いcurrentFileId（song-2）をresume()して
@@ -1075,8 +1080,8 @@ test("キュー曲再生中に「この曲を再生」でキュー外の単曲�
 
 test("単曲試聴中に一時停止した後、同じファイルIDでもう一度「この曲を再生」を押すと、先頭からではなく一時停止位置から再開する（開発体制#42③、2026-09-09 ChatGPTレビュー指摘：P2。ネイティブ<audio controls>廃止で、従来ネイティブの再生アイコンが担っていた「停止位置からの再開」が単曲試聴では失われていた）", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page);
-  await page.locator("#play-file-id").fill("song-1");
-  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.locator("#play-file-id").fill("song-1");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "この曲を再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/song-1(\?|$)/);
   // 初回は先頭（position 0）から開始していることを確認しておく。
   expect(await page.evaluate(() => (window as unknown as { __e2e: { getLastExternalPlaybackPosition(): number | null } }).__e2e.getLastExternalPlaybackPosition())).toBe(0);
@@ -1089,7 +1094,7 @@ test("単曲試聴中に一時停止した後、同じファイルIDでもう一
   await page.evaluate(() => { (document.querySelector("#audio-player") as HTMLAudioElement).currentTime = 30; });
   await page.getByRole("button", { name: "一時停止" }).click();
 
-  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "この曲を再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/song-1(\?|$)/);
   expect(await page.evaluate(() => (window as unknown as { __e2e: { getLastExternalPlaybackPosition(): number | null } }).__e2e.getLastExternalPlaybackPosition())).toBe(30);
 });
@@ -1097,8 +1102,8 @@ test("単曲試聴中に一時停止した後、同じファイルIDでもう一
 test("キュー作成後の単曲試聴をトグルで一時停止・再開しても、キュー曲へ切り替えず同じ位置から再開する", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
 
-  await page.locator("#play-file-id").fill("external-track");
-  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.locator("#play-file-id").fill("external-track");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "この曲を再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/external-track(\?|$)/);
   await page.evaluate(() => {
     const e2e = (window as unknown as { __e2e: { activeAudioElementId(): string } }).__e2e;
@@ -1117,8 +1122,8 @@ test("キュー作成後の単曲試聴をトグルで一時停止・再開し�
 test("キュー作成後の単曲試聴が自然終了してからトグルで再生すると、キュー曲へ切り替えず同じ曲を先頭から再生する", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/"); await login(page); await openCatalog(page);
 
-  await page.locator("#play-file-id").fill("external-track");
-  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.locator("#play-file-id").fill("external-track");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "この曲を再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /stream\/external-track(\?|$)/);
 
   await page.evaluate(() => {
@@ -1151,8 +1156,8 @@ test("再生中の曲をチェック解除で除外してから「再生」ボ�
 
 test("アルバム一覧はアーティスト別に見出し付きで表示され、検索欄でアルバム名/アーティスト名を絞り込める", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   const albumList = page.locator("#album-list");
@@ -1176,8 +1181,8 @@ test("アルバム一覧はアーティスト別に見出し付きで表示さ�
 
 test("アルバム一覧はCDラックの分け方：CD1/CD2フォルダの2枚組は1枚にまとまり、アルバムアーティストの無い寄せ集めはオムニバスの棚に入る（R14）", async ({ context, page }) => {
   await installGoogleMocks(context, { rackCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から5曲");
   await openTab(page, "albums");
   const albumList = page.locator("#album-list");
@@ -1192,8 +1197,8 @@ test("アルバム一覧はCDラックの分け方：CD1/CD2フォルダの2枚�
 
 test("曲フィルタでアルバム一覧を絞っても再生時は全曲を保持し、リリース年順ではアーティスト付きフラット表示になる", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   // Symphonyの3曲中2曲だけがSoloistだが、アルバム単位では表示し、再生リストには全3曲を入れる。
@@ -1264,7 +1269,7 @@ test("プレイリスト一覧の読み込み後に入力欄のスプレッド�
   await expect(page.locator("#playlist-list li")).toHaveCount(1);
 
   // 一覧を再読み込みせずに入力欄だけを別のスプレッドシートIDへ書き換えてから削除する。
-  await page.locator("#spreadsheet-id").fill("other-sheet");
+  await ensureSettingsTab(page); await page.locator("#spreadsheet-id").fill("other-sheet");
   // 保存時のappendも記録に含まれてしまい「playlist_tracksへの書き込みがある」だけでは削除
   // 自体を検証したことにならないため、削除クリック直前でスナップショットしてから比較する
   // （2026-09-03 Codexレビュー指摘：P1。以前のアサーションは削除処理を完全にスキップしても
@@ -1309,7 +1314,7 @@ test("読み込んだプレイリストの全曲が索引から消えていた�
 test("対象スプレッドシートを切り替えた後に完了した旧対象向けの読み込みはコミットしない（新対象への切り替え後は破棄）", async ({ context, page }) => {
   const mock = await installGoogleMocks(context, { gatePlaylistsListReads: true });
   await page.goto("/"); await login(page);
-  await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.locator("#spreadsheet-id").fill("sheet");
 
   const getCommitCount = () => page.evaluate(() => (window as unknown as { __e2e: { getPlaylistsCommitCount: () => number } }).__e2e.getPlaylistsCommitCount());
   const callLoadPlaylists = (id: string) => page.evaluate((spreadsheetId) => (window as unknown as { __e2e: { loadPlaylists: (id: string) => Promise<boolean> } }).__e2e.loadPlaylists(spreadsheetId), id);
@@ -1423,7 +1428,7 @@ test("曲一覧とプレイリスト一覧が別のスプレッドシートか�
 
   // 一覧を再読み込みせずに入力欄だけを別のスプレッドシートIDへ書き換えてから、そのIDで
   // プレイリスト一覧を読み込む。
-  await page.locator("#spreadsheet-id").fill("other-sheet");
+  await ensureSettingsTab(page); await page.locator("#spreadsheet-id").fill("other-sheet");
   await openTab(page, "playlists");
   await page.getByRole("button", { name: "プレイリスト一覧を更新" }).click();
   await expect(page.locator("#playlist-list li")).toHaveCount(1);
@@ -1437,8 +1442,8 @@ test("曲一覧とプレイリスト一覧が別のスプレッドシートか�
 
 test("スキャン開始後のアルバム再生は再読み込みエラーになりキューを変更しない", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true, delaySheetsReads: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "library");
   await page.locator("#filter-query").fill("jazz");
@@ -1446,7 +1451,7 @@ test("スキャン開始後のアルバム再生は再読み込みエラーに�
   await page.getByRole("button", { name: "この条件で再生リストを作る" }).click();
   await expect(page.locator("#catalog-list li")).toHaveCount(1);
 
-  await page.getByRole("button", { name: /スキャンして索引/ }).click();
+  await ensureSettingsTab(page); await page.getByRole("button", { name: /スキャンして索引/ }).click();
   await openTab(page, "albums");
   const symphony = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" });
   await symphony.getByRole("button", { name: "このアルバムを再生" }).click();
@@ -1458,8 +1463,8 @@ test("スキャン開始後のアルバム再生は再読み込みエラーに�
 
 test("検索→一覧から追加を、条件を変えて繰り返して再生リストを作れる（2026-10-16、ユーザー要望）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   const search = page.getByRole("button", { name: "検索", exact: true });
   const results = page.locator("#search-results li");
@@ -1511,8 +1516,8 @@ test("検索→一覧から追加を、条件を変えて繰り返して再生�
 
 test("絞り込み欄でEnterを押しても検索でき、0件ヒットの案内も出る（2026-10-16）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   await openTab(page, "library");
@@ -1529,8 +1534,8 @@ test("絞り込み欄でEnterを押しても検索でき、0件ヒットの案�
 
 test("曲一覧を読み込み直すと、古い検索結果は破棄される（古い索引の曲を足さない、2026-10-16）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "library");
   await page.locator("#filter-query").fill("jazz");
@@ -1538,7 +1543,7 @@ test("曲一覧を読み込み直すと、古い検索結果は破棄される�
   await page.getByRole("button", { name: "検索", exact: true }).click();
   await expect(page.locator("#search-results li")).toHaveCount(1);
 
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await expect(page.locator("#search-results li")).toHaveCount(0);
   await openTab(page, "library");
@@ -1547,9 +1552,9 @@ test("曲一覧を読み込み直すと、古い検索結果は破棄される�
 
 test("索引の再読み込み中は、旧索引の検索結果が失効して検索も止まり、完了後に検索できる（旧索引の曲を足さない、2026-10-16）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true, delaySheetsReads: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  const load = page.getByRole("button", { name: "索引から曲一覧を読み込む" });
-  await load.click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  const load = page.locator("#load-catalog-btn");
+  await ensureSettingsTab(page); await load.click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   const search = page.getByRole("button", { name: "検索", exact: true });
   await openTab(page, "library");
@@ -1559,7 +1564,7 @@ test("索引の再読み込み中は、旧索引の検索結果が失効して�
 
   // 再読み込みを始めた時点で、旧索引の検索結果が失効し、検索も止まる（読み込みの長いawait中に
   // 旧結果の「＋追加」が押せない）。
-  await load.click();
+  await ensureSettingsTab(page); await load.click();
   await expect(page.locator("#search-results li")).toHaveCount(0);
   await openTab(page, "library");
   await expect(page.locator("#search-add-all-btn")).toBeDisabled();
@@ -1574,16 +1579,17 @@ test("索引の再読み込み中は、旧索引の検索結果が失効して�
 
 test("抽出失敗曲の再抽出で索引を無効化したら、検索結果が失効して検索ボタンも止まる（スキャン開始時と同じ、2026-10-16）", async ({ context, page }) => {
   await installGoogleMocks(context, { extractionFailedCount: 1 }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から1曲");
   const search = page.getByRole("button", { name: "検索", exact: true });
   await search.click();
   await expect(page.locator("#search-results li")).toHaveCount(1);
 
-  await page.getByRole("button", { name: "抽出失敗曲の再抽出を試みる" }).click();
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "抽出失敗曲の再抽出を試みる" }).click();
   // 再抽出は索引を書き換えうるため、読み込み済みのスナップショットが無効化され、検索結果も失効する。
   await expect(page.locator("#search-results li")).toHaveCount(0);
+  await openTab(page, "library");
   await expect(search).toBeDisabled();
   await page.locator("#filter-query").press("Enter");
   await expect(page.locator("#search-results li")).toHaveCount(0);
@@ -1591,8 +1597,8 @@ test("抽出失敗曲の再抽出で索引を無効化したら、検索結果�
 
 test("日本語入力の確定のEnter（isComposing=falseでkeyCode 229）では検索せず、通常のEnterでは検索する（2026-10-16）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "library");
   await page.locator("#filter-query").fill("jazz");
@@ -1873,8 +1879,8 @@ test("フェード・クロスフェードの設定は、ページを開き直�
 
 test("クロスフェード無効時は残り時間が閾値以内になっても#audio-player-bへ触れない", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   await openTab(page, "albums");
@@ -1898,8 +1904,8 @@ test("クロスフェード無効時は残り時間が閾値以内になって�
 // audio-player-crossfade→audio-player-bへ置き換えて検証）。
 test("準備（#audio-player-bへの接続確立）は音量ランプ開始しきい値より前倒しで始まり、まだ主audio要素の音量には触れない", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
@@ -1931,8 +1937,8 @@ test("準備（#audio-player-bへの接続確立）は音量ランプ開始し�
 // ため、このフックで直接確認する。
 test("キュー内自然終了に近づくとクロスフェードが発生し、#audio-player-bが新しいactiveスロットへ昇格する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
@@ -1972,8 +1978,8 @@ test("キュー内自然終了に近づくとクロスフェードが発生し�
 
 test("クロスフェード中に退場側が自然終了してpauseイベントを発火しても再生中表示を維持する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
@@ -2004,8 +2010,8 @@ test("クロスフェード中に退場側が自然終了してpauseイベント
 
 test("手動で「次へ」を押すとクロスフェードが中断され、#audio-player-bがリセットされる", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
@@ -2051,8 +2057,8 @@ test("手動で「次へ」を押すとクロスフェードが中断され、#a
 
 test("シークするとクロスフェードのランプが打ち切られ、#audio-player-bがリセットされる", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
@@ -2090,8 +2096,8 @@ test("シークするとクロスフェードのランプが打ち切られ、#a
 
 test("一時停止するとクロスフェードのランプが打ち切られ、#audio-player-bがリセットされる", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
@@ -2123,8 +2129,8 @@ test("一時停止するとクロスフェードのランプが打ち切られ�
 // role-swapでも維持していることの確認）。
 test("先読み再生の開始が応答なく固まっても、タイムアウトしてクロスフェード状態が解除され自然終了時の自動送りが機能する", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
@@ -2176,8 +2182,8 @@ test("先読み再生の開始が応答なく固まっても、タイムアウ�
 // 「Finding 2」に相当する検証をrole-swap版として維持）。
 test("先読み再生の開始待ち中に主audio要素が自然終了しても、未確立のままハンドオフせず通常の自動送りへフォールバックする", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "settings");
   await page.getByRole("checkbox", { name: "曲間をクロスフェードする" }).check();
@@ -2454,8 +2460,8 @@ test("バックグラウンドで復帰済みトークンが古いリトライ�
 
 test("バックグラウンド復帰が自然終了に伴う遷移をreplacePendingで迂回した後、元の遷移が遅れて解決してもさらに先へ進んだ再生状態を巻き戻さない（2026-09-15、Codexレビュー指摘：P2「Invalidate the bypassed natural-end operation」の回帰防止）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   await openTab(page, "albums");
@@ -2562,8 +2568,8 @@ test("バックグラウンドで手動の「次へ」が未解決のまま固�
 
 test("自然終了の遷移が未解決のまま固まるのではなく実際に失敗した後、別の曲へのユーザー操作が固まっても、復帰は失敗済みの自然終了先ではなくユーザーの最新の選択へ迂回する（2026-09-15、Codexレビュー指摘：P2「Prefer a later manual transition over stale natural-end state」の回帰防止）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   await openTab(page, "albums");
@@ -2719,8 +2725,8 @@ test("新規に作成した再生リストの最初の曲（playAt(0)）がネ�
 
 test("最後の曲が自然終了し次の曲が無くキューが正当に終了した後、除外していた曲を再度有効化してからバックグラウンドにしても、自動的に再生を開始しない（2026-09-15、Codexレビュー指摘：P2「Clear natural-end state when no next track starts」の回帰防止）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   await openTab(page, "albums");
@@ -2866,8 +2872,8 @@ test("手動の「次へ」が未解決のまま固まっている間にその�
 
 test("自然終了に伴う遷移の先読み先が無くなった場合（残り全曲除外等）、元の未解決の遷移を無効化してから諦め、後から遅れて解決しても除外済みの曲を誤ってコミットしない（2026-09-16、Codexレビュー指摘：P2「Invalidate a natural-end move when its target is excluded」の回帰防止）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   await openTab(page, "albums");
@@ -2944,8 +2950,8 @@ test("キュー由来の手動ナビゲーションが未解決のまま固ま�
 
   // この固まった遷移を解決させないまま、「この曲を再生」で無関係な外部ファイルへ切り替える
   // （それ自体もplay()未解決のまま固まる）。
-  await page.locator("#play-file-id").fill("external-track");
-  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.locator("#play-file-id").fill("external-track");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "この曲を再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /external-track(\?|$)/);
 
   // documentをhiddenにして定期リトライループを開始させる（VITE_E2Eでは50ms間隔）。
@@ -2984,8 +2990,8 @@ test("キュー曲が既にコミット済みの状態で「この曲を再生�
   // 「この曲を再生」で無関係な外部ファイルへ切り替える（notifyExternalPlaybackStarted()は
   // play()成功後にしか呼ばれないため、この待機中はqueue.currentFileId/isQueuePlaybackが
   // song-1を指したまま残り、canResumeCurrent()もtrueのまま）。
-  await page.locator("#play-file-id").fill("external-track");
-  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.locator("#play-file-id").fill("external-track");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "この曲を再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /external-track(\?|$)/);
 
   // documentをhiddenにして定期リトライループを開始させる（VITE_E2Eでは50ms間隔）。
@@ -3005,8 +3011,8 @@ test("キュー曲が既にコミット済みの状態で「この曲を再生�
 
 test("自然終了に伴う遷移の先読み先が無くなり諦めた際、放置されたネイティブplay()が後から解決しても、audio要素自体を一時停止し除外済みの曲が実際に鳴り出さないようにする（2026-09-16、Codexレビュー指摘：P2「Cancel the native transition when abandoning an excluded target」の回帰防止）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   await openTab(page, "albums");
@@ -3098,10 +3104,10 @@ test("同一fileIdへの「この曲を再生」を連打すると、先に開�
 
   // 同一fileId（external-track）へ「この曲を再生」を連打する（A→B、いずれも未解決のまま
   // 固まる。A=呼び出し#0、B=呼び出し#1）。
-  await page.locator("#play-file-id").fill("external-track");
-  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.locator("#play-file-id").fill("external-track");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "この曲を再生" }).click();
   await expect(page.locator("#audio-player")).toHaveAttribute("src", /external-track(\?|$)/);
-  await page.getByRole("button", { name: "この曲を再生" }).click();
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "この曲を再生" }).click();
   await page.waitForTimeout(20);
 
   // 先発の試行（A、呼び出し#0）だけを解放する。後発の試行（B、呼び出し#1）はまだ未解決のまま。
@@ -3194,8 +3200,8 @@ test("バックグラウンド復帰の対象（B）が未解決のまま2回連
 test("一覧の行は曲名の長さに関わらず操作ボタンが右端にそろい、折り返して行が高くならない（再生リスト・アルバム）", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
 
   // 寸法は「表示されている」一覧でしか測れない（タブで隠れたパネルの要素はgetBoundingClientRect()が
@@ -3298,13 +3304,17 @@ test("タブは選んだ画面のパネルだけを表示し、読み込み・�
       await expect(page.locator(`#tab-${id}`)).toHaveAttribute("aria-selected", String(id === shown));
     }
   };
-  // 初期表示は再生リスト。
-  await expectOnlyVisible("queue");
+  // 初期表示は設定（接続・索引の読み込みがここにあり、読み込むまで他のタブは空のため）。
+  // タイトル行は無く、タブがいちばん上。アプリ名は再生バーの右下に小さく出す。
+  await expectOnlyVisible("settings");
+  await expect(page.locator("h1")).toHaveCount(0);
+  await expect(page.locator("#panel-settings #connection")).toBeVisible();
+  await expect(page.locator(".now-playing-bar .brand")).toHaveText("DustyJukebox");
   for (const id of tabs) { await page.locator(`#tab-${id}`).click(); await expectOnlyVisible(id); }
 
   // 索引の読み込みが成功するとライブラリへ移る。
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await expectOnlyVisible("library");
   // 「この条件で再生リストを作る」で再生リストへ移る。
@@ -3339,6 +3349,7 @@ test("タブは←→・Home/Endで移動でき、再生リストの曲数がバ
 
 test("再生リストが空のときは案内を出し、「ライブラリを開く」でライブラリのタブへ移る", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
+  await openTab(page, "queue");
   await expect(page.locator("#queue-empty")).toBeVisible();
   await page.locator("#queue-empty").getByRole("button", { name: "ライブラリを開く" }).click();
   await expect(page.locator("#panel-library")).toBeVisible();
@@ -3348,12 +3359,28 @@ test("再生リストが空のときは案内を出し、「ライブラリを�
   await expect(page.locator("#queue-empty")).toBeVisible();
 });
 
+test("狭い画面でも、選んでいるタブはタブ列の見える範囲に入る（起動時の設定タブ・切り替え後のタブ）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true });
+  // 実機の文字幅では320pxでも右端の設定タブがはみ出す。テストのブラウザは文字が少し細いため、確実にはみ出す280pxで確かめる。
+  await page.setViewportSize({ width: 280, height: 844 });
+  await page.goto("/");
+  // 起動時は右端の設定タブが選ばれている。タブ列が左端のままだと画面外に隠れる。
+  await expect(page.locator("#tab-settings")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#tab-settings")).toBeInViewport({ ratio: 0.99 });
+  // 左端の再生リストへ移れば、そちらが見える範囲へ戻る。
+  await page.locator("#tab-queue").click();
+  await expect(page.locator("#tab-queue")).toBeInViewport({ ratio: 0.99 });
+  await page.keyboard.press("End");
+  await expect(page.locator("#tab-settings")).toBeInViewport({ ratio: 0.99 });
+});
+
 test("タブ見出しはページをスクロールしても画面上部に張り付く", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.setViewportSize({ width: 390, height: 500 });
   await openSymphonyQueue(page);
+  // タブの本来の位置（ページ先頭から余白24px）より十分下までスクロールしてから、上端に張り付いているかを見る。
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(60);
   const box = await page.locator(".tabs").boundingBox();
   expect(box).not.toBeNull();
   expect(Math.abs(box!.y)).toBeLessThanOrEqual(1);
@@ -3381,12 +3408,17 @@ test("詳細条件・並び替え・診断ログは初期状態では閉じて�
 test("「接続・索引」パネルの開閉は再読み込みしても覚えている", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/");
   await expect(page.locator("#folder-id")).toBeVisible();
+  // 開閉の保存は<details>のtoggleイベント（クリックの後で非同期に届く）で行うため、保存されたのを
+  // 確かめてから再読み込みする（確かめずに再読み込みすると、保存前の状態で開き直すことがある）。
+  const savedOpen = () => page.evaluate(() => localStorage.getItem("dusty-jukebox-connection-open"));
   await page.locator("#connection > summary").click();
   await expect(page.locator("#folder-id")).toBeHidden();
+  await expect.poll(savedOpen).toBe("0");
   await page.reload();
   await expect(page.locator("#connection")).toHaveJSProperty("open", false);
   await expect(page.locator("#folder-id")).toBeHidden();
   await page.locator("#connection > summary").click();
+  await expect.poll(savedOpen).toBe("1");
   await page.reload();
   await expect(page.locator("#folder-id")).toBeVisible();
 });
@@ -3463,9 +3495,9 @@ test("アルバムアート（R17）：再生中の曲の埋め込み画像を�
   // 開き直しても、保存した画像は（曲を鳴らさずに）一覧に出る
   const scherzoReads = mock.pageMediaRequests.filter((u) => u.includes("album-track-2")).length;
   await page.reload(); await login(page);
-  await page.locator("#folder-id").fill("root");
-  await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root");
+  await ensureSettingsTab(page); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "albums");
   await expect(page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).locator(".art-tile img")).toHaveAttribute("src", artUrl!);
@@ -3520,7 +3552,7 @@ test("アルバムアート：albumArtタブの応答が滞っても索引の読
   await page.goto("/"); await login(page);
   await loadAlbumCatalog(page, 4);
   // 表紙の対応表を待たずに、曲は使える
-  await expect(page.getByRole("button", { name: "索引から曲一覧を読み込む" })).toBeEnabled();
+  await expect(page.locator("#load-catalog-btn")).toBeEnabled();
   await expect(page.locator("#search-btn")).toBeEnabled();
   const symphonyTile = page.locator("#album-list li").filter({ hasText: "Symphony（3曲）" }).locator(".art-tile");
   await expect(symphonyTile).toHaveText("S");
@@ -3543,8 +3575,8 @@ test("アルバムアート：albumArtタブが無ければ作らず、これま
 
 // アルバムの中身（トラック一覧、R20。Android版と同じ）：アルバム名をタップすると中身を開く。▶は従来どおり再生。
 async function loadAlbumCatalog(page: import("@playwright/test").Page, count: number) {
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText(`索引から${count}曲`);
   await openTab(page, "albums");
 }
@@ -3652,8 +3684,8 @@ test("アルバム一覧の「次に再生」「最後に追加」は再生リ�
 
 test("アルバム一覧の並べ方は、開き直しても覚えている", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
-  await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
-  await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
+  await ensureSettingsTab(page); await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
+  await ensureSettingsTab(page); await page.getByRole("button", { name: "索引から曲一覧を読み込む" }).click();
   await expect(page.locator("#status")).toContainText("索引から4曲");
   await openTab(page, "albums");
   await page.locator("#album-sort").selectOption("year-desc");
