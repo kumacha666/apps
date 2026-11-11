@@ -3383,12 +3383,17 @@ test("詳細条件・並び替え・診断ログは初期状態では閉じて�
 test("「接続・索引」パネルの開閉は再読み込みしても覚えている", async ({ context, page }) => {
   await installGoogleMocks(context); await page.goto("/");
   await expect(page.locator("#folder-id")).toBeVisible();
+  // 開閉の保存は<details>のtoggleイベント（クリックの後で非同期に届く）で行うため、保存されたのを
+  // 確かめてから再読み込みする（確かめずに再読み込みすると、保存前の状態で開き直すことがある）。
+  const savedOpen = () => page.evaluate(() => localStorage.getItem("dusty-jukebox-connection-open"));
   await page.locator("#connection > summary").click();
   await expect(page.locator("#folder-id")).toBeHidden();
+  await expect.poll(savedOpen).toBe("0");
   await page.reload();
   await expect(page.locator("#connection")).toHaveJSProperty("open", false);
   await expect(page.locator("#folder-id")).toBeHidden();
   await page.locator("#connection > summary").click();
+  await expect.poll(savedOpen).toBe("1");
   await page.reload();
   await expect(page.locator("#folder-id")).toBeVisible();
 });
