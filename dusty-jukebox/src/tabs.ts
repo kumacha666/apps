@@ -39,3 +39,13 @@ export function nextTabForKey(current: TabId, key: string): TabId | null {
       return null;
   }
 }
+
+// タブ列（横スクロール）で、選んだタブが見えるようにするためのscrollLeft。
+// すでに全体が見えていれば今の値のまま、左にはみ出していれば左端を、右にはみ出していれば右端を合わせる。
+// 狭い画面では右端の「設定」タブが初期表示で隠れるため（2026-11-11、ChatGPTレビュー指摘：P2）。
+export function scrollLeftToReveal(scrollLeft: number, viewWidth: number, itemLeft: number, itemWidth: number): number {
+  const itemRight = itemLeft + itemWidth;
+  if (itemLeft < scrollLeft) return itemLeft;
+  if (itemRight > scrollLeft + viewWidth) return Math.min(itemLeft, itemRight - viewWidth);
+  return scrollLeft;
+}

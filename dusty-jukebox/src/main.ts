@@ -31,7 +31,7 @@ import {
 import { PlaybackQueue, REPEAT_MODES, REPEAT_MODE_LABELS, insertNextStatusMessage, queueRowViews, songSubLabel, nowPlayingLabel } from "./queue";
 import { iconSvg, type IconName } from "./icons";
 import { marqueeText, startMarquee } from "./marquee";
-import { DEFAULT_TAB, TAB_IDS, TAB_LABELS, isTabId, nextTabForKey, type TabId } from "./tabs";
+import { DEFAULT_TAB, TAB_IDS, TAB_LABELS, isTabId, nextTabForKey, scrollLeftToReveal, type TabId } from "./tabs";
 import { QUEUE_SORT_FIELDS, type QueueSortField } from "./queueSort";
 
 // union型の分岐をRecordの網羅性チェックに使う（AI開発ルール4）：QUEUE_SORT_FIELDSに
@@ -924,8 +924,17 @@ function activateTab(tab: TabId, options: { focus?: boolean } = {}): void {
     button.setAttribute("aria-selected", String(selected));
     button.tabIndex = selected ? 0 : -1;
     el<HTMLElement>(`panel-${id}`).hidden = !selected;
+    if (selected) revealTab(button);
     if (selected && options.focus) button.focus();
   }
+}
+// 選んだタブをタブ列（狭い画面では横スクロール）の見える範囲へ入れる。ページ全体は動かさない。
+function revealTab(button: HTMLElement): void {
+  const strip = button.parentElement;
+  if (!strip) return;
+  const stripRect = strip.getBoundingClientRect();
+  const itemLeft = button.getBoundingClientRect().left - stripRect.left + strip.scrollLeft;
+  strip.scrollLeft = scrollLeftToReveal(strip.scrollLeft, strip.clientWidth, itemLeft, button.offsetWidth);
 }
 function wireTabs(): void {
   for (const id of TAB_IDS) {
@@ -3268,6 +3277,8 @@ function init(): void {
   });
   if (!CLIENT_ID) return;
   wireTabs();
+  // 起動時のタブ（設定＝右端）を、狭い画面でもタブ列の見える範囲へ入れる。
+  activateTab(DEFAULT_TAB);
   wireConnectionPanel();
 
   if ("serviceWorker" in navigator) {

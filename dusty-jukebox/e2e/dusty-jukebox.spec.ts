@@ -3334,6 +3334,21 @@ test("再生リストが空のときは案内を出し、「ライブラリを�
   await expect(page.locator("#queue-empty")).toBeVisible();
 });
 
+test("狭い画面でも、選んでいるタブはタブ列の見える範囲に入る（起動時の設定タブ・切り替え後のタブ）", async ({ context, page }) => {
+  await installGoogleMocks(context, { albumCatalog: true });
+  // 実機の文字幅では320pxでも右端の設定タブがはみ出す。テストのブラウザは文字が少し細いため、確実にはみ出す280pxで確かめる。
+  await page.setViewportSize({ width: 280, height: 844 });
+  await page.goto("/");
+  // 起動時は右端の設定タブが選ばれている。タブ列が左端のままだと画面外に隠れる。
+  await expect(page.locator("#tab-settings")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#tab-settings")).toBeInViewport({ ratio: 0.99 });
+  // 左端の再生リストへ移れば、そちらが見える範囲へ戻る。
+  await page.locator("#tab-queue").click();
+  await expect(page.locator("#tab-queue")).toBeInViewport({ ratio: 0.99 });
+  await page.keyboard.press("End");
+  await expect(page.locator("#tab-settings")).toBeInViewport({ ratio: 0.99 });
+});
+
 test("タブ見出しはページをスクロールしても画面上部に張り付く", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.setViewportSize({ width: 390, height: 500 });
