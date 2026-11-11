@@ -1,4 +1,4 @@
-const CACHE_NAME = "dusty-jukebox-v0.1.200";
+const CACHE_NAME = "dusty-jukebox-v0.1.201";
 const CACHE_PREFIX = "dusty-jukebox-";
 const ASSETS = ["./", "./index.html", "./app.js", "./manifest.json", "./icon.svg", "./icon-maskable.svg"];
 const APP_SHELL_URLS = new Set(ASSETS.map((asset) => new URL(asset, self.location.href).href));

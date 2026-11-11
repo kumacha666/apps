@@ -322,7 +322,7 @@
 
 ユーザーからの機能要望4点のうち④（曲間のクロスフェード＋曲の終わり/スキップ時のフェードアウト）を、ユーザーとの相談で2段階に分割した：本PRは**フェードアウト（次へ/前へ/曲名クリック等の手動スキップ時のみ）**。**曲間のクロスフェード（2曲が重なって鳴る本格版、曲の自然終了時に適用）は別PRで実装する**（`<audio>`要素を2つ使い、Service Workerストリーミング認証・`PlaybackQueue`の`pendingMove`直列化・MediaSession連携などの既存の仕組みをかなり作り直す必要がある規模のため、AI開発ルール「1PRに複数の大きな変更を詰め込まない」に沿って分離）。
 
-- **UI**：「前へ/次へ」ボタン列の下に「手動スキップ時にフェードアウトする」チェックボックス（`#fade-out-toggle`）を追加。既定OFF、永続化はしない（他のUIトグルと同じくセッション内限定）。
+- **UI**：「前へ/次へ」ボタン列の下に「手動スキップ時にフェードアウトする」チェックボックス（`#fade-out-toggle`）を追加。既定OFF。**2026-11-11から、フェードアウト・クロスフェードのON/OFFとクロスフェードの長さは次に開いたときも引き継ぐ**（ユーザー要望。`src/playbackSettings.ts`、localStorageの`dusty-jukebox-playback-settings`、端末・ブラウザごと。読めない項目だけ既定へ戻す）。
 - **フェード対象は次へ/前へ/曲名クリック/Bluetooth・OSメディアキーのみ**：`PlaybackQueue.next()`/`previous()`/`playFileId()`に`fadeOut`引数（既定`false`）を追加し、`main.ts`側のこれらの操作の呼び出し元だけがチェックボックスの現在値を渡す。**曲の自然終了（`advanceOnEnded()`経由の`next()`呼び出し）には渡さない**（既定`false`のまま）——将来のクロスフェード機能がこの経路を専用に扱うため、単曲の音量を下げるだけの簡易フェードアウトとは役割を分けた設計。`moveSong`/`sortBy`/`shuffle`等の並べ替え系操作は`player.play()`を呼ばないため対象外。
 - **実装場所は`PlaybackQueue`ではなく`PlaybackController.play()`**（`src/playback.ts`）：`PlaybackQueue`の`pendingMove`直列化機構は既に開発体制#42②で複数ラウンドの既知の制限を抱えており（上記「再生リスト内の曲の順番入れ替え」節参照）、これ以上の複雑化を避けるため、フェード自体はより単純な`PlaybackController`に閉じ込めた。`play(fileId, position, { fadeOut })`が、**次の曲が実際に見つかり`play()`が呼ばれる時点で初めて**（`moveSong()`と同じ「見つかった時だけ動く」設計）、src差し替え・トークン確認より前に現在再生中の音声（`!audio.paused`の場合のみ）をフェードアウトする。
 - **`src/fade.ts`**：`fadeOutVolume(audio, durationMs, options)`が純粋なDI関数（`steps`・`wait`・`isCancelled`を注入可能、他のDI関数と同じ方針）。既定20段階、`durationMs`は`FADE_OUT_DURATION_MS`（`playback.ts`、既定2000ms・`VITE_E2E`時は50ms、暫定値）。

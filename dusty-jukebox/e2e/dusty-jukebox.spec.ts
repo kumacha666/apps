@@ -1846,6 +1846,31 @@ test("クロスフェードのUI（チェックボックス・秒数選択・非
   await expect(page.locator("#audio-player-b")).toBeAttached();
 });
 
+test("フェード・クロスフェードの設定は、ページを開き直しても引き継がれる", async ({ context, page }) => {
+  await installGoogleMocks(context); await page.goto("/"); await login(page);
+  await openTab(page, "settings");
+  const fadeOut = page.getByRole("checkbox", { name: /手動スキップ・一時停止・シークのときにフェードアウト/ });
+  const crossfade = page.getByRole("checkbox", { name: "曲間をクロスフェードする" });
+  await expect(fadeOut).not.toBeChecked();
+  await expect(crossfade).not.toBeChecked();
+  await fadeOut.check();
+  await crossfade.check();
+  await page.locator("#crossfade-duration-sec").selectOption("20");
+
+  await page.reload();
+  await openTab(page, "settings");
+  await expect(fadeOut).toBeChecked();
+  await expect(crossfade).toBeChecked();
+  await expect(page.locator("#crossfade-duration-sec")).toHaveValue("20");
+
+  // 外した設定も引き継ぐ
+  await fadeOut.uncheck();
+  await page.reload();
+  await openTab(page, "settings");
+  await expect(fadeOut).not.toBeChecked();
+  await expect(crossfade).toBeChecked();
+});
+
 test("クロスフェード無効時は残り時間が閾値以内になっても#audio-player-bへ触れない", async ({ context, page }) => {
   await installGoogleMocks(context, { albumCatalog: true }); await page.goto("/"); await login(page);
   await page.locator("#folder-id").fill("root"); await page.locator("#spreadsheet-id").fill("sheet");
