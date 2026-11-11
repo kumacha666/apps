@@ -14,7 +14,9 @@ export const TAB_LABELS: Record<TabId, string> = {
   settings: "設定",
 };
 
-export const DEFAULT_TAB: TabId = "queue";
+// 起動時は設定タブ（接続・索引の読み込みがここにあり、曲一覧を読み込むまで他のタブは空のため）。
+// 索引の読み込みに成功するとライブラリのタブへ移る（main.tsのloadCatalog()）。
+export const DEFAULT_TAB: TabId = "settings";
 
 export function isTabId(value: unknown): value is TabId {
   return typeof value === "string" && (TAB_IDS as readonly string[]).includes(value);
