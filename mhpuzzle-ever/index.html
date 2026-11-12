@@ -7,6 +7,7 @@
   <title>アイルーパズル「いつまでも版」実機検証まとめ | Honeypaw Lab.</title>
   <meta name="description" content="アイルーパズル「いつまでも版」を運営版の進捗100%データから引き継いで比較。ハート撤廃、セーブ20枠、追加されたアイルーのお願い、イベント・メダルの未確認事項をまとめました。">
   <link rel="canonical" href="https://honeypawlab.com/mhpuzzle-ever/">
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
   <meta property="og:type" content="article">
   <meta property="og:locale" content="ja_JP">
   <meta property="og:site_name" content="Honeypaw Lab.">
@@ -14,6 +15,13 @@
   <meta property="og:description" content="約2,000円で何が変わる？ 運営版をほぼ攻略し尽くしたデータから、引き継ぎ・新クエスト・未確認点を実機で比較。">
   <meta property="og:url" content="https://honeypawlab.com/mhpuzzle-ever/">
   <meta name="twitter:card" content="summary">
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-KL70XNZKT8"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-KL70XNZKT8');
+  </script>
   <style>
     :root{--bg:#fff8e7;--paper:#fffefa;--ink:#3d2b1f;--muted:#745f4f;--accent:#946009;--line:#e8dbc2;--green:#245c48;--blue:#234f81;--amber:#805413}
     *{box-sizing:border-box}
@@ -63,6 +71,21 @@
     .small-link{font-size:.9rem}
     footer{border-top:1px solid var(--line);padding:25px 0 35px;color:var(--muted);font-size:.86rem}
     @media(max-width:600px){.hero{padding-top:32px}.summary{grid-template-columns:1fr;gap:9px}.stat{display:flex;justify-content:space-between;align-items:center;padding:12px 15px}.stat strong{font-size:1.4rem}.stat span{margin:0;text-align:right;max-width:60%}nav.toc ul{columns:1}.sitehead small{display:none}h2{margin-top:34px}}
+    /* 比較表はスマホで横スクロールさせず、項目別カード表示にする */
+    @media(max-width:600px){
+      .table-wrap{overflow:visible;border:0;background:transparent}
+      table{display:block;min-width:0;width:100%}
+      thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+      tbody{display:grid;gap:12px}
+      tr{display:block;border:1px solid var(--line);border-radius:13px;background:var(--paper);overflow:hidden}
+      td,td:first-child{display:block;width:auto;border:0;padding:10px 15px;overflow-wrap:anywhere}
+      td:first-child{font-size:1rem;padding:12px 15px;background:#fbefcf;color:#62471d}
+      td:nth-child(2),td:nth-child(3){font-size:.93rem}
+      td:nth-child(2)::before,td:nth-child(3)::before{content:"運営版";display:block;color:var(--muted);font-size:.75rem;font-weight:800}
+      td:nth-child(3)::before{content:"いつまでも版"}
+      td:nth-child(3){border-top:1px dashed var(--line)}
+    }
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
     @media print{body{background:white}main{max-width:100%}nav.toc{display:none}a{color:inherit}.stat,.box,.notice{break-inside:avoid}}
   </style>
 </head>
@@ -119,13 +142,13 @@
           <tr><td>アイルーのお願い</td><td>検証データでは全消化済み</td><td><span class="status yes">確認済み</span>引き継ぎロード時に複数出現</td></tr>
           <tr><td>モンスターのサブクエスト</td><td>イベントと関連するものあり</td><td><span class="status yes">確認済み</span>多数が常設のサブクエスト欄に表示</td></tr>
           <tr><td>マスタークエスト</td><td>プレイ可能・ランキングあり</td><td><span class="status yes">確認済み</span>プレイ可能・ランキングなし</td></tr>
-          <tr><td>フレンド・アイテム交換</td><td>あり</td><td><span class="status seen">見当たらず</span>該当機能なし</td></tr>
-          <tr><td>デイリークエスト</td><td>あり</td><td><span class="status seen">見当たらず</span>該当機能なし</td></tr>
+          <tr><td>フレンド・アイテム交換</td><td>あり</td><td><span class="status seen">見当たらず</span>初回確認時点で画面・機能を確認できず</td></tr>
+          <tr><td>デイリークエスト</td><td>あり</td><td><span class="status seen">見当たらず</span>初回確認時点で画面・機能を確認できず</td></tr>
           <tr><td>ビンゴ・秘境探索など</td><td>イベントとして開催</td><td><span class="status seen">見当たらず</span>2026/11/13 2時時点でイベント表示なし</td></tr>
-          <tr><td>ニャチーブメント</td><td>あり</td><td><span class="status yes">確認済み</span>あり。イベント・ランキング系の項目は見当たらず</td></tr>
+          <tr><td>ニャチーブメント</td><td>あり</td><td><span class="status yes">確認済み</span>機能はあり。<span class="status seen">見当たらず</span>イベント・ランキング系の項目</td></tr>
           <tr><td>ジェムショップ</td><td>あり</td><td><span class="status yes">確認済み</span>あり</td></tr>
-          <tr><td>VIPサロン</td><td>あり</td><td><span class="status yes">確認済み</span>あり。新規のVIPチケット獲得方法は不明</td></tr>
-          <tr><td>メダル</td><td>イベントで収集</td><td><span class="status yes">確認済み</span>獲得済み分は残る。追加獲得方法は不明</td></tr>
+          <tr><td>VIPサロン</td><td>あり</td><td><span class="status yes">確認済み</span>ショップと所持チケットを確認。<span class="status unknown">未確認</span>新たな獲得方法</td></tr>
+          <tr><td>メダル</td><td>イベントで収集</td><td><span class="status yes">確認済み</span>獲得済みのメダルは表示。<span class="status unknown">未確認</span>追加獲得方法</td></tr>
         </tbody>
       </table>
     </div>
@@ -134,7 +157,17 @@
   <section id="save">
     <h2>引き継ぎ・新規プレイ</h2>
     <p><span class="status yes">確認済み</span>運営版から進捗を引き継いでプレイできました。セーブデータの枠は20個あり、コピー・削除・新規開始が可能。<strong>攻略済みデータを残しながら別枠で最初から遊べる</strong>点は、購入前には分からなかった大きなメリットでした。</p>
-    <p>公式案内・公式Xでは、進行状況、建物や装飾、衣装・スキン、ジェムや一部アイテム、コラボを含むイベント報酬などの引き継ぎが案内されています。ただし、<strong>時限式の無限ブースターなどは対象外</strong>で、一部の素材は変換されます。詳しい対象や移行条件は公式案内を確認してください。</p>
+    <p>カプコンの公式発表では、運営版のデータを引き継いで続きから遊べると案内されています。ただし<strong>一部引き継げないデータがある</strong>とも記載されているため、個別のアイテム・報酬がすべて移行できるとは限りません。<a href="https://prtimes.jp/main/html/rd/p/000006146.000013450.html" target="_blank" rel="noopener noreferrer">カプコンの発売発表</a>、<a href="https://mobile.capcom.com/mhpuzzle/ja-jp/notice_announcement.html" target="_blank" rel="noopener noreferrer">公式の移行案内</a>を参照してください。</p>
+    <div class="box"><h3>購入前に確認したい、データ引き継ぎの条件（公式）</h3>
+      <ul>
+        <li><strong>運営版アプリを削除しない</strong>（削除するといつまでも版への移行ができなくなる）</li>
+        <li>運営版を<strong>ver 2.25.0以上</strong>にしておく</li>
+        <li>iOSは<strong>iCloud</strong>、Androidは<strong>Google Cloud</strong>を利用できる環境が必要</li>
+        <li><strong>同じOS間のみ引き継ぎ可能</strong>。iOSとAndroidをまたいだ移行は非対応</li>
+      </ul>
+      <p class="note">端末OSやクラウド側の仕様変更により引き継げなくなる可能性についても公式が注意喚起しています。</p>
+    </div>
+    <p class="note">なお運営版も、サービス終了後に通信不要な部分は引き続きプレイ可能ですが、サポート対象外となる旨が<a href="https://mobile.capcom.com/mhpuzzle/ja-jp/notice_announcement.html" target="_blank" rel="noopener noreferrer">公式に案内</a>されています。</p>
     <p class="note">補足：引き継いだデータのプレイ時間は初回表示時に0:00:00でした。旧版の累計プレイ時間が保持されるかは未確認です。</p>
   </section>
 
@@ -147,7 +180,7 @@
 
   <section id="events">
     <h2>イベント・メダルはどうなる？</h2>
-    <p><span class="status seen">現時点で見当たらず</span>2026年11月13日午前2時時点では、ビンゴや秘境探索などのイベントクエストは表示されていません。ランキングやフレンド機能もなくなっています。</p>
+    <p><span class="status seen">現時点で見当たらず</span>2026年11月13日午前2時時点では、ビンゴや秘境探索などのイベントクエストは表示されていません。ランキングやフレンド機能についても、初回確認時点では利用画面を確認できませんでした。</p>
     <p>そのため、<strong>イベント報酬で集めていたメダルが今後も獲得できるのか</strong>が気になるところです。過去に入手したメダルは残っていますが、買い切り版で新規セーブを始めた場合に全種類を集められるかは未確認です。</p>
     <div class="box"><h3>午前3時の切り替えに注目</h3><p>アイテム探索には日次回数制限が残っており、運営版と同様に午前3時を境とする表示があります。ただし、<strong>日次リセットがあることと、イベントが定期ローテーションすることは別</strong>です。2026年11月13日午前3時以降にどうなるかは今後の検証項目です。</p></div>
   </section>
@@ -162,7 +195,7 @@
   <section id="questions">
     <h2>まだ分からないこと</h2>
     <div class="box"><h3>イベントは完全になくなった？</h3><p>初回時点で表示はありません。ビンゴ・秘境探索などが日次・週次で復活する可能性は、現状否定も肯定もできません。</p></div>
-    <div class="box"><h3>VIPチケットは新たに入手できる？</h3><p>VIPサロン自体と引き継いだチケットはありますが、運営版にあったランキングやフレンド経由の入手がなくなったため、別の取得手段があるか確認中です。</p></div>
+    <div class="box"><h3>VIPチケットは新たに入手できる？</h3><p>VIPサロン自体と引き継いだチケットは確認できました。ただし、いつまでも版で新たにチケットを獲得する方法はまだ確認できていません。</p></div>
     <div class="box"><h3>図鑑の最後の1匹は？</h3><p>検証データではアイルー図鑑が104匹、空き枠が1つ残り「あと1匹」の表示があります。いつまでも版での入手方法は未確認です。</p></div>
     <div class="box"><h3>マスタークエストはどこまで続く？</h3><p>引き続き遊べますが、運営版のようなランキングはありません。乱入モンスターや素材収集の場としてどう機能するか確認中です。</p></div>
   </section>
@@ -170,10 +203,10 @@
   <section id="updates">
     <h2>更新履歴・参考情報</h2>
     <p><strong>2026年11月13日</strong> — 初版。11月12〜13日の購入直後の比較結果を整理。イベントの有無や午前3時のリセット結果は未確認として記載。</p>
-    <p class="small-link">公式情報：<a href="https://mobile.capcom.com/mhpuzzle/ja-jp/notice_announcement.html" target="_blank" rel="noopener noreferrer">カプコン公式「サービス終了／いつまでも版」の案内</a></p>
+    <p class="small-link">参考：<a href="https://prtimes.jp/main/html/rd/p/000006146.000013450.html" target="_blank" rel="noopener noreferrer">カプコン発売発表（2026年11月12日・発売日と希望小売価格）</a> ／ <a href="https://mobile.capcom.com/mhpuzzle/ja-jp/notice_announcement.html" target="_blank" rel="noopener noreferrer">公式「サービス終了・データ引き継ぎ」の案内</a> ／ <a href="https://x.com/MHPuzzles" target="_blank" rel="noopener noreferrer">公式X</a></p>
     <p class="note">本ページは個人による非公式のプレイ記録です。『モンスターハンターパズル アイルーアイランド』の名称・各種権利はそれぞれの権利者に帰属します。発売直後のため、誤りや未解明の点が判明した際は追記・訂正します。</p>
   </section>
-  <footer><a href="/">Honeypaw Lab. トップへ戻る</a> · 非公式実機検証レポート</footer>
+  <footer><a href="/">Honeypaw Lab. トップへ戻る</a> · 非公式実機検証レポート · Googleアナリティクスを使用しています</footer>
 </main>
 </body>
 </html>
