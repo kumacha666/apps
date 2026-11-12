@@ -113,6 +113,7 @@
       <li><a href="#method">検証条件と判定の見方</a></li>
       <li><a href="#compare">運営版との比較表</a></li>
       <li><a href="#save">引き継ぎ・新規プレイ</a></li>
+      <li><a href="#daily">午前3時の日次リセット</a></li>
       <li><a href="#quests">新たに遊べるクエスト</a></li>
       <li><a href="#events">イベント・メダル</a></li>
       <li><a href="#materials">ミラボレアス素材</a></li>
@@ -137,8 +138,8 @@
           <tr><td>ハート</td><td>消費制</td><td><span class="status yes">確認済み</span>撤廃。無制限プレイ</td></tr>
           <tr><td>サブクエストチケット</td><td>消費制</td><td><span class="status yes">確認済み</span>撤廃。無制限プレイ</td></tr>
           <tr><td>セーブデータ</td><td>運営版の進行データ</td><td><span class="status yes">確認済み</span>20枠。新規作成・コピー・削除が可能</td></tr>
-          <tr><td>アイテム探索</td><td>1日の回数制限あり</td><td><span class="status yes">確認済み</span>回数制限の表示あり。実際の翌日リセットは要検証</td></tr>
-          <tr><td>アイテム探索の報酬</td><td>ハートを獲得できる</td><td><span class="status yes">確認済み</span>ハートに代わりジェム</td></tr>
+          <tr><td>アイテム探索の回数</td><td>午前3時過ぎの残数：ハート3回＋ブースター1回</td><td><span class="status yes">確認済み</span>午前3時に回数がリセット。リセット後の残数はジェム9回＋ブースター3回</td></tr>
+          <tr><td>アイテム探索の報酬</td><td>ハート探索：1〜5個／回（表示値）</td><td><span class="status yes">確認済み</span>ジェム探索：200〜1,000個／回（表示値）。ブースター探索もあり</td></tr>
           <tr><td>アイルーのお願い</td><td>検証データでは全消化済み</td><td><span class="status yes">確認済み</span>引き継ぎロード時に複数出現</td></tr>
           <tr><td>モンスターのサブクエスト</td><td>イベントと関連するものあり</td><td><span class="status yes">確認済み</span>多数が常設のサブクエスト欄に表示</td></tr>
           <tr><td>マスタークエスト</td><td>プレイ可能・ランキングあり</td><td><span class="status yes">確認済み</span>プレイ可能・ランキングなし</td></tr>
@@ -171,6 +172,24 @@
     <p class="note">補足：引き継いだデータのプレイ時間は初回表示時に0:00:00でした。旧版の累計プレイ時間が保持されるかは未確認です。</p>
   </section>
 
+  <section id="daily">
+    <h2>11月13日午前3時、アイテム探索がリセット</h2>
+    <p><span class="status yes">確認済み</span>日本時間の2026年11月13日午前3時を過ぎたところ、<strong>アイテム探索の残り回数がリセット</strong>されました。運営版・いつまでも版の両方で「本日あと」の回数を比較したところ、次の表示でした。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">項目</th><th scope="col">運営版</th><th scope="col">いつまでも版</th></tr></thead>
+        <tbody>
+          <tr><td>通常探索</td><td>ハート探索：本日あと3回</td><td>ジェム探索：本日あと9回</td></tr>
+          <tr><td>通常探索の報酬表示</td><td>ハート1〜5個</td><td>ジェム200〜1,000個</td></tr>
+          <tr><td>ブースター探索</td><td>本日あと1回</td><td>本日あと3回</td></tr>
+          <tr><td>合計残り回数</td><td>4回</td><td>12回</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>画面上の残り回数は買い切り版で3倍</strong>になっています。アイテム探索には日次制限が残るものの、運営版より多く挑戦できる仕様のようです。</p>
+    <p class="note">上記は午前3時過ぎに撮影した画面の残り回数を比較した値です。日付切り替え後、どちらの版も探索を消化していなければ、表示がその日の最大回数に相当します。なお、1回あたりに実際に得られる素材数や出現率は未検証です。</p>
+  </section>
+
   <section id="quests">
     <h2>攻略済みデータにも、アイルーのお願いが出現</h2>
     <p><span class="status yes">確認済み</span>運営版で「サブクエストがありません」と表示されていたデータをいつまでも版に移したところ、初回ロード時に「リッチーのお願いが出現した！」など複数の通知が表示されました。</p>
@@ -182,7 +201,7 @@
     <h2>イベント・メダルはどうなる？</h2>
     <p><span class="status seen">現時点で見当たらず</span>2026年11月13日午前2時時点では、ビンゴや秘境探索などのイベントクエストは表示されていません。ランキングやフレンド機能についても、初回確認時点では利用画面を確認できませんでした。</p>
     <p>そのため、<strong>イベント報酬で集めていたメダルが今後も獲得できるのか</strong>が気になるところです。過去に入手したメダルは残っていますが、買い切り版で新規セーブを始めた場合に全種類を集められるかは未確認です。</p>
-    <div class="box"><h3>午前3時の切り替えに注目</h3><p>アイテム探索には日次回数制限が残っており、運営版と同様に午前3時を境とする表示があります。ただし、<strong>日次リセットがあることと、イベントが定期ローテーションすることは別</strong>です。2026年11月13日午前3時以降にどうなるかは今後の検証項目です。</p></div>
+    <div class="box"><h3>午前3時の日次リセットは確認済み</h3><p>アイテム探索は2026年11月13日午前3時に回数がリセットされ、買い切り版ではジェム探索9回・ブースター探索3回の残数が表示されました。ただし、<strong>日次リセットがあることと、イベントが定期ローテーションすることは別</strong>です。イベント開催の有無は引き続き調査中です。詳しくは<a href="#daily">実機比較</a>をご覧ください。</p></div>
   </section>
 
   <section id="materials">
@@ -202,7 +221,8 @@
 
   <section id="updates">
     <h2>更新履歴・参考情報</h2>
-    <p><strong>2026年11月13日</strong> — 初版。11月12〜13日の購入直後の比較結果を整理。イベントの有無や午前3時のリセット結果は未確認として記載。</p>
+    <p><strong>2026年11月13日（追記）</strong> — 午前3時のアイテム探索リセットを確認。運営版の「ハート3回＋ブースター1回」に対し、いつまでも版は「ジェム9回＋ブースター3回」の残数を確認。比較表と解説を更新。</p>
+    <p><strong>2026年11月13日（初版）</strong> — 11月12〜13日の購入直後の比較結果を整理。イベント開催については未確認として記載。</p>
     <p class="small-link">参考：<a href="https://prtimes.jp/main/html/rd/p/000006146.000013450.html" target="_blank" rel="noopener noreferrer">カプコン発売発表（2026年11月12日・発売日と希望小売価格）</a> ／ <a href="https://mobile.capcom.com/mhpuzzle/ja-jp/notice_announcement.html" target="_blank" rel="noopener noreferrer">公式「サービス終了・データ引き継ぎ」の案内</a> ／ <a href="https://x.com/MHPuzzles" target="_blank" rel="noopener noreferrer">公式X</a></p>
     <p class="note">本ページは個人による非公式のプレイ記録です。『モンスターハンターパズル アイルーアイランド』の名称・各種権利はそれぞれの権利者に帰属します。発売直後のため、誤りや未解明の点が判明した際は追記・訂正します。</p>
   </section>
