@@ -26,10 +26,12 @@
 /love-lab/           静的PWA
 /marvel-checklist/   マーベル映画・ドラマチェックリスト（視聴済み管理＋見るべき度合い評価）— 静的PWA、JSONデータ駆動
 /mhwilds-karikan/    モンハンワイルズ計算ツール — 静的PWA、JSONデータ駆動
+/mhpuzzle-ever/      『モンスターハンターパズル アイルーアイランド いつまでも版』実機検証記事 — 単独静的HTML、ビルド不要、公開情報ページ
 /mori-no-yakai/      「森の夜会」ワンナイト人狼系アプリ — Vite+TS、ビルド有、Firebase RTDB
 /tapu-neko/          シンプルな単独ウィジェット（PWA化なし）
 ```
 
+- `mhpuzzle-ever/` は実機検証記事の単独静的HTML。GitHub Pagesの直下URLで公開し、現時点ではトップページのアプリカードには追加しない。ゲーム内での観察と公式確認事項を区別し、内容が判明した際に記事を更新する。実機スクリーンショットなどの素材は必要が生じたとき追加する。
 - ランディングページ（`index.html`）に掲載されているのは現状 `cpt-tracker`（2026-10-10掲載、EVO France専用の期間限定ツール。大会終了後は掲載を外すか判断）・`7metch`・`emoji-dm`・`enblo-classic`・`LifeLog`・`marvel-checklist` のみ。他のアプリは未掲載／開発中で、URLを直接踏んで動作確認する運用。`marvel-checklist`のカードアイコンは`icon-192.png`ではなく`/marvel-checklist/icon.svg`を直接参照している（PNGアイコンを持たないため）。新しいアプリを公開する際は `index.html` の `.apps` セクションにカードを追加する。`mori-no-yakai` は実機での動作確認・機能実装が完了済みだが、**身内利用アプリのため意図的に非掲載**（不特定多数への公開を想定していない、2026-07-11判断。`mori-no-yakai/CLAUDE.md`参照）。著作権的な懸念もあり、部屋の新規作成（ホスト操作）は合言葉ゲートで管理者本人に限定している（2026-07-13、`mori-no-yakai/CLAUDE.md`の「部屋作成（ホスト）の合言葉ゲート」参照）。`enblo-classic` は専用PNGアイコン（`icon-192.png`/`icon-512.png`）が未整備のため、ランディングページのカードは絵文字（⚔️）ベースのdata URI SVGアイコンを使用している（LifeLogカードと同じ手法）。`combrawl` も開発中・有料化検討前段階のため`enblo`と同様に意図的に非掲載（URLを直接踏んで確認する運用）。
 - `lifelog/` は2026-07-13、単独リポジトリ `kumacha666/lifelog`（`https://kumacha666.github.io/lifelog/`）から本リポジトリに移行したもの。旧リポジトリは開発終了・クローズ済みで、以後の変更は本ディレクトリ側で行う。データはlocalStorage保存のためoriginをまたいだ自動移行はできない（利用者本人がエクスポート/インポート機能で手動移行）。
 - 各アプリディレクトリに固有の `CLAUDE.md` がある場合（例: `7metch/CLAUDE.md`）は、そのアプリを変更する際に必ず参照・遵守する。アプリ固有の開発ルール・テスト方針・チェックリストはそちらに記載されている。アプリ固有の`AGENTS.md`がある場合（現状`dusty-jukebox`のみ）は、Codex向けの実行手順としてそちらも参照する。
