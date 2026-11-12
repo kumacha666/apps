@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#fff8e7">
+  <title>アイルーパズル「いつまでも版」実機検証まとめ | Honeypaw Lab.</title>
+  <meta name="description" content="アイルーパズル「いつまでも版」を運営版の進捗100%データから引き継いで比較。ハート撤廃、セーブ20枠、追加されたアイルーのお願い、イベント・メダルの未確認事項をまとめました。">
+  <link rel="canonical" href="https://honeypawlab.com/mhpuzzle-ever/">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="ja_JP">
+  <meta property="og:site_name" content="Honeypaw Lab.">
+  <meta property="og:title" content="アイルーパズル「いつまでも版」実機検証まとめ">
+  <meta property="og:description" content="約2,000円で何が変わる？ 運営版をほぼ攻略し尽くしたデータから、引き継ぎ・新クエスト・未確認点を実機で比較。">
+  <meta property="og:url" content="https://honeypawlab.com/mhpuzzle-ever/">
+  <meta name="twitter:card" content="summary">
+  <style>
+    :root{--bg:#fff8e7;--paper:#fffefa;--ink:#3d2b1f;--muted:#745f4f;--accent:#946009;--line:#e8dbc2;--green:#245c48;--blue:#234f81;--amber:#805413}
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.85 -apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif}
+    a{color:#805200;text-underline-offset:3px;overflow-wrap:anywhere}
+    a:hover{color:#523400}
+    .sitehead{border-bottom:1px solid var(--line);background:#fffcf3}
+    .sitehead-inner{max-width:950px;margin:auto;padding:13px 22px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+    .brand{font-weight:900;text-decoration:none;color:var(--ink);letter-spacing:.03em}
+    .sitehead small{color:var(--muted)}
+    main{max-width:950px;padding:0 20px 64px;margin:auto}
+    .hero{padding:50px 0 28px}
+    .eyebrow{display:inline-block;color:var(--accent);font-size:.79rem;font-weight:800;letter-spacing:.12em}
+    h1{font-size:clamp(1.8rem,4.4vw,2.7rem);line-height:1.4;letter-spacing:-.035em;margin:12px 0 20px}
+    h2{font-size:1.43rem;line-height:1.45;margin:40px 0 16px;padding-bottom:9px;border-bottom:2px solid #ecd7a8}
+    h3{font-size:1.1rem;line-height:1.5;margin:22px 0 9px}
+    p{margin:10px 0}
+    .lede{font-size:1.09rem;max-width:760px;color:#584438}
+    .meta{color:var(--muted);font-size:.86rem}
+    .notice{background:#fff0c9;border-left:4px solid #c89629;padding:16px 19px;border-radius:0 12px 12px 0;margin:20px 0}
+    .notice p:first-child{margin-top:0}.notice p:last-child{margin-bottom:0}
+    .summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:23px 0}
+    .stat{background:var(--paper);border:1px solid var(--line);border-radius:15px;padding:19px 17px}
+    .stat strong{display:block;font-size:1.8rem;line-height:1.3;color:#7c520b;font-variant-numeric:tabular-nums}
+    .stat span{display:block;font-size:.83rem;color:var(--muted);margin-top:8px}
+    nav.toc{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:18px 24px}
+    nav.toc strong{display:block;margin-bottom:5px}
+    nav.toc ul{columns:2;margin:8px 0 0;padding-left:21px}
+    nav.toc li{break-inside:avoid;padding:3px 0}
+    .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:15px;background:var(--paper)}
+    table{border-collapse:collapse;width:100%;min-width:565px}
+    th,td{padding:12px 15px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+    th{color:#62471d;background:#fbefcf;font-size:.88rem;white-space:nowrap}
+    tr:last-child td{border-bottom:0}
+    td:first-child{font-weight:700;width:24%}
+    .status{display:inline-block;font-size:.73rem;font-weight:800;border-radius:5px;padding:1px 7px;margin-right:5px;white-space:nowrap}
+    .yes{color:var(--green);background:#e4f1e7}
+    .seen{color:var(--blue);background:#e4eef9}
+    .unknown{color:var(--amber);background:#fbedcf}
+    .legend{display:flex;gap:9px;flex-wrap:wrap;align-items:center;color:var(--muted);font-size:.85rem;margin:13px 0}
+    ul{padding-left:1.5em}
+    li{margin:6px 0}
+    .box{border:1px solid var(--line);background:var(--paper);border-radius:13px;margin:12px 0;padding:15px 18px}
+    .box h3{margin:0 0 8px}.box p{margin:0}
+    .note{font-size:.86rem;color:var(--muted)}
+    .small-link{font-size:.9rem}
+    footer{border-top:1px solid var(--line);padding:25px 0 35px;color:var(--muted);font-size:.86rem}
+    @media(max-width:600px){.hero{padding-top:32px}.summary{grid-template-columns:1fr;gap:9px}.stat{display:flex;justify-content:space-between;align-items:center;padding:12px 15px}.stat strong{font-size:1.4rem}.stat span{margin:0;text-align:right;max-width:60%}nav.toc ul{columns:1}.sitehead small{display:none}h2{margin-top:34px}}
+    @media print{body{background:white}main{max-width:100%}nav.toc{display:none}a{color:inherit}.stat,.box,.notice{break-inside:avoid}}
+  </style>
+</head>
+<body>
+<header class="sitehead"><div class="sitehead-inner"><a class="brand" href="/">🐾 Honeypaw Lab.</a><small>非公式・ユーザーによる実機検証</small></div></header>
+<main>
+  <header class="hero">
+    <span class="eyebrow">MONSTER HUNTER PUZZLES · PLAY REPORT</span>
+    <h1>アイルーパズル「いつまでも版」<br>運営版との違い・引き継ぎ後の実機検証</h1>
+    <p class="lede">「約2,000円払って、実際に何ができるようになるの？」——運営版の通常ステージを全攻略したデータを引き継ぎ、買い切り版で変わったこと、残る疑問をまとめました。</p>
+    <p class="meta">発売：2026年11月12日 ／ 税込1,990円 ／ 初回検証：2026年11月12〜13日（日本時間）</p>
+  </header>
+  <div class="notice">
+    <p><strong>先に結論：</strong>ハートとサブクエストチケットがなくなり、好きなだけ遊べます。セーブデータは20枠で、新しく最初から始めることも可能。攻略済みデータにもアイルーの依頼が複数出現しました。</p>
+    <p>一方、<strong>ビンゴ・秘境探索などのイベントは初回確認時点では見当たらず、メダルやVIPチケットの新たな入手方法も未確認</strong>です。「イベント廃止」と断定できる段階ではありません。</p>
+  </div>
+  <div class="summary">
+    <div class="stat"><strong>1,990円</strong><span>買い切り版（税込）</span></div>
+    <div class="stat"><strong>20枠</strong><span>複数のセーブデータを保存</span></div>
+    <div class="stat"><strong>無制限</strong><span>ハート・サブクエストチケット不要</span></div>
+  </div>
+  <nav class="toc" aria-label="目次">
+    <strong>目次</strong>
+    <ul>
+      <li><a href="#method">検証条件と判定の見方</a></li>
+      <li><a href="#compare">運営版との比較表</a></li>
+      <li><a href="#save">引き継ぎ・新規プレイ</a></li>
+      <li><a href="#quests">新たに遊べるクエスト</a></li>
+      <li><a href="#events">イベント・メダル</a></li>
+      <li><a href="#materials">ミラボレアス素材</a></li>
+      <li><a href="#questions">未解明の点</a></li>
+      <li><a href="#updates">更新履歴・参考情報</a></li>
+    </ul>
+  </nav>
+
+  <section id="method">
+    <h2>検証条件と判定の見方</h2>
+    <p>検証した運営版データは、通常ステージ<strong>2,400まで進行、進捗100%</strong>、マスタークエスト<strong>3,906</strong>まで進行。ハート・アイテムは99+で、運営版ではイベント終了後、繰り返されるマスタークエスト以外ほぼ遊び終えている状態です。</p>
+    <p>この記事は公式仕様書ではなく、<strong>運営版といつまでも版を実際に操作して比較した記録</strong>です。新しい情報が分かった時点で更新する予定です。</p>
+    <div class="legend"><span class="status yes">確認済み</span>実際に操作・画面で確認 <span class="status seen">現時点で見当たらず</span>存在しないとは断定しない <span class="status unknown">未確認・推測</span>結論は保留</div>
+  </section>
+
+  <section id="compare">
+    <h2>運営版との比較表</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">項目</th><th scope="col">運営版</th><th scope="col">いつまでも版（実機確認）</th></tr></thead>
+        <tbody>
+          <tr><td>ハート</td><td>消費制</td><td><span class="status yes">確認済み</span>撤廃。無制限プレイ</td></tr>
+          <tr><td>サブクエストチケット</td><td>消費制</td><td><span class="status yes">確認済み</span>撤廃。無制限プレイ</td></tr>
+          <tr><td>セーブデータ</td><td>運営版の進行データ</td><td><span class="status yes">確認済み</span>20枠。新規作成・コピー・削除が可能</td></tr>
+          <tr><td>アイテム探索</td><td>1日の回数制限あり</td><td><span class="status yes">確認済み</span>回数制限の表示あり。実際の翌日リセットは要検証</td></tr>
+          <tr><td>アイテム探索の報酬</td><td>ハートを獲得できる</td><td><span class="status yes">確認済み</span>ハートに代わりジェム</td></tr>
+          <tr><td>アイルーのお願い</td><td>検証データでは全消化済み</td><td><span class="status yes">確認済み</span>引き継ぎロード時に複数出現</td></tr>
+          <tr><td>モンスターのサブクエスト</td><td>イベントと関連するものあり</td><td><span class="status yes">確認済み</span>多数が常設のサブクエスト欄に表示</td></tr>
+          <tr><td>マスタークエスト</td><td>プレイ可能・ランキングあり</td><td><span class="status yes">確認済み</span>プレイ可能・ランキングなし</td></tr>
+          <tr><td>フレンド・アイテム交換</td><td>あり</td><td><span class="status seen">見当たらず</span>該当機能なし</td></tr>
+          <tr><td>デイリークエスト</td><td>あり</td><td><span class="status seen">見当たらず</span>該当機能なし</td></tr>
+          <tr><td>ビンゴ・秘境探索など</td><td>イベントとして開催</td><td><span class="status seen">見当たらず</span>2026/11/13 2時時点でイベント表示なし</td></tr>
+          <tr><td>ニャチーブメント</td><td>あり</td><td><span class="status yes">確認済み</span>あり。イベント・ランキング系の項目は見当たらず</td></tr>
+          <tr><td>ジェムショップ</td><td>あり</td><td><span class="status yes">確認済み</span>あり</td></tr>
+          <tr><td>VIPサロン</td><td>あり</td><td><span class="status yes">確認済み</span>あり。新規のVIPチケット獲得方法は不明</td></tr>
+          <tr><td>メダル</td><td>イベントで収集</td><td><span class="status yes">確認済み</span>獲得済み分は残る。追加獲得方法は不明</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="save">
+    <h2>引き継ぎ・新規プレイ</h2>
+    <p><span class="status yes">確認済み</span>運営版から進捗を引き継いでプレイできました。セーブデータの枠は20個あり、コピー・削除・新規開始が可能。<strong>攻略済みデータを残しながら別枠で最初から遊べる</strong>点は、購入前には分からなかった大きなメリットでした。</p>
+    <p>公式案内・公式Xでは、進行状況、建物や装飾、衣装・スキン、ジェムや一部アイテム、コラボを含むイベント報酬などの引き継ぎが案内されています。ただし、<strong>時限式の無限ブースターなどは対象外</strong>で、一部の素材は変換されます。詳しい対象や移行条件は公式案内を確認してください。</p>
+    <p class="note">補足：引き継いだデータのプレイ時間は初回表示時に0:00:00でした。旧版の累計プレイ時間が保持されるかは未確認です。</p>
+  </section>
+
+  <section id="quests">
+    <h2>攻略済みデータにも、アイルーのお願いが出現</h2>
+    <p><span class="status yes">確認済み</span>運営版で「サブクエストがありません」と表示されていたデータをいつまでも版に移したところ、初回ロード時に「リッチーのお願いが出現した！」など複数の通知が表示されました。</p>
+    <p>実際に<strong>リッチー、ルシアス、ソルト</strong>らの依頼が「NEW」として表示され、進捗100%からでも新たに挑戦できるクエストがありました。</p>
+    <p><span class="status unknown">未確認</span>これらが本当の完全新作なのか、過去のイベント・既存データを再収録したものか、全依頼の数、クリア後の再挑戦可否はまだ調べていません。</p>
+  </section>
+
+  <section id="events">
+    <h2>イベント・メダルはどうなる？</h2>
+    <p><span class="status seen">現時点で見当たらず</span>2026年11月13日午前2時時点では、ビンゴや秘境探索などのイベントクエストは表示されていません。ランキングやフレンド機能もなくなっています。</p>
+    <p>そのため、<strong>イベント報酬で集めていたメダルが今後も獲得できるのか</strong>が気になるところです。過去に入手したメダルは残っていますが、買い切り版で新規セーブを始めた場合に全種類を集められるかは未確認です。</p>
+    <div class="box"><h3>午前3時の切り替えに注目</h3><p>アイテム探索には日次回数制限が残っており、運営版と同様に午前3時を境とする表示があります。ただし、<strong>日次リセットがあることと、イベントが定期ローテーションすることは別</strong>です。2026年11月13日午前3時以降にどうなるかは今後の検証項目です。</p></div>
+  </section>
+
+  <section id="materials">
+    <h2>ミラボレアスの「黒龍の厚鱗」はどこで集める？</h2>
+    <p>ミラボレアス関連素材「黒龍の厚鱗」が不足した状態で「素材を探す」を押すと、<strong>運営版では「期限切れ／開催期間外」になる一方、いつまでも版ではマスタークエストへ移動</strong>しました。</p>
+    <p>これは実際に確認できた版ごとの差です。ただし、<strong>ミラボレアスが実際に乱入するか、黒龍の厚鱗がドロップするかは未確認</strong>です。</p>
+    <p><span class="status unknown">仮説</span>運営版でイベント中に登場していた乱入モンスターを、いつまでも版ではマスタークエスト内に常設化した可能性があります。もしそうなら、イベント開催がなくても素材を集められる仕組みになります。</p>
+  </section>
+
+  <section id="questions">
+    <h2>まだ分からないこと</h2>
+    <div class="box"><h3>イベントは完全になくなった？</h3><p>初回時点で表示はありません。ビンゴ・秘境探索などが日次・週次で復活する可能性は、現状否定も肯定もできません。</p></div>
+    <div class="box"><h3>VIPチケットは新たに入手できる？</h3><p>VIPサロン自体と引き継いだチケットはありますが、運営版にあったランキングやフレンド経由の入手がなくなったため、別の取得手段があるか確認中です。</p></div>
+    <div class="box"><h3>図鑑の最後の1匹は？</h3><p>検証データではアイルー図鑑が104匹、空き枠が1つ残り「あと1匹」の表示があります。いつまでも版での入手方法は未確認です。</p></div>
+    <div class="box"><h3>マスタークエストはどこまで続く？</h3><p>引き続き遊べますが、運営版のようなランキングはありません。乱入モンスターや素材収集の場としてどう機能するか確認中です。</p></div>
+  </section>
+
+  <section id="updates">
+    <h2>更新履歴・参考情報</h2>
+    <p><strong>2026年11月13日</strong> — 初版。11月12〜13日の購入直後の比較結果を整理。イベントの有無や午前3時のリセット結果は未確認として記載。</p>
+    <p class="small-link">公式情報：<a href="https://mobile.capcom.com/mhpuzzle/ja-jp/notice_announcement.html" target="_blank" rel="noopener noreferrer">カプコン公式「サービス終了／いつまでも版」の案内</a></p>
+    <p class="note">本ページは個人による非公式のプレイ記録です。『モンスターハンターパズル アイルーアイランド』の名称・各種権利はそれぞれの権利者に帰属します。発売直後のため、誤りや未解明の点が判明した際は追記・訂正します。</p>
+  </section>
+  <footer><a href="/">Honeypaw Lab. トップへ戻る</a> · 非公式実機検証レポート</footer>
+</main>
+</body>
+</html>
