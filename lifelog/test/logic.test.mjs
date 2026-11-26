@@ -563,3 +563,73 @@ test('mergeItems: 全角・半角だけが違う名前を変更先にすると�
   assert.deepEqual(st.cats[0].items, ['LACOSTE白長Ｔ']);
   assert.deepEqual(st.logs['2026-11-01'].c.v, ['LACOSTE白長Ｔ']);
 });
+
+/* ---- 特殊な名前（__proto__ など）でも属性が消えない ---- */
+
+function protoState() {
+  return {
+    cats: [{ id: 'c', name: 'コーデ', type: 'fashion', items: ['__proto__', 'constructor', '黒T'] }],
+    logs: { '2026-11-01': { c: { v: ['__proto__'], free: '' } } }
+  };
+}
+
+test('特殊な名前: startGrouping / setMeta で、__proto__ の服の属性が保存され、継承元も汚染されない', () => {
+  const st = protoState();
+  const c = st.cats[0];
+  L.startGrouping(c);
+  assert.ok(Object.prototype.hasOwnProperty.call(c.meta, '__proto__'));
+  assert.equal(L.setMeta(c, '__proto__', { g: 'tp', t: '半袖T', s: '夏', q: 2 }).ok, true);
+  assert.deepEqual(L.getMeta(c, '__proto__'), { g: 'tp', t: '半袖T', s: '夏', q: 2, r: false });
+  assert.equal(Object.getPrototypeOf(c.meta), Object.prototype);
+  assert.deepEqual(L.getMeta(c, 'constructor'), { g: null, t: '', s: '通年', q: 1, r: false });
+  // JSON の書き出し・読み込みを往復しても保持される
+  const round = JSON.parse(JSON.stringify(st));
+  assert.deepEqual(L.getMeta(round.cats[0], '__proto__'), { g: 'tp', t: '半袖T', s: '夏', q: 2, r: false });
+});
+
+test('特殊な名前: bulkSetMeta / renameItem / mergeItems / repairMeta でも属性が保存される', () => {
+  const st = protoState();
+  const c = st.cats[0];
+  L.startGrouping(c);
+  L.bulkSetMeta(c, ['__proto__', '黒T'], { g: 'tp', s: '冬' });
+  assert.equal(L.getMeta(c, '__proto__').s, '冬');
+  // 名前変更で __proto__ にする
+  assert.equal(L.renameItem(st, 'c', '黒T', 'a').ok, true);
+  assert.equal(L.setMeta(c, 'a', { q: 3 }).ok, true);
+  c.items.push('b');
+  L.setMeta(c, 'b', { q: 2 });
+  // 統合先が __proto__ の服
+  const r = L.mergeItems(st, 'c', ['a', 'b'], '__proto__');
+  assert.equal(r.ok, true);
+  assert.equal(r.name, '__proto__');
+  assert.equal(L.getMeta(c, '__proto__').q, 1 + 3 + 2);
+  assert.equal(Object.getPrototypeOf(c.meta), Object.prototype);
+  // 名前変更の先が __proto__
+  c.items.push('z');
+  L.setMeta(c, 'z', { q: 4, s: '夏' });
+  c.items = c.items.filter(n => n !== '__proto__');
+  delete c.meta['__proto__'];
+  assert.equal(L.renameItem(st, 'c', 'z', '__proto__').ok, true);
+  assert.deepEqual(L.getMeta(c, '__proto__'), { g: null, t: '', s: '夏', q: 4, r: false });
+  // repairMeta は __proto__ の属性を壊さず、不正な値だけを直す
+  assert.equal(L.repairMeta(st), 0);
+  c.meta['__proto__'].s = '春';
+  assert.equal(L.repairMeta(st), 1);
+  assert.equal(L.getMeta(c, '__proto__').s, '通年');
+});
+
+test('特殊な名前: __proto__ という名前のグループIDにも種類を保存できる', () => {
+  const c = { id: 'c', name: 'コーデ', type: 'fashion', items: ['黒T'] };
+  L.startGrouping(c);
+  assert.equal(L.addGroup(c, '特殊', '__proto__').ok, true);
+  assert.equal(L.addType(c, '__proto__', '種類A').ok, true);
+  assert.deepEqual(L.addType(c, '__proto__', '種類A'), { ok: false, error: 'duplicate' });
+  assert.ok(Object.prototype.hasOwnProperty.call(c.types, '__proto__'));
+  assert.deepEqual(c.types['__proto__'], ['種類A']);
+  assert.equal(L.setMeta(c, '黒T', { g: '__proto__', t: '種類A' }).ok, true);
+  assert.equal(Object.getPrototypeOf(c.types), Object.prototype);
+  // 種類の一覧を持たない（取り込んだデータなど）グループIDでも、例外にならず種類なしとして扱う
+  const d = { id: 'd', name: 'x', type: 'fashion', items: ['a'], groups: [{ id: '__proto__', name: 'P' }], types: {} };
+  assert.equal(L.setMeta(d, 'a', { g: '__proto__', t: 'T' }).error, 'no-type');
+  assert.equal(L.setMeta(d, 'a', { g: '__proto__' }).ok, true);
+});

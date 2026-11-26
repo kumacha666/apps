@@ -83,6 +83,18 @@
     ot: ['ジャケット', 'ブルゾン・ジャンパー', 'コート・ダウン']
   };
 
+  // 名前・IDをキーにしてオブジェクトへ値を入れる。`__proto__` のような特殊な名前でも、
+  // 継承元を書き換えず、必ず自分自身のプロパティとして保存する（通常の代入だと値が消える）。
+  function setOwn(obj, key, value) {
+    Object.defineProperty(obj, key, { value, writable: true, enumerable: true, configurable: true });
+  }
+
+  // グループIDに対応する種類の一覧（自分自身のプロパティだけを見る。無ければ空）。
+  function typesOf(cat, groupId) {
+    const t = cat && cat.types;
+    return t && Object.prototype.hasOwnProperty.call(t, groupId) && Array.isArray(t[groupId]) ? t[groupId] : [];
+  }
+
   function ok(extra) { return Object.assign({ ok: true }, extra); }
   function fail(error, extra) { return Object.assign({ ok: false, error }, extra); }
 
@@ -132,10 +144,10 @@
     if (Array.isArray(cat.groups) && cat.groups.length) return fail('already');
     cat.groups = PRESET_GROUPS.map(g => Object.assign({}, g));
     cat.types = {};
-    Object.keys(PRESET_TYPES).forEach(k => { cat.types[k] = PRESET_TYPES[k].slice(); });
+    Object.keys(PRESET_TYPES).forEach(k => { setOwn(cat.types, k, PRESET_TYPES[k].slice()); });
     cat.meta = cat.meta || {};
     cat.items.forEach(name => {
-      if (!Object.prototype.hasOwnProperty.call(cat.meta, name)) cat.meta[name] = Object.assign({}, DEFAULT_META);
+      if (!Object.prototype.hasOwnProperty.call(cat.meta, name)) setOwn(cat.meta, name, Object.assign({}, DEFAULT_META));
     });
     return ok();
   }
@@ -154,7 +166,7 @@
     if (cat.groups.some(g => g.id === gid)) return fail('duplicate-id');
     cat.groups.push({ id: gid, name: nm });
     cat.types = cat.types || {};
-    cat.types[gid] = [];
+    setOwn(cat.types, gid, []);
     return ok({ id: gid });
   }
 
@@ -164,7 +176,8 @@
     const nm = typeof name === 'string' ? name.trim() : '';
     if (!nm) return fail('empty');
     cat.types = cat.types || {};
-    const list = cat.types[groupId] = cat.types[groupId] || [];
+    const list = typesOf(cat, groupId);
+    setOwn(cat.types, groupId, list);
     if (list.some(t => normalizeName(t) === normalizeName(nm))) return fail('duplicate');
     list.push(nm);
     return ok();
@@ -179,11 +192,11 @@
       if (p.g !== null && !(Array.isArray(cat.groups) && cat.groups.some(g => g.id === p.g))) return fail('no-group');
       next.g = p.g;
       // グループが変わって、今の種類が新しいグループに無ければ種類を外す（種類を同時に指定した場合は下で検証）
-      if (!('t' in p) && !(next.g && (cat.types && cat.types[next.g] || []).includes(next.t))) next.t = '';
+      if (!('t' in p) && !(next.g && typesOf(cat, next.g).includes(next.t))) next.t = '';
     }
     if ('t' in p) {
       const t = p.t == null ? '' : p.t;
-      if (t !== '' && !(next.g && (cat.types && cat.types[next.g] || []).includes(t))) return fail('no-type');
+      if (t !== '' && !(next.g && typesOf(cat, next.g).includes(t))) return fail('no-type');
       next.t = t;
     }
     if ('s' in p) {
@@ -207,7 +220,7 @@
     const res = resolvePatch(cat, name, patch);
     if (!res.ok) return res;
     cat.meta = cat.meta || {};
-    cat.meta[name] = res.meta;
+    setOwn(cat.meta, name, res.meta);
     return ok();
   }
 
@@ -223,7 +236,7 @@
       planned.push([name, res.meta]);
     }
     cat.meta = cat.meta || {};
-    planned.forEach(([name, meta]) => { cat.meta[name] = meta; });
+    planned.forEach(([name, meta]) => { setOwn(cat.meta, name, meta); });
     return ok({ changed: planned.length });
   }
 
@@ -294,8 +307,9 @@
 
     cat.items[idx] = nn;
     if (cat.meta && Object.prototype.hasOwnProperty.call(cat.meta, oldName)) {
-      cat.meta[nn] = cat.meta[oldName];
+      const moved = cat.meta[oldName];
       delete cat.meta[oldName];
+      setOwn(cat.meta, nn, moved);
     }
     const logsChanged = rewriteLogNames(state.logs, catId, new Set([oldName]), nn);
     return ok({ logsChanged });
@@ -335,7 +349,7 @@
     if (hasMetaStore(cat)) {
       cat.meta = cat.meta || {};
       fold.forEach(n => { delete cat.meta[n]; });
-      cat.meta[finalName] = merged;
+      setOwn(cat.meta, finalName, merged);
     }
     const logsChanged = rewriteLogNames(state.logs, catId, fold, finalName);
     return ok({ name: finalName, merged: fold.size - (fold.has(finalName) ? 1 : 0), logsChanged });
@@ -453,11 +467,11 @@
       Object.keys(cat.meta).forEach(name => {
         if (!items.includes(name)) { delete cat.meta[name]; fixed++; return; }
         const m = cat.meta[name];
-        if (!m || typeof m !== 'object') { cat.meta[name] = Object.assign({}, DEFAULT_META); fixed++; return; }
+        if (!m || typeof m !== 'object') { setOwn(cat.meta, name, Object.assign({}, DEFAULT_META)); fixed++; return; }
         let touched = false;
         if (m.g != null && !groupIds.has(m.g)) { m.g = null; touched = true; }
         if (m.g == null && m.g !== null) { m.g = null; touched = true; }
-        const typeList = m.g != null && cat.types && Array.isArray(cat.types[m.g]) ? cat.types[m.g] : [];
+        const typeList = m.g != null ? typesOf(cat, m.g) : [];
         if (typeof m.t !== 'string' || (m.t !== '' && !typeList.includes(m.t))) { m.t = ''; touched = true; }
         if (!SEASONS.includes(m.s)) { m.s = '通年'; touched = true; }
         if (!Number.isInteger(m.q) || m.q < 1 || m.q > MAX_QTY) { m.q = 1; touched = true; }
