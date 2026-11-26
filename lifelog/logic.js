@@ -86,6 +86,11 @@
   function ok(extra) { return Object.assign({ ok: true }, extra); }
   function fail(error, extra) { return Object.assign({ ok: false, error }, extra); }
 
+  // 利用者が付けた名前（`__proto__` などを含む）も通常のキーとして安全に保存する。
+  function setOwn(obj, key, value) {
+    Object.defineProperty(obj, key, { value, enumerable: true, configurable: true, writable: true });
+  }
+
   // 全角・半角、大文字・小文字、前後の空白の違いを同じ名前として扱うための正規化。
   function normalizeName(s) {
     return String(s == null ? '' : s).normalize('NFKC').trim().toLowerCase();
@@ -135,7 +140,7 @@
     Object.keys(PRESET_TYPES).forEach(k => { cat.types[k] = PRESET_TYPES[k].slice(); });
     cat.meta = cat.meta || {};
     cat.items.forEach(name => {
-      if (!Object.prototype.hasOwnProperty.call(cat.meta, name)) cat.meta[name] = Object.assign({}, DEFAULT_META);
+      if (!Object.prototype.hasOwnProperty.call(cat.meta, name)) setOwn(cat.meta, name, Object.assign({}, DEFAULT_META));
     });
     return ok();
   }
@@ -207,7 +212,7 @@
     const res = resolvePatch(cat, name, patch);
     if (!res.ok) return res;
     cat.meta = cat.meta || {};
-    cat.meta[name] = res.meta;
+    setOwn(cat.meta, name, res.meta);
     return ok();
   }
 
@@ -223,7 +228,7 @@
       planned.push([name, res.meta]);
     }
     cat.meta = cat.meta || {};
-    planned.forEach(([name, meta]) => { cat.meta[name] = meta; });
+    planned.forEach(([name, meta]) => { setOwn(cat.meta, name, meta); });
     return ok({ changed: planned.length });
   }
 
@@ -294,7 +299,7 @@
 
     cat.items[idx] = nn;
     if (cat.meta && Object.prototype.hasOwnProperty.call(cat.meta, oldName)) {
-      cat.meta[nn] = cat.meta[oldName];
+      setOwn(cat.meta, nn, cat.meta[oldName]);
       delete cat.meta[oldName];
     }
     const logsChanged = rewriteLogNames(state.logs, catId, new Set([oldName]), nn);
@@ -335,7 +340,7 @@
     if (hasMetaStore(cat)) {
       cat.meta = cat.meta || {};
       fold.forEach(n => { delete cat.meta[n]; });
-      cat.meta[finalName] = merged;
+      setOwn(cat.meta, finalName, merged);
     }
     const logsChanged = rewriteLogNames(state.logs, catId, fold, finalName);
     return ok({ name: finalName, merged: fold.size - (fold.has(finalName) ? 1 : 0), logsChanged });
@@ -453,7 +458,7 @@
       Object.keys(cat.meta).forEach(name => {
         if (!items.includes(name)) { delete cat.meta[name]; fixed++; return; }
         const m = cat.meta[name];
-        if (!m || typeof m !== 'object') { cat.meta[name] = Object.assign({}, DEFAULT_META); fixed++; return; }
+        if (!m || typeof m !== 'object') { setOwn(cat.meta, name, Object.assign({}, DEFAULT_META)); fixed++; return; }
         let touched = false;
         if (m.g != null && !groupIds.has(m.g)) { m.g = null; touched = true; }
         if (m.g == null && m.g !== null) { m.g = null; touched = true; }

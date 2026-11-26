@@ -240,6 +240,15 @@ test('setMeta: 分類を始めていないカテゴリにグループは設定�
   assert.equal(L.setMeta(c, '黒Tシャツ', { s: '夏', q: 2 }).ok, true);
 });
 
+test('setMeta: Object の特殊なプロパティ名と同じ服にも属性を保存できる', () => {
+  const st = { cats: [{ id: 'c', items: ['__proto__'] }], logs: {} };
+  const c = cat(st);
+  assert.equal(L.startGrouping(c).ok, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(c.meta, '__proto__'), true);
+  assert.equal(L.setMeta(c, '__proto__', { s: '夏', q: 2 }).ok, true);
+  assert.deepEqual(L.getMeta(c, '__proto__'), { g: null, t: '', s: '夏', q: 2, r: false });
+});
+
 test('bulkSetMeta: まとめて変更できる。1つでも失敗したら全体を適用しない', () => {
   const c = cat(makeState());
   L.startGrouping(c);
@@ -562,4 +571,16 @@ test('mergeItems: 全角・半角だけが違う名前を変更先にすると�
   assert.equal(r.name, 'LACOSTE白長Ｔ');
   assert.deepEqual(st.cats[0].items, ['LACOSTE白長Ｔ']);
   assert.deepEqual(st.logs['2026-11-01'].c.v, ['LACOSTE白長Ｔ']);
+});
+
+test('renameItem / mergeItems: __proto__ を変更先にしても属性が失われない', () => {
+  const renamed = { cats: [{ id: 'c', items: ['A'], meta: { A: { g: null, t: '', s: '夏', q: 2, r: false } } }], logs: {} };
+  assert.equal(L.renameItem(renamed, 'c', 'A', '__proto__').ok, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(renamed.cats[0].meta, '__proto__'), true);
+  assert.equal(L.getMeta(renamed.cats[0], '__proto__').q, 2);
+
+  const merged = { cats: [{ id: 'c', items: ['A', 'B'], meta: { A: { q: 2 }, B: { q: 3 } } }], logs: {} };
+  assert.equal(L.mergeItems(merged, 'c', ['A', 'B'], '__proto__').ok, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(merged.cats[0].meta, '__proto__'), true);
+  assert.equal(L.getMeta(merged.cats[0], '__proto__').q, 5);
 });
