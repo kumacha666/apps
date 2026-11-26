@@ -135,6 +135,10 @@ test('guessItem: 名前からグループ・種類・季節を推定する', () 
   assert.equal(L.guessItem("Levi's ロゴ"), null); // モデル番号の無いリーバイスは判定しない
   assert.deepEqual(L.guessItem('グレースラックス'), { g: 'bt', t: 'パンツ', s: '通年' });
   assert.deepEqual(L.guessItem('カーゴパンツ'), { g: 'bt', t: 'パンツ', s: '通年' });
+  // 「長」を含んでも、ボトムスは長袖Tにならない
+  assert.deepEqual(L.guessItem('黒の長ズボン'), { g: 'bt', t: 'パンツ', s: '通年' });
+  assert.deepEqual(L.guessItem('ロングパンツ'), { g: 'bt', t: 'パンツ', s: '通年' });
+  assert.deepEqual(L.guessItem('白ショーツ'), { g: 'bt', t: 'パンツ', s: '通年' });
   assert.deepEqual(L.guessItem('黒パーカー'), { g: 'tp', t: 'パーカー', s: '冬' });
   assert.deepEqual(L.guessItem('ウールニット'), { g: 'tp', t: 'ニット', s: '冬' });
   assert.deepEqual(L.guessItem('長袖シャツ'), { g: 'tp', t: '長袖T', s: '冬' });
