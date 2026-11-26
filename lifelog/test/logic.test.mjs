@@ -339,7 +339,7 @@ test('mergeItems: 2つを1つに統合し、記録を付け替え、同じ日の
   // 同じ日に両方ある記録を作る
   st.logs['2026-11-26'].c.v = ['黒Tシャツ', '白Tシャツ'];
   const r = L.mergeItems(st, 'c', ['黒Tシャツ', '白Tシャツ'], '黒Tシャツ');
-  assert.deepEqual(r, { ok: true, name: '黒Tシャツ', merged: 1, logsChanged: 3 });
+  assert.deepEqual(r, { ok: true, name: '黒Tシャツ', merged: 1, logsChanged: 3, qty: 3 });
   assert.deepEqual(c.items, ['黒Tシャツ', 'ジーンズ', 'ダウンコート', '謎のアイテム']);
   assert.deepEqual(c.meta['黒Tシャツ'], { g: 'tp', t: '半袖T', s: '夏', q: 3, r: false }); // 着数は合算
   assert.equal(c.meta['白Tシャツ'], undefined);
@@ -680,4 +680,126 @@ test('repairMeta: cat.meta そのものが配列・不正な型でも、空の�
   assert.deepEqual(st.cats[0].meta, {});
   assert.deepEqual(st.cats[1].meta, {});
   assert.equal(L.repairMeta(st), 0);
+});
+
+/* ====================================================================
+ * 服の管理画面の部品（追加・表示用の一覧・統合のプレビュー）
+ * ================================================================== */
+
+test('addItem: 服を追加できる。同じ名前（全角半角違いを含む）は断る', () => {
+  const c = { id: 'c', name: 'コーデ', type: 'fashion', items: ['黒Tシャツ', 'LACOSTE白長Ｔ'] };
+  assert.deepEqual(L.addItem(c, '  ダウンコート '), { ok: true, name: 'ダウンコート' });
+  assert.deepEqual(c.items, ['黒Tシャツ', 'LACOSTE白長Ｔ', 'ダウンコート']);
+  assert.equal(c.meta, undefined); // 分類を始めていなければ meta は作らない
+  assert.deepEqual(L.addItem(c, 'LACOSTE白長T'), { ok: false, error: 'exists', existing: 'LACOSTE白長Ｔ' });
+  assert.equal(L.addItem(c, '  ').error, 'empty');
+  assert.equal(L.addItem(null, 'x').error, 'no-cat');
+  assert.equal(c.items.length, 3);
+});
+
+test('addItem: 分類を始めたカテゴリでは、名前から グループ・種類・季節 を設定する', () => {
+  const c = { id: 'c', name: 'コーデ', type: 'fashion', items: ['黒Tシャツ'] };
+  L.startGrouping(c);
+  L.addItem(c, 'ダウンコート');
+  assert.deepEqual(L.getMeta(c, 'ダウンコート'), { g: 'ot', t: 'コート・ダウン', s: '冬', q: 1, r: false });
+  L.addItem(c, '謎のアイテム');
+  assert.deepEqual(L.getMeta(c, '謎のアイテム'), { g: null, t: '', s: '通年', q: 1, r: false });
+  // 推定されたグループがこのカテゴリに無ければ、グループは未設定
+  c.groups = c.groups.filter(g => g.id !== 'ot');
+  L.addItem(c, 'ダウンベスト');
+  assert.equal(L.getMeta(c, 'ダウンベスト').g, null);
+  // 推定された種類がグループに無ければ、種類は空
+  c.types.bt = c.types.bt.filter(t => t !== 'パンツ');
+  L.addItem(c, 'チノパンツ');
+  assert.equal(L.getMeta(c, 'チノパンツ').g, 'bt');
+  assert.equal(L.getMeta(c, 'チノパンツ').t, '');
+  // __proto__ という名前でも保存される
+  L.addItem(c, '__proto__');
+  assert.ok(Object.prototype.hasOwnProperty.call(c.meta, '__proto__'));
+});
+
+test('visibleItems: 手放した服は隠す。ただし、その日に選ばれている服は残す', () => {
+  const c = { id: 'c', items: ['A', 'B', 'C'], meta: { B: { r: true }, C: { r: true } } };
+  assert.deepEqual(L.visibleItems(c, []), ['A']);
+  assert.deepEqual(L.visibleItems(c, ['C']), ['A', 'C']);
+  assert.deepEqual(L.visibleItems(c, undefined), ['A']);
+  // meta の無いカテゴリは全部表示
+  assert.deepEqual(L.visibleItems({ id: 'd', items: ['X', 'Y'] }, []), ['X', 'Y']);
+  assert.deepEqual(L.visibleItems(null, []), []);
+});
+
+test('activeItems: 手放していない服だけ（順序を保つ）', () => {
+  const c = { id: 'c', items: ['A', 'B', 'C'], meta: { B: { r: true } } };
+  assert.deepEqual(L.activeItems(c), ['A', 'C']);
+  assert.deepEqual(L.activeItems({ items: ['X'] }), ['X']);
+  assert.deepEqual(L.activeItems(undefined), []);
+});
+
+function wardrobeFixture() {
+  const st = makeState();
+  const c = cat(st);
+  L.startGrouping(c);
+  L.applyMeta(c, L.suggestMeta(c)); // 黒T/白T=tp, ジーンズ=bt, ダウンコート=ot, 謎のアイテム=未設定
+  L.setMeta(c, '白Tシャツ', { r: true });
+  L.setMeta(c, 'ジーンズ', { q: 2 });
+  return st;
+}
+
+test('wardrobeRows: 既定は現役のみ。回数と最終着用日が付く', () => {
+  const st = wardrobeFixture();
+  const rows = L.wardrobeRows(cat(st), st.logs, {});
+  assert.deepEqual(rows.map(r => r.name), ['黒Tシャツ', 'ジーンズ', 'ダウンコート', '謎のアイテム']);
+  const jeans = rows.find(r => r.name === 'ジーンズ');
+  assert.deepEqual(jeans, { name: 'ジーンズ', order: 1, g: 'bt', t: 'ジーンズ', s: '通年', q: 2, r: false, count: 3, last: '2026-11-20' });
+  assert.equal(rows.find(r => r.name === '謎のアイテム').count, 0);
+  assert.equal(rows.find(r => r.name === '謎のアイテム').last, '');
+});
+
+test('wardrobeRows: 状態・グループ・検索で絞り込む（全角半角・大文字小文字を区別しない）', () => {
+  const st = wardrobeFixture();
+  const c = cat(st);
+  assert.deepEqual(L.wardrobeRows(c, st.logs, { status: 'gone' }).map(r => r.name), ['白Tシャツ']);
+  assert.equal(L.wardrobeRows(c, st.logs, { status: 'all' }).length, 5);
+  assert.deepEqual(L.wardrobeRows(c, st.logs, { status: 'all', group: 'tp' }).map(r => r.name), ['黒Tシャツ', '白Tシャツ']);
+  assert.deepEqual(L.wardrobeRows(c, st.logs, { group: 'none' }).map(r => r.name), ['謎のアイテム']);
+  assert.deepEqual(L.wardrobeRows(c, st.logs, { q: 'ＴＳＨＩＲＴ' }).map(r => r.name), []); // 「Tシャツ」は「tshirt」ではない
+  assert.deepEqual(L.wardrobeRows(c, st.logs, { q: 'ｔシャツ' }).map(r => r.name), ['黒Tシャツ']); // 全角の t で、半角の T に当たる
+  assert.deepEqual(L.wardrobeRows(c, st.logs, { q: '  ジーンズ ' }).map(r => r.name), ['ジーンズ']);
+});
+
+test('wardrobeRows: 並べ替え（名前・グループ・着数・回数・最終着用日）。同じ値は元の順序を保つ', () => {
+  const st = wardrobeFixture();
+  const c = cat(st);
+  const names = o => L.wardrobeRows(c, st.logs, Object.assign({ status: 'all' }, o)).map(r => r.name);
+  assert.deepEqual(names({ sort: 'group' }), ['黒Tシャツ', '白Tシャツ', 'ジーンズ', 'ダウンコート', '謎のアイテム']); // 未設定は最後
+  assert.deepEqual(names({ sort: 'group', dir: 'desc' }), ['謎のアイテム', 'ダウンコート', 'ジーンズ', '黒Tシャツ', '白Tシャツ']);
+  assert.deepEqual(names({ sort: 'qty', dir: 'desc' })[0], 'ジーンズ');
+  assert.deepEqual(names({ sort: 'count', dir: 'desc' })[0], 'ジーンズ');
+  assert.deepEqual(names({ sort: 'count' }).slice(-1), ['ジーンズ']);
+  assert.deepEqual(names({ sort: 'last', dir: 'desc' })[0], '黒Tシャツ'); // 11/26
+  assert.deepEqual(names({ sort: 'last' })[0], '謎のアイテム'); // 未着用は '' で最初
+  assert.deepEqual(names({ sort: 'status' }).slice(-1), ['白Tシャツ']); // 手放した服は後ろ
+  assert.deepEqual(names({ sort: 'season' })[0], '黒Tシャツ'); // 夏が先
+  assert.deepEqual(names({ sort: 'name' }), [...names({ sort: 'name' })].sort((a, b) => a.localeCompare(b, 'ja')));
+  assert.deepEqual(names({ sort: 'nope' }), names({ sort: 'order' })); // 不明なキーは元の順序
+});
+
+test('wardrobeRows: __proto__・constructor という名前の服でも回数が正しく出る', () => {
+  const st = {
+    cats: [{ id: 'c', name: 'x', type: 'fashion', items: ['__proto__', 'constructor', 'A'] }],
+    logs: { d1: { c: { v: ['A'] } } }
+  };
+  const rows = L.wardrobeRows(st.cats[0], st.logs, {});
+  assert.deepEqual(rows.map(r => [r.name, r.count, r.last]), [['__proto__', 0, ''], ['constructor', 0, ''], ['A', 1, 'd1']]);
+});
+
+test('previewMerge: 実際には変更せず、統合した場合の結果を返す', () => {
+  const st = makeState();
+  const snap = JSON.stringify(st);
+  const r = L.previewMerge(st, 'c', ['黒Tシャツ', '白Tシャツ'], '黒Tシャツ');
+  assert.equal(r.ok, true);
+  assert.equal(r.qty, 2);
+  assert.equal(r.logsChanged, 3);
+  assert.equal(JSON.stringify(st), snap);
+  assert.equal(L.previewMerge(st, 'c', ['黒Tシャツ'], ' ').error, 'empty');
 });

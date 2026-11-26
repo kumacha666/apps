@@ -425,6 +425,85 @@
     }
     .add-cat-btn:active { background: var(--primary-light); }
 
+    /* Wardrobe (服の管理) */
+    .wd-top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .wd-back {
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+      padding: 8px 12px; font-size: 14px; font-weight: 700; color: var(--text);
+      cursor: pointer; font-family: inherit; white-space: nowrap;
+    }
+    .wd-title { flex: 1; font-size: 18px; font-weight: 800; min-width: 0; white-space: nowrap; }
+    .wd-undo-note { font-size: 12px; color: var(--text-3); margin: -6px 0 10px; }
+    .wd-undo { background: var(--card); color: var(--text); border: 1px solid var(--border); white-space: nowrap; }
+    .wd-undo:disabled { opacity: .4; cursor: not-allowed; }
+    .wd-cats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .wd-n { font-size: 12px; opacity: .7; margin-left: 4px; }
+    .wd-banner { background: var(--primary-light); border: 1px solid var(--primary); }
+    .wd-banner p { font-size: 13px; line-height: 1.7; color: var(--text-2); margin: 6px 0 12px; }
+    .wd-add { display: flex; gap: 8px; margin-bottom: 10px; }
+    .wd-add .field-input { flex: 1; min-width: 0; }
+    .wd-tool { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+    .wd-tool .field-input { flex: 1 1 160px; min-width: 0; }
+    .wd-sel {
+      background: var(--bg); color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 7px 8px; font-size: 13px; font-family: inherit; min-width: 0; max-width: 100%;
+    }
+    .wd-sel:disabled { opacity: .45; }
+    .wd-seg { display: inline-flex; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 2px; gap: 2px; }
+    .wd-seg button {
+      border: none; background: transparent; border-radius: 8px; padding: 6px 10px; font-size: 13px;
+      font-weight: 700; color: var(--text-2); cursor: pointer; font-family: inherit;
+    }
+    .wd-seg button[aria-pressed="true"] { background: var(--primary); color: #fff; }
+    .wd-bulk {
+      position: sticky; top: 58px; z-index: 50; background: var(--primary-light);
+      border: 1px solid var(--primary); border-radius: 14px; padding: 10px 12px; margin-bottom: 10px;
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    }
+    .wd-bulk b { font-size: 13px; }
+    .wd-head { display: none; }
+    .wd-row {
+      background: var(--card); border-radius: 14px; padding: 10px 12px; margin-bottom: 8px;
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center; box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    }
+    .wd-row.gone .wd-name { color: var(--text-3); }
+    .wd-row.selected { outline: 2px solid var(--primary); }
+    .wd-row input[type=checkbox], .wd-head input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--primary); }
+    .wd-name {
+      flex: 1 1 150px; min-width: 0; background: var(--bg); color: var(--text); border: 1.5px solid transparent;
+      border-radius: 8px; padding: 7px 8px; font-size: 15px; font-weight: 600; font-family: inherit;
+    }
+    .wd-name:focus { outline: none; border-color: var(--primary); background: var(--card); }
+    .wd-use { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+    .wd-gap:empty { display: none; }
+    .wd-pill { border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 100px; padding: 5px 12px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; }
+    .wd-pill.gone { background: var(--border); color: var(--text-2); }
+    .wd-stepper { display: inline-flex; align-items: center; background: var(--bg); border: 1px solid var(--border); border-radius: 100px; padding: 1px; }
+    .wd-stepper button { width: 28px; height: 28px; border-radius: 50%; border: none; background: transparent; font-size: 16px; font-weight: 700; color: var(--text); cursor: pointer; }
+    .wd-stepper span { min-width: 2.6em; text-align: center; font-size: 13px; font-weight: 700; }
+    .wd-del { border: none; background: transparent; color: var(--text-3); font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: 8px; }
+    .wd-del:disabled { opacity: .3; cursor: not-allowed; }
+    .wd-sortsel { display: inline-block; }
+    .wd-opt { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+    .wd-line { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .wd-line span:last-child { color: var(--text-2); text-align: right; }
+    .wd-line.bad span:last-child { color: var(--danger); }
+    @media (min-width: 900px) {
+      body.wide-view { max-width: 1180px; }
+      body.wide-view .bottom-nav { display: none; }
+      body.wide-view .view { padding-bottom: 40px; }
+      .wd-sortsel { display: none; }
+      .wd-head, .wd-row {
+        display: grid; gap: 10px; align-items: center;
+        grid-template-columns: 24px minmax(190px, 2fr) 140px 150px 90px 120px 100px 150px 36px;
+      }
+      .wd-head { padding: 6px 10px; font-size: 12px; font-weight: 700; color: var(--text-2); }
+      .wd-head button { border: none; background: none; font: inherit; font-weight: 700; color: inherit; cursor: pointer; text-align: left; padding: 0; }
+      .wd-head button.on { color: var(--primary); }
+      .wd-row { border-radius: 10px; padding: 5px 10px; margin-bottom: 4px; }
+      .wd-gap:empty { display: block; }
+    }
+
     /* History */
     .history-day {
       background: var(--card);
@@ -649,6 +728,7 @@
   <div class="view" id="view-insights"></div>
   <div class="view" id="view-shopping"></div>
   <div class="view" id="view-settings"></div>
+  <div class="view" id="view-wardrobe"></div>
 </main>
 
 <nav class="bottom-nav">
@@ -694,6 +774,11 @@
   <div class="modal" id="cat-modal-body"></div>
 </div>
 
+<!-- Wardrobe Dialog (統合・一括設定の確認) -->
+<div class="modal-overlay" id="wd-modal" onclick="overlayClose(this,'wd-modal')">
+  <div class="modal" id="wd-modal-body"></div>
+</div>
+
 <div class="toast" id="toast"></div>
 <div id="tut-container"></div>
 
@@ -725,6 +810,8 @@ function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 
 // 過去の記録に入っていた重複（同じ服が2回）を取り除く。直した場合のみ保存し直す
 if (LifeLogLogic.repairLogs(state.logs) > 0) save();
+// 服の管理の属性に不正な値があれば直す（取り込んだファイルの破損への備え）
+if (LifeLogLogic.repairMeta(state) > 0) save();
 
 // ─── Date utils ───────────────────────────────────────────────
 function today() {
@@ -756,8 +843,12 @@ let calMonth = today().slice(0, 7);
 function nav(v) {
   curView = v;
   document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === 'view-'+v));
-  document.querySelectorAll('.nav-tab').forEach(el => el.classList.toggle('active', el.dataset.v === v));
+  // 服の管理は設定の中の画面。下のタブは設定を選択中のままにし、PCでは画面を広げる
+  const tab = v === 'wardrobe' ? 'settings' : v;
+  document.querySelectorAll('.nav-tab').forEach(el => el.classList.toggle('active', el.dataset.v === tab));
+  document.body.classList.toggle('wide-view', v === 'wardrobe');
   render[v]();
+  window.scrollTo(0, 0);
 }
 
 // ─── Render dispatcher ────────────────────────────────────────
@@ -766,7 +857,8 @@ const render = {
   history:  renderHistory,
   insights: renderInsights,
   shopping: renderShopping,
-  settings: renderSettings
+  settings: renderSettings,
+  wardrobe: renderWardrobe
 };
 
 // ─── TODAY ────────────────────────────────────────────────────
@@ -842,7 +934,9 @@ function openLog(catId) {
   const selVals = Array.isArray(e.v) ? [...e.v] : (e.v ? [e.v] : []);
   const typeInfo = CAT_TYPES[cat.type] || CAT_TYPES.custom;
 
-  const chipsHtml = (cat.items||[]).map(item => `
+  // 手放した服は隠す（その日にすでに選ばれている服は残す）
+  const shownItems = LifeLogLogic.visibleItems(cat, selVals);
+  const chipsHtml = shownItems.map(item => `
     <button class="chip ${selVals.includes(item)?'selected':''}"
             data-item="${esc(item)}" onclick="toggleChip(this)">${esc(item)}</button>`).join('');
 
@@ -890,14 +984,14 @@ function openLog(catId) {
     <div class="modal-title">${esc(cat.name)}</div>
     <div class="modal-subtitle">${fmtDate(curDate)} · ${typeInfo.label}</div>
 
-    ${(cat.items||[]).length ? `
+    ${shownItems.length ? `
       <div class="field-group">
         <div class="field-label">${typeInfo.multi?'アイテムを選択（複数可）':'アイテムを選択'}</div>
         <div class="chips" id="chip-box">${chipsHtml}</div>
       </div>` : ''}
 
     <div class="field-group">
-      <div class="field-label">${(cat.items||[]).length ? 'その他・自由記入' : '記録内容'}</div>
+      <div class="field-label">${shownItems.length ? 'その他・自由記入' : '記録内容'}</div>
       <input class="field-input" id="f-text" type="text" placeholder="自由に入力..." value="${esc(LifeLogLogic.freePrefill(e, cat.items))}">
     </div>
     ${extraFields.join('')}
@@ -918,7 +1012,7 @@ function toggleChip(btn) { btn.classList.toggle('selected'); }
 function saveLog(catId) {
   const chips = document.querySelectorAll('#chip-box .chip.selected');
   const selVals = Array.from(chips).map(c => c.dataset.item);
-  const free = document.getElementById('f-text')?.value?.trim() || '';
+  let free = document.getElementById('f-text')?.value?.trim() || '';
   const kcal = document.getElementById('f-kcal')?.value || '';
   const yen  = document.getElementById('f-yen')?.value || '';
   const min  = document.getElementById('f-min')?.value || '';
@@ -930,7 +1024,10 @@ function saveLog(catId) {
 
   const cat = state.cats.find(c => c.id === catId);
   if (free && cat && !cat.items.includes(free)) {
-    if (confirm(`「${free}」をアイテムリストに追加しますか？`)) cat.items.push(free);
+    // 全角・半角などの違いだけの名前は、すでにある服として扱う（似た名前の服が増えるのを防ぐ）
+    const dup = cat.items.find(n => LifeLogLogic.normalizeName(n) === LifeLogLogic.normalizeName(free));
+    if (dup !== undefined) free = dup;
+    else if (confirm(`「${free}」をアイテムリストに追加しますか？`)) LifeLogLogic.addItem(cat, free);
   }
 
   const vals = LifeLogLogic.mergeSelection(selVals, free);
@@ -1146,17 +1243,19 @@ function getInsights(cat, days30) {
       });
     });
 
-    const used = new Set(Object.keys(usage));
-    const total = cat.items.length;
-    const variety = Math.round(used.size / total * 100);
+    // 手放した服は、バリエーション率とおすすめの対象から外す（使用回数のグラフには、使った分だけ残す）
+    const activeNames = LifeLogLogic.activeItems(cat);
+    const usedActive = activeNames.filter(n => usage[n]);
+    const total = activeNames.length;
+    const variety = total ? Math.round(usedActive.length / total * 100) : 0;
     rows.push({
       type: variety >= 70 ? 'good' : variety >= 40 ? 'stat' : 'warn',
       label: '🎨 バリエーション',
-      text: `${used.size}/${total}アイテムを使用 (${variety}%)`
+      text: `${usedActive.length}/${total}アイテムを使用 (${variety}%)`
     });
 
     // Suggestions for unused / long-unused items
-    cat.items.forEach(item => {
+    activeNames.forEach(item => {
       const last = lastUsed[item];
       if (!last) {
         rows.push({ type:'tip', label:'💡 未使用', text:`「${esc(item)}」はまだ記録がありません` });
@@ -1170,13 +1269,15 @@ function getInsights(cat, days30) {
     if (top) rows.push({ type:'stat', label:'👑 最多', text:`「${esc(top[0])}」が最もよく使われています (${top[1]}回)` });
 
     const maxCnt = Math.max(...cat.items.map(i => usage[i]||0), 1);
+    const retiredNames = new Set(cat.items.filter(n => !activeNames.includes(n)));
     const barRows = [...cat.items]
+      .filter(item => !retiredNames.has(item) || (usage[item]||0) > 0)
       .sort((a, b) => (usage[b]||0) - (usage[a]||0))
       .map(item => {
         const cnt = usage[item]||0;
         const pct = Math.round(cnt / maxCnt * 100);
         return `<div class="bar-row">
-          <div class="bar-label" title="${esc(item)}">${esc(item)}</div>
+          <div class="bar-label" title="${esc(item)}">${esc(item)}${retiredNames.has(item) ? ' <span style="font-size:10px;color:var(--text-3)">手放した</span>' : ''}</div>
           <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
           <div class="bar-count">${cnt}</div>
         </div>`;
@@ -1293,6 +1394,16 @@ function renderSettings() {
     ${catRows}
     <button class="add-cat-btn" onclick="openCatEdit(null)">＋ カテゴリを追加</button>
 
+    <div class="section-title">整理</div>
+    <div class="setting-row" onclick="wdOpen(null)">
+      <div class="setting-icon">👗</div>
+      <div class="setting-info">
+        <div class="setting-name">服の管理</div>
+        <div class="setting-sub">グループ・季節・名前変更・統合・手放した服</div>
+      </div>
+      <div class="setting-chevron">›</div>
+    </div>
+
     <div class="section-title">データ</div>
     <div class="setting-row" onclick="exportData()">
       <div class="setting-icon">📤</div>
@@ -1406,6 +1517,7 @@ function openCatEdit(catId) {
   const icon  = cat?.icon  || '👗';
   const color = cat?.color || '#6366f1';
   const items = [...(cat?.items || [])];
+  const grouped = !!(cat && Array.isArray(cat.groups) && cat.groups.length);
 
   const typeHtml = Object.entries(CAT_TYPES).map(([k,t]) => `
     <button class="type-btn ${type===k?'selected':''}" data-type="${k}" onclick="selType(this)">
@@ -1445,6 +1557,11 @@ function openCatEdit(catId) {
     <div class="color-row" id="ce-colors">${colorHtml}</div>
 
     <hr class="divider">
+    ${grouped ? `
+    <div class="field-label" style="margin-bottom:8px">アイテム登録</div>
+    <div style="font-size:13px;line-height:1.7;color:var(--text-2);margin-bottom:10px">このカテゴリは「服の管理」で分類しています。服の追加・名前変更・削除は、そこから行ってください（名前を変えると、過去の記録の名前も一緒に直ります）。</div>
+    <button class="btn-sm" style="background:var(--primary-light);color:var(--primary);margin-bottom:16px" onclick="closeModal('cat-modal');wdOpen('${catId}')">服の管理を開く</button>
+    ` : `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <div class="field-label" style="margin:0">アイテム登録</div>
       ${!itemTipVisible ? '<button onclick="showItemTip()" style="background:none;border:1px solid var(--border);border-radius:50%;width:24px;height:24px;font-size:13px;color:var(--text-2);cursor:pointer;display:flex;align-items:center;justify-content:center">?</button>' : ''}
@@ -1452,6 +1569,7 @@ function openCatEdit(catId) {
     <div id="ce-item-tip">${itemTipHtml()}</div>
     <div id="ce-items">${itemsHtml}</div>
     <button class="btn-sm" style="background:var(--primary-light);color:var(--primary);margin-bottom:16px" onclick="addItemRow()">＋ アイテムを追加</button>
+    `}
 
     <button class="btn btn-primary" onclick="saveCat()">保存する</button>
     ${!isNew ? `<button class="btn btn-danger" onclick="deleteCat('${catId}')">このカテゴリを削除</button>` : ''}
@@ -1509,7 +1627,11 @@ function saveCat() {
   document.querySelectorAll('#ce-items input').forEach((inp, i) => {
     if (inp.dataset.idx !== undefined) window._editItems[Number(inp.dataset.idx)] = inp.value.trim();
   });
-  const items = (window._editItems||[]).filter(v => v && v.trim());
+  // 分類を使うカテゴリの服は「服の管理」で編集する（ここで上書きすると、過去の記録の名前と食い違う）
+  const editing = editCatId ? state.cats.find(c => c.id === editCatId) : null;
+  const items = editing && Array.isArray(editing.groups) && editing.groups.length
+    ? editing.items
+    : (window._editItems||[]).filter(v => v && v.trim());
 
   if (editCatId) {
     const cat = state.cats.find(c => c.id === editCatId);
@@ -1561,8 +1683,10 @@ function importData() {
         if (!Array.isArray(imported.cats) || typeof imported.logs !== 'object' || imported.logs === null) throw new Error();
         if (!confirm('現在のデータをインポートデータで上書きしますか？')) return;
         LifeLogLogic.repairLogs(imported.logs);
+        LifeLogLogic.repairMeta(imported);
         state = imported;
         save();
+        undoStack = []; saveUndo(); // 取り込み前の状態へは戻せない（別のデータになるため）
         render[curView]();
         toast('インポートしました ✓');
       } catch { toast('ファイルが正しくありません'); }
@@ -1575,8 +1699,359 @@ function clearAll() {
   if (!confirm('全データを消去しますか？\nこの操作は元に戻せません。')) return;
   localStorage.removeItem(STORAGE_KEY);
   state = { cats: [], logs: {} };
+  undoStack = []; saveUndo();
   render[curView]();
   toast('データを消去しました');
+}
+
+// ─── WARDROBE（服の管理）────────────────────────────────────────
+// ロジックは logic.js（LifeLogLogic）。ここは描画と操作のつなぎだけ。
+const UNDO_KEY = 'lifelog_v2_undo';
+let undoStack = (() => {
+  try { const a = JSON.parse(localStorage.getItem(UNDO_KEY)); return Array.isArray(a) ? a : []; }
+  catch { return []; }
+})();
+function saveUndo() {
+  try { localStorage.setItem(UNDO_KEY, JSON.stringify(undoStack)); return; } catch {}
+  // 容量が足りないときは、古い順に捨てて保存し直す
+  while (undoStack.length > 1) {
+    undoStack = undoStack.slice(1);
+    try { localStorage.setItem(UNDO_KEY, JSON.stringify(undoStack)); return; } catch {}
+  }
+  try { localStorage.removeItem(UNDO_KEY); } catch {}
+}
+
+const wd = { catId: null, q: '', group: 'all', status: 'active', sort: 'order', dir: 'asc', sel: new Set(), rows: [], bulk: { g: '', t: '', s: '' } };
+const WD_ERR = {
+  exists: '同じ名前の服がすでにあります',
+  empty: '名前を入力してください',
+  used: '記録のある服は削除できません。「手放した」にしてください',
+  'qty-overflow': '着数の合計が99を超えるため、統合できません',
+  'no-type': '選んだグループに、その種類はありません',
+  'no-group': 'そのグループはありません',
+  'bad-qty': '着数は1〜99にしてください',
+  'no-item': '対象の服が見つかりません',
+  already: 'すでに分類を始めています'
+};
+const wdMsg = res => WD_ERR[res && res.error] || 'できませんでした';
+
+function wdCats() { return state.cats.filter(c => Array.isArray(c.items) && c.items.length); }
+function wdCat() {
+  const cs = wdCats();
+  let c = cs.find(x => x.id === wd.catId);
+  if (!c) {
+    c = cs.slice().sort((a, b) => b.items.length - a.items.length)[0] || null;
+    wd.catId = c ? c.id : null;
+  }
+  return c;
+}
+function wdStarted(cat) { return !!(cat && Array.isArray(cat.groups) && cat.groups.length); }
+function wdOpen(catId) {
+  if (catId) wd.catId = catId;
+  wd.sel.clear();
+  nav('wardrobe');
+}
+
+// 変更を加える共通の入口：操作の直前の状態を保存し、成功したときだけ確定する
+function wdMutate(label, fn) {
+  // 直前の状態を10件まで保存する（容量が足りないときは、saveUndo が古い順に捨てる）
+  const next = LifeLogLogic.pushSnapshot(undoStack, state, label, Date.now(), 10);
+  const res = fn();
+  if (!res || res.ok === false) return res || { ok: false, error: 'unknown' };
+  undoStack = next;
+  saveUndo();
+  save();
+  return res;
+}
+function wdAfter() { renderWardrobe(); }
+
+const optHtml = (value, label, selected) => `<option value="${esc(value)}"${selected ? ' selected' : ''}>${esc(label)}</option>`;
+const sortHead = (key, label) => `<button class="${wd.sort === key ? 'on' : ''}" onclick="wdSort('${key}')">${label}${wd.sort === key ? (wd.dir === 'asc' ? ' ▲' : ' ▼') : ''}</button>`;
+
+function renderWardrobe() {
+  const el = document.getElementById('view-wardrobe');
+  const cat = wdCat();
+  const last = undoStack[undoStack.length - 1];
+  const top = `
+    <div class="wd-top">
+      <button class="wd-back" onclick="nav('settings')">‹ 設定</button>
+      <div class="wd-title">服の管理</div>
+      <button class="btn-sm wd-undo" onclick="wdUndo()" ${last ? '' : 'disabled'}>↩ 元に戻す</button>
+    </div>
+    ${last ? `<div class="hint wd-undo-note">直前の操作：${esc(last.label)}（${undoStack.length}件まで戻せます）</div>` : ''}`;
+  if (!cat) {
+    el.innerHTML = top + `<div class="empty"><div class="empty-emoji">👗</div><p>アイテムのあるカテゴリがありません。<br>設定でカテゴリにアイテムを登録してください。</p></div>`;
+    return;
+  }
+  const started = wdStarted(cat);
+  const catsHtml = wdCats().map(c => `<button class="chip ${c.id === cat.id ? 'selected' : ''}" onclick="wdSelCat('${c.id}')">${esc(c.icon || '')} ${esc(c.name)}<span class="wd-n">${c.items.length}</span></button>`).join('');
+  const groupOpts = optHtml('all', 'すべてのグループ', wd.group === 'all')
+    + (started ? optHtml('none', '未設定', wd.group === 'none') + cat.groups.map(g => optHtml(g.id, g.name, wd.group === g.id)).join('') : '');
+  const unresolved = started ? LifeLogLogic.suggestMeta(cat).length : 0;
+  const sortOpts = [['order', '登録順'], ['name', '名前'], ['group', 'グループ'], ['season', '季節'], ['qty', '着数'], ['count', '着用回数'], ['last', '最終着用日']]
+    .map(([k, l]) => optHtml(k + ':asc', l + (k === 'order' ? '' : '（昇順）'), wd.sort === k && wd.dir === 'asc') + (k === 'order' ? '' : optHtml(k + ':desc', l + '（降順）', wd.sort === k && wd.dir === 'desc'))).join('');
+
+  el.innerHTML = top + `
+    <div class="wd-cats">${catsHtml}</div>
+    ${started ? '' : `
+    <div class="card wd-banner">
+      <div style="font-weight:800;font-size:15px">このカテゴリの分類を始める</div>
+      <p>服を「トップス／ボトムス／アウター」のグループと、その中の種類（半袖T・パーカー・ジャケットなど）に分けて管理できます。名前から自動で振り分けるので、確認して、外れたものだけ直してください。過去の記録は変わりません。</p>
+      <button class="btn btn-primary" onclick="wdStart()">分類を始めて、名前から振り分ける</button>
+    </div>`}
+    <div class="wd-add">
+      <input class="field-input" id="wd-add-name" placeholder="新しい服の名前${started ? '（グループ・季節は名前から自動）' : ''}" autocomplete="off" onkeydown="if(event.key==='Enter')wdAdd()">
+      <button class="btn-sm" style="background:var(--primary);color:#fff" onclick="wdAdd()">＋ 追加</button>
+    </div>
+    <div class="wd-tool">
+      <input class="field-input" id="wd-q" type="search" placeholder="名前で検索" value="${esc(wd.q)}" oninput="wdSearch(this.value)">
+      <select class="wd-sel" aria-label="グループで絞り込む" onchange="wdFilter('group',this.value)">${groupOpts}</select>
+      <div class="wd-seg">
+        <button aria-pressed="${wd.status === 'active'}" onclick="wdFilter('status','active')">現役</button>
+        <button aria-pressed="${wd.status === 'gone'}" onclick="wdFilter('status','gone')">手放した</button>
+        <button aria-pressed="${wd.status === 'all'}" onclick="wdFilter('status','all')">すべて</button>
+      </div>
+      <select class="wd-sel wd-sortsel" aria-label="並べ替え" onchange="wdSortSel(this.value)">${sortOpts}</select>
+      ${started && unresolved ? `<button class="btn-sm" style="background:var(--primary-light);color:var(--primary)" onclick="wdSuggestOpen()">名前から一括設定（未設定${unresolved}件）</button>` : ''}
+    </div>
+    <div id="wd-list"></div>`;
+  renderWardrobeList();
+}
+
+function renderWardrobeList() {
+  const cat = wdCat();
+  const box = document.getElementById('wd-list');
+  if (!cat || !box) return;
+  const started = wdStarted(cat);
+  const rows = LifeLogLogic.wardrobeRows(cat, state.logs, { q: wd.q, group: wd.group, status: wd.status, sort: wd.sort, dir: wd.dir });
+  wd.rows = rows;
+  const shown = new Set(rows.map(r => r.name));
+  [...wd.sel].forEach(n => { if (!shown.has(n)) wd.sel.delete(n); });
+
+  // 一括操作バー
+  let bulk = '';
+  if (wd.sel.size) {
+    const names = [...wd.sel];
+    const gs = new Set(names.map(n => LifeLogLogic.getMeta(cat, n).g));
+    const typeGroup = wd.bulk.g && wd.bulk.g !== '__none' ? wd.bulk.g : (gs.size === 1 ? [...gs][0] : null);
+    const typeList = typeGroup ? (cat.types && Object.prototype.hasOwnProperty.call(cat.types, typeGroup) ? cat.types[typeGroup] : []) : [];
+    bulk = `<div class="wd-bulk">
+      <b>${wd.sel.size}件を選択中</b>
+      ${started ? `
+      <select class="wd-sel" aria-label="グループ" onchange="wd.bulk.g=this.value;wd.bulk.t='';renderWardrobeList()">${optHtml('', 'グループ（変更しない）', !wd.bulk.g)}${optHtml('__none', '未設定にする', wd.bulk.g === '__none')}${cat.groups.map(g => optHtml(g.id, g.name, wd.bulk.g === g.id)).join('')}</select>
+      <select class="wd-sel" aria-label="種類" onchange="wd.bulk.t=this.value" ${typeGroup ? '' : 'disabled'}>${optHtml('', '種類（変更しない）', !wd.bulk.t)}${typeList.map(t => optHtml(t, t, wd.bulk.t === t)).join('')}</select>` : ''}
+      <select class="wd-sel" aria-label="季節" onchange="wd.bulk.s=this.value">${optHtml('', '季節（変更しない）', !wd.bulk.s)}${LifeLogLogic.SEASONS.map(x => optHtml(x, x, wd.bulk.s === x)).join('')}</select>
+      <button class="btn-sm" style="background:var(--primary);color:#fff" onclick="wdBulk('apply')">適用</button>
+      <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" onclick="wdBulk('retire')">手放した</button>
+      <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" onclick="wdBulk('active')">現役に戻す</button>
+      <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" onclick="wdMergeOpen()" ${wd.sel.size >= 2 ? '' : 'disabled'}>統合…</button>
+      <button class="btn-sm" style="background:transparent;color:var(--text-2)" onclick="wdSelAll(false)">選択を解除</button>
+    </div>`;
+  }
+
+  const head = `<div class="wd-head">
+    <span><input type="checkbox" aria-label="すべて選択" ${rows.length && rows.every(r => wd.sel.has(r.name)) ? 'checked' : ''} onchange="wdSelAll(this.checked)"></span>
+    ${sortHead('name', '名前')}${started ? sortHead('group', 'グループ') + sortHead('type', '種類') : '<span></span><span></span>'}${sortHead('season', '季節')}${sortHead('qty', '着数')}${sortHead('status', '状態')}${sortHead('count', '着用（回数・最終）')}<span></span>
+  </div>`;
+
+  const body = rows.map((r, i) => {
+    const typeList = started && r.g && cat.types && Object.prototype.hasOwnProperty.call(cat.types, r.g) ? cat.types[r.g] : [];
+    const used = LifeLogLogic.isItemUsed(state.logs, cat.id, r.name);
+    return `<div class="wd-row ${r.r ? 'gone' : ''} ${wd.sel.has(r.name) ? 'selected' : ''}">
+      <span><input type="checkbox" aria-label="${esc(r.name)}を選択" ${wd.sel.has(r.name) ? 'checked' : ''} onchange="wdSel(${i},this.checked)"></span>
+      <input class="wd-name" value="${esc(r.name)}" aria-label="名前" onchange="wdName(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()">
+      ${started ? `<select class="wd-sel" aria-label="グループ" onchange="wdSet(${i},'g',this.value)">${optHtml('', '未設定', r.g == null)}${cat.groups.map(g => optHtml(g.id, g.name, r.g === g.id)).join('')}</select>
+      <select class="wd-sel" aria-label="種類" onchange="wdSet(${i},'t',this.value)" ${r.g ? '' : 'disabled'}>${optHtml('', '種類なし', !r.t)}${typeList.map(t => optHtml(t, t, r.t === t)).join('')}</select>` : '<span class="wd-gap"></span><span class="wd-gap"></span>'}
+      <select class="wd-sel" aria-label="季節" onchange="wdSet(${i},'s',this.value)">${LifeLogLogic.SEASONS.map(x => optHtml(x, x, r.s === x)).join('')}</select>
+      <span class="wd-stepper" title="同じような服を何着持っているか"><button aria-label="着数を減らす" onclick="wdQty(${i},-1)">−</button><span>${r.q}着</span><button aria-label="着数を増やす" onclick="wdQty(${i},1)">＋</button></span>
+      <button class="wd-pill ${r.r ? 'gone' : ''}" onclick="wdToggleR(${i})">${r.r ? '手放した' : '現役'}</button>
+      <span class="wd-use">${r.count}回${r.last ? ' · ' + esc(r.last.slice(5).replace('-', '/')) : ''}</span>
+      <button class="wd-del" aria-label="${esc(r.name)}を削除" title="${used ? '記録のある服は削除できません（「手放した」にしてください）' : '削除'}" onclick="wdDel(${i})" ${used ? 'disabled' : ''}>✕</button>
+    </div>`;
+  }).join('');
+
+  box.innerHTML = bulk + (rows.length ? head + body : `<div class="empty" style="padding:24px 0"><p>${wd.q || wd.group !== 'all' || wd.status !== 'all' ? '条件に合う服がありません' : '服がありません'}</p></div>`);
+}
+
+// ── 絞り込み・並べ替え・選択 ──
+function wdSelCat(id) { wd.catId = id; wd.sel.clear(); wd.group = 'all'; wd.bulk = { g: '', t: '', s: '' }; renderWardrobe(); }
+function wdSearch(v) { wd.q = v; renderWardrobeList(); }
+function wdFilter(k, v) { wd[k] = v; renderWardrobe(); }
+function wdSort(key) { if (wd.sort === key) wd.dir = wd.dir === 'asc' ? 'desc' : 'asc'; else { wd.sort = key; wd.dir = 'asc'; } renderWardrobe(); }
+function wdSortSel(v) { const [k, d] = v.split(':'); wd.sort = k; wd.dir = d || 'asc'; renderWardrobe(); }
+function wdSel(i, on) { const r = wd.rows[i]; if (!r) return; on ? wd.sel.add(r.name) : wd.sel.delete(r.name); renderWardrobeList(); }
+function wdSelAll(on) { wd.sel.clear(); if (on) wd.rows.forEach(r => wd.sel.add(r.name)); renderWardrobeList(); }
+
+// ── 1件ずつの変更 ──
+function wdSet(i, key, v) {
+  const cat = wdCat(), r = wd.rows[i]; if (!cat || !r) return;
+  const patch = { [key]: key === 'g' ? (v || null) : v };
+  const res = wdMutate('服の設定を変更', () => LifeLogLogic.setMeta(cat, r.name, patch));
+  if (res.ok === false) toast(wdMsg(res));
+  wdAfter();
+}
+function wdQty(i, d) {
+  const cat = wdCat(), r = wd.rows[i]; if (!cat || !r) return;
+  const res = wdMutate('着数を変更', () => LifeLogLogic.setMeta(cat, r.name, { q: r.q + d }));
+  if (res.ok === false) toast(wdMsg(res));
+  wdAfter();
+}
+function wdToggleR(i) {
+  const cat = wdCat(), r = wd.rows[i]; if (!cat || !r) return;
+  const res = wdMutate(r.r ? '現役に戻す' : '手放した', () => LifeLogLogic.setMeta(cat, r.name, { r: !r.r }));
+  if (res.ok === false) toast(wdMsg(res)); else toast(r.r ? `「${r.name}」を現役に戻しました` : `「${r.name}」を手放した扱いにしました（記録と統計には残ります）`);
+  wdAfter();
+}
+function wdName(i, val) {
+  const cat = wdCat(), r = wd.rows[i]; if (!cat || !r) return;
+  const nn = val.trim();
+  if (nn === r.name) { wdAfter(); return; }
+  let res = wdMutate('名前変更', () => LifeLogLogic.renameItem(state, cat.id, r.name, nn));
+  if (res.ok) {
+    if (wd.sel.delete(r.name)) wd.sel.add(nn);
+    toast(res.logsChanged ? `名前を変えました（過去の記録${res.logsChanged}件も更新）` : '名前を変えました');
+  } else if (res.error === 'exists') {
+    const target = res.existing;
+    const pv = LifeLogLogic.previewMerge(state, cat.id, [r.name], target);
+    if (!pv.ok) toast(wdMsg(pv));
+    else if (confirm(`「${target}」はすでにあります。\n「${r.name}」を「${target}」に統合しますか？\n（着数は合わせて${pv.qty}着になり、過去の記録${pv.logsChanged}件も付け替わります）`)) {
+      const src = r.name;
+      res = wdMutate('統合', () => LifeLogLogic.mergeItems(state, cat.id, [src], target));
+      if (res.ok) { wd.sel.delete(src); toast(`「${src}」を「${target}」に統合しました`); } else toast(wdMsg(res));
+    }
+  } else toast(wdMsg(res));
+  wdAfter();
+}
+function wdDel(i) {
+  const cat = wdCat(), r = wd.rows[i]; if (!cat || !r) return;
+  if (!confirm(`「${r.name}」を削除しますか？\n（一度も記録に使っていない服です。元に戻すで復元できます）`)) return;
+  const res = wdMutate('削除', () => LifeLogLogic.deleteItem(state, cat.id, r.name));
+  if (res.ok) { wd.sel.delete(r.name); toast(`「${r.name}」を削除しました`); } else toast(wdMsg(res));
+  wdAfter();
+}
+function wdAdd() {
+  const cat = wdCat(), inp = document.getElementById('wd-add-name'); if (!cat || !inp) return;
+  const res = wdMutate('服を追加', () => LifeLogLogic.addItem(cat, inp.value));
+  if (res.ok) {
+    toast(`「${res.name}」を追加しました`);
+    // 追加した服が、今の絞り込みで見えなくなっていれば解除する
+    wd.q = ''; wd.group = 'all'; if (wd.status === 'gone') wd.status = 'active';
+    wdAfter();
+    document.getElementById('wd-add-name')?.focus();
+  } else toast(wdMsg(res));
+}
+
+// ── 分類を始める・名前からの一括設定 ──
+function wdStart() {
+  const cat = wdCat(); if (!cat) return;
+  const res = wdMutate('分類を始める', () => LifeLogLogic.startGrouping(cat));
+  if (res.ok === false) { toast(wdMsg(res)); return; }
+  wdAfter();
+  wdSuggestOpen();
+}
+function wdSuggestOpen() {
+  const cat = wdCat(); if (!cat) return;
+  const props = LifeLogLogic.suggestMeta(cat);
+  const gname = id => (cat.groups.find(g => g.id === id) || { name: '?' }).name;
+  const good = props.filter(p => !p.unresolved);
+  document.getElementById('wd-modal-body').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">名前から一括設定</div>
+    <div class="modal-subtitle">グループが未設定の服${props.length}件に、名前から推定した設定を入れます。確認して「適用」を押してください。外れた分は、あとで一覧から直せます。</div>
+    ${props.map(p => `<div class="wd-line ${p.unresolved ? 'bad' : ''}"><span>${esc(p.name)}</span><span>${p.unresolved ? '判定できません（そのまま）' : esc(gname(p.g)) + '／' + esc(p.t) + '／' + esc(p.s)}</span></div>`).join('') || '<div class="empty">未設定の服はありません</div>'}
+    <button class="btn btn-primary" style="margin-top:16px" onclick="wdSuggestDo()" ${good.length ? '' : 'disabled'}>${good.length}件に適用する</button>
+    <button class="btn btn-secondary" onclick="closeModal('wd-modal')">閉じる</button>`;
+  document.getElementById('wd-modal').classList.add('show');
+}
+function wdSuggestDo() {
+  const cat = wdCat(); if (!cat) return;
+  const props = LifeLogLogic.suggestMeta(cat);
+  const res = wdMutate('名前から一括設定', () => Object.assign({ ok: true }, LifeLogLogic.applyMeta(cat, props)));
+  closeModal('wd-modal');
+  if (res.ok) toast(`${res.applied}件に設定しました` + (res.skipped ? `（${res.skipped}件は判定できませんでした）` : ''));
+  wdAfter();
+}
+
+// ── 複数選択の一括変更・統合 ──
+function wdBulk(kind) {
+  const cat = wdCat(); if (!cat || !wd.sel.size) return;
+  const names = [...wd.sel];
+  let patch;
+  if (kind === 'retire') patch = { r: true };
+  else if (kind === 'active') patch = { r: false };
+  else {
+    patch = {};
+    if (wd.bulk.g) patch.g = wd.bulk.g === '__none' ? null : wd.bulk.g;
+    if (wd.bulk.t) patch.t = wd.bulk.t;
+    if (wd.bulk.s) patch.s = wd.bulk.s;
+    if (!Object.keys(patch).length) { toast('変更する項目を選んでください'); return; }
+  }
+  const res = wdMutate(`${names.length}件を一括変更`, () => LifeLogLogic.bulkSetMeta(cat, names, patch));
+  if (res.ok === false) { toast(res.name ? `「${res.name}」: ${wdMsg(res)}` : wdMsg(res)); return; }
+  toast(`${res.changed}件を変更しました`);
+  wd.bulk = { g: '', t: '', s: '' };
+  wdAfter();
+}
+function wdMergeOpen() {
+  const cat = wdCat(); if (!cat || wd.sel.size < 2) return;
+  const names = [...wd.sel];
+  wd.mergeNames = names;
+  document.getElementById('wd-modal-body').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">${names.length}件を1つに統合</div>
+    <div class="modal-subtitle">残す名前を選んでください。着数は合算され、過去の記録の名前も付け替わります（同じ日に両方あれば1回になります）。</div>
+    ${names.map((n, k) => `<label class="wd-opt"><input type="radio" name="wd-merge-target" value="${k}" ${k === 0 ? 'checked' : ''} onchange="wdMergePreview()"> ${esc(n)}</label>`).join('')}
+    <div class="field-group" style="margin-top:12px">
+      <div class="field-label">または、新しい名前にする（任意）</div>
+      <input class="field-input" id="wd-merge-new" placeholder="空欄なら、上で選んだ名前" autocomplete="off" oninput="wdMergePreview()">
+    </div>
+    <div id="wd-merge-pv" style="font-size:13px;margin-bottom:8px"></div>
+    <button class="btn btn-primary" id="wd-merge-go" onclick="wdMergeDo()">統合する</button>
+    <button class="btn btn-secondary" onclick="closeModal('wd-modal')">キャンセル</button>`;
+  document.getElementById('wd-modal').classList.add('show');
+  wdMergePreview();
+}
+function wdMergeTarget() {
+  const typed = (document.getElementById('wd-merge-new')?.value || '').trim();
+  if (typed) return typed;
+  const k = Number(document.querySelector('input[name="wd-merge-target"]:checked')?.value || 0);
+  return (wd.mergeNames || [])[k] || '';
+}
+function wdMergePreview() {
+  const cat = wdCat(); if (!cat) return;
+  const pv = LifeLogLogic.previewMerge(state, cat.id, wd.mergeNames || [], wdMergeTarget());
+  const box = document.getElementById('wd-merge-pv'), go = document.getElementById('wd-merge-go');
+  if (!box || !go) return;
+  go.disabled = !pv.ok;
+  box.style.color = pv.ok ? 'var(--text-2)' : 'var(--danger)';
+  box.textContent = pv.ok ? `統合後：「${pv.name}」・着数 合計${pv.qty}着・過去の記録${pv.logsChanged}件を付け替え` : wdMsg(pv);
+}
+function wdMergeDo() {
+  const cat = wdCat(); if (!cat) return;
+  const names = wd.mergeNames || [], target = wdMergeTarget();
+  const res = wdMutate(`${names.length}件を統合`, () => LifeLogLogic.mergeItems(state, cat.id, names, target));
+  if (res.ok === false) { toast(wdMsg(res)); return; }
+  closeModal('wd-modal');
+  wd.sel.clear();
+  toast(`「${res.name}」に統合しました`);
+  wdAfter();
+}
+
+// ── 元に戻す ──
+function wdUndo() {
+  const last = undoStack[undoStack.length - 1]; if (!last) return;
+  // 操作のあとに付けた記録があれば、戻すと消えることを知らせる
+  const newer = Object.values(state.logs || {}).some(day => day && Object.values(day).some(e => e && e.ts > last.ts));
+  const msg = `「${last.label}」の前の状態に戻します。` + (newer ? '\nその後に付けた記録も消えます。' : '') + '\nよろしいですか？';
+  if (!confirm(msg)) return;
+  const popped = LifeLogLogic.popSnapshot(undoStack);
+  state = popped.state;
+  undoStack = popped.stack;
+  saveUndo();
+  save();
+  wd.sel.clear();
+  toast(`「${popped.label}」の前に戻しました`);
+  wdAfter();
 }
 
 // ─── SHOPPING LIST ────────────────────────────────────────────

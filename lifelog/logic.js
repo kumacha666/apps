@@ -352,7 +352,7 @@
       setOwn(cat.meta, finalName, merged);
     }
     const logsChanged = rewriteLogNames(state.logs, catId, fold, finalName);
-    return ok({ name: finalName, merged: fold.size - (fold.has(finalName) ? 1 : 0), logsChanged });
+    return ok({ name: finalName, merged: fold.size - (fold.has(finalName) ? 1 : 0), logsChanged, qty: totalQty });
   }
 
   // 記録に1度でも使われている名前か（v と自由記入の両方を見る）。
@@ -377,6 +377,95 @@
     cat.items = cat.items.filter(n => n !== name);
     if (cat.meta) delete cat.meta[name];
     return ok();
+  }
+
+  // 服を追加する。分類を始めているカテゴリでは、名前から推定した グループ・種類・季節 を設定する。
+  // 同じ名前（全角・半角などの違いを含む）がすでにあれば断る。
+  function addItem(cat, name) {
+    if (!cat || !Array.isArray(cat.items)) return fail('no-cat');
+    const nm = typeof name === 'string' ? name.trim() : '';
+    if (!nm) return fail('empty');
+    const clash = cat.items.find(n => normalizeName(n) === normalizeName(nm));
+    if (clash !== undefined) return fail('exists', { existing: clash });
+    cat.items.push(nm);
+    if (Array.isArray(cat.groups) && cat.groups.length) {
+      const g = guessItem(nm);
+      cat.meta = cat.meta || {};
+      const meta = Object.assign({}, DEFAULT_META);
+      if (g && cat.groups.some(x => x.id === g.g)) {
+        meta.g = g.g;
+        meta.s = g.s;
+        if (typesOf(cat, g.g).includes(g.t)) meta.t = g.t;
+      }
+      setOwn(cat.meta, nm, meta);
+    }
+    return ok({ name: nm });
+  }
+
+  // 記録画面で選べる服。手放した服は隠す（ただし、その日にすでに選ばれている服は残す）。
+  function visibleItems(cat, selectedNames) {
+    const items = cat && Array.isArray(cat.items) ? cat.items : [];
+    const selected = new Set(Array.isArray(selectedNames) ? selectedNames : []);
+    return items.filter(n => !getMeta(cat, n).r || selected.has(n));
+  }
+
+  // 現役の服（手放していない服）。バリエーション率やおすすめの対象。
+  function activeItems(cat) {
+    const items = cat && Array.isArray(cat.items) ? cat.items : [];
+    return items.filter(n => !getMeta(cat, n).r);
+  }
+
+  function ownGet(obj, key, fallback) {
+    return obj && Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : fallback;
+  }
+
+  // 服の管理画面の一覧。絞り込み・並べ替えをして返す。
+  //   opts: { q: 検索語, group: 'all'|'none'|グループID, status: 'active'|'gone'|'all',
+  //           sort: 'order'|'name'|'group'|'type'|'season'|'qty'|'status'|'count'|'last', dir: 'asc'|'desc' }
+  function wardrobeRows(cat, logs, opts) {
+    const o = Object.assign({ q: '', group: 'all', status: 'active', sort: 'order', dir: 'asc' }, opts);
+    if (!cat || !Array.isArray(cat.items)) return [];
+    const counts = countUsage(logs, cat.id, null);
+    const last = lastUsed(logs, cat.id);
+    const q = normalizeName(o.q);
+    let rows = cat.items.map((name, order) => {
+      const m = getMeta(cat, name);
+      return { name, order, g: m.g, t: m.t, s: m.s, q: m.q, r: m.r, count: ownGet(counts, name, 0), last: ownGet(last, name, '') };
+    });
+    rows = rows.filter(r => {
+      if (q && !normalizeName(r.name).includes(q)) return false;
+      if (o.status === 'active' && r.r) return false;
+      if (o.status === 'gone' && !r.r) return false;
+      if (o.group === 'none') return r.g == null;
+      if (o.group !== 'all') return r.g === o.group;
+      return true;
+    });
+    const groupIndex = new Map((Array.isArray(cat.groups) ? cat.groups : []).map((g, i) => [g.id, i]));
+    const keyOf = {
+      order: r => r.order,
+      name: r => r.name,
+      group: r => (r.g != null && groupIndex.has(r.g) ? groupIndex.get(r.g) : Infinity),
+      type: r => r.t,
+      season: r => SEASONS.indexOf(r.s),
+      qty: r => r.q,
+      status: r => (r.r ? 1 : 0),
+      count: r => r.count,
+      last: r => r.last
+    }[o.sort] || (r => r.order);
+    const sign = o.dir === 'desc' ? -1 : 1;
+    rows.sort((a, b) => {
+      const x = keyOf(a), y = keyOf(b);
+      let c;
+      if (typeof x === 'string' || typeof y === 'string') c = String(x).localeCompare(String(y), 'ja');
+      else c = x === y ? 0 : (x < y ? -1 : 1);
+      return c * sign || a.order - b.order;
+    });
+    return rows;
+  }
+
+  // 統合した場合の結果を、実際には変更せずに確認する（確認画面用）。
+  function previewMerge(state, catId, sourceNames, targetName) {
+    return mergeItems(JSON.parse(JSON.stringify(state)), catId, sourceNames, targetName);
   }
 
   /* ---------- 期間別の集計 ---------- */
@@ -492,7 +581,8 @@
     SEASONS, PRESET_GROUPS, PRESET_TYPES,
     normalizeName, guessItem, getMeta, startGrouping, addGroup, addType,
     setMeta, bulkSetMeta, suggestMeta, applyMeta,
-    renameItem, mergeItems, deleteItem, isItemUsed,
+    renameItem, mergeItems, previewMerge, addItem, deleteItem, isItemUsed,
+    visibleItems, activeItems, wardrobeRows,
     // 期間別の集計
     shiftDate, periodRange, countUsage, lastUsed,
     // 元に戻す・修復
