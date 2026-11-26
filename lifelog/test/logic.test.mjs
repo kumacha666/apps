@@ -538,7 +538,8 @@ test('repairMeta: meta の無いカテゴリ・不正な state でも落ちな�
   assert.equal(L.repairMeta(makeState()), 0);
   assert.equal(L.repairMeta(null), 0);
   assert.equal(L.repairMeta({}), 0);
-  assert.equal(L.repairMeta({ cats: [null, { meta: 'x' }] }), 0);
+  // meta が無い・null のカテゴリは対象外（meta が配列・文字列などの不正な型の場合は、別のテストで空のオブジェクトに直す）
+  assert.equal(L.repairMeta({ cats: [null, {}, { meta: null }, { meta: undefined }] }), 0);
 });
 
 test('mergeItems: 変更先と完全に同じ名前の服があれば、全角・半角違いの別の服ではなくそちらを使う', () => {
@@ -632,4 +633,51 @@ test('特殊な名前: __proto__ という名前のグループIDにも種類を
   const d = { id: 'd', name: 'x', type: 'fashion', items: ['a'], groups: [{ id: '__proto__', name: 'P' }], types: {} };
   assert.equal(L.setMeta(d, 'a', { g: '__proto__', t: 'T' }).error, 'no-type');
   assert.equal(L.setMeta(d, 'a', { g: '__proto__' }).ok, true);
+});
+
+/* ---- レビュー指摘への回帰テスト ---- */
+
+test('mergeItems: 合計の着数が上限（99）を超える統合は、何も変えずに断る（黙って切り捨てない）', () => {
+  const st = {
+    cats: [{ id: 'c', name: 'コーデ', type: 'fashion', items: ['服A', '服B'], meta: {
+      '服A': { g: null, t: '', s: '通年', q: 60, r: false },
+      '服B': { g: null, t: '', s: '通年', q: 50, r: false } } }],
+    logs: { '2026-11-01': { c: { v: ['服B'], free: '' } } }
+  };
+  const snap = JSON.stringify(st);
+  const r = L.mergeItems(st, 'c', ['服A', '服B'], '服A');
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'qty-overflow');
+  assert.equal(JSON.stringify(st), snap); // items・meta・logs のどれも変わらない
+});
+
+test('mergeItems: 合計がちょうど上限（99）なら統合できる', () => {
+  const st = {
+    cats: [{ id: 'c', name: 'コーデ', type: 'fashion', items: ['服A', '服B'], meta: {
+      '服A': { g: null, t: '', s: '通年', q: 40, r: false },
+      '服B': { g: null, t: '', s: '通年', q: 59, r: false } } }],
+    logs: {}
+  };
+  assert.equal(L.mergeItems(st, 'c', ['服A', '服B'], '服A').ok, true);
+  assert.equal(L.getMeta(st.cats[0], '服A').q, 99);
+});
+
+test('repairMeta: 属性が配列になっているデータは、保存できるオブジェクトに置き換える（JSON往復後も直ったまま）', () => {
+  const st = {
+    cats: [{ id: 'c', name: 'コーデ', type: 'fashion', items: ['A', 'B'], groups: [{ id: 'tp', name: 'トップス' }], types: { tp: [] }, meta: { A: [], B: [1, 2] } }]
+  };
+  assert.equal(L.repairMeta(st), 2);
+  assert.deepEqual(st.cats[0].meta.A, { g: null, t: '', s: '通年', q: 1, r: false });
+  assert.equal(Array.isArray(st.cats[0].meta.B), false);
+  const round = JSON.parse(JSON.stringify(st));
+  assert.deepEqual(round.cats[0].meta.A, { g: null, t: '', s: '通年', q: 1, r: false });
+  assert.equal(L.repairMeta(round), 0); // 再実行しても直す必要がない
+});
+
+test('repairMeta: cat.meta そのものが配列・不正な型でも、空のオブジェクトに直す', () => {
+  const st = { cats: [{ id: 'c', items: ['A'], meta: ['x'] }, { id: 'd', items: ['A'], meta: 'x' }] };
+  assert.equal(L.repairMeta(st), 2);
+  assert.deepEqual(st.cats[0].meta, {});
+  assert.deepEqual(st.cats[1].meta, {});
+  assert.equal(L.repairMeta(st), 0);
 });

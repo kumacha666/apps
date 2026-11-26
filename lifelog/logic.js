@@ -336,11 +336,11 @@
     const ordered = cat.items.filter(n => fold.has(n));
     const first = cat.items.indexOf(ordered[0]);
     const metas = ordered.map(n => getMeta(cat, n));
+    // 着数は1項目あたり上限がある。合計が超えるなら、黙って切り捨てずに、何も変えずに断る。
+    const totalQty = metas.reduce((sum, m) => sum + m.q, 0);
+    if (totalQty > MAX_QTY) return fail('qty-overflow', { total: totalQty });
     const base = existing !== undefined ? getMeta(cat, existing) : metas[0];
-    const merged = Object.assign({}, base, {
-      q: Math.min(MAX_QTY, metas.reduce((sum, m) => sum + m.q, 0)),
-      r: metas.every(m => m.r)
-    });
+    const merged = Object.assign({}, base, { q: totalQty, r: metas.every(m => m.r) });
 
     const before = cat.items.slice(0, first).filter(n => !fold.has(n));
     const after = cat.items.slice(first).filter(n => !fold.has(n));
@@ -461,13 +461,16 @@
     let fixed = 0;
     if (!state || !Array.isArray(state.cats)) return fixed;
     state.cats.forEach(cat => {
-      if (!cat || !cat.meta || typeof cat.meta !== 'object') return;
+      if (!cat || typeof cat !== 'object' || cat.meta == null) return;
+      // meta そのものが配列・オブジェクト以外なら、保存できる空のオブジェクトに直す
+      if (typeof cat.meta !== 'object' || Array.isArray(cat.meta)) { cat.meta = {}; fixed++; return; }
       const items = Array.isArray(cat.items) ? cat.items : [];
       const groupIds = new Set((Array.isArray(cat.groups) ? cat.groups : []).map(g => g.id));
       Object.keys(cat.meta).forEach(name => {
         if (!items.includes(name)) { delete cat.meta[name]; fixed++; return; }
         const m = cat.meta[name];
-        if (!m || typeof m !== 'object') { setOwn(cat.meta, name, Object.assign({}, DEFAULT_META)); fixed++; return; }
+        // 配列は typeof が 'object' だが、g/t/s/q/r を持たせても JSON に保存されない。通常のオブジェクトに置き換える
+        if (!m || typeof m !== 'object' || Array.isArray(m)) { setOwn(cat.meta, name, Object.assign({}, DEFAULT_META)); fixed++; return; }
         let touched = false;
         if (m.g != null && !groupIds.has(m.g)) { m.g = null; touched = true; }
         if (m.g == null && m.g !== null) { m.g = null; touched = true; }
