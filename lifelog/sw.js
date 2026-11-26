@@ -1,5 +1,5 @@
-const CACHE = 'lifelog-v1';
-const ASSETS = ['./index.html', './manifest.json'];
+const CACHE = 'lifelog-v2';
+const ASSETS = ['./index.html', './logic.js', './manifest.json'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
@@ -15,8 +15,9 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
-  // index.html はネットワーク優先：最新版を取得し、オフライン時のみキャッシュ返却
-  if (e.request.mode === 'navigate' || url.pathname.endsWith('index.html') || url.pathname.endsWith('/')) {
+  // index.html / logic.js はネットワーク優先：最新版を取得し、オフライン時のみキャッシュ返却
+  // （logic.js をキャッシュ優先にすると、更新後も古いロジックが使われ続けてしまう）
+  if (e.request.mode === 'navigate' || url.pathname.endsWith('index.html') || url.pathname.endsWith('logic.js') || url.pathname.endsWith('/')) {
     e.respondWith(
       fetch(e.request).then(res => {
         const clone = res.clone();

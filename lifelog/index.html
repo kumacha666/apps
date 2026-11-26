@@ -697,6 +697,7 @@
 <div class="toast" id="toast"></div>
 <div id="tut-container"></div>
 
+<script src="logic.js"></script>
 <script>
 // ─── Constants ───────────────────────────────────────────────
 const STORAGE_KEY = 'lifelog_v2';
@@ -721,6 +722,9 @@ let state = (() => {
 })();
 
 function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+
+// 過去の記録に入っていた重複（同じ服が2回）を取り除く。直した場合のみ保存し直す
+if (LifeLogLogic.repairLogs(state.logs) > 0) save();
 
 // ─── Date utils ───────────────────────────────────────────────
 function today() {
@@ -894,7 +898,7 @@ function openLog(catId) {
 
     <div class="field-group">
       <div class="field-label">${(cat.items||[]).length ? 'その他・自由記入' : '記録内容'}</div>
-      <input class="field-input" id="f-text" type="text" placeholder="自由に入力..." value="${esc(e.free||'')}">
+      <input class="field-input" id="f-text" type="text" placeholder="自由に入力..." value="${esc(LifeLogLogic.freePrefill(e, cat.items))}">
     </div>
     ${extraFields.join('')}
     <div class="field-group">
@@ -929,15 +933,15 @@ function saveLog(catId) {
     if (confirm(`「${free}」をアイテムリストに追加しますか？`)) cat.items.push(free);
   }
 
-  if (free) selVals.push(free);
+  const vals = LifeLogLogic.mergeSelection(selVals, free);
 
-  if (!selVals.length && !kcal && !yen && !min && !km && !steps && !wt && !fat && !note) {
+  if (!vals.length && !kcal && !yen && !min && !km && !steps && !wt && !fat && !note) {
     if (state.logs[curDate]?.[catId]) { clearLog(catId); return; }
   }
 
   if (!state.logs[curDate]) state.logs[curDate] = {};
   state.logs[curDate][catId] = {
-    v: selVals,
+    v: vals,
     free,
     kcal: kcal ? Number(kcal) : null,
     yen:  yen  ? Number(yen)  : null,
@@ -1556,6 +1560,7 @@ function importData() {
         const imported = JSON.parse(ev.target.result);
         if (!Array.isArray(imported.cats) || typeof imported.logs !== 'object' || imported.logs === null) throw new Error();
         if (!confirm('現在のデータをインポートデータで上書きしますか？')) return;
+        LifeLogLogic.repairLogs(imported.logs);
         state = imported;
         save();
         render[curView]();
