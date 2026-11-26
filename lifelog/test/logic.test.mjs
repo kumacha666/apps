@@ -804,6 +804,20 @@ test('previewMerge: 実際には変更せず、統合した場合の結果を返
   assert.equal(L.previewMerge(st, 'c', ['黒Tシャツ'], ' ').error, 'empty');
 });
 
+test('wardrobeCategories: 分類を始めたカテゴリは、種類を変えても・服が空でも対象のまま（服の管理から届かなくならない）', () => {
+  const groups = [{ id: 'tp', name: 'トップス' }];
+  const st = {
+    cats: [
+      { id: 'a', type: 'food', items: ['x'], groups },     // 分類を始めたあとに、種類を「食事」に変えた
+      { id: 'b', type: 'fashion', items: [], groups },      // 分類を始めたあとに、服をすべて削除した
+      { id: 'c', type: 'food', items: ['カレー'] },          // 分類を始めていない食事は対象外
+      { id: 'd', type: 'fashion', items: [] },              // 服が無く、分類も始めていない
+      { id: 'e', type: 'fashion', items: ['y'], groups: [] } // groups が空の配列は「始めていない」扱い
+    ]
+  };
+  assert.deepEqual(L.wardrobeCategories(st).map(c => c.id), ['a', 'b', 'e']);
+});
+
 test('wardrobeCategories: 服が1つ以上ある「ファッション」のカテゴリだけが対象（食事・サプリ・空は対象外）', () => {
   const st = {
     cats: [

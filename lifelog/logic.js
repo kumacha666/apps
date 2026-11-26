@@ -402,11 +402,15 @@
     return ok({ name: nm });
   }
 
-  // 服の管理の対象になるカテゴリ（種類が「ファッション」で、服が1つ以上あるもの）。
-  // 食事・サプリなどは対象外（初期のグループ「トップス／ボトムス／アウター」は服用のため）。
+  // 服の管理の対象になるカテゴリ。
+  //   ・分類を始めたカテゴリ（groups がある）。種類をあとから変えても、服が空になっても対象のまま。
+  //     （カテゴリの編集画面は、分類を始めたカテゴリの服の編集を「服の管理」へ案内するため、届かなくならないようにする）
+  //   ・種類が「ファッション」で、服が1つ以上あるカテゴリ（これから分類を始める候補）。
+  // 食事・サプリなどは、分類を始めていなければ対象外（初期のグループ「トップス／ボトムス／アウター」は服用のため）。
   function wardrobeCategories(state) {
+    const started = c => Array.isArray(c.groups) && c.groups.length > 0;
     return state && Array.isArray(state.cats)
-      ? state.cats.filter(c => c && c.type === 'fashion' && Array.isArray(c.items) && c.items.length)
+      ? state.cats.filter(c => c && Array.isArray(c.items) && (started(c) || (c.type === 'fashion' && c.items.length > 0)))
       : [];
   }
 
