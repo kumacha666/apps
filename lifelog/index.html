@@ -1821,11 +1821,14 @@ function renderWardrobe() {
     return;
   }
   const started = wdStarted(cat);
+  const brands = Array.isArray(cat.brands) ? cat.brands : [];
+  // 絞り込みの対象（グループ・ブランド）がいまのカテゴリに無ければ解除する（元に戻す・カテゴリの切り替えのあとなど）
+  if (wd.group !== 'all' && !(started && (wd.group === 'none' || cat.groups.some(g => g.id === wd.group)))) wd.group = 'all';
+  if (wd.brand !== 'all' && wd.brand !== 'none' && !brands.some(b => b.id === wd.brand)) wd.brand = 'all';
   const catsHtml = wdCats().map(c => `<button class="chip ${c.id === cat.id ? 'selected' : ''}" onclick="wdSelCat('${c.id}')">${esc(c.icon || '')} ${esc(c.name)}<span class="wd-n">${c.items.length}</span></button>`).join('');
   const groupOpts = optHtml('all', 'すべてのグループ', wd.group === 'all')
     + (started ? optHtml('none', '未設定', wd.group === 'none') + cat.groups.map(g => optHtml(g.id, g.name, wd.group === g.id)).join('') : '');
   const unresolved = started ? LifeLogLogic.suggestMeta(cat).length : 0;
-  const brands = Array.isArray(cat.brands) ? cat.brands : [];
   const brandSug = LifeLogLogic.suggestBrands(cat).length;
   const brandOpts = optHtml('all', 'すべてのブランド', wd.brand === 'all') + optHtml('none', 'ブランド未設定', wd.brand === 'none')
     + brands.map(b => optHtml(b.id, b.short ? `${b.name}（${b.short}）` : b.name, wd.brand === b.id)).join('');
