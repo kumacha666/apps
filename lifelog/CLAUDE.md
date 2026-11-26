@@ -30,6 +30,7 @@ entry = { v: [string] | string, free, kcal, yen, min, km, steps, wt, fat, note, 
 
 ## 服の管理画面（`view-wardrobe`）
 - 設定タブの「整理 → 服の管理」から開く（`nav('wardrobe')`）。下のタブは「設定」が選択中のままで、**画面幅900px以上では`body.wide-view`で画面を広げ、下のタブを隠して表形式**にする。スマホ幅では縦のカード。同じDOMをCSSで切り替えている。
+- **対象は、種類が「ファッション」で、服が1つ以上あるカテゴリだけ**（`LifeLogLogic.wardrobeCategories`）。食事・サプリなどは対象外（初期のグループが服用のため）。
 - 描画と操作のつなぎは`index.html`の`wd*`関数。**絞り込み・並べ替え・集計は`LifeLogLogic.wardrobeRows`**、変更は`logic.js`の関数（`setMeta`／`bulkSetMeta`／`renameItem`／`mergeItems`／`deleteItem`／`addItem`／`startGrouping`／`suggestMeta`＋`applyMeta`）を呼ぶだけにする。
 - **変更は必ず`wdMutate`を通す**：操作の直前の状態を保存し、成功したときだけ確定する。保存先は`localStorage`の`lifelog_v2_undo`（別キー。エクスポートには含まれない）。**10件まで**で、容量が足りないときは古い順に捨てる。取り込み・全消去でクリアする。元に戻すは**全データ**を戻すので、操作のあとに付けた記録があれば確認を出す。
 - 名前を既存の服と同じにすると統合の確認を出す。記録のある服は削除ボタンを押せない。
