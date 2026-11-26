@@ -402,6 +402,14 @@
     return ok({ name: nm });
   }
 
+  // 服の管理の対象になるカテゴリ（種類が「ファッション」で、服が1つ以上あるもの）。
+  // 食事・サプリなどは対象外（初期のグループ「トップス／ボトムス／アウター」は服用のため）。
+  function wardrobeCategories(state) {
+    return state && Array.isArray(state.cats)
+      ? state.cats.filter(c => c && c.type === 'fashion' && Array.isArray(c.items) && c.items.length)
+      : [];
+  }
+
   // 記録画面で選べる服。手放した服は隠す（ただし、その日にすでに選ばれている服は残す）。
   function visibleItems(cat, selectedNames) {
     const items = cat && Array.isArray(cat.items) ? cat.items : [];
@@ -582,7 +590,7 @@
     normalizeName, guessItem, getMeta, startGrouping, addGroup, addType,
     setMeta, bulkSetMeta, suggestMeta, applyMeta,
     renameItem, mergeItems, previewMerge, addItem, deleteItem, isItemUsed,
-    visibleItems, activeItems, wardrobeRows,
+    visibleItems, activeItems, wardrobeRows, wardrobeCategories,
     // 期間別の集計
     shiftDate, periodRange, countUsage, lastUsed,
     // 元に戻す・修復

@@ -803,3 +803,22 @@ test('previewMerge: 実際には変更せず、統合した場合の結果を返
   assert.equal(JSON.stringify(st), snap);
   assert.equal(L.previewMerge(st, 'c', ['黒Tシャツ'], ' ').error, 'empty');
 });
+
+test('wardrobeCategories: 服が1つ以上ある「ファッション」のカテゴリだけが対象（食事・サプリ・空は対象外）', () => {
+  const st = {
+    cats: [
+      { id: 'a', type: 'fashion', items: ['x'] },
+      { id: 'b', type: 'food', items: ['カレー'] },
+      { id: 'c', type: 'supplement', items: ['ビタミン'] },
+      { id: 'd', type: 'fashion', items: [] },
+      { id: 'e', type: 'fashion' },
+      { id: 'f', type: 'custom', items: ['y'] },
+      null,
+      { id: 'g', type: 'fashion', items: ['z'] }
+    ]
+  };
+  assert.deepEqual(L.wardrobeCategories(st).map(c => c.id), ['a', 'g']);
+  assert.deepEqual(L.wardrobeCategories({ cats: [] }), []);
+  assert.deepEqual(L.wardrobeCategories(null), []);
+  assert.deepEqual(L.wardrobeCategories({}), []);
+});

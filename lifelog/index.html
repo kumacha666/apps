@@ -1736,7 +1736,7 @@ const WD_ERR = {
 };
 const wdMsg = res => WD_ERR[res && res.error] || 'できませんでした';
 
-function wdCats() { return state.cats.filter(c => Array.isArray(c.items) && c.items.length); }
+function wdCats() { return LifeLogLogic.wardrobeCategories(state); }
 function wdCat() {
   const cs = wdCats();
   let c = cs.find(x => x.id === wd.catId);
@@ -1781,7 +1781,7 @@ function renderWardrobe() {
     </div>
     ${last ? `<div class="hint wd-undo-note">直前の操作：${esc(last.label)}（${undoStack.length}件まで戻せます）</div>` : ''}`;
   if (!cat) {
-    el.innerHTML = top + `<div class="empty"><div class="empty-emoji">👗</div><p>アイテムのあるカテゴリがありません。<br>設定でカテゴリにアイテムを登録してください。</p></div>`;
+    el.innerHTML = top + `<div class="empty"><div class="empty-emoji">👗</div><p>服の管理は、種類が「ファッション」のカテゴリで使えます。<br>設定でカテゴリにアイテムを登録してください。</p></div>`;
     return;
   }
   const started = wdStarted(cat);
