@@ -488,15 +488,28 @@
     .wd-line { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
     .wd-line span:last-child { color: var(--text-2); text-align: right; }
     .wd-line.bad span:last-child { color: var(--danger); }
-    /* 表に必要な幅は約960px（列の最小幅の合計＋すき間＋余白）。それより広い 1000px から表にする */
-    @media (min-width: 1000px) {
+    .wd-brands { margin-bottom: 12px; }
+    .wd-brands h3 { margin: 0 0 4px; font-size: 14px; }
+    .wd-brands .sub { margin: 0 0 8px; font-size: 12px; color: var(--text-3); }
+    .wd-brandrow { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) 3.2em auto; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+    .wd-brandrow:last-child { border-bottom: none; }
+    .wd-brandrow input {
+      min-width: 0; background: var(--bg); color: var(--text); border: 1.5px solid transparent;
+      border-radius: 8px; padding: 7px 8px; font-size: 14px; font-family: inherit;
+    }
+    .wd-brandrow input:focus { outline: none; border-color: var(--primary); background: var(--card); }
+    .wd-brandrow .wd-use { text-align: right; }
+    .wd-brandrow.add { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; padding-top: 10px; }
+    .wd-brandrow.add input { background: var(--bg); border-color: var(--border); }
+    /* 表に必要な幅は約1030px（列の最小幅の合計＋すき間＋余白）。それより広い 1100px から表にする */
+    @media (min-width: 1100px) {
       body.wide-view { max-width: 1180px; }
       body.wide-view .bottom-nav { display: none; }
       body.wide-view .view { padding-bottom: 40px; }
       .wd-sortsel { display: none; }
       .wd-head, .wd-row {
         display: grid; gap: 10px; align-items: center;
-        grid-template-columns: 24px minmax(140px, 2fr) 110px 160px 76px 96px 84px 120px 32px;
+        grid-template-columns: 24px minmax(130px, 2fr) 104px 150px 112px 72px 94px 80px 108px 32px;
       }
       .wd-head, .wd-row { column-gap: 8px; }
       .wd-head { padding: 6px 10px; font-size: 12px; font-weight: 700; color: var(--text-2); }
@@ -1724,7 +1737,7 @@ function saveUndo() {
   try { localStorage.removeItem(UNDO_KEY); } catch {}
 }
 
-const wd = { catId: null, q: '', group: 'all', status: 'active', sort: 'order', dir: 'asc', sel: new Set(), rows: [], bulk: { g: '', t: '', s: '' } };
+const wd = { catId: null, q: '', group: 'all', brand: 'all', brandPanel: false, status: 'active', sort: 'order', dir: 'asc', sel: new Set(), rows: [], bulk: { g: '', t: '', s: '', b: '' } };
 const WD_ERR = {
   exists: '同じ名前の服がすでにあります',
   empty: '名前を入力してください',
@@ -1735,6 +1748,8 @@ const WD_ERR = {
   'bad-qty': '着数は1〜99にしてください',
   'no-item': '対象の服が見つかりません',
   already: 'すでに分類を始めています',
+  duplicate: '同じ名前または略称のブランドがあります',
+  'no-brand': 'そのブランドはありません',
   storage: '保存容量が足りず、変更できませんでした（元の状態のままです）。エクスポートして、不要な記録を整理してください'
 };
 const wdMsg = res => WD_ERR[res && res.error] || 'できませんでした';
@@ -1810,7 +1825,11 @@ function renderWardrobe() {
   const groupOpts = optHtml('all', 'すべてのグループ', wd.group === 'all')
     + (started ? optHtml('none', '未設定', wd.group === 'none') + cat.groups.map(g => optHtml(g.id, g.name, wd.group === g.id)).join('') : '');
   const unresolved = started ? LifeLogLogic.suggestMeta(cat).length : 0;
-  const sortOpts = [['order', '登録順'], ['name', '名前'], ['group', 'グループ'], ['season', '季節'], ['qty', '着数'], ['count', '着用回数'], ['last', '最終着用日']]
+  const brands = Array.isArray(cat.brands) ? cat.brands : [];
+  const brandSug = LifeLogLogic.suggestBrands(cat).length;
+  const brandOpts = optHtml('all', 'すべてのブランド', wd.brand === 'all') + optHtml('none', 'ブランド未設定', wd.brand === 'none')
+    + brands.map(b => optHtml(b.id, b.short ? `${b.name}（${b.short}）` : b.name, wd.brand === b.id)).join('');
+  const sortOpts = [['order', '登録順'], ['name', '名前'], ['group', 'グループ'], ['brand', 'ブランド'], ['season', '季節'], ['qty', '着数'], ['count', '着用回数'], ['last', '最終着用日']]
     .map(([k, l]) => optHtml(k + ':asc', l + (k === 'order' ? '' : '（昇順）'), wd.sort === k && wd.dir === 'asc') + (k === 'order' ? '' : optHtml(k + ':desc', l + '（降順）', wd.sort === k && wd.dir === 'desc'))).join('');
 
   el.innerHTML = top + `
@@ -1828,6 +1847,7 @@ function renderWardrobe() {
     <div class="wd-tool">
       <input class="field-input" id="wd-q" type="search" placeholder="名前で検索" value="${esc(wd.q)}" oninput="wdSearch(this.value)">
       <select class="wd-sel" aria-label="グループで絞り込む" onchange="wdFilter('group',this.value)">${groupOpts}</select>
+      ${brands.length ? `<select class="wd-sel" aria-label="ブランドで絞り込む" onchange="wdFilter('brand',this.value)">${brandOpts}</select>` : ''}
       <div class="wd-seg">
         <button aria-pressed="${wd.status === 'active'}" onclick="wdFilter('status','active')">現役</button>
         <button aria-pressed="${wd.status === 'gone'}" onclick="wdFilter('status','gone')">手放した</button>
@@ -1835,7 +1855,10 @@ function renderWardrobe() {
       </div>
       <select class="wd-sel wd-sortsel" aria-label="並べ替え" onchange="wdSortSel(this.value)">${sortOpts}</select>
       ${started && unresolved ? `<button class="btn-sm" style="background:var(--primary-light);color:var(--primary)" onclick="wdSuggestOpen()">名前から一括設定（未設定${unresolved}件）</button>` : ''}
+      <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" aria-expanded="${wd.brandPanel}" onclick="wdBrandPanel()">ブランドの管理${brands.length ? `（${brands.length}）` : ''}</button>
+      ${brandSug ? `<button class="btn-sm" style="background:var(--primary-light);color:var(--primary)" onclick="wdBrandSuggestOpen()">名前からブランドを推定（${brandSug}件）</button>` : ''}
     </div>
+    ${wd.brandPanel ? wdBrandPanelHtml(cat) : ''}
     <div id="wd-list"></div>`;
   renderWardrobeList();
 }
@@ -1845,7 +1868,8 @@ function renderWardrobeList() {
   const box = document.getElementById('wd-list');
   if (!cat || !box) return;
   const started = wdStarted(cat);
-  const rows = LifeLogLogic.wardrobeRows(cat, state.logs, { q: wd.q, group: wd.group, status: wd.status, sort: wd.sort, dir: wd.dir });
+  const brands = Array.isArray(cat.brands) ? cat.brands : [];
+  const rows = LifeLogLogic.wardrobeRows(cat, state.logs, { q: wd.q, group: wd.group, brand: wd.brand, status: wd.status, sort: wd.sort, dir: wd.dir });
   wd.rows = rows;
   const shown = new Set(rows.map(r => r.name));
   [...wd.sel].forEach(n => { if (!shown.has(n)) wd.sel.delete(n); });
@@ -1862,6 +1886,7 @@ function renderWardrobeList() {
       ${started ? `
       <select class="wd-sel" aria-label="グループ" onchange="wd.bulk.g=this.value;wd.bulk.t='';renderWardrobeList()">${optHtml('', 'グループ（変更しない）', !wd.bulk.g)}${optHtml('__none', '未設定にする', wd.bulk.g === '__none')}${cat.groups.map(g => optHtml(g.id, g.name, wd.bulk.g === g.id)).join('')}</select>
       <select class="wd-sel" aria-label="種類" onchange="wd.bulk.t=this.value" ${typeGroup ? '' : 'disabled'}>${optHtml('', '種類（変更しない）', !wd.bulk.t)}${typeList.map(t => optHtml(t, t, wd.bulk.t === t)).join('')}</select>` : ''}
+      ${brands.length ? `<select class="wd-sel" aria-label="ブランド" onchange="wd.bulk.b=this.value">${optHtml('', 'ブランド（変更しない）', !wd.bulk.b)}${optHtml('__none', '未設定にする', wd.bulk.b === '__none')}${brands.map(b => optHtml(b.id, LifeLogLogic.brandText(b), wd.bulk.b === b.id)).join('')}</select>` : ''}
       <select class="wd-sel" aria-label="季節" onchange="wd.bulk.s=this.value">${optHtml('', '季節（変更しない）', !wd.bulk.s)}${LifeLogLogic.SEASONS.map(x => optHtml(x, x, wd.bulk.s === x)).join('')}</select>
       <button class="btn-sm" style="background:var(--primary);color:#fff" onclick="wdBulk('apply')">適用</button>
       <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" onclick="wdBulk('retire')">手放した</button>
@@ -1873,7 +1898,7 @@ function renderWardrobeList() {
 
   const head = `<div class="wd-head">
     <span><input type="checkbox" aria-label="すべて選択" ${rows.length && rows.every(r => wd.sel.has(r.name)) ? 'checked' : ''} onchange="wdSelAll(this.checked)"></span>
-    ${sortHead('name', '名前')}${started ? sortHead('group', 'グループ') + sortHead('type', '種類') : '<span></span><span></span>'}${sortHead('season', '季節')}${sortHead('qty', '着数')}${sortHead('status', '状態')}${sortHead('count', '着用（回数・最終）')}<span></span>
+    ${sortHead('name', '名前')}${started ? sortHead('group', 'グループ') + sortHead('type', '種類') : '<span></span><span></span>'}${sortHead('brand', 'ブランド')}${sortHead('season', '季節')}${sortHead('qty', '着数')}${sortHead('status', '状態')}${sortHead('count', '着用（回数・最終）')}<span></span>
   </div>`;
 
   const body = rows.map((r, i) => {
@@ -1884,6 +1909,9 @@ function renderWardrobeList() {
       <input class="wd-name" value="${esc(r.name)}" aria-label="名前" onchange="wdName(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()">
       ${started ? `<select class="wd-sel" aria-label="グループ" onchange="wdSet(${i},'g',this.value)">${optHtml('', '未設定', r.g == null)}${cat.groups.map(g => optHtml(g.id, g.name, r.g === g.id)).join('')}</select>
       <select class="wd-sel" aria-label="種類" onchange="wdSet(${i},'t',this.value)" ${r.g ? '' : 'disabled'}>${optHtml('', '種類なし', !r.t)}${typeList.map(t => optHtml(t, t, r.t === t)).join('')}</select>` : '<span class="wd-gap"></span><span class="wd-gap"></span>'}
+      ${brands.length
+        ? `<select class="wd-sel" aria-label="ブランド" title="${esc((brands.find(b => b.id === r.b) || {}).name || '')}" onchange="wdSet(${i},'b',this.value)">${optHtml('', '未設定', r.b == null)}${brands.map(b => optHtml(b.id, LifeLogLogic.brandText(b), r.b === b.id)).join('')}</select>`
+        : `<select class="wd-sel" aria-label="ブランド" disabled title="「ブランドの管理」でブランドを登録すると選べます"><option>未登録</option></select>`}
       <select class="wd-sel" aria-label="季節" onchange="wdSet(${i},'s',this.value)">${LifeLogLogic.SEASONS.map(x => optHtml(x, x, r.s === x)).join('')}</select>
       <span class="wd-stepper" title="同じような服を何着持っているか"><button aria-label="着数を減らす" onclick="wdQty(${i},-1)">−</button><span>${r.q}着</span><button aria-label="着数を増やす" onclick="wdQty(${i},1)">＋</button></span>
       <button class="wd-pill ${r.r ? 'gone' : ''}" onclick="wdToggleR(${i})">${r.r ? '手放した' : '現役'}</button>
@@ -1892,11 +1920,11 @@ function renderWardrobeList() {
     </div>`;
   }).join('');
 
-  box.innerHTML = bulk + (rows.length ? head + body : `<div class="empty" style="padding:24px 0"><p>${wd.q || wd.group !== 'all' || wd.status !== 'all' ? '条件に合う服がありません' : '服がありません'}</p></div>`);
+  box.innerHTML = bulk + (rows.length ? head + body : `<div class="empty" style="padding:24px 0"><p>${wd.q || wd.group !== 'all' || wd.brand !== 'all' || wd.status !== 'all' ? '条件に合う服がありません' : '服がありません'}</p></div>`);
 }
 
 // ── 絞り込み・並べ替え・選択 ──
-function wdSelCat(id) { wd.catId = id; wd.sel.clear(); wd.group = 'all'; wd.bulk = { g: '', t: '', s: '' }; renderWardrobe(); }
+function wdSelCat(id) { wd.catId = id; wd.sel.clear(); wd.group = 'all'; wd.brand = 'all'; wd.bulk = { g: '', t: '', s: '', b: '' }; renderWardrobe(); }
 function wdSearch(v) { wd.q = v; renderWardrobeList(); }
 function wdFilter(k, v) { wd[k] = v; renderWardrobe(); }
 function wdSort(key) { if (wd.sort === key) wd.dir = wd.dir === 'asc' ? 'desc' : 'asc'; else { wd.sort = key; wd.dir = 'asc'; } renderWardrobe(); }
@@ -1904,10 +1932,81 @@ function wdSortSel(v) { const [k, d] = v.split(':'); wd.sort = k; wd.dir = d || 
 function wdSel(i, on) { const r = wd.rows[i]; if (!r) return; on ? wd.sel.add(r.name) : wd.sel.delete(r.name); renderWardrobeList(); }
 function wdSelAll(on) { wd.sel.clear(); if (on) wd.rows.forEach(r => wd.sel.add(r.name)); renderWardrobeList(); }
 
+// ── ブランド ──
+function wdBrandPanelHtml(cat) {
+  const brands = Array.isArray(cat.brands) ? cat.brands : [];
+  const counts = LifeLogLogic.brandCounts(cat);
+  const rows = brands.map((b, i) => {
+    const n = Object.prototype.hasOwnProperty.call(counts, b.id) ? counts[b.id] : 0;
+    return `<div class="wd-brandrow">
+      <input value="${esc(b.name)}" aria-label="正式名称" onchange="wdBrandEdit(${i},'name',this.value)" onkeydown="if(event.key==='Enter')this.blur()">
+      <input value="${esc(b.short || '')}" placeholder="略称" aria-label="略称" onchange="wdBrandEdit(${i},'short',this.value)" onkeydown="if(event.key==='Enter')this.blur()">
+      <span class="wd-use">${n}件</span>
+      <button class="wd-del" aria-label="${esc(b.name)}を削除" title="${n ? '使っている服があるため削除できません' : '削除'}" onclick="wdBrandDel(${i})" ${n ? 'disabled' : ''}>✕</button>
+    </div>`;
+  }).join('');
+  return `<div class="card wd-brands">
+    <h3>ブランドの管理（${esc(cat.name)}）</h3>
+    <p class="sub">正式名称は一覧・絞り込みに、略称（任意）は表や選択欄などの狭いところに出ます。名前や略称を直すと、付いている服も一緒に変わります。</p>
+    ${rows || '<div class="hint" style="padding:6px 0">まだブランドがありません。下から追加するか、「名前からブランドを推定」を使ってください。</div>'}
+    <div class="wd-brandrow add">
+      <input id="wd-bn" placeholder="正式名称（例：Paul Smith）" autocomplete="off" aria-label="新しいブランドの正式名称" onkeydown="if(event.key==='Enter')wdBrandAdd()">
+      <input id="wd-bs" placeholder="略称（任意）" autocomplete="off" aria-label="新しいブランドの略称" onkeydown="if(event.key==='Enter')wdBrandAdd()">
+      <button class="btn-sm" style="background:var(--primary);color:#fff" onclick="wdBrandAdd()">＋ 追加</button>
+    </div>
+  </div>`;
+}
+function wdBrandPanel() { wd.brandPanel = !wd.brandPanel; renderWardrobe(); }
+function wdBrandAdd() {
+  const cat = wdCat(); if (!cat) return;
+  const name = document.getElementById('wd-bn')?.value || '', short = document.getElementById('wd-bs')?.value || '';
+  const res = wdMutate('ブランドを追加', () => LifeLogLogic.addBrand(cat, name, short));
+  if (res.ok) toast(`ブランド「${name.trim()}」を追加しました`); else toast(wdMsg(res));
+  wdAfter();
+  if (res.ok) document.getElementById('wd-bn')?.focus();
+}
+function wdBrandEdit(i, field, value) {
+  const cat = wdCat(), b = cat && (cat.brands || [])[i]; if (!b) return;
+  const res = wdMutate('ブランドを変更', () => LifeLogLogic.updateBrand(cat, b.id, { [field]: value }));
+  if (res.ok === false) toast(wdMsg(res));
+  wdAfter();
+}
+function wdBrandDel(i) {
+  const cat = wdCat(), b = cat && (cat.brands || [])[i]; if (!b) return;
+  if (!confirm(`ブランド「${b.name}」を削除しますか？\n（使っている服がないブランドです。元に戻すで復元できます）`)) return;
+  const res = wdMutate('ブランドを削除', () => LifeLogLogic.deleteBrand(cat, b.id));
+  if (res.ok === false) toast(res.error === 'used' ? `このブランドを使っている服が${res.count}件あるため、削除できません` : wdMsg(res));
+  else { if (wd.brand === b.id) wd.brand = 'all'; toast(`ブランド「${b.name}」を削除しました`); }
+  wdAfter();
+}
+function wdBrandSuggestOpen() {
+  const cat = wdCat(); if (!cat) return;
+  const props = LifeLogLogic.suggestBrands(cat);
+  const groups = new Map();
+  props.forEach(p => { const k = p.brand; if (!groups.has(k)) groups.set(k, { isNew: p.id === null, names: [] }); groups.get(k).names.push(p.name); });
+  const created = [...groups.values()].filter(g => g.isNew).length;
+  document.getElementById('wd-modal-body').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">名前からブランドを推定</div>
+    <div class="modal-subtitle">ブランドが未設定の服${props.length}件に、名前から推定したブランドを設定します。「新規」のブランドは、正式名称として登録します（略称や正式名称は、あとで「ブランドの管理」で直せます）。</div>
+    ${[...groups.entries()].map(([brand, g]) => `<div class="wd-line"><span><b>${esc(brand)}</b>${g.isNew ? ' <span class="hint">新規</span>' : ''}<br><span class="hint">${esc(g.names.join(' / '))}</span></span><span>${g.names.length}件</span></div>`).join('') || '<div class="empty">推定できるブランドはありません</div>'}
+    <button class="btn btn-primary" style="margin-top:16px" onclick="wdBrandSuggestDo()" ${props.length ? '' : 'disabled'}>${props.length}件に設定する${created ? `（新規ブランド${created}件を登録）` : ''}</button>
+    <button class="btn btn-secondary" onclick="closeModal('wd-modal')">閉じる</button>`;
+  document.getElementById('wd-modal').classList.add('show');
+}
+function wdBrandSuggestDo() {
+  const cat = wdCat(); if (!cat) return;
+  const props = LifeLogLogic.suggestBrands(cat);
+  const res = wdMutate('名前からブランドを設定', () => Object.assign({ ok: true }, LifeLogLogic.applyBrands(cat, props)));
+  closeModal('wd-modal');
+  if (res.ok) { wd.brandPanel = true; toast(`${res.applied}件にブランドを設定しました` + (res.created ? `（新規ブランド${res.created}件）` : '')); } else toast(wdMsg(res));
+  wdAfter();
+}
+
 // ── 1件ずつの変更 ──
 function wdSet(i, key, v) {
   const cat = wdCat(), r = wd.rows[i]; if (!cat || !r) return;
-  const patch = { [key]: key === 'g' ? (v || null) : v };
+  const patch = { [key]: (key === 'g' || key === 'b') ? (v || null) : v };
   const res = wdMutate('服の設定を変更', () => LifeLogLogic.setMeta(cat, r.name, patch));
   if (res.ok === false) toast(wdMsg(res));
   wdAfter();
@@ -2006,12 +2105,13 @@ function wdBulk(kind) {
     if (wd.bulk.g) patch.g = wd.bulk.g === '__none' ? null : wd.bulk.g;
     if (wd.bulk.t) patch.t = wd.bulk.t;
     if (wd.bulk.s) patch.s = wd.bulk.s;
+    if (wd.bulk.b) patch.b = wd.bulk.b === '__none' ? null : wd.bulk.b;
     if (!Object.keys(patch).length) { toast('変更する項目を選んでください'); return; }
   }
   const res = wdMutate(`${names.length}件を一括変更`, () => LifeLogLogic.bulkSetMeta(cat, names, patch));
   if (res.ok === false) { toast(res.name ? `「${res.name}」: ${wdMsg(res)}` : wdMsg(res)); return; }
   toast(`${res.changed}件を変更しました`);
-  wd.bulk = { g: '', t: '', s: '' };
+  wd.bulk = { g: '', t: '', s: '', b: '' };
   wdAfter();
 }
 function wdMergeOpen() {

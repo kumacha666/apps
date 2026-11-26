@@ -211,6 +211,11 @@
       if (typeof p.r !== 'boolean') return fail('bad-retired');
       next.r = p.r;
     }
+    if ('b' in p) {
+      // ブランドはカテゴリごとの一覧（cat.brands）から選ぶ。null は「未設定」（属性ごと外す）
+      if (p.b !== null && !findBrand(cat, p.b)) return fail('no-brand');
+      if (p.b === null) delete next.b; else next.b = p.b;
+    }
     return ok({ meta: next });
   }
 
@@ -341,6 +346,11 @@
     if (totalQty > MAX_QTY) return fail('qty-overflow', { total: totalQty });
     const base = existing !== undefined ? getMeta(cat, existing) : metas[0];
     const merged = Object.assign({}, base, { q: totalQty, r: metas.every(m => m.r) });
+    // ブランドは、変更先（または一番前の統合元）の設定を使う。未設定なら、統合する服のうち最初に設定のあるものを引き継ぐ
+    if (merged.b == null) {
+      const withBrand = metas.find(m => m.b != null);
+      if (withBrand) merged.b = withBrand.b; else delete merged.b;
+    }
 
     const before = cat.items.slice(0, first).filter(n => !fold.has(n));
     const after = cat.items.slice(first).filter(n => !fold.has(n));
@@ -388,15 +398,20 @@
     const clash = cat.items.find(n => normalizeName(n) === normalizeName(nm));
     if (clash !== undefined) return fail('exists', { existing: clash });
     cat.items.push(nm);
-    if (Array.isArray(cat.groups) && cat.groups.length) {
-      const g = guessItem(nm);
+    const grouped = Array.isArray(cat.groups) && cat.groups.length > 0;
+    const brand = matchBrandForName(cat, nm); // 登録済みのブランドが、名前の先頭などに含まれていれば、自動で設定する
+    if (grouped || brand) {
       cat.meta = cat.meta || {};
       const meta = Object.assign({}, DEFAULT_META);
-      if (g && cat.groups.some(x => x.id === g.g)) {
-        meta.g = g.g;
-        meta.s = g.s;
-        if (typesOf(cat, g.g).includes(g.t)) meta.t = g.t;
+      if (grouped) {
+        const g = guessItem(nm);
+        if (g && cat.groups.some(x => x.id === g.g)) {
+          meta.g = g.g;
+          meta.s = g.s;
+          if (typesOf(cat, g.g).includes(g.t)) meta.t = g.t;
+        }
       }
+      if (brand) meta.b = brand.id;
       setOwn(cat.meta, nm, meta);
     }
     return ok({ name: nm });
@@ -432,32 +447,38 @@
   }
 
   // 服の管理画面の一覧。絞り込み・並べ替えをして返す。
-  //   opts: { q: 検索語, group: 'all'|'none'|グループID, status: 'active'|'gone'|'all',
-  //           sort: 'order'|'name'|'group'|'type'|'season'|'qty'|'status'|'count'|'last', dir: 'asc'|'desc' }
+  //   opts: { q: 検索語, group: 'all'|'none'|グループID, brand: 'all'|'none'|ブランドID, status: 'active'|'gone'|'all',
+  //           sort: 'order'|'name'|'group'|'type'|'brand'|'season'|'qty'|'status'|'count'|'last', dir: 'asc'|'desc' }
   function wardrobeRows(cat, logs, opts) {
-    const o = Object.assign({ q: '', group: 'all', status: 'active', sort: 'order', dir: 'asc' }, opts);
+    const o = Object.assign({ q: '', group: 'all', brand: 'all', status: 'active', sort: 'order', dir: 'asc' }, opts);
     if (!cat || !Array.isArray(cat.items)) return [];
     const counts = countUsage(logs, cat.id, null);
     const last = lastUsed(logs, cat.id);
     const q = normalizeName(o.q);
     let rows = cat.items.map((name, order) => {
       const m = getMeta(cat, name);
-      return { name, order, g: m.g, t: m.t, s: m.s, q: m.q, r: m.r, count: ownGet(counts, name, 0), last: ownGet(last, name, '') };
+      return { name, order, g: m.g, t: m.t, b: m.b == null ? null : m.b, s: m.s, q: m.q, r: m.r, count: ownGet(counts, name, 0), last: ownGet(last, name, '') };
     });
     rows = rows.filter(r => {
       if (q && !normalizeName(r.name).includes(q)) return false;
       if (o.status === 'active' && r.r) return false;
       if (o.status === 'gone' && !r.r) return false;
+      if (o.brand === 'none' && r.b != null) return false;
+      if (o.brand !== 'all' && o.brand !== 'none' && r.b !== o.brand) return false;
       if (o.group === 'none') return r.g == null;
       if (o.group !== 'all') return r.g === o.group;
       return true;
     });
+    // ブランド順：表示名（略称があれば略称）の五十音順。未設定は最後
+    const brandRank = new Map((Array.isArray(cat.brands) ? cat.brands : [])
+      .slice().sort((a, b) => brandText(a).localeCompare(brandText(b), 'ja')).map((b, i) => [b.id, i]));
     const groupIndex = new Map((Array.isArray(cat.groups) ? cat.groups : []).map((g, i) => [g.id, i]));
     const keyOf = {
       order: r => r.order,
       name: r => r.name,
       group: r => (r.g != null && groupIndex.has(r.g) ? groupIndex.get(r.g) : Infinity),
       type: r => r.t,
+      brand: r => (r.b != null && brandRank.has(r.b) ? brandRank.get(r.b) : Infinity),
       season: r => SEASONS.indexOf(r.s),
       qty: r => r.q,
       status: r => (r.r ? 1 : 0),
@@ -478,6 +499,230 @@
   // 統合した場合の結果を、実際には変更せずに確認する（確認画面用）。
   function previewMerge(state, catId, sourceNames, targetName) {
     return mergeItems(JSON.parse(JSON.stringify(state)), catId, sourceNames, targetName);
+  }
+
+  /* ---------- ブランド（カテゴリごとの一覧。服に1つ付ける） ----------
+   *   cat.brands : [{ id, name(正式名称), short(略称。任意) }]
+   *   meta.b     : ブランドID（未設定なら属性なし）
+   * 表や選択欄など狭いところは略称（あれば）、設定や絞り込みの一覧では正式名称を出す。
+   * ---------------------------------------------------------------- */
+
+  // 名前からの推定に使う、よく知られたブランド（正式名称と、名前に含まれやすい表記）。
+  const BRAND_DICTIONARY = [
+    { name: 'Nike', keys: ['ナイキ', 'nike'] },
+    { name: 'New Balance', keys: ['ニューバランス', 'new balance', 'newbalance'] },
+    { name: 'Cole Haan', keys: ['コールハーン', 'cole haan', 'colehaan'] },
+    { name: 'THE NORTH FACE', keys: ['ノースフェース', 'ノースフェイス', 'north face', 'northface'] },
+    { name: 'adidas', keys: ['アディダス', 'adidas'] },
+    { name: 'PUMA', keys: ['プーマ', 'puma'] },
+    { name: 'Converse', keys: ['コンバース', 'converse'] },
+    { name: 'VANS', keys: ['バンズ', 'vans'] },
+    { name: 'Champion', keys: ['チャンピオン', 'champion'] },
+    { name: 'LACOSTE', keys: ['ラコステ', 'lacoste'] },
+    { name: "Levi's", keys: ['リーバイス', "levi's", 'levis'] },
+    { name: 'Theory', keys: ['セオリー', 'theory'] },
+    { name: 'UNIQLO', keys: ['ユニクロ', 'uniqlo'] },
+    { name: 'Ralph Lauren', keys: ['ラルフローレン', 'ralph lauren'] },
+    { name: 'BEAMS', keys: ['ビームス', 'beams'] },
+    { name: 'UNITED ARROWS', keys: ['ユナイテッドアローズ', 'united arrows'] },
+    { name: 'Paul Smith', keys: ['ポールスミス', 'paul smith'] },
+    { name: 'Tom Wood', keys: ['トムウッド', 'tom wood'] },
+    { name: 'CASIO', keys: ['カシオ', 'casio', 'オシアナス', 'oceanus', 'ocw-', 'mtg-'] }, // OCW-・MTG- はカシオの型番
+    { name: 'Google', keys: ['pixel watch'] },
+    { name: 'G-SHOCK', keys: ['g-shock', 'gshock', 'ジーショック'] },
+    { name: 'SEIKO', keys: ['セイコー', 'seiko'] },
+    { name: 'CITIZEN', keys: ['シチズン', 'citizen'] }
+  ];
+
+  const isAscii = k => /^[\x00-\x7f]+$/.test(k);
+  const escapeRe = k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // 辞書のキーが名前に含まれるか。英字のキーは、前が英数字でない位置（先頭や日本語の直後）だけを見る。
+  function hasDictKey(n, key) {
+    const k = normalizeName(key);
+    return isAscii(k) ? new RegExp('(^|[^a-z0-9])' + escapeRe(k)).test(n) : n.includes(k);
+  }
+
+  function dictionaryBrand(name) {
+    const n = normalizeName(name);
+    if (!n) return null;
+    return BRAND_DICTIONARY.find(e => e.keys.some(k => hasDictKey(n, k))) || null;
+  }
+
+  // 一覧・選択欄に出す表示名（略称があれば略称）。
+  function brandText(brand) { return brand ? (brand.short || brand.name) : ''; }
+  function brandLabel(cat, id) { return brandText(findBrand(cat, id)); }
+
+  function findBrand(cat, id) {
+    return (cat && Array.isArray(cat.brands) ? cat.brands.find(b => b && b.id === id) : undefined) || null;
+  }
+
+  // 正式名称または略称が label と同じブランド（全角・半角などの違いは同じとみなす）。
+  function findBrandByLabel(cat, label) {
+    const n = normalizeName(label);
+    if (!n || !cat || !Array.isArray(cat.brands)) return null;
+    return cat.brands.find(b => b && (normalizeName(b.name) === n || (b.short && normalizeName(b.short) === n))) || null;
+  }
+
+  // 名前と略称が、ほかのブランドの名前・略称と重ならないか。
+  function brandConflict(cat, name, short, exceptId) {
+    const taken = new Set();
+    (cat.brands || []).forEach(b => {
+      if (b.id === exceptId) return;
+      taken.add(normalizeName(b.name));
+      if (b.short) taken.add(normalizeName(b.short));
+    });
+    return taken.has(normalizeName(name)) || (!!short && taken.has(normalizeName(short)));
+  }
+
+  function addBrand(cat, name, short, id) {
+    if (!cat || typeof cat !== 'object') return fail('no-cat');
+    const nm = typeof name === 'string' ? name.trim() : '';
+    if (!nm) return fail('empty');
+    let sh = typeof short === 'string' ? short.trim() : '';
+    if (normalizeName(sh) === normalizeName(nm)) sh = '';
+    if (!Array.isArray(cat.brands)) cat.brands = [];
+    if (brandConflict(cat, nm, sh, null)) return fail('duplicate');
+    let bid = id;
+    if (!bid) {
+      let i = cat.brands.length + 1;
+      while (cat.brands.some(b => b.id === 'b' + i)) i++;
+      bid = 'b' + i;
+    }
+    if (cat.brands.some(b => b.id === bid)) return fail('duplicate-id');
+    cat.brands.push({ id: bid, name: nm, short: sh });
+    return ok({ id: bid });
+  }
+
+  // ブランドの正式名称・略称を変える。付いている服は、IDで結び付いているので、そのまま付け替わる。
+  function updateBrand(cat, id, patch) {
+    const b = findBrand(cat, id);
+    if (!b) return fail('no-brand');
+    const p = patch || {};
+    const nm = 'name' in p ? (typeof p.name === 'string' ? p.name.trim() : '') : b.name;
+    if (!nm) return fail('empty');
+    let sh = 'short' in p ? (typeof p.short === 'string' ? p.short.trim() : '') : (b.short || '');
+    if (normalizeName(sh) === normalizeName(nm)) sh = '';
+    if (brandConflict(cat, nm, sh, id)) return fail('duplicate');
+    b.name = nm;
+    b.short = sh;
+    return ok();
+  }
+
+  // ブランドごとの服の数（手放した服を含む）。
+  function brandCounts(cat) {
+    const counts = new Map();
+    if (!cat || !cat.meta) return {};
+    Object.keys(cat.meta).forEach(name => {
+      const m = cat.meta[name];
+      if (m && typeof m === 'object' && m.b != null) counts.set(m.b, (counts.get(m.b) || 0) + 1);
+    });
+    return Object.fromEntries(counts);
+  }
+
+  // 使っていないブランドだけ削除できる。
+  function deleteBrand(cat, id) {
+    if (!findBrand(cat, id)) return fail('no-brand');
+    const n = ownGet(brandCounts(cat), id, 0);
+    if (n > 0) return fail('used', { count: n });
+    cat.brands = cat.brands.filter(b => b.id !== id);
+    return ok();
+  }
+
+  // 登録済みのブランドのうち、名前に含まれているもの。ユーザーが付けた名前・略称は、英字なら名前の先頭、
+  // 日本語なら名前のどこかに含まれていれば当てはまる（「Levi's 502 US」が略称「US」に当たらないよう、英字は先頭だけを見る）。
+  // 辞書にあるブランドは、辞書の表記（ナイキ・nike など）でも当てはまる。
+  function matchBrandForName(cat, name) {
+    if (!cat || !Array.isArray(cat.brands) || !cat.brands.length) return null;
+    const n = normalizeName(name);
+    if (!n) return null;
+    for (const b of cat.brands) {
+      const labels = [b.name, b.short].filter(Boolean).map(normalizeName);
+      for (const k of labels) {
+        if (k.length < 2) continue;
+        if (isAscii(k) ? n.startsWith(k) : n.includes(k)) return b;
+      }
+      const entry = BRAND_DICTIONARY.find(e => labels.includes(normalizeName(e.name)));
+      if (entry && entry.keys.some(k => hasDictKey(n, k))) return b;
+    }
+    return null;
+  }
+
+  // 名前の先頭の英字（2文字以上）。例：「Theory長黒」→ Theory、「PS緑長T」→ PS。
+  // ハイフンや数字の手前までを見る（型番「AB-1」「AB-2」を、同じ「AB」として数えるため）。
+  function leadingLatin(name) {
+    const raw = String(name == null ? '' : name).normalize('NFKC').trim();
+    const m = /^[A-Za-z][A-Za-z'.&]*/.exec(raw);
+    const t = m ? m[0].replace(/[.&']+$/, '') : '';
+    return t.length >= 2 ? t : '';
+  }
+
+  // ブランド未設定の服に、名前からブランドの案を作る（cat は書き換えない）。
+  //   ①登録済みのブランドが名前に含まれていれば、そのブランド
+  //   ②辞書にあるブランドがあれば、その正式名称
+  //   ③名前の先頭の英字が、同じカテゴリで2つ以上の服に共通していれば、その英字（1つだけの服は推定しない）
+  // 戻り値: [{ name: 服の名前, brand: ブランド名, id: 登録済みなら ID / 未登録なら null }]
+  function suggestBrands(cat) {
+    if (!cat || !Array.isArray(cat.items)) return [];
+    const counts = new Map();
+    cat.items.forEach(n => {
+      if (dictionaryBrand(n)) return;
+      const t = leadingLatin(n).toLowerCase();
+      if (t) counts.set(t, (counts.get(t) || 0) + 1);
+    });
+    const out = [];
+    cat.items.forEach(n => {
+      if (getMeta(cat, n).b != null) return;
+      let existing = matchBrandForName(cat, n);
+      let brand = existing ? existing.name : null;
+      if (!brand) {
+        const d = dictionaryBrand(n);
+        if (d) brand = d.name;
+        else {
+          const t = leadingLatin(n);
+          if (t && counts.get(t.toLowerCase()) >= 2) brand = t;
+        }
+        existing = brand ? findBrandByLabel(cat, brand) : null;
+      }
+      if (brand) out.push({ name: n, brand: existing ? existing.name : brand, id: existing ? existing.id : null });
+    });
+    return out;
+  }
+
+  // 推定案を適用する。未登録のブランドは、正式名称として登録する（略称は、あとで付けられる）。
+  function applyBrands(cat, proposals) {
+    let applied = 0, created = 0, skipped = 0;
+    (proposals || []).forEach(p => {
+      if (!p || typeof p.brand !== 'string' || !cat || !cat.items.includes(p.name)) { skipped++; return; }
+      let b = findBrandByLabel(cat, p.brand);
+      if (!b) {
+        const r = addBrand(cat, p.brand, '');
+        if (!r.ok) { skipped++; return; }
+        b = findBrand(cat, r.id);
+        created++;
+      }
+      if (setMeta(cat, p.name, { b: b.id }).ok) applied++; else skipped++;
+    });
+    return { applied, created, skipped };
+  }
+
+  // cat.brands の不正な値を直す。直した件数を返す。
+  function repairBrands(cat) {
+    if (cat.brands === undefined) return 0;
+    let fixed = 0;
+    if (!Array.isArray(cat.brands)) { cat.brands = []; return 1; }
+    const seen = new Set();
+    const clean = [];
+    cat.brands.forEach(b => {
+      const valid = b && typeof b === 'object' && !Array.isArray(b) && typeof b.id === 'string' && b.id && typeof b.name === 'string' && b.name.trim() && !seen.has(b.id);
+      if (!valid) { fixed++; return; }
+      seen.add(b.id);
+      const short = typeof b.short === 'string' ? b.short : '';
+      if (short !== b.short) fixed++;
+      clean.push({ id: b.id, name: b.name, short });
+    });
+    cat.brands = clean;
+    return fixed;
   }
 
   /* ---------- 期間別の集計 ---------- */
@@ -562,11 +807,14 @@
     let fixed = 0;
     if (!state || !Array.isArray(state.cats)) return fixed;
     state.cats.forEach(cat => {
-      if (!cat || typeof cat !== 'object' || cat.meta == null) return;
+      if (!cat || typeof cat !== 'object') return;
+      fixed += repairBrands(cat);
+      if (cat.meta == null) return;
       // meta そのものが配列・オブジェクト以外なら、保存できる空のオブジェクトに直す
       if (typeof cat.meta !== 'object' || Array.isArray(cat.meta)) { cat.meta = {}; fixed++; return; }
       const items = Array.isArray(cat.items) ? cat.items : [];
       const groupIds = new Set((Array.isArray(cat.groups) ? cat.groups : []).map(g => g.id));
+      const brandIds = new Set((Array.isArray(cat.brands) ? cat.brands : []).map(b => b.id));
       Object.keys(cat.meta).forEach(name => {
         if (!items.includes(name)) { delete cat.meta[name]; fixed++; return; }
         const m = cat.meta[name];
@@ -580,6 +828,7 @@
         if (!SEASONS.includes(m.s)) { m.s = '通年'; touched = true; }
         if (!Number.isInteger(m.q) || m.q < 1 || m.q > MAX_QTY) { m.q = 1; touched = true; }
         if (typeof m.r !== 'boolean') { m.r = false; touched = true; }
+        if ('b' in m && (m.b == null || !brandIds.has(m.b))) { delete m.b; touched = true; } // 存在しないブランドは外す
         if (touched) fixed++;
       });
     });
@@ -595,6 +844,9 @@
     setMeta, bulkSetMeta, suggestMeta, applyMeta,
     renameItem, mergeItems, previewMerge, addItem, deleteItem, isItemUsed,
     visibleItems, activeItems, wardrobeRows, wardrobeCategories,
+    // ブランド
+    BRAND_DICTIONARY, brandText, brandLabel, findBrand, addBrand, updateBrand, deleteBrand, brandCounts,
+    matchBrandForName, suggestBrands, applyBrands,
     // 期間別の集計
     shiftDate, periodRange, countUsage, lastUsed,
     // 元に戻す・修復

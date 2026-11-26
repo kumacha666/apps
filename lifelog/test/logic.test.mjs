@@ -750,7 +750,7 @@ test('wardrobeRows: 既定は現役のみ。回数と最終着用日が付く', 
   const rows = L.wardrobeRows(cat(st), st.logs, {});
   assert.deepEqual(rows.map(r => r.name), ['黒Tシャツ', 'ジーンズ', 'ダウンコート', '謎のアイテム']);
   const jeans = rows.find(r => r.name === 'ジーンズ');
-  assert.deepEqual(jeans, { name: 'ジーンズ', order: 1, g: 'bt', t: 'ジーンズ', s: '通年', q: 2, r: false, count: 3, last: '2026-11-20' });
+  assert.deepEqual(jeans, { name: 'ジーンズ', order: 1, g: 'bt', t: 'ジーンズ', b: null, s: '通年', q: 2, r: false, count: 3, last: '2026-11-20' });
   assert.equal(rows.find(r => r.name === '謎のアイテム').count, 0);
   assert.equal(rows.find(r => r.name === '謎のアイテム').last, '');
 });
@@ -835,4 +835,232 @@ test('wardrobeCategories: 服が1つ以上ある「ファッション」のカ�
   assert.deepEqual(L.wardrobeCategories({ cats: [] }), []);
   assert.deepEqual(L.wardrobeCategories(null), []);
   assert.deepEqual(L.wardrobeCategories({}), []);
+});
+
+/* ====================================================================
+ * ブランド（カテゴリごとの一覧。正式名称＋任意の略称。服に1つ付ける）
+ * ================================================================== */
+
+const brandCat = () => ({ id: 'c', name: 'コーデ', type: 'fashion', items: ['Theory長黒', 'Theory長白', 'PS緑長T', 'UA灰パーカー', 'UA青パーカー', "Levi's 502 US", '黒ナイキ', '黒Tシャツ', 'Tシャツ'] });
+
+test('addBrand: 正式名称と任意の略称で追加できる。前後の空白は除く', () => {
+  const c = brandCat();
+  assert.deepEqual(L.addBrand(c, '  Paul Smith ', ' PS '), { ok: true, id: 'b1' });
+  assert.deepEqual(c.brands, [{ id: 'b1', name: 'Paul Smith', short: 'PS' }]);
+  assert.deepEqual(L.addBrand(c, 'Theory'), { ok: true, id: 'b2' });
+  assert.equal(c.brands[1].short, '');
+  assert.equal(L.addBrand(c, 'x', '', 'b2').error, 'duplicate-id');
+  assert.equal(L.addBrand(c, '  ').error, 'empty');
+  assert.equal(L.addBrand(null, 'x').error, 'no-cat');
+});
+
+test('addBrand: 名前や略称が、ほかのブランドの名前・略称と重なるものは断る（全角半角・大文字小文字を含む）', () => {
+  const c = brandCat();
+  L.addBrand(c, 'Paul Smith', 'PS');
+  assert.equal(L.addBrand(c, 'paul smith').error, 'duplicate');
+  assert.equal(L.addBrand(c, 'ＰＡＵＬ　ＳＭＩＴＨ'.replace('　', ' ')).error, 'duplicate');
+  assert.equal(L.addBrand(c, 'Pretty Style', 'ps').error, 'duplicate'); // 略称が他の略称と同じ
+  assert.equal(L.addBrand(c, 'PS').error, 'duplicate'); // 名前が他の略称と同じ
+  assert.equal(c.brands.length, 1);
+});
+
+test('addBrand: 略称が正式名称と同じなら、略称なしとして扱う', () => {
+  const c = brandCat();
+  L.addBrand(c, 'Theory', 'theory');
+  assert.equal(c.brands[0].short, '');
+});
+
+test('updateBrand: 正式名称・略称を変えられる。重なる名前・空は断り、何も変えない', () => {
+  const c = brandCat();
+  L.addBrand(c, 'PS');
+  L.addBrand(c, 'Theory');
+  assert.equal(L.updateBrand(c, 'b1', { name: 'Paul Smith', short: 'PS' }).ok, true);
+  assert.deepEqual(c.brands[0], { id: 'b1', name: 'Paul Smith', short: 'PS' });
+  assert.equal(L.updateBrand(c, 'b1', { short: '' }).ok, true);
+  assert.equal(c.brands[0].short, '');
+  const snap = JSON.stringify(c.brands);
+  assert.equal(L.updateBrand(c, 'b2', { name: 'paul smith' }).error, 'duplicate');
+  assert.equal(L.updateBrand(c, 'b2', { name: ' ' }).error, 'empty');
+  assert.equal(L.updateBrand(c, 'zzz', { name: 'x' }).error, 'no-brand');
+  assert.equal(JSON.stringify(c.brands), snap);
+  // 自分自身と同じ名前に変えるのは重複ではない
+  assert.equal(L.updateBrand(c, 'b2', { name: 'THEORY' }).ok, true);
+});
+
+test('setMeta / bulkSetMeta: ブランドを設定できる。一覧に無いブランドは断り、null で外せる', () => {
+  const c = brandCat();
+  L.addBrand(c, 'Theory');
+  assert.equal(L.setMeta(c, 'Theory長黒', { b: 'zzz' }).error, 'no-brand');
+  assert.equal(L.setMeta(c, 'Theory長黒', { b: 'b1' }).ok, true);
+  assert.equal(L.getMeta(c, 'Theory長黒').b, 'b1');
+  assert.equal(L.setMeta(c, 'Theory長黒', { s: '冬' }).ok, true);
+  assert.equal(L.getMeta(c, 'Theory長黒').b, 'b1'); // 他の属性を変えても保つ
+  assert.deepEqual(L.bulkSetMeta(c, ['Theory長白', 'PS緑長T'], { b: 'b1' }), { ok: true, changed: 2 });
+  assert.equal(L.getMeta(c, 'PS緑長T').b, 'b1');
+  const snap = JSON.stringify(c.meta);
+  assert.equal(L.bulkSetMeta(c, ['UA灰パーカー', 'ない服'], { b: 'b1' }).error, 'no-item'); // 全体を適用しない
+  assert.equal(JSON.stringify(c.meta), snap);
+  assert.equal(L.setMeta(c, 'Theory長黒', { b: null }).ok, true);
+  assert.ok(!('b' in L.getMeta(c, 'Theory長黒'))); // 未設定は属性ごと無い
+  assert.equal(L.getMeta(c, 'Theory長黒').b, undefined);
+});
+
+test('brandText / brandLabel: 略称があれば略称、無ければ正式名称', () => {
+  const c = brandCat();
+  L.addBrand(c, 'Paul Smith', 'PS');
+  L.addBrand(c, 'Theory');
+  assert.equal(L.brandLabel(c, 'b1'), 'PS');
+  assert.equal(L.brandLabel(c, 'b2'), 'Theory');
+  assert.equal(L.brandLabel(c, 'nope'), '');
+  assert.equal(L.brandText(null), '');
+});
+
+test('deleteBrand: 使っていないブランドだけ削除できる（手放した服が使っていても断る）', () => {
+  const c = brandCat();
+  L.addBrand(c, 'Theory'); L.addBrand(c, 'PS');
+  L.setMeta(c, 'Theory長黒', { b: 'b1' });
+  L.setMeta(c, 'Theory長黒', { r: true });
+  assert.deepEqual(L.deleteBrand(c, 'b1'), { ok: false, error: 'used', count: 1 });
+  assert.equal(c.brands.length, 2);
+  assert.equal(L.deleteBrand(c, 'b2').ok, true);
+  assert.deepEqual(c.brands.map(b => b.id), ['b1']);
+  assert.equal(L.deleteBrand(c, 'b2').error, 'no-brand');
+  L.setMeta(c, 'Theory長黒', { b: null });
+  assert.equal(L.deleteBrand(c, 'b1').ok, true);
+});
+
+test('deleteBrand: ID が __proto__ でも使用中を正しく判定できる', () => {
+  const c = brandCat();
+  L.addBrand(c, 'Weird', '', '__proto__');
+  L.setMeta(c, 'Theory長黒', { b: '__proto__' });
+  assert.equal(L.deleteBrand(c, '__proto__').error, 'used');
+  assert.deepEqual(L.brandCounts(c), { ['__proto__']: 1 });
+  L.setMeta(c, 'Theory長黒', { b: null });
+  assert.equal(L.deleteBrand(c, '__proto__').ok, true);
+});
+
+test('mergeItems: ブランドは変更先の設定を使い、未設定なら統合する服のうち最初に設定のあるものを引き継ぐ', () => {
+  const mk = () => {
+    const st = { cats: [brandCat()], logs: {} };
+    const c = st.cats[0];
+    L.addBrand(c, 'Theory'); L.addBrand(c, 'PS');
+    return { st, c };
+  };
+  let { st, c } = mk();
+  L.setMeta(c, 'Theory長黒', { b: 'b1' }); L.setMeta(c, 'Theory長白', { b: 'b2' });
+  L.mergeItems(st, 'c', ['Theory長黒', 'Theory長白'], 'Theory長黒');
+  assert.equal(L.getMeta(c, 'Theory長黒').b, 'b1'); // 変更先の設定
+  ({ st, c } = mk());
+  L.setMeta(c, 'Theory長白', { b: 'b2' });
+  L.mergeItems(st, 'c', ['Theory長黒', 'Theory長白'], 'Theory長黒');
+  assert.equal(L.getMeta(c, 'Theory長黒').b, 'b2'); // 変更先が未設定なので、設定のある服から
+  ({ st, c } = mk());
+  L.mergeItems(st, 'c', ['Theory長黒', 'Theory長白'], 'Theory長黒');
+  assert.ok(!('b' in L.getMeta(c, 'Theory長黒'))); // どちらも未設定なら、未設定のまま
+});
+
+test('addItem: 登録済みのブランドが名前に含まれていれば、ブランドを自動で設定する', () => {
+  const c = brandCat();
+  L.addBrand(c, 'Theory'); L.addBrand(c, 'Paul Smith', 'PS'); L.addBrand(c, 'Nike'); L.addBrand(c, 'US');
+  L.addItem(c, 'Theory長グレー');
+  assert.equal(L.getMeta(c, 'Theory長グレー').b, 'b1');
+  L.addItem(c, 'PS紺ニット');
+  assert.equal(L.getMeta(c, 'PS紺ニット').b, 'b2'); // 略称
+  L.addItem(c, '白ナイキ');
+  assert.equal(L.getMeta(c, '白ナイキ').b, 'b3'); // 辞書の表記（ナイキ）が、登録済みのNikeに当たる
+  L.addItem(c, "Levi's 505 US");
+  assert.equal(L.getMeta(c, "Levi's 505 US").b, undefined); // 英字は名前の先頭だけを見る（末尾の「US」に当たらない）
+  L.addItem(c, 'ブランド無しの服');
+  assert.equal(L.getMeta(c, 'ブランド無しの服').b, undefined);
+  assert.ok(c.meta && !('ブランド無しの服' in c.meta)); // 分類を始めておらず、ブランドも無ければ meta は作らない
+});
+
+test('suggestBrands: 辞書・名前の先頭の英字（2つ以上の服に共通）・登録済みのブランドから案を作る', () => {
+  const c = brandCat();
+  const props = L.suggestBrands(c);
+  const by = Object.fromEntries(props.map(p => [p.name, p.brand]));
+  assert.equal(by['Theory長黒'], 'Theory');
+  assert.equal(by['Theory長白'], 'Theory');
+  assert.equal(by['UA灰パーカー'], 'UA');
+  assert.equal(by['UA青パーカー'], 'UA');
+  assert.equal(by["Levi's 502 US"], "Levi's"); // 辞書
+  assert.equal(by['黒ナイキ'], 'Nike'); // 辞書（カタカナ）
+  assert.equal(by['PS緑長T'], undefined); // 1つだけの英字は推定しない
+  assert.equal(by['黒Tシャツ'], undefined);
+  assert.equal(by['Tシャツ'], undefined); // 1文字の英字は対象外
+  assert.ok(props.every(p => p.id === null)); // まだ登録されていない
+  assert.equal(c.brands, undefined); // 案を作っただけでは変わらない
+});
+
+test('suggestBrands: 登録済みのブランドは1つだけの服にも当てはまり、既存のID・名前を使う。設定済みの服は対象外', () => {
+  const c = brandCat();
+  L.addBrand(c, 'Paul Smith', 'PS');
+  L.setMeta(c, 'Theory長黒', { b: L.addBrand(c, 'Theory').id });
+  const props = L.suggestBrands(c);
+  const ps = props.find(p => p.name === 'PS緑長T');
+  assert.deepEqual(ps, { name: 'PS緑長T', brand: 'Paul Smith', id: 'b1' });
+  assert.ok(!props.some(p => p.name === 'Theory長黒')); // 設定済み
+  const white = props.find(p => p.name === 'Theory長白');
+  assert.deepEqual(white, { name: 'Theory長白', brand: 'Theory', id: 'b2' });
+});
+
+test('applyBrands: 未登録のブランドは正式名称として登録し、服に設定する。登録済みは再利用する', () => {
+  const c = brandCat();
+  const props = L.suggestBrands(c);
+  const r = L.applyBrands(c, props);
+  assert.equal(r.skipped, 0);
+  assert.equal(r.applied, props.length);
+  assert.deepEqual(c.brands.map(b => b.name).sort(), ["Levi's", 'Nike', 'Theory', 'UA']);
+  assert.equal(L.brandLabel(c, L.getMeta(c, 'Theory長黒').b), 'Theory');
+  assert.equal(L.getMeta(c, 'Theory長黒').b, L.getMeta(c, 'Theory長白').b); // 同じブランドは同じID
+  assert.equal(r.created, 4);
+  // もう一度適用しても、ブランドは増えない
+  const again = L.applyBrands(c, [{ name: 'PS緑長T', brand: 'theory' }]);
+  assert.equal(again.created, 0);
+  assert.equal(c.brands.length, 4);
+  assert.deepEqual(L.applyBrands(c, [{ name: 'ない服', brand: 'X' }, null, { name: '黒Tシャツ' }]), { applied: 0, created: 0, skipped: 3 });
+});
+
+test('wardrobeRows: ブランドで絞り込み・並べ替え（略称があれば略称の順。未設定は最後）', () => {
+  const c = brandCat();
+  L.addBrand(c, 'Theory'); L.addBrand(c, 'Paul Smith', 'PS'); L.addBrand(c, 'Adidas');
+  L.setMeta(c, 'Theory長黒', { b: 'b1' }); L.setMeta(c, 'PS緑長T', { b: 'b2' }); L.setMeta(c, '黒ナイキ', { b: 'b3' });
+  const names = o => L.wardrobeRows(c, {}, Object.assign({ status: 'all' }, o)).map(r => r.name);
+  assert.deepEqual(names({ brand: 'b2' }), ['PS緑長T']);
+  assert.deepEqual(names({ brand: 'none' }).includes('Theory長黒'), false);
+  assert.equal(names({ brand: 'none' }).length, 6);
+  assert.deepEqual(names({ sort: 'brand' }).slice(0, 3), ['黒ナイキ', 'PS緑長T', 'Theory長黒']); // Adidas, PS(略称), Theory
+  assert.deepEqual(names({ sort: 'brand', dir: 'desc' }).slice(-3), ['Theory長黒', 'PS緑長T', '黒ナイキ']);
+  assert.equal(L.wardrobeRows(c, {}, { status: 'all' }).find(r => r.name === 'PS緑長T').b, 'b2');
+});
+
+test('repairMeta: 不正なブランドの一覧・属性を直す', () => {
+  const st = { cats: [{
+    id: 'c', items: ['A', 'B', 'C'],
+    brands: [{ id: 'b1', name: 'Theory', short: 5 }, { id: 'b1', name: 'Dup' }, { id: 'b3', name: ' ' }, 'x', null, { name: 'noid' }, { id: 'b4', name: 'OK' }],
+    meta: { A: { g: null, t: '', s: '夏', q: 1, r: false, b: 'b1' }, B: { g: null, t: '', s: '夏', q: 1, r: false, b: 'gone' }, C: { g: null, t: '', s: '夏', q: 1, r: false, b: null } }
+  }] };
+  const fixed = L.repairMeta(st);
+  assert.ok(fixed >= 6);
+  assert.deepEqual(st.cats[0].brands, [{ id: 'b1', name: 'Theory', short: '' }, { id: 'b4', name: 'OK', short: '' }]);
+  assert.equal(st.cats[0].meta.A.b, 'b1');
+  assert.ok(!('b' in st.cats[0].meta.B)); // 存在しないブランドは外す
+  assert.ok(!('b' in st.cats[0].meta.C)); // null も外す
+  assert.equal(L.repairMeta(st), 0);
+  const bad = { cats: [{ id: 'd', items: [], brands: 'oops' }, { id: 'e', items: [] }] };
+  assert.equal(L.repairMeta(bad), 1);
+  assert.deepEqual(bad.cats[0].brands, []);
+  assert.equal(bad.cats[1].brands, undefined);
+});
+
+test('suggestBrands: 型番の先頭（ハイフンより前）を同じブランドとして数える。カシオの型番は辞書で CASIO', () => {
+  const c = { id: 'w', items: ['AB-100 赤', 'AB-200 青', 'OCW-7000B 青紫', 'OCW-S4000E 銀', 'MTG-B1000RB 虹', 'Pixel Watch 4', 'ZZ-1'] };
+  const by = Object.fromEntries(L.suggestBrands(c).map(p => [p.name, p.brand]));
+  assert.equal(by['AB-100 赤'], 'AB');
+  assert.equal(by['AB-200 青'], 'AB');
+  assert.equal(by['OCW-7000B 青紫'], 'CASIO');
+  assert.equal(by['OCW-S4000E 銀'], 'CASIO');
+  assert.equal(by['MTG-B1000RB 虹'], 'CASIO');
+  assert.equal(by['Pixel Watch 4'], 'Google');
+  assert.equal(by['ZZ-1'], undefined); // 1つだけの型番は推定しない
 });
