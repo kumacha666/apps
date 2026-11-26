@@ -841,6 +841,7 @@ let histView = 'list';
 let calMonth = today().slice(0, 7);
 
 function nav(v) {
+  const prev = curView;
   curView = v;
   document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === 'view-'+v));
   // 服の管理は設定の中の画面。下のタブは設定を選択中のままにし、PCでは画面を広げる
@@ -848,7 +849,7 @@ function nav(v) {
   document.querySelectorAll('.nav-tab').forEach(el => el.classList.toggle('active', el.dataset.v === tab));
   document.body.classList.toggle('wide-view', v === 'wardrobe');
   render[v]();
-  window.scrollTo(0, 0);
+  if (v === 'wardrobe' || prev === 'wardrobe') window.scrollTo(0, 0); // 服の管理への出入りだけ、先頭に戻す
 }
 
 // ─── Render dispatcher ────────────────────────────────────────
