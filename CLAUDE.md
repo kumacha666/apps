@@ -22,7 +22,7 @@
 /enblo-classic/      enbloの大規模再設計前の完成形（試作品v1）を凍結・独立公開したもの — Vite+TS、ビルド有
 /enblo-tools/        enblo用デバッグ・プレビュー用の単独HTMLツール群
 /emoji-dm/           絵文字チャット — 静的PWA + Firebase (RTDB/Functions/FCM)
-/lifelog/            ライフログ＋ライフコーチ — 静的PWA
+/lifelog/            ライフログ＋ライフコーチ — 静的PWA（ユニットテスト有、`logic.js`のみ）
 /love-lab/           静的PWA
 /marvel-checklist/   マーベル映画・ドラマチェックリスト（視聴済み管理＋見るべき度合い評価）— 静的PWA、JSONデータ駆動
 /mhwilds-karikan/    モンハンワイルズ計算ツール — 静的PWA、JSONデータ駆動
@@ -45,7 +45,7 @@
 - Service Worker はネットワーク優先設計（キャッシュはオフライン用フォールバック）。「新しいバージョンがあります」のような更新トースト通知は、ネットワーク優先では常に最新を取得するため不正確になりやすく、過去に削除された実績がある（`tapu-neko`/`mhwilds-karikan`/`love-lab` 一括追加コミット参照）
 - 変更はファイルを直接編集してコミットするだけで GitHub Pages に反映される（ビルドステップなし）
 - `tapu-neko` はPWA化されていない最小構成（`manifest.json`はあるが`sw.js`なし）
-- `lifelog` はCSS/JSを分離せず、単一の`index.html`にインライン（`style.css`/`app.js`は無い）。アイコンは`manifest.json`内のSVGデータURI（📔）のみで`icon-192.png`/`icon-512.png`ファイルは無い
+- `lifelog` はCSS/JSを分離せず、単一の`index.html`にインライン（`style.css`/`app.js`は無い）。**ただしロジックのみ`logic.js`に切り出してユニットテストを持つ**（`npm test`、Node標準テストランナー）。`logic.js`はインラインのonclickからグローバルを参照する構成を崩さないため、ESMではなくクラシックスクリプト（UMD、グローバル`LifeLogLogic`）。詳細は`lifelog/CLAUDE.md`参照。アイコンは`manifest.json`内のSVGデータURI（📔）のみで`icon-192.png`/`icon-512.png`ファイルは無い
 - `marvel-checklist` は`icon-192.png`/`icon-512.png`のPNGファイルを持たず、単一の`icon.svg`（`sizes: "any"`）を`manifest.json`から参照する方式（PNG生成不要でスケーラブル）。データは`data/movies.json`にMCU（フェイズ別、映画＋Disney+ドラマシリーズをシーズン単位で混在）・ソニー（サム・ライミ版／アメイジング・スパイダーマン／SSU）・フォックス（X-MEN系／ファンタスティック・フォー）・その他（ブレイド等）の作品を`type`（`movie`/`series`）・`releaseDate`付きで収録し、視聴済みフラグと見るべき度合い評価（◎〇△✕、任意項目）は`localStorage`（`marvel-checklist-state-v1`）に保存。未公開作品（`releaseDate`が未来）は視聴済みチェックを無効化しつつ評価のみ設定可能。共有リンク経由で友達のリストを自分の端末にローカル保存・手動編集できる「友達」機能（バックエンド無し・自動同期無し、`marvel-checklist-friends-v1`等に保存）、`data/characters.json`（登場キャラクターの出演作収録、2作品以上に登場するキャラのみ）に基づき各作品カードに「前提作品」（登場人物の理解に先に見ておきたい作品）を表示する機能も持つ。**A系の中で唯一ユニットテストを持つ例外**（ビルドステップは無いが、公開日判定・進捗集計・インポート検証などのロジックを`logic.js`に切り出しており、`npm test`（Node標準テストランナー、`test/logic.test.mjs`）で検証する。`app.js`はDOM描画のみを担当しESモジュールとして`logic.js`を読み込む）。詳細は`marvel-checklist/CLAUDE.md`参照
 - `cpt-tracker` は2026-10-10新設。`marvel-checklist`に次ぐA系のユニットテスト持ち（`logic.js`＋`npm test`）。start.ggのAPIトークンが必要なため、トークンを預かる中継をGoogle Apps Script（`gas/Code.gs`、手動デプロイ）に置き、ページは中継のURL（`data/config.json`の`apiUrl`、トークンを含まない）だけを知る。**GASの変更は既存デプロイを新バージョンで更新**する必要がある（`gas/SETUP.md`）。EVO France（Premier 8/8）専用で、大会終了後は役目終了の想定。詳細は`cpt-tracker/CLAUDE.md`参照
 
