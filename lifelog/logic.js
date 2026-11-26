@@ -771,7 +771,7 @@
     // 最近着た服（記録中の日は除く）
     let recent = [];
     if (!searching && o.today) {
-      const from = shiftDate(o.today, -(o.recentDays - 1));
+      const from = shiftDate(o.today, -o.recentDays);
       const lastSeen = new Map();
       Object.keys(logs && typeof logs === 'object' ? logs : {}).forEach(date => {
         if (date === o.excludeDate || date < from || date > o.today) return;

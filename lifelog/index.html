@@ -1142,7 +1142,12 @@ function pkToggle(btn) {
   if (!pk) return;
   const name = btn.dataset.item;
   const i = pk.sel.indexOf(name);
-  if (i >= 0) pk.sel.splice(i, 1); else pk.sel.push(name);
+  if (i >= 0) {
+    pk.sel.splice(i, 1);
+    // 以前の記録の自由記入に同じ名前が残っていると、保存時に選択へ戻ってしまう（mergeSelection）ので、一緒に消す
+    const f = document.getElementById('f-text');
+    if (f && f.value.trim() === name) f.value = '';
+  } else pk.sel.push(name);
   pkRender();
 }
 function pkSeason(v) { if (pk) { pk.season = v; pkRender(); } }
@@ -1157,14 +1162,19 @@ function pkAdd() {
   if (!cat || !el) return;
   const name = el.value.trim();
   if (!name) return;
+  const backup = JSON.stringify(state);
   const r = LifeLogLogic.addItem(cat, name);
   let picked = name;
   if (!r.ok) {
     if (r.error !== 'exists') return;
     picked = r.existing;
     toast('すでにある服を選びました');
+  } else if (!wdPersist()) {
+    // 容量が足りず保存できなかった（本体を先に保存し、履歴を削っても入らない）。メモリだけ追加済みの状態を残さない
+    state = JSON.parse(backup);
+    toast('保存できなかったため、追加を取り消しました（容量が足りません）');
+    return;
   } else {
-    save();
     toast('服を追加しました');
   }
   if (!pk.sel.includes(picked)) pk.sel.push(picked);

@@ -1203,3 +1203,15 @@ test('pickerSections: 元のカテゴリを書き換えない／壊れたデー�
   assert.doesNotThrow(() => L.pickerSections({ id: 'x' }, null, {}));
   assert.deepEqual(L.pickerSections({ id: 'x' }, null, {}).groups, []);
 });
+
+test('pickerSections: 最近着た服は、記録日の30日前から前日まで（30日前の日を含み、31日前は含まない）', () => {
+  const { c } = pickerCat();
+  const logs = {
+    '2026-10-27': { f: { v: ['夏半袖'] } }, // 31日前：含まない
+    '2026-10-28': { f: { v: ['冬ニット'] } }, // 30日前：含む
+    '2026-11-26': { f: { v: ['通年シャツ'] } }, // 前日：含む
+    '2026-11-27': { f: { v: ['夏パンツ'] } } // 記録日：含まない
+  };
+  const s = L.pickerSections(c, logs, { season: 'all', today: '2026-11-27', excludeDate: '2026-11-27' });
+  assert.deepEqual(s.recent.slice().sort(), ['冬ニット', '通年シャツ'].sort());
+});
