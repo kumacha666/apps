@@ -728,6 +728,84 @@
     return fixed;
   }
 
+  /* ---------- 記録画面（服の選択）の表示 ---------- */
+
+  // 記録する日の月から、季節の切り替えの初期値を決める。
+  //   6〜9月：夏 ／ 11〜3月：冬 ／ 4・5・10月：すべて（夏の服も冬の服も出す。急に暑く・寒くなる時期のため）
+  // 日付が読めなければ「すべて」。
+  function defaultSeasonView(dateStr) {
+    const m = /^\d{4}-(\d{2})-\d{2}$/.exec(String(dateStr || ''));
+    const month = m ? Number(m[1]) : 0;
+    if (month >= 6 && month <= 9) return '夏';
+    if (month === 11 || month === 12 || (month >= 1 && month <= 3)) return '冬';
+    return 'all';
+  }
+
+  // 記録画面で服を選ぶための並び。cat は書き換えない。
+  //   opts: { selected: 選択中の名前の配列, season: '夏'|'冬'|'all', q: 検索語,
+  //           today: 今日の日付, excludeDate: 最近着た服の判定から除く日（記録中の日）, recentDays: 30, recentMax: 8 }
+  //   ・手放した服は出さない（選択中の服は残す）
+  //   ・季節の切り替えは、その季節と「通年」の服を出す（選択中の服は残す）。検索中は、季節に関係なく全部から探す
+  //   ・「最近着た服」は、季節に関係なく、直近 recentDays 日に着た服を新しい順に recentMax 件まで
+  //   ・グループ → 種類の順に並べる。グループが未設定の服は「未分類」にまとめる
+  // 戻り値: { recent, groups: [{ id, name, count, types: [{ type, items }] }], hiddenBySeason, searching }
+  function pickerSections(cat, logs, opts) {
+    const o = Object.assign({ selected: [], season: 'all', q: '', today: '', excludeDate: '', recentDays: 30, recentMax: 8 }, opts);
+    const items = cat && Array.isArray(cat.items) ? cat.items : [];
+    const selected = new Set(o.selected);
+    const q = normalizeName(o.q);
+    const searching = q !== '';
+    const metaOf = name => getMeta(cat, name);
+    const matches = name => {
+      if (!searching) return true;
+      if (normalizeName(name).includes(q)) return true;
+      const b = findBrand(cat, metaOf(name).b);
+      return !!b && (normalizeName(b.name).includes(q) || (!!b.short && normalizeName(b.short).includes(q)));
+    };
+    const seasonOk = name => o.season === 'all' || metaOf(name).s === '通年' || metaOf(name).s === o.season;
+    // 手放した服は、選択中でなければ出さない
+    const candidates = items.filter(n => !metaOf(n).r || selected.has(n));
+    const visible = candidates.filter(n => matches(n) && (searching || seasonOk(n) || selected.has(n)));
+    const hiddenBySeason = searching ? 0 : candidates.filter(n => !seasonOk(n) && !selected.has(n)).length;
+
+    // 最近着た服（記録中の日は除く）
+    let recent = [];
+    if (!searching && o.today) {
+      const from = shiftDate(o.today, -(o.recentDays - 1));
+      const lastSeen = new Map();
+      Object.keys(logs && typeof logs === 'object' ? logs : {}).forEach(date => {
+        if (date === o.excludeDate || date < from || date > o.today) return;
+        const day = logs[date];
+        const entry = day && typeof day === 'object' ? day[cat.id] : null;
+        entryValues(entry).forEach(n => { if (!lastSeen.has(n) || lastSeen.get(n) < date) lastSeen.set(n, date); });
+      });
+      const order = new Map(items.map((n, i) => [n, i]));
+      recent = candidates
+        .filter(n => lastSeen.has(n))
+        .sort((a, b) => (lastSeen.get(a) < lastSeen.get(b) ? 1 : lastSeen.get(a) > lastSeen.get(b) ? -1 : order.get(a) - order.get(b)))
+        .slice(0, o.recentMax);
+    }
+
+    const groups = [];
+    const known = new Set();
+    (Array.isArray(cat && cat.groups) ? cat.groups : []).forEach(g => {
+      known.add(g.id);
+      groups.push({ id: g.id, name: g.name, names: visible.filter(n => metaOf(n).g === g.id) });
+    });
+    groups.push({ id: null, name: '未分類', names: visible.filter(n => !known.has(metaOf(n).g)) });
+    return {
+      recent,
+      groups: groups.filter(g => g.names.length).map(g => {
+        const list = g.id == null ? [] : typesOf(cat, g.id);
+        const typeOf = n => (list.includes(metaOf(n).t) ? metaOf(n).t : '');
+        const types = list.concat(['']).map(t => ({ type: t, items: g.names.filter(n => typeOf(n) === t) })).filter(t => t.items.length);
+        return { id: g.id, name: g.name, count: g.names.length, types };
+      }),
+      hiddenBySeason,
+      searching
+    };
+  }
+
   /* ---------- 期間別の集計 ---------- */
 
   const PERIOD_DAYS = { '30d': 30, '90d': 90, '6m': 180, '1y': 365 };
@@ -846,7 +924,7 @@
     normalizeName, guessItem, getMeta, startGrouping, addGroup, addType,
     setMeta, bulkSetMeta, suggestMeta, applyMeta,
     renameItem, mergeItems, previewMerge, addItem, deleteItem, isItemUsed,
-    visibleItems, activeItems, wardrobeRows, wardrobeCategories,
+    visibleItems, activeItems, wardrobeRows, wardrobeCategories, defaultSeasonView, pickerSections,
     // ブランド
     BRAND_DICTIONARY, brandText, brandLabel, findBrand, addBrand, updateBrand, deleteBrand, brandCounts,
     matchBrandForName, suggestBrands, applyBrands,
