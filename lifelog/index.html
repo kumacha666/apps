@@ -488,15 +488,17 @@
     .wd-line { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
     .wd-line span:last-child { color: var(--text-2); text-align: right; }
     .wd-line.bad span:last-child { color: var(--danger); }
-    @media (min-width: 900px) {
+    /* 表に必要な幅は約960px（列の最小幅の合計＋すき間＋余白）。それより広い 1000px から表にする */
+    @media (min-width: 1000px) {
       body.wide-view { max-width: 1180px; }
       body.wide-view .bottom-nav { display: none; }
       body.wide-view .view { padding-bottom: 40px; }
       .wd-sortsel { display: none; }
       .wd-head, .wd-row {
         display: grid; gap: 10px; align-items: center;
-        grid-template-columns: 24px minmax(190px, 2fr) 140px 150px 90px 120px 100px 150px 36px;
+        grid-template-columns: 24px minmax(140px, 2fr) 110px 160px 76px 96px 84px 120px 32px;
       }
+      .wd-head, .wd-row { column-gap: 8px; }
       .wd-head { padding: 6px 10px; font-size: 12px; font-weight: 700; color: var(--text-2); }
       .wd-head button { border: none; background: none; font: inherit; font-weight: 700; color: inherit; cursor: pointer; text-align: left; padding: 0; }
       .wd-head button.on { color: var(--primary); }
@@ -1732,7 +1734,8 @@ const WD_ERR = {
   'no-group': 'そのグループはありません',
   'bad-qty': '着数は1〜99にしてください',
   'no-item': '対象の服が見つかりません',
-  already: 'すでに分類を始めています'
+  already: 'すでに分類を始めています',
+  storage: '保存容量が足りず、変更できませんでした（元の状態のままです）。エクスポートして、不要な記録を整理してください'
 };
 const wdMsg = res => WD_ERR[res && res.error] || 'できませんでした';
 
@@ -1753,15 +1756,33 @@ function wdOpen(catId) {
   nav('wardrobe');
 }
 
+// 本体のデータを先に保存し、そのあとで元に戻す履歴を保存する。
+// 本体が入らないときは、保存してある履歴を消して空きを作り、もう一度保存する。それでも入らなければ false。
+function wdPersist() {
+  const trySave = () => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); return true; } catch { return false; } };
+  if (!trySave()) {
+    try { localStorage.removeItem(UNDO_KEY); } catch {}
+    if (!trySave()) return false;
+  }
+  saveUndo(); // 履歴は本体のあと。入らなければ、古い順に捨てる
+  return true;
+}
+
 // 変更を加える共通の入口：操作の直前の状態を保存し、成功したときだけ確定する
 function wdMutate(label, fn) {
-  // 直前の状態を10件まで保存する（容量が足りないときは、saveUndo が古い順に捨てる）
+  // 直前の状態を10件まで保存する（容量が足りないときは、wdPersist／saveUndo が古い順に捨てる）
   const next = LifeLogLogic.pushSnapshot(undoStack, state, label, Date.now(), 10);
+  const before = undoStack;
   const res = fn();
   if (!res || res.ok === false) return res || { ok: false, error: 'unknown' };
   undoStack = next;
-  saveUndo();
-  save();
+  if (!wdPersist()) {
+    // 容量が足りず保存できなかった。メモリだけ変更済みの状態を残さないよう、操作の前に戻す
+    state = LifeLogLogic.popSnapshot(next).state;
+    undoStack = before;
+    saveUndo();
+    return { ok: false, error: 'storage' };
+  }
   return res;
 }
 function wdAfter() { renderWardrobe(); }
@@ -2046,10 +2067,17 @@ function wdUndo() {
   const msg = `「${last.label}」の前の状態に戻します。` + (newer ? '\nその後に付けた記録も消えます。' : '') + '\nよろしいですか？';
   if (!confirm(msg)) return;
   const popped = LifeLogLogic.popSnapshot(undoStack);
+  const prevState = state, prevStack = undoStack;
   state = popped.state;
   undoStack = popped.stack;
-  saveUndo();
-  save();
+  if (!wdPersist()) {
+    // 保存できなかったときは、メモリだけ戻った状態を残さない
+    state = prevState;
+    undoStack = prevStack;
+    saveUndo();
+    toast(wdMsg({ error: 'storage' }));
+    return;
+  }
   wd.sel.clear();
   toast(`「${popped.label}」の前に戻しました`);
   wdAfter();
