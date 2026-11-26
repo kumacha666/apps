@@ -486,8 +486,11 @@
       last: r => r.last
     }[o.sort] || (r => r.order);
     const sign = o.dir === 'desc' ? -1 : 1;
+    // グループ・ブランドが未設定の服は、昇順でも降順でも最後にする（空の値は常に最後。未設定だけ見たいときは絞り込みを使う）
+    const unsetLast = o.sort === 'group' || o.sort === 'brand';
     rows.sort((a, b) => {
       const x = keyOf(a), y = keyOf(b);
+      if (unsetLast && (x === Infinity) !== (y === Infinity)) return x === Infinity ? 1 : -1;
       let c;
       if (typeof x === 'string' || typeof y === 'string') c = String(x).localeCompare(String(y), 'ja');
       else c = x === y ? 0 : (x < y ? -1 : 1);

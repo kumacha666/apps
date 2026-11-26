@@ -772,7 +772,7 @@ test('wardrobeRows: 並べ替え（名前・グループ・着数・回数・最
   const c = cat(st);
   const names = o => L.wardrobeRows(c, st.logs, Object.assign({ status: 'all' }, o)).map(r => r.name);
   assert.deepEqual(names({ sort: 'group' }), ['黒Tシャツ', '白Tシャツ', 'ジーンズ', 'ダウンコート', '謎のアイテム']); // 未設定は最後
-  assert.deepEqual(names({ sort: 'group', dir: 'desc' }), ['謎のアイテム', 'ダウンコート', 'ジーンズ', '黒Tシャツ', '白Tシャツ']);
+  assert.deepEqual(names({ sort: 'group', dir: 'desc' }), ['ダウンコート', 'ジーンズ', '黒Tシャツ', '白Tシャツ', '謎のアイテム']); // 降順でも、未設定は最後
   assert.deepEqual(names({ sort: 'qty', dir: 'desc' })[0], 'ジーンズ');
   assert.deepEqual(names({ sort: 'count', dir: 'desc' })[0], 'ジーンズ');
   assert.deepEqual(names({ sort: 'count' }).slice(-1), ['ジーンズ']);
@@ -1030,7 +1030,8 @@ test('wardrobeRows: ブランドで絞り込み・並べ替え（略称があれ
   assert.deepEqual(names({ brand: 'none' }).includes('Theory長黒'), false);
   assert.equal(names({ brand: 'none' }).length, 6);
   assert.deepEqual(names({ sort: 'brand' }).slice(0, 3), ['黒ナイキ', 'PS緑長T', 'Theory長黒']); // Adidas, PS(略称), Theory
-  assert.deepEqual(names({ sort: 'brand', dir: 'desc' }).slice(-3), ['Theory長黒', 'PS緑長T', '黒ナイキ']);
+  assert.deepEqual(names({ sort: 'brand', dir: 'desc' }).slice(0, 3), ['Theory長黒', 'PS緑長T', '黒ナイキ']); // 降順でも、未設定は最後
+  assert.ok(L.wardrobeRows(c, {}, { status: 'all', sort: 'brand', dir: 'desc' }).slice(3).every(r => r.b === null));
   assert.equal(L.wardrobeRows(c, {}, { status: 'all' }).find(r => r.name === 'PS緑長T').b, 'b2');
 });
 
@@ -1063,4 +1064,18 @@ test('suggestBrands: 型番の先頭（ハイフンより前）を同じブラ�
   assert.equal(by['MTG-B1000RB 虹'], 'CASIO');
   assert.equal(by['Pixel Watch 4'], 'Google');
   assert.equal(by['ZZ-1'], undefined); // 1つだけの型番は推定しない
+});
+
+test('wardrobeRows: グループ・ブランドの並べ替えは、昇順でも降順でも、未設定の服が最後', () => {
+  const c = { id: 'c', items: ['未設定服', 'Z服', 'A服'], groups: [{ id: 'g1', name: 'A群' }, { id: 'g2', name: 'Z群' }], types: { g1: [], g2: [] },
+    brands: [{ id: 'bA', name: 'Alpha', short: '' }, { id: 'bZ', name: 'Zed', short: '' }],
+    meta: { 'Z服': { g: 'g2', t: '', s: '通年', q: 1, r: false, b: 'bZ' }, 'A服': { g: 'g1', t: '', s: '通年', q: 1, r: false, b: 'bA' } } };
+  const names = o => L.wardrobeRows(c, {}, Object.assign({ status: 'all' }, o)).map(r => r.name);
+  assert.deepEqual(names({ sort: 'brand' }), ['A服', 'Z服', '未設定服']);
+  assert.deepEqual(names({ sort: 'brand', dir: 'desc' }), ['Z服', 'A服', '未設定服']);
+  assert.deepEqual(names({ sort: 'group' }), ['A服', 'Z服', '未設定服']);
+  assert.deepEqual(names({ sort: 'group', dir: 'desc' }), ['Z服', 'A服', '未設定服']);
+  // 未設定どうしは、元の順序を保つ
+  c.items.push('未設定服2');
+  assert.deepEqual(names({ sort: 'brand', dir: 'desc' }).slice(-2), ['未設定服', '未設定服2']);
 });
