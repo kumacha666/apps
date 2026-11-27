@@ -1564,7 +1564,8 @@ import { fileURLToPath } from 'node:url';
 //     戻り値の形を変えたときも、一覧は変わらないが VERSION を上げること（CLAUDE.md参照）
 const API_BY_VERSION = {
   1: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v1.json', import.meta.url)), 'utf8')),
-  2: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v2.json', import.meta.url)), 'utf8')) // discardCandidates を追加
+  2: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v2.json', import.meta.url)), 'utf8')), // discardCandidates を追加
+  3: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v3.json', import.meta.url)), 'utf8')) // monthCells / entryText / dayEntries を追加
 };
 
 test('版：index.html が期待する logic.js の版と、logic.js の VERSION が同じ', () => {
@@ -1578,4 +1579,67 @@ test('版：logic.js の公開する関数の一覧を変えたら、VERSION を
   const names = Object.keys(L).sort();
   assert.ok(API_BY_VERSION[L.VERSION], `VERSION ${L.VERSION} の一覧が test/api-v*.json に無い`);
   assert.deepEqual(names, API_BY_VERSION[L.VERSION], '公開する関数の一覧が変わっています。logic.js の VERSION を上げ、index.html の LOGIC_VERSION_EXPECTED も同じ値にして、test/api-v<新しい版>.json を足してください');
+});
+
+/* ---------- ホームのカレンダー（monthCells / dayEntries / entryText） ---------- */
+
+test('monthCells: 月の配置（週は日曜はじまり）。前後の空白・今日・未来を印づける', () => {
+  // 2026年11月は日曜はじまり（11/1が日曜）、30日。今日=11/27
+  const w = L.monthCells('2026-11', '2026-11-27');
+  assert.equal(w.length, 5);
+  assert.deepEqual(w[0].map(c => c && c.day), [1, 2, 3, 4, 5, 6, 7]); // 1日が日曜なので、前の空白は無い
+  assert.deepEqual(w[4].map(c => c && c.day), [29, 30, null, null, null, null, null]);
+  const flat = w.flat().filter(Boolean);
+  assert.equal(flat.length, 30);
+  assert.equal(flat.find(c => c.day === 27).today, true);
+  assert.equal(flat.filter(c => c.today).length, 1);
+  assert.deepEqual(flat.filter(c => c.future).map(c => c.day), [28, 29, 30]);
+  assert.equal(flat[0].date, '2026-11-01');
+});
+
+test('monthCells: 月の長さ・うるう年・月の頭の曜日', () => {
+  // 2028年2月：29日（うるう年）、2/1は火曜
+  const feb = L.monthCells('2028-02', '2028-03-01');
+  const f = feb.flat();
+  assert.equal(f.filter(Boolean).length, 29);
+  assert.deepEqual(feb[0].map(c => c && c.day), [null, null, 1, 2, 3, 4, 5]);
+  // 2027年2月：28日。2/1は月曜
+  assert.equal(L.monthCells('2027-02', '2027-03-01').flat().filter(Boolean).length, 28);
+  // 6週にまたがる月（2026年8月：8/1が土曜、31日）
+  const aug = L.monthCells('2026-08', '2026-11-27');
+  assert.equal(aug.length, 6);
+  assert.deepEqual(aug[0].map(c => c && c.day), [null, null, null, null, null, null, 1]);
+  // どの週も7マス
+  assert.ok(aug.every(w => w.length === 7));
+  // 過去の月に、未来・今日の印は付かない
+  assert.ok(aug.flat().filter(Boolean).every(c => !c.future && !c.today));
+});
+
+test('monthCells: 今日が別の月なら、その月の日は全部未来（先の月）', () => {
+  const next = L.monthCells('2026-12', '2026-11-27').flat().filter(Boolean);
+  assert.ok(next.every(c => c.future));
+  assert.equal(next.some(c => c.today), false);
+});
+
+test('entryText: 記録の表示（選んだ服・カロリー・金額・時間・距離・歩数・体重・体脂肪・メモのみ）', () => {
+  assert.equal(L.entryText({ v: ['A', 'B'] }), 'A, B');
+  assert.equal(L.entryText({ v: 'A' }), 'A');
+  assert.equal(L.entryText({ v: ['A'], kcal: 500, yen: 1500 }), 'A · 500kcal · ¥1,500');
+  assert.equal(L.entryText({ min: 30, km: 5, steps: 8000 }), '30分 · 5km · 8,000歩');
+  assert.equal(L.entryText({ wt: 65.5, fat: 18 }), '65.5kg · 18%');
+  assert.equal(L.entryText({ v: [], note: 'メモだけ' }), 'メモだけ');
+  assert.equal(L.entryText({ v: ['A'], note: 'メモ' }), 'A'); // 値があれば、メモは出さない
+  assert.equal(L.entryText({}), '記録あり');
+  assert.equal(L.entryText(null), '');
+});
+
+test('dayEntries: その日の記録を、カテゴリの並び順で返す。無いカテゴリ・空の記録は除く', () => {
+  const cats = [{ id: 'a', name: '腕時計', icon: '⌚' }, { id: 'b', name: 'コーデ', icon: '👕' }, { id: 'c', name: '食事' }];
+  const logs = { '2026-11-20': { b: { v: ['服A', '服B'] }, a: { v: ['時計'] }, zz: { v: ['消えたカテゴリ'] }, c: null } };
+  const r = L.dayEntries({ cats, logs }, '2026-11-20');
+  assert.deepEqual(r.map(x => [x.name, x.icon, x.text]), [['腕時計', '⌚', '時計'], ['コーデ', '👕', '服A, 服B']]);
+  assert.deepEqual(L.dayEntries({ cats, logs }, '2026-11-21'), []);
+  assert.deepEqual(L.dayEntries({ cats, logs: null }, '2026-11-20'), []);
+  // アイコンが無ければ既定の📝
+  assert.equal(L.dayEntries({ cats: [{ id: 'c', name: '食事' }], logs: { d: { c: { v: ['x'] } } } }, 'd')[0].icon, '📝');
 });

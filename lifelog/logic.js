@@ -70,7 +70,7 @@
   // index.html が期待する logic.js の版。logic.js の公開する関数・戻り値の形を変えたら上げる
   // （index.html の LOGIC_VERSION_EXPECTED を同じ値にし、test/api-v<版>.json を足す。test/logic.test.mjs が突き合わせる）。
   // 更新の直後に「新しい index.html ＋ 古い logic.js」になったとき、index.html が気づいて取り直すために使う。
-  const VERSION = 2;
+  const VERSION = 3;
 
   const SEASONS = ['夏', '冬', '通年'];
   const DEFAULT_META = Object.freeze({ g: null, t: '', s: '通年', q: 1, r: false });
@@ -1042,6 +1042,53 @@
     return { firstLog, rows };
   }
 
+  /* ---------- ホームのカレンダー ---------- */
+
+  // 月の配置。週は日曜はじまりで、各週は7マス（月の前後の空きは null）。
+  //   マス: { date: 'YYYY-MM-DD', day, today, future }。ym は 'YYYY-MM'、todayStr は今日の日付。
+  function monthCells(ym, todayStr) {
+    const [y, m] = String(ym).split('-').map(Number);
+    const firstDow = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+    const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const cells = [];
+    for (let i = 0; i < firstDow; i++) cells.push(null);
+    for (let d = 1; d <= days; d++) {
+      const date = `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      cells.push({ date, day: d, today: date === todayStr, future: date > todayStr });
+    }
+    while (cells.length % 7) cells.push(null);
+    const weeks = [];
+    for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+    return weeks;
+  }
+
+  // 1件の記録の表示（選んだ服・カロリー・金額・時間・距離・歩数・体重・体脂肪を「 · 」でつなぐ。何も無ければメモ、それも無ければ「記録あり」）。
+  function entryText(e) {
+    if (!e || typeof e !== 'object') return '';
+    const vs = entryValues(e);
+    const parts = [];
+    if (vs.length) parts.push(vs.join(', '));
+    if (e.kcal) parts.push(`${e.kcal}kcal`);
+    if (e.yen) parts.push(`¥${Number(e.yen).toLocaleString('ja-JP')}`);
+    if (e.min) parts.push(`${e.min}分`);
+    if (e.km) parts.push(`${e.km}km`);
+    if (e.steps) parts.push(`${Number(e.steps).toLocaleString('ja-JP')}歩`);
+    if (e.wt) parts.push(`${e.wt}kg`);
+    if (e.fat) parts.push(`${e.fat}%`);
+    if (parts.length) return parts.join(' · ');
+    return typeof e.note === 'string' && e.note ? e.note : '記録あり';
+  }
+
+  // その日の記録を、カテゴリの並び順で返す（カテゴリが無い記録・空の記録は除く）。state は書き換えない。
+  function dayEntries(state, date) {
+    const cats = state && Array.isArray(state.cats) ? state.cats : [];
+    const day = state && state.logs && typeof state.logs === 'object' ? state.logs[date] : null;
+    if (!day || typeof day !== 'object') return [];
+    return cats
+      .filter(c => c && day[c.id])
+      .map(c => ({ catId: c.id, name: c.name, icon: c.icon || '📝', text: entryText(day[c.id]) }));
+  }
+
   /* ---------- 元に戻す（操作前の状態を保存） ---------- */
 
   // 操作の直前の状態をスタックに積む。古いものから捨てて max 件まで保つ。新しい配列を返す。
@@ -1109,6 +1156,8 @@
     matchBrandForName, suggestBrands, applyBrands,
     // 期間別の集計
     shiftDate, periodRange, periodLabel, countUsage, lastUsed, hasLogs, fashionStats, discardCandidates,
+    // ホームのカレンダー
+    monthCells, entryText, dayEntries,
     // 元に戻す・修復
     pushSnapshot, popSnapshot, repairMeta
   };

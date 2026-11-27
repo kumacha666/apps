@@ -150,6 +150,9 @@
     .date-nav-btn:disabled { opacity: 0.3; cursor: default; }
     .date-center { flex: 1; text-align: center; }
     .date-label { font-size: 15px; font-weight: 700; }
+    .date-label-btn { background: none; border: none; font-family: inherit; color: var(--text); cursor: pointer; padding: 3px 8px; border-radius: 10px; -webkit-tap-highlight-color: transparent; }
+    .date-label-btn:active { background: var(--border); }
+    .date-caret { font-size: 13px; margin-left: 2px; }
     .date-today-pill {
       display: inline-block;
       font-size: 11px;
@@ -773,6 +776,18 @@
     .cal-table td.is-today { box-shadow: inset 0 0 0 2px var(--primary); }
     .cal-table td:active:not(.empty) { opacity: 0.7; }
     .cal-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--primary); margin: 1px auto 0; }
+    /* ホームのカレンダー（日付をタップで開く下からのシート） */
+    .cal-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .cal-top .modal-title { margin: 0; }
+    .cal-table td.is-sel { background: var(--primary); color: #fff; font-weight: 700; }
+    .cal-table td.is-sel .cal-dot { background: #fff; }
+    .cal-table td.is-sel.is-today { box-shadow: none; }
+    .cal-table td.empty.future { color: var(--text-3); opacity: .45; }
+    .cal-prev { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); margin-bottom: 14px; }
+    .cal-prev-date { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+    .cal-prev-empty { font-size: 13px; color: var(--text-3); padding: 6px 0; }
+    .cal-prev .history-entry { align-items: flex-start; }
+    .cal-prev .h-val { overflow-wrap: anywhere; }
 
     /* History view toggle */
     .hist-toggle { display: flex; background: var(--border); border-radius: 10px; padding: 2px; margin-bottom: 16px; }
@@ -853,6 +868,11 @@
 </div>
 
 <!-- Wardrobe Dialog (統合・一括設定の確認) -->
+<!-- Home Calendar (日付をタップで開く) -->
+<div class="modal-overlay" id="cal-modal" onclick="overlayClose(this,'cal-modal')">
+  <div class="modal" id="cal-modal-body"></div>
+</div>
+
 <div class="modal-overlay" id="wd-modal" onclick="overlayClose(this,'wd-modal')">
   <div class="modal" id="wd-modal-body"></div>
 </div>
@@ -867,7 +887,7 @@
 // （画面の一部が描画されない）。その場合は一度だけ、キャッシュを避けて取り直して再読み込みする。
 // それでも合わなければ、画面に知らせる（無限に再読み込みしない）。記録のデータ（localStorage）には触れない。
 // LOGIC_VERSION_EXPECTED は logic.js の VERSION と同じ値にする（test/logic.test.mjs が突き合わせる）。
-const LOGIC_VERSION_EXPECTED = 2;
+const LOGIC_VERSION_EXPECTED = 3;
 if (LifeLogLogic.VERSION !== LOGIC_VERSION_EXPECTED) {
   let canRetry = false;
   try { canRetry = sessionStorage.getItem('lifelog_logic_retry') !== '1'; if (canRetry) sessionStorage.setItem('lifelog_logic_retry', '1'); } catch {}
@@ -1000,7 +1020,7 @@ function renderToday() {
     <div class="date-nav">
       <button class="date-nav-btn" onclick="shiftDate(-1)">‹</button>
       <div class="date-center">
-        <div class="date-label">${fmtDate(curDate)}</div>
+        <button class="date-label date-label-btn" onclick="calSheetOpen()" aria-label="カレンダーを開く（日付を選んで、その日の記録をのぞけます）">${fmtDate(curDate)} <span class="date-caret">📅</span></button>
         ${!isToday ? `<button class="date-today-pill" onclick="goToday()">今日に戻る</button>` : ''}
       </div>
       <button class="date-nav-btn" ${isToday?'disabled':''} onclick="shiftDate(1)">›</button>
@@ -1016,6 +1036,64 @@ function shiftDate(n) {
   renderToday();
 }
 function goToday() { curDate = today(); renderToday(); }
+
+// ─── ホームのカレンダー（日付をタップで開く）──────────────────────
+// 日付を選ぶと、その日の記録（「あのとき何を着てたっけ」）がカレンダーの下に出る。「この日を開く」を押すまで、ホームの日付は変わらない。
+// 履歴タブのカレンダー（calMonth／renderCalendarHtml）とは別の状態（cal）で動く。
+const cal = { month: '', sel: '' };
+
+function calSheetOpen() {
+  cal.month = curDate.slice(0, 7);
+  cal.sel = curDate;
+  calSheetRender();
+  document.getElementById('cal-modal').classList.add('show');
+}
+
+function calSheetRender() {
+  const todayStr = today();
+  const [y, m] = cal.month.split('-').map(Number);
+  const isCurMonth = cal.month === todayStr.slice(0, 7);
+  const weeks = LifeLogLogic.monthCells(cal.month, todayStr);
+  const rows = weeks.map(w => '<tr>' + w.map(c => {
+    if (!c) return '<td class="empty"></td>';
+    const hasLog = !!(state.logs[c.date] && Object.keys(state.logs[c.date]).length);
+    const cls = [hasLog && 'has-log', c.today && 'is-today', c.date === cal.sel && 'is-sel', c.future && 'empty future'].filter(Boolean).join(' ');
+    return `<td class="${cls}" ${c.future ? '' : `data-d="${c.date}" onclick="calSheetPick(this.dataset.d)"`}>${c.day}${hasLog ? '<div class="cal-dot"></div>' : ''}</td>`;
+  }).join('') + '</tr>').join('');
+  const ents = LifeLogLogic.dayEntries(state, cal.sel);
+  document.getElementById('cal-modal-body').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="cal-top">
+      <div class="modal-title">カレンダー</div>
+      <button class="date-today-pill" style="margin:0" onclick="calSheetToday()">今日</button>
+    </div>
+    <div class="cal-hdr">
+      <button class="date-nav-btn" aria-label="前の月" onclick="calSheetMonth(-1)">‹</button>
+      <div class="cal-title">${y}年${m}月</div>
+      <button class="date-nav-btn" aria-label="次の月" ${isCurMonth ? 'disabled' : ''} onclick="calSheetMonth(1)">›</button>
+    </div>
+    <table class="cal-table"><thead><tr>${['日', '月', '火', '水', '木', '金', '土'].map(d => `<th>${d}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>
+    <div class="cal-prev">
+      <div class="cal-prev-date">${esc(fmtDate(cal.sel))}</div>
+      ${ents.length
+        ? ents.map(e => `<div class="history-entry"><span class="h-icon">${esc(e.icon)}</span><span class="h-name">${esc(e.name)}</span><span class="h-val">${esc(e.text)}</span></div>`).join('')
+        : '<div class="cal-prev-empty">この日の記録はありません</div>'}
+    </div>
+    <button class="btn btn-primary" onclick="calSheetGo()">この日を開く</button>
+    <button class="btn btn-secondary" onclick="closeModal('cal-modal')">閉じる</button>`;
+}
+
+function calSheetMonth(n) {
+  const [y, m] = cal.month.split('-').map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  const next = `${d.getFullYear()}-${p2(d.getMonth() + 1)}`;
+  if (next > today().slice(0, 7)) return;
+  cal.month = next;
+  calSheetRender();
+}
+function calSheetPick(d) { if (d > today()) return; cal.sel = d; calSheetRender(); }
+function calSheetToday() { cal.sel = today(); cal.month = cal.sel.slice(0, 7); calSheetRender(); }
+function calSheetGo() { const d = cal.sel; closeModal('cal-modal'); jumpToDate(d); }
 
 // ─── LOG MODAL ────────────────────────────────────────────────
 function openLog(catId) {
