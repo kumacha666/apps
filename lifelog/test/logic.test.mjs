@@ -1565,7 +1565,8 @@ import { fileURLToPath } from 'node:url';
 const API_BY_VERSION = {
   1: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v1.json', import.meta.url)), 'utf8')),
   2: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v2.json', import.meta.url)), 'utf8')), // discardCandidates を追加
-  3: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v3.json', import.meta.url)), 'utf8')) // monthCells / entryText / dayEntries を追加
+  3: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v3.json', import.meta.url)), 'utf8')), // monthCells / entryText / dayEntries を追加
+  4: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v4.json', import.meta.url)), 'utf8')) // sortModes / defaultSortMode / sortItems を追加
 };
 
 test('版：index.html が期待する logic.js の版と、logic.js の VERSION が同じ', () => {
@@ -1642,4 +1643,72 @@ test('dayEntries: その日の記録を、カテゴリの並び順で返す。�
   assert.deepEqual(L.dayEntries({ cats, logs: null }, '2026-11-20'), []);
   // アイコンが無ければ既定の📝
   assert.equal(L.dayEntries({ cats: [{ id: 'c', name: '食事' }], logs: { d: { c: { v: ['x'] } } } }, 'd')[0].icon, '📝');
+});
+
+/* ---------- 平らな選択一覧の並び替え（sortItems / sortModes / defaultSortMode） ---------- */
+
+function flatCat(type = 'fashion') {
+  return { id: 'w', type, items: ['A', 'B', 'C', 'D', 'E'] };
+}
+const flatLogs = () => ({
+  '2026-10-01': { w: { v: ['A'] } },            // 57日前
+  '2026-11-20': { w: { v: ['B', 'C'] } },       // 7日前
+  '2026-11-25': { w: { v: ['B'] } },            // 2日前
+  '2026-11-26': { w: { v: ['B'] } }             // 1日前
+});
+const si = (c, logs, o) => L.sortItems(c, logs, Object.assign({ names: c.items, mode: 'idle', today: '2026-11-27' }, o));
+
+test('sortModes / defaultSortMode: ファッションは「着ていない順」が既定、それ以外は登録順。ラベルは種類で変わる', () => {
+  assert.deepEqual(L.sortModes(flatCat('fashion')).map(m => m.id), ['order', 'idle', 'few']);
+  assert.equal(L.sortModes(flatCat('fashion')).find(m => m.id === 'idle').label, '着ていない順');
+  assert.equal(L.sortModes(flatCat('food')).find(m => m.id === 'idle').label, '久しぶり順');
+  assert.equal(L.sortModes(flatCat('fashion')).find(m => m.id === 'order').label, '登録順');
+  assert.equal(L.defaultSortMode(flatCat('fashion')), 'idle');
+  for (const t of ['food', 'supplement', 'exercise', 'body', 'purchase', 'custom']) assert.equal(L.defaultSortMode(flatCat(t)), 'order', t);
+  assert.equal(L.defaultSortMode({ id: 'x' }), 'order'); // 種類が不明でも落ちない
+});
+
+test('sortItems: 着ていない順。一度も着ていない服が先頭、次に最後に着た日が古い順。何日前かを返す', () => {
+  const r = si(flatCat(), flatLogs());
+  assert.deepEqual(r.map(x => x.name), ['D', 'E', 'A', 'C', 'B']);
+  assert.deepEqual(r.map(x => x.days), [null, null, 57, 7, 1]);
+  assert.equal(r.find(x => x.name === 'B').count, 3);
+});
+
+test('sortItems: 回数が少ない順（着数で割る）。同じなら最後に着た日が古い順', () => {
+  const c = flatCat(); c.meta = { B: { g: null, t: '', s: '通年', q: 3, r: false } };
+  const r = si(c, flatLogs(), { mode: 'few' });
+  // 未着用D・E(0)、A(1回)、C(1回)、B(3回÷3着=1)。1回のもの同士は最後に着た日が古い順：A(57日)→C(7日)→B(1日)
+  assert.deepEqual(r.map(x => x.name), ['D', 'E', 'A', 'C', 'B']);
+  assert.equal(r.find(x => x.name === 'B').perPiece, 1);
+  // 着数で割ると順番が変わる例：F＝2回÷1着（2）、G＝3回÷3着（1）。回数だけで比べるとFが先だが、着数で割るとGが先
+  const c2 = { id: 'w', type: 'fashion', items: ['F', 'G'], meta: { G: { g: null, t: '', s: '通年', q: 3, r: false } } };
+  const logs2 = { '2026-11-10': { w: { v: ['F'] } }, '2026-11-11': { w: { v: ['F'] } }, '2026-11-12': { w: { v: ['G'] } }, '2026-11-13': { w: { v: ['G'] } }, '2026-11-14': { w: { v: ['G'] } } };
+  assert.deepEqual(si(c2, logs2, { mode: 'few' }).map(x => x.name), ['G', 'F']);
+});
+
+test('sortItems: 登録順は元の並びのまま。知らないモードも登録順', () => {
+  assert.deepEqual(si(flatCat(), flatLogs(), { mode: 'order' }).map(x => x.name), ['A', 'B', 'C', 'D', 'E']);
+  assert.deepEqual(si(flatCat(), flatLogs(), { mode: 'なにか' }).map(x => x.name), ['A', 'B', 'C', 'D', 'E']);
+  // 渡した一覧の一部だけ並べる
+  assert.deepEqual(si(flatCat(), flatLogs(), { names: ['C', 'A'], mode: 'order' }).map(x => x.name), ['A', 'C']);
+});
+
+test('sortItems: 「出さない」服は、どの並びでも最後に回す', () => {
+  const c = flatCat(); c.meta = { D: { g: null, t: '', s: '通年', q: 1, r: false, z: true } };
+  assert.equal(si(c, flatLogs()).at(-1).name, 'D'); // 未着用で本来は先頭だが、最後
+  assert.deepEqual(si(c, flatLogs(), { mode: 'order' }).map(x => x.name), ['A', 'B', 'C', 'E', 'D']);
+  assert.equal(si(c, flatLogs(), { mode: 'few' }).at(-1).name, 'D');
+});
+
+test('sortItems: 記録している日と、それより後の記録は使わない／壊れたデータや一覧に無い名前でも落ちない／元を書き換えない', () => {
+  const c = flatCat();
+  const logs = Object.assign(flatLogs(), { '2026-11-27': { w: { v: ['D'] } }, '2026-12-05': { w: { v: ['E'] } }, '2026-11-02': null });
+  const before = JSON.stringify([c, logs]);
+  const r = si(c, logs);
+  assert.deepEqual(r.slice(0, 2).map(x => x.name), ['D', 'E']); // 記録中の日（11/27）と未来の記録は、数えない
+  assert.equal(JSON.stringify([c, logs]), before);
+  // 一覧に無い名前（記録だけに残る名前）は、一覧にある名前の後ろに回る
+  assert.deepEqual(L.sortItems(c, null, { names: ['X', 'A'], mode: 'idle', today: '2026-11-27' }).map(x => x.name), ['A', 'X']);
+  assert.doesNotThrow(() => L.sortItems({ id: 'q' }, null, { names: [], mode: 'idle', today: '2026-11-27' }));
 });
