@@ -1378,7 +1378,7 @@ function renderInsights() {
     </div>`;
 
   // ファッションの統計の集計期間（初期値は全期間）。ほかの指標（記録率・直近30日の記録など）は変わらない
-  if (state.cats.some(c => c.type === 'fashion' && (c.items || []).length > 1)) {
+  if (state.cats.some(c => c.type === 'fashion' && LifeLogLogic.hasLogs(state.logs, c.id))) {
     const opts = [['30d', '30日'], ['90d', '90日'], ['6m', '半年'], ['1y', '1年'], ['all', '全期間']];
     html += `
     <div class="card ins-period">
@@ -1426,15 +1426,18 @@ function getInsights(cat, days30) {
 
   const catLogs30 = catLogs.filter(l => days30.includes(l.date));
 
+  // ファッションは、直近30日に記録が無くても、過去の記録があれば選んだ期間の統計を続けて出す（全期間・半年・1年のため）
+  const showFashion = cat.type === 'fashion' && LifeLogLogic.hasLogs(state.logs, cat.id);
   if (!catLogs30.length) {
     rows.push({ type:'warn', label:'⚠ 未記録', text:'直近30日に記録がありません' });
-    return rows;
+    if (!showFashion) return rows;
+  } else {
+    rows.push({ type:'stat', label:'📊 記録', text:`直近30日で${catLogs30.length}回 (${Math.round(catLogs30.length/30*100)}%)` });
   }
 
-  rows.push({ type:'stat', label:'📊 記録', text:`直近30日で${catLogs30.length}回 (${Math.round(catLogs30.length/30*100)}%)` });
-
   // Fashion insights（グループ別。集計はLifeLogLogic.fashionStats。期間は insPeriod）
-  if (cat.type === 'fashion' && (cat.items||[]).length > 1) {
+  // 現在の服の数には依存させない（統合後に1点だけになっても、過去の記録・一覧に無い名前の統計は出す）
+  if (showFashion) {
     const season = LifeLogLogic.defaultSeasonView(todayS);
     const stats = LifeLogLogic.fashionStats(cat, state.logs, { period: insPeriod, today: todayS, season });
     const firstDate = Object.keys(state.logs).filter(d => state.logs[d] && state.logs[d][cat.id]).sort()[0] || '';
@@ -1444,7 +1447,7 @@ function getInsights(cat, days30) {
       const key = cat.id + ':' + (g.id == null ? '_' : g.id);
       if (g.name) rows.push({ type:'stat', label:'👕 ' + esc(g.name), text:
         `<span class="ins-group">現役${g.activeCount}点（${g.pieces}着）</span>・着用 延べ${g.wears}回` });
-      if (g.variety.total) {
+      if (g.variety.total > 1) { // 対象が1点だけでは、バリエーションの意味が薄いので省く
         const pct = g.variety.pct;
         rows.push({
           type: pct >= 70 ? 'good' : pct >= 40 ? 'stat' : 'warn',

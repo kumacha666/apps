@@ -851,6 +851,12 @@
     return Object.fromEntries(counts);
   }
 
+  // そのカテゴリの記録が、いつのものでも1件でもあるか。
+  function hasLogs(logs, catId) {
+    if (!logs || typeof logs !== 'object') return false;
+    return Object.keys(logs).some(date => { const day = logs[date]; return !!(day && typeof day === 'object' && day[catId]); });
+  }
+
   // 服ごとの最終着用日（全期間）。
   function lastUsed(logs, catId) {
     const last = new Map();
@@ -1015,7 +1021,7 @@
     BRAND_DICTIONARY, brandText, brandLabel, findBrand, addBrand, updateBrand, deleteBrand, brandCounts,
     matchBrandForName, suggestBrands, applyBrands,
     // 期間別の集計
-    shiftDate, periodRange, periodLabel, countUsage, lastUsed, fashionStats,
+    shiftDate, periodRange, periodLabel, countUsage, lastUsed, hasLogs, fashionStats,
     // 元に戻す・修復
     pushSnapshot, popSnapshot, repairMeta
   };

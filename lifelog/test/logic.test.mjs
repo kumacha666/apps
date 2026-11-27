@@ -1344,3 +1344,11 @@ test('fashionStats: __proto__ という名前の服や壊れたデータでも�
   assert.equal(JSON.stringify([c, logs]), before);
   assert.doesNotThrow(() => L.fashionStats({ id: 'x' }, null, { period: 'all', today: '2026-11-27', season: 'all' }));
 });
+
+test('hasLogs: そのカテゴリの記録が（いつでも）1件でもあるか。空の記録・別カテゴリ・壊れたデータは数えない', () => {
+  assert.equal(L.hasLogs({ '2026-06-01': { f: { v: ['A'] } } }, 'f'), true);
+  assert.equal(L.hasLogs({ '2026-06-01': { g: { v: ['A'] } } }, 'f'), false);
+  assert.equal(L.hasLogs({ '2026-06-01': null, '2026-06-02': { f: null } }, 'f'), false);
+  assert.equal(L.hasLogs({}, 'f'), false);
+  assert.equal(L.hasLogs(null, 'f'), false);
+});
