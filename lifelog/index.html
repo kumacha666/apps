@@ -852,6 +852,22 @@
 
 <script src="logic.js"></script>
 <script>
+// ─── logic.js の版の確認 ─────────────────────────────────────
+// 公開サーバーは10分間キャッシュさせるため、更新の直後に「新しい index.html ＋ 古い logic.js」になることがある
+// （画面の一部が描画されない）。その場合は一度だけ、キャッシュを避けて取り直して再読み込みする。
+// それでも合わなければ、画面に知らせる（無限に再読み込みしない）。記録のデータ（localStorage）には触れない。
+// LOGIC_VERSION_EXPECTED は logic.js の VERSION と同じ値にする（test/logic.test.mjs が突き合わせる）。
+const LOGIC_VERSION_EXPECTED = 1;
+if (LifeLogLogic.VERSION !== LOGIC_VERSION_EXPECTED) {
+  let canRetry = false;
+  try { canRetry = sessionStorage.getItem('lifelog_logic_retry') !== '1'; if (canRetry) sessionStorage.setItem('lifelog_logic_retry', '1'); } catch {}
+  document.body.insertAdjacentHTML('afterbegin', `<div id="logic-mismatch" style="padding:32px 20px;text-align:center;font-size:14px;line-height:1.7">
+    ${canRetry ? '最新版に更新しています…' : 'アプリの更新を取得できていません。<br>少し待ってから、ページを開き直してください。<br>（記録は消えていません）<br><button onclick="location.reload()" style="margin-top:12px;padding:8px 20px;border-radius:100px;border:1px solid #999;background:transparent;color:inherit;font-size:14px">再読み込み</button>'}</div>`);
+  if (canRetry) Promise.all(['logic.js', 'index.html'].map(u => fetch(u, { cache: 'reload' }).catch(() => null))).then(() => location.reload());
+  throw new Error('logic.js の版が合いません（期待 ' + LOGIC_VERSION_EXPECTED + ' / 実際 ' + LifeLogLogic.VERSION + '）');
+}
+try { sessionStorage.removeItem('lifelog_logic_retry'); } catch {}
+
 // ─── Constants ───────────────────────────────────────────────
 const STORAGE_KEY = 'lifelog_v2';
 

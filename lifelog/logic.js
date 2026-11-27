@@ -67,6 +67,11 @@
    * 旧バージョンは追加フィールドを読み飛ばすので、書き出し・取り込みもそのまま動く。
    * ---------------------------------------------------------------- */
 
+  // index.html が期待する logic.js の版。logic.js の公開する関数・戻り値の形を変えたら上げる
+  // （index.html の LOGIC_VERSION_EXPECTED を同じ値にし、test/api-v<版>.json を足す。test/logic.test.mjs が突き合わせる）。
+  // 更新の直後に「新しい index.html ＋ 古い logic.js」になったとき、index.html が気づいて取り直すために使う。
+  const VERSION = 1;
+
   const SEASONS = ['夏', '冬', '通年'];
   const DEFAULT_META = Object.freeze({ g: null, t: '', s: '通年', q: 1, r: false });
   const MAX_QTY = 99;
@@ -1047,6 +1052,7 @@
   }
 
   return {
+    VERSION,
     // 記録の重複排除
     dedupeValues, mergeSelection, freePrefill, repairLogs,
     // 服の管理
