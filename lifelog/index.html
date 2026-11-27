@@ -307,6 +307,9 @@
     .pk-sub { font-size: 11px; font-weight: 700; color: var(--text-2); margin: 8px 0 4px; }
     .pk-recent-title { font-size: 12px; font-weight: 800; color: var(--text-2); margin: 10px 0 6px; }
     .pk-b { font-size: 10px; font-weight: 600; color: var(--text-3); margin-left: 6px; }
+    .pk-stat { color: var(--primary); }
+    .chip.selected .pk-stat { color: rgba(255,255,255,.9); }
+    .pk-muting .chip { border-style: dashed; }
     .chip.selected .pk-b { color: rgba(255,255,255,.8); }
     .pk-add { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
     .pk-add-row { display: flex; gap: 8px; margin-top: 8px; }
@@ -539,7 +542,7 @@
     .wd-brandrow .wd-use { text-align: right; }
     .wd-brandrow.add { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; padding-top: 10px; }
     .wd-brandrow.add input { background: var(--bg); border-color: var(--border); }
-    /* 表に必要な幅は約1030px（列の最小幅の合計＋すき間＋余白）。それより広い 1100px から表にする */
+    /* 表に必要な幅は約1050px（列の最小幅の合計＋すき間＋余白）。それより広い 1100px から表にする */
     @media (min-width: 1100px) {
       body.wide-view { max-width: 1180px; }
       body.wide-view .bottom-nav { display: none; }
@@ -547,7 +550,7 @@
       .wd-sortsel { display: none; }
       .wd-head, .wd-row {
         display: grid; gap: 10px; align-items: center;
-        grid-template-columns: 24px minmax(130px, 2fr) 104px 150px 112px 72px 94px 80px 108px 32px;
+        grid-template-columns: 24px minmax(130px, 2fr) 104px 150px 112px 72px 94px 96px 108px 32px;
       }
       .wd-head, .wd-row { column-gap: 8px; }
       .wd-head { padding: 6px 10px; font-size: 12px; font-weight: 700; color: var(--text-2); }
@@ -683,14 +686,17 @@
       background: #111827;
       color: white;
       padding: 10px 20px;
-      border-radius: 100px;
+      border-radius: 18px;
+      width: max-content;
+      max-width: calc(100vw - 32px);
+      text-align: center;
+      line-height: 1.45;
       font-size: 14px;
       font-weight: 500;
       z-index: 999;
       opacity: 0;
       transition: all 0.2s;
       pointer-events: none;
-      white-space: nowrap;
       box-shadow: 0 4px 16px rgba(0,0,0,0.2);
     }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -999,7 +1005,7 @@ function openLog(catId) {
 
   // 分類を使うカテゴリ（服）は、グループ・種類の見出しつきの選択画面（pk*）。それ以外は従来の平らなチップ
   const grouped = isGroupedCat(cat);
-  pk = grouped ? { catId, sel: selVals.slice(), season: LifeLogLogic.defaultSeasonView(curDate), q: '', closed: {}, adding: false } : null;
+  pk = grouped ? { catId, sel: selVals.slice(), season: LifeLogLogic.defaultSeasonView(curDate), q: '', closed: {}, adding: false, top: 'idle', mute: false } : null;
 
   // 手放した服は隠す（その日にすでに選ばれている服は残す）
   const shownItems = LifeLogLogic.visibleItems(cat, selVals);
@@ -1116,15 +1122,32 @@ function pkRender() {
   document.getElementById('pk-count').textContent = sel.length ? `${sel.length}点` : '';
   // 季節の切り替え
   const secs = LifeLogLogic.pickerSections(cat, state.logs, {
-    selected: pk.sel, season: pk.season, q: pk.q, today: curDate, excludeDate: curDate
+    selected: pk.sel, season: pk.season, q: pk.q, today: curDate, excludeDate: curDate,
+    rareMode: pk.top === 'recent' ? null : pk.top
   });
   const seasonBtn = (v, label) => `<button class="chip${pk.season === v ? ' selected' : ''}" onclick="pkSeason('${v}')">${label}</button>`;
   document.getElementById('pk-seasons').innerHTML = seasonBtn('夏', '夏') + seasonBtn('冬', '冬') + seasonBtn('all', 'すべて') +
     (secs.hiddenBySeason ? `<span class="pk-note">ほかの季節の服${secs.hiddenBySeason}点は隠しています</span>` : '');
   // 一覧
   let html = '';
-  if (secs.recent.length) {
-    html += `<div class="pk-recent-title">最近着た服</div><div class="chips">${secs.recent.map(n => pkChip(cat, n)).join('')}</div>`;
+  // 上の列：バランスよく着るために、しばらく着ていない服・回数が少ない服を先頭に出す（切り替えで「最近着た服」も選べる）。検索中は出さない
+  if (!secs.searching) {
+    const topRows = pk.top === 'recent'
+      ? secs.recent.map(n => ({ name: n, label: '' }))
+      : secs.rare.map(r => ({ name: r.name, label: pk.top === 'idle'
+          ? (r.days == null ? '未着用' : `${r.days}日`)
+          : (r.count === 0 ? '未着用' : r.perPiece !== r.count ? `${r.count}回・${r.perPiece}/着` : `${r.count}回`) }));
+    const tab = (v, l) => `<button class="chip${pk.top === v ? ' selected' : ''}" onclick="pkTop('${v}')">${l}</button>`;
+    html += `<div class="pk-recent-title">上に出す服</div>
+      <div class="pk-seasons">${tab('idle', '着ていない順')}${tab('few', '回数が少ない順')}${tab('recent', '最近着た順')}</div>`;
+    if (topRows.length) {
+      html += `<div class="chips${pk.mute ? ' pk-muting' : ''}">${topRows.map(r => pkTopChip(cat, r)).join('')}</div>`;
+      if (pk.top !== 'recent') html += pk.mute
+        ? `<div class="pk-note" style="margin-top:6px">出さない服をタップ（服の管理で戻せます）　<button class="pk-link" onclick="pkMuteMode(false)">完了</button></div>`
+        : `<button class="pk-link" onclick="pkMuteMode(true)">この列に出さない服を選ぶ…</button>`;
+    } else if (pk.top !== 'recent') {
+      html += `<div class="pk-note">今の季節に、対象の服がありません。</div>`;
+    }
   }
   secs.groups.forEach(g => {
     const key = g.id == null ? '_' : g.id;
@@ -1145,6 +1168,23 @@ function pkRender() {
     : `<button class="pk-link" onclick="pkAddOpen()">＋ 新しい服を追加</button>`}</div>`;
   document.getElementById('pk-list').innerHTML = html;
   if (pk.adding) { const el = document.getElementById('pk-new'); if (el && pk.focusNew) { el.focus(); pk.focusNew = false; } }
+}
+
+// 上の列のチップ。「出さない服を選ぶ」中は、タップで「提案に出さない」にする
+function pkTopChip(cat, row) {
+  const b = LifeLogLogic.brandLabel(cat, LifeLogLogic.getMeta(cat, row.name).b);
+  const tail = row.label ? `<span class="pk-b pk-stat">${esc(row.label)}</span>` : (b ? `<span class="pk-b">${esc(b)}</span>` : '');
+  return `<button class="chip pk-chip${!pk.mute && pk.sel.includes(row.name) ? ' selected' : ''}" data-item="${esc(row.name)}" onclick="pkTopTap(this)">${pk.mute ? '✕ ' : ''}${esc(row.name)}${tail}</button>`;
+}
+function pkTopTap(btn) { if (pk && pk.mute) pkMute(btn.dataset.item); else pkToggle(btn); }
+function pkTop(v) { if (pk) { pk.top = v; pk.mute = false; pkRender(); } }
+function pkMuteMode(on) { if (pk) { pk.mute = on; pkRender(); } }
+function pkMute(name) {
+  const cat = pkCat(); if (!cat) return;
+  const res = wdMutate('提案に出さない', () => LifeLogLogic.setMeta(cat, name, { z: true }));
+  if (res.ok === false) { toast(wdMsg(res)); return; }
+  toast(`「${name}」を出さない服にしました（服の管理で戻せます）`);
+  pkRender();
 }
 
 function pkToggle(btn) {
@@ -1928,6 +1968,7 @@ const WD_ERR = {
   'no-type': '選んだグループに、その種類はありません',
   'no-group': 'そのグループはありません',
   'bad-qty': '着数は1〜99にしてください',
+  'bad-flag': '設定できませんでした',
   'no-item': '対象の服が見つかりません',
   already: 'すでに分類を始めています',
   duplicate: '同じ名前または略称のブランドがあります',
@@ -2035,6 +2076,7 @@ function renderWardrobe() {
       ${brands.length ? `<select class="wd-sel" aria-label="ブランドで絞り込む" onchange="wdFilter('brand',this.value)">${brandOpts}</select>` : ''}
       <div class="wd-seg">
         <button aria-pressed="${wd.status === 'active'}" onclick="wdFilter('status','active')">現役</button>
+        <button aria-pressed="${wd.status === 'kept'}" onclick="wdFilter('status','kept')">出さない</button>
         <button aria-pressed="${wd.status === 'gone'}" onclick="wdFilter('status','gone')">手放した</button>
         <button aria-pressed="${wd.status === 'all'}" onclick="wdFilter('status','all')">すべて</button>
       </div>
@@ -2074,6 +2116,7 @@ function renderWardrobeList() {
       ${brands.length ? `<select class="wd-sel" aria-label="ブランド" onchange="wd.bulk.b=this.value">${optHtml('', 'ブランド（変更しない）', !wd.bulk.b)}${optHtml('__none', '未設定にする', wd.bulk.b === '__none')}${brands.map(b => optHtml(b.id, LifeLogLogic.brandText(b), wd.bulk.b === b.id)).join('')}</select>` : ''}
       <select class="wd-sel" aria-label="季節" onchange="wd.bulk.s=this.value">${optHtml('', '季節（変更しない）', !wd.bulk.s)}${LifeLogLogic.SEASONS.map(x => optHtml(x, x, wd.bulk.s === x)).join('')}</select>
       <button class="btn-sm" style="background:var(--primary);color:#fff" onclick="wdBulk('apply')">適用</button>
+      <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" onclick="wdBulk('kept')">出さない</button>
       <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" onclick="wdBulk('retire')">手放した</button>
       <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" onclick="wdBulk('active')">現役に戻す</button>
       <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" onclick="wdMergeOpen()" ${wd.sel.size >= 2 ? '' : 'disabled'}>統合…</button>
@@ -2099,7 +2142,7 @@ function renderWardrobeList() {
         : `<select class="wd-sel" aria-label="ブランド" disabled title="「ブランドの管理」でブランドを登録すると選べます"><option>未登録</option></select>`}
       <select class="wd-sel" aria-label="季節" onchange="wdSet(${i},'s',this.value)">${LifeLogLogic.SEASONS.map(x => optHtml(x, x, r.s === x)).join('')}</select>
       <span class="wd-stepper" title="同じような服を何着持っているか"><button aria-label="着数を減らす" onclick="wdQty(${i},-1)">−</button><span>${r.q}着</span><button aria-label="着数を増やす" onclick="wdQty(${i},1)">＋</button></span>
-      <button class="wd-pill ${r.r ? 'gone' : ''}" onclick="wdToggleR(${i})">${r.r ? '手放した' : '現役'}</button>
+      <select class="wd-sel wd-status" aria-label="状態" title="現役＝普通に使う／出さない＝持っているが、記録画面の上の列やバリエーション・提案に出さない（礼服・部屋着・着ない服など）／手放した＝記録画面から隠す（記録と統計は残る）" onchange="wdStatus(${i},this.value)">${optHtml('active', '現役', !r.r && !r.z)}${optHtml('kept', '出さない', !r.r && r.z)}${optHtml('gone', '手放した', r.r)}</select>
       <span class="wd-use">${r.count}回${r.last ? ' · ' + esc(r.last.slice(5).replace('-', '/')) : ''}</span>
       <button class="wd-del" aria-label="${esc(r.name)}を削除" title="${used ? '記録のある服は削除できません（「手放した」にしてください）' : '削除'}" onclick="wdDel(${i})" ${used ? 'disabled' : ''}>✕</button>
     </div>`;
@@ -2202,10 +2245,16 @@ function wdQty(i, d) {
   if (res.ok === false) toast(wdMsg(res));
   wdAfter();
 }
-function wdToggleR(i) {
-  const cat = wdCat(), r = wd.rows[i]; if (!cat || !r) return;
-  const res = wdMutate(r.r ? '現役に戻す' : '手放した', () => LifeLogLogic.setMeta(cat, r.name, { r: !r.r }));
-  if (res.ok === false) toast(wdMsg(res)); else toast(r.r ? `「${r.name}」を現役に戻しました` : `「${r.name}」を手放した扱いにしました（記録と統計には残ります）`);
+// 状態：現役／出さない（持っているが提案に出さない）／手放した。r と z の組み合わせはここで決める（出さない＝z、手放した＝r）
+const WD_STATUS = {
+  active: { patch: { r: false, z: false }, label: '現役に戻す', msg: n => `「${n}」を現役に戻しました` },
+  kept: { patch: { r: false, z: true }, label: '提案に出さない', msg: n => `「${n}」を出さない服にしました（上の列・提案から外れます）` },
+  gone: { patch: { r: true, z: false }, label: '手放した', msg: n => `「${n}」を手放した扱いにしました（記録と統計には残ります）` }
+};
+function wdStatus(i, v) {
+  const cat = wdCat(), r = wd.rows[i], st = WD_STATUS[v]; if (!cat || !r || !st) return;
+  const res = wdMutate(st.label, () => LifeLogLogic.setMeta(cat, r.name, st.patch));
+  if (res.ok === false) toast(wdMsg(res)); else toast(st.msg(r.name));
   wdAfter();
 }
 function wdName(i, val) {
@@ -2241,7 +2290,7 @@ function wdAdd() {
   if (res.ok) {
     toast(`「${res.name}」を追加しました`);
     // 追加した服が、今の絞り込みで見えなくなっていれば解除する
-    wd.q = ''; wd.group = 'all'; if (wd.status === 'gone') wd.status = 'active';
+    wd.q = ''; wd.group = 'all'; if (wd.status === 'gone' || wd.status === 'kept') wd.status = 'active';
     wdAfter();
     document.getElementById('wd-add-name')?.focus();
   } else toast(wdMsg(res));
@@ -2283,8 +2332,9 @@ function wdBulk(kind) {
   const cat = wdCat(); if (!cat || !wd.sel.size) return;
   const names = [...wd.sel];
   let patch;
-  if (kind === 'retire') patch = { r: true };
-  else if (kind === 'active') patch = { r: false };
+  if (kind === 'retire') patch = WD_STATUS.gone.patch;
+  else if (kind === 'kept') patch = WD_STATUS.kept.patch;
+  else if (kind === 'active') patch = WD_STATUS.active.patch;
   else {
     patch = {};
     if (wd.bulk.g) patch.g = wd.bulk.g === '__none' ? null : wd.bulk.g;

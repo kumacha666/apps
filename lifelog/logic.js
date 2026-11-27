@@ -211,6 +211,11 @@
       if (typeof p.r !== 'boolean') return fail('bad-retired');
       next.r = p.r;
     }
+    if ('z' in p) {
+      // 「提案に出さない」。falseは属性ごと外す（ブランドと同じく、無いのが既定）
+      if (typeof p.z !== 'boolean') return fail('bad-flag');
+      if (p.z) next.z = true; else delete next.z;
+    }
     if ('b' in p) {
       // ブランドはカテゴリごとの一覧（cat.brands）から選ぶ。null は「未設定」（属性ごと外す）
       if (p.b !== null && !findBrand(cat, p.b)) return fail('no-brand');
@@ -346,6 +351,8 @@
     if (totalQty > MAX_QTY) return fail('qty-overflow', { total: totalQty });
     const base = existing !== undefined ? getMeta(cat, existing) : metas[0];
     const merged = Object.assign({}, base, { q: totalQty, r: metas.every(m => m.r) });
+    // 「提案に出さない」は、統合する服が全部そうのときだけ残す（1つでも出す服があれば、統合後も出す）
+    if (metas.every(m => m.z)) merged.z = true; else delete merged.z;
     // ブランドは、変更先（または一番前の統合元）の設定を使う。未設定なら、統合する服のうち最初に設定のあるものを引き継ぐ
     if (merged.b == null) {
       const withBrand = metas.find(m => m.b != null);
@@ -447,7 +454,7 @@
   }
 
   // 服の管理画面の一覧。絞り込み・並べ替えをして返す。
-  //   opts: { q: 検索語, group: 'all'|'none'|グループID, brand: 'all'|'none'|ブランドID, status: 'active'|'gone'|'all',
+  //   opts: { q: 検索語, group: 'all'|'none'|グループID, brand: 'all'|'none'|ブランドID, status: 'active'|'kept'(出さない)|'gone'|'all',
   //           sort: 'order'|'name'|'group'|'type'|'brand'|'season'|'qty'|'status'|'count'|'last', dir: 'asc'|'desc' }
   function wardrobeRows(cat, logs, opts) {
     const o = Object.assign({ q: '', group: 'all', brand: 'all', status: 'active', sort: 'order', dir: 'asc' }, opts);
@@ -457,12 +464,13 @@
     const q = normalizeName(o.q);
     let rows = cat.items.map((name, order) => {
       const m = getMeta(cat, name);
-      return { name, order, g: m.g, t: m.t, b: m.b == null ? null : m.b, s: m.s, q: m.q, r: m.r, count: ownGet(counts, name, 0), last: ownGet(last, name, '') };
+      return { name, order, g: m.g, t: m.t, b: m.b == null ? null : m.b, s: m.s, q: m.q, r: m.r, z: m.z === true, count: ownGet(counts, name, 0), last: ownGet(last, name, '') };
     });
     rows = rows.filter(r => {
       if (q && !normalizeName(r.name).includes(q)) return false;
       if (o.status === 'active' && r.r) return false;
       if (o.status === 'gone' && !r.r) return false;
+      if (o.status === 'kept' && (r.r || !r.z)) return false;
       if (o.brand === 'none' && r.b != null) return false;
       if (o.brand !== 'all' && o.brand !== 'none' && r.b !== o.brand) return false;
       if (o.group === 'none') return r.g == null;
@@ -481,7 +489,7 @@
       brand: r => (r.b != null && brandRank.has(r.b) ? brandRank.get(r.b) : Infinity),
       season: r => SEASONS.indexOf(r.s),
       qty: r => r.q,
-      status: r => (r.r ? 1 : 0),
+      status: r => (r.r ? 2 : r.z ? 1 : 0),
       count: r => r.count,
       last: r => r.last
     }[o.sort] || (r => r.order);
@@ -746,7 +754,7 @@
   //           today: 今日の日付, excludeDate: 最近着た服の判定から除く日（記録中の日）, recentDays: 30, recentMax: 8 }
   //   ・手放した服は出さない（選択中の服は残す）
   //   ・季節の切り替えは、その季節と「通年」の服を出す（選択中の服は残す）。検索中は、季節に関係なく全部から探す
-  //   ・「最近着た服」は、季節に関係なく、直近 recentDays 日に着た服を新しい順に recentMax 件まで
+  //   ・「最近着た服」は、季節に関係なく、直近 recentDays 日に着た服を新しい順に recentMax 件まで（「出さない」服は外す）
   //   ・グループ → 種類の順に並べる。グループが未設定の服は「未分類」にまとめる
   // 戻り値: { recent, groups: [{ id, name, count, types: [{ type, items }] }], hiddenBySeason, searching }
   function pickerSections(cat, logs, opts) {
@@ -781,9 +789,37 @@
       });
       const order = new Map(items.map((n, i) => [n, i]));
       recent = candidates
-        .filter(n => lastSeen.has(n))
+        .filter(n => lastSeen.has(n) && !metaOf(n).z) // 「出さない」服は、上の列のどの並びにも出さない（8件に絞る前に外す）
         .sort((a, b) => (lastSeen.get(a) < lastSeen.get(b) ? 1 : lastSeen.get(a) > lastSeen.get(b) ? -1 : order.get(a) - order.get(b)))
         .slice(0, o.recentMax);
+    }
+
+    // 着ていない服の列（しばらく着ていない順／回数が少ない順）。
+    //   対象は今の季節（と通年）の現役の服で、「提案に出さない」服は選択中でも外す。記録している日より前の記録だけで数える。
+    let rare = [];
+    if (!searching && o.today && (o.rareMode === 'idle' || o.rareMode === 'few')) {
+      const lastSeen = new Map(), counts = new Map();
+      Object.keys(logs && typeof logs === 'object' ? logs : {}).forEach(date => {
+        if (date >= o.today) return;
+        const day = logs[date];
+        const entry = day && typeof day === 'object' ? day[cat.id] : null;
+        entryValues(entry).forEach(n => {
+          counts.set(n, (counts.get(n) || 0) + 1);
+          if (!lastSeen.has(n) || lastSeen.get(n) < date) lastSeen.set(n, date);
+        });
+      });
+      const order = new Map(items.map((n, i) => [n, i]));
+      const list = items
+        .filter(n => !metaOf(n).r && !metaOf(n).z && seasonOk(n))
+        .map(n => {
+          const count = counts.get(n) || 0;
+          const q = metaOf(n).q;
+          const last = lastSeen.get(n) || '';
+          return { name: n, count, perPiece: Math.round(count / q * 10) / 10, last, days: last ? daysBetween(last, o.today) : null, _p: count / q, _o: order.get(n) };
+        });
+      const byLast = (a, b) => (a.last === b.last ? 0 : !a.last ? -1 : !b.last ? 1 : a.last < b.last ? -1 : 1); // 一度も着ていない服が先頭、次に古い順
+      list.sort((a, b) => (o.rareMode === 'few' ? (a._p - b._p) || byLast(a, b) : byLast(a, b)) || a._o - b._o);
+      rare = list.slice(0, o.recentMax).map(r => ({ name: r.name, count: r.count, perPiece: r.perPiece, last: r.last, days: r.days }));
     }
 
     const groups = [];
@@ -795,6 +831,7 @@
     groups.push({ id: null, name: '未分類', names: visible.filter(n => !known.has(metaOf(n).g)) });
     return {
       recent,
+      rare,
       groups: groups.filter(g => g.names.length).map(g => {
         const list = g.id == null ? [] : typesOf(cat, g.id);
         const typeOf = n => (list.includes(metaOf(n).t) ? metaOf(n).t : '');
@@ -931,7 +968,7 @@
           return { name: r.name, count, q, retired: r.orphan ? false : !!m.r, orphan: r.orphan, last: lastMap.get(r.name) || '', perPiece: Math.round(count / q * 10) / 10 };
         });
       rows.sort((a, b) => (b.count - a.count) || ((order.has(a.name) ? order.get(a.name) : 1e9) - (order.has(b.name) ? order.get(b.name) : 1e9)));
-      const target = active.filter(seasonOk);
+      const target = active.filter(n => !meta(n).z).filter(seasonOk); // 「提案に出さない」服は、バリエーションの母数・提案から外す
       const used = target.filter(n => (counts.get(n) || 0) > 0).length;
       const tips = [];
       target.forEach(n => {
@@ -1002,6 +1039,7 @@
         if (!Number.isInteger(m.q) || m.q < 1 || m.q > MAX_QTY) { m.q = 1; touched = true; }
         if (typeof m.r !== 'boolean') { m.r = false; touched = true; }
         if ('b' in m && (m.b == null || !brandIds.has(m.b))) { delete m.b; touched = true; } // 存在しないブランドは外す
+        if ('z' in m && m.z !== true) { delete m.z; touched = true; } // 「提案に出さない」は、trueのときだけ持つ
         if (touched) fixed++;
       });
     });
