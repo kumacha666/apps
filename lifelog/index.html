@@ -526,6 +526,16 @@
     .wd-del:disabled { opacity: .3; cursor: not-allowed; }
     .wd-sortsel { display: inline-block; }
     .wd-opt { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+    .wd-cand { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
+    .wd-cand-days { flex: 0 0 52px; text-align: center; font-size: 20px; font-weight: 800; color: var(--primary); line-height: 1.1; }
+    .wd-cand-days small { font-size: 11px; font-weight: 600; color: var(--text-2); }
+    .wd-cand-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .wd-cand-main b { font-size: 14px; overflow-wrap: anywhere; }
+    .wd-cand-sub, .wd-cand-stat { font-size: 11px; color: var(--text-2); }
+    .wd-cand-act { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
+    .wd-cand-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .wd-cand-chips .chip { padding: 5px 12px; font-size: 13px; }
+    .wd-cand-n { margin-left: 5px; font-size: 11px; opacity: .75; }
     .wd-line { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
     .wd-line span:last-child { color: var(--text-2); text-align: right; }
     .wd-line.bad span:last-child { color: var(--danger); }
@@ -857,7 +867,7 @@
 // （画面の一部が描画されない）。その場合は一度だけ、キャッシュを避けて取り直して再読み込みする。
 // それでも合わなければ、画面に知らせる（無限に再読み込みしない）。記録のデータ（localStorage）には触れない。
 // LOGIC_VERSION_EXPECTED は logic.js の VERSION と同じ値にする（test/logic.test.mjs が突き合わせる）。
-const LOGIC_VERSION_EXPECTED = 1;
+const LOGIC_VERSION_EXPECTED = 2;
 if (LifeLogLogic.VERSION !== LOGIC_VERSION_EXPECTED) {
   let canRetry = false;
   try { canRetry = sessionStorage.getItem('lifelog_logic_retry') !== '1'; if (canRetry) sessionStorage.setItem('lifelog_logic_retry', '1'); } catch {}
@@ -1976,6 +1986,7 @@ function saveUndo() {
 }
 
 const wd = { catId: null, q: '', group: 'all', brand: 'all', brandPanel: false, status: 'active', sort: 'order', dir: 'asc', sel: new Set(), rows: [], bulk: { g: '', t: '', s: '', b: '' } };
+const wdCand = { min: 60, all: false }; // 手放し候補：何日以上着ていない服か／季節を問わないか
 const WD_ERR = {
   exists: '同じ名前の服がすでにあります',
   empty: '名前を入力してください',
@@ -2100,6 +2111,7 @@ function renderWardrobe() {
       ${started && unresolved ? `<button class="btn-sm" style="background:var(--primary-light);color:var(--primary)" onclick="wdSuggestOpen()">名前から一括設定（未設定${unresolved}件）</button>` : ''}
       <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" aria-expanded="${wd.brandPanel}" onclick="wdBrandPanel()">ブランドの管理${brands.length ? `（${brands.length}）` : ''}</button>
       ${brandSug ? `<button class="btn-sm" style="background:var(--primary-light);color:var(--primary)" onclick="wdBrandSuggestOpen()">名前からブランドを推定（${brandSug}件）</button>` : ''}
+      <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" onclick="wdCandOpen()" title="しばらく着ていない服を並べて、手放すか残すかを選べます">手放し候補（${wdCandCount(cat)}）</button>
     </div>
     ${wd.brandPanel ? wdBrandPanelHtml(cat) : ''}
     <div id="wd-list"></div>`;
@@ -2320,6 +2332,55 @@ function wdStart() {
   wdAfter();
   wdSuggestOpen();
 }
+// ── 手放し候補：しばらく着ていない服を、着ていない期間が長い順に並べて、手放すか残すかを選ぶ ──
+function wdCandCalc(cat, min, all) {
+  return LifeLogLogic.discardCandidates(cat, state.logs, { today: today(), season: LifeLogLogic.defaultSeasonView(today()), minDays: min, allSeasons: all });
+}
+function wdCandCount(cat) { return wdCandCalc(cat, wdCand.min, wdCand.all).rows.length; }
+function wdCandOpen() { if (wdCat()) wdCandRender(); document.getElementById('wd-modal').classList.add('show'); }
+function wdCandSet(k, v) { wdCand[k] = v; wdCandRender(); }
+function wdCandRender() {
+  const cat = wdCat(); if (!cat) return;
+  const season = LifeLogLogic.defaultSeasonView(today());
+  const res = wdCandCalc(cat, wdCand.min, wdCand.all);
+  const brandOf = id => LifeLogLogic.brandLabel(cat, id);
+  const gname = id => (Array.isArray(cat.groups) ? cat.groups.find(g => g.id === id) : null);
+  const mins = [30, 60, 90, 180];
+  const chip = (on, label, fn) => `<button class="chip${on ? ' selected' : ''}" onclick="${fn}">${label}</button>`;
+  const md = d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+  const rows = res.rows.map((r, i) => {
+    const sub = [brandOf(r.b), (gname(r.g) || {}).name, r.t, r.s !== '通年' ? r.s : '', r.q > 1 ? `${r.q}着` : ''].filter(Boolean).map(esc).join('・');
+    const stat = r.never
+      ? `一度も着ていません（記録を始めてから${r.idleDays}日）`
+      : `最後に着たのは${md(r.last)}・着用 全${r.count}回`;
+    return `<div class="wd-cand">
+      <div class="wd-cand-days">${r.idleDays}<small>日</small></div>
+      <div class="wd-cand-main"><b>${esc(r.name)}</b>${sub ? `<span class="wd-cand-sub">${sub}</span>` : ''}<span class="wd-cand-stat">${stat}</span></div>
+      <div class="wd-cand-act">
+        <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" data-n="${esc(r.name)}" onclick="wdCandAct(this.dataset.n,'gone')">手放す</button>
+        <button class="btn-sm" style="background:var(--primary-light);color:var(--primary)" data-n="${esc(r.name)}" onclick="wdCandAct(this.dataset.n,'kept')">残す</button>
+      </div>
+    </div>`;
+  }).join('');
+  const seasonChips = season === 'all' ? '' : `<div class="wd-cand-chips">${chip(!wdCand.all, `今の季節（${season}）`, "wdCandSet('all',false)")}${chip(wdCand.all, 'すべての季節', "wdCandSet('all',true)")}</div>`;
+  document.getElementById('wd-modal-body').innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">手放し候補</div>
+    <div class="modal-subtitle">着ていない期間が長い順です。<b>手放す</b>＝記録と統計は残して、記録画面から隠します。<b>残す</b>＝持ち続けます（上の列・提案・この一覧には出しません。礼服・部屋着など）。どちらも服の管理で戻せます。</div>
+    <div class="wd-cand-chips">${mins.map(m => chip(wdCand.min === m, `${m}日以上<span class="wd-cand-n">${wdCandCalc(cat, m, wdCand.all).rows.length}</span>`, `wdCandSet('min',${m})`)).join('')}</div>
+    ${seasonChips}
+    ${res.rows.length ? rows : `<div class="empty" style="padding:24px 0"><p>${res.firstLog ? `${wdCand.min}日以上着ていない服はありません` : 'まだ記録がないため、判断できません'}</p></div>`}
+    <button class="btn btn-secondary" style="margin-top:16px" onclick="closeModal('wd-modal')">閉じる</button>`;
+}
+function wdCandAct(name, kind) {
+  const cat = wdCat(), st = WD_STATUS[kind]; if (!cat || !st) return;
+  const res = wdMutate(st.label, () => LifeLogLogic.setMeta(cat, name, st.patch));
+  if (res.ok === false) { toast(wdMsg(res)); return; }
+  toast(kind === 'gone' ? `「${name}」を手放した扱いにしました` : `「${name}」を残す服にしました（候補・上の列に出しません）`);
+  wdCandRender();
+  wdAfter();
+}
+
 function wdSuggestOpen() {
   const cat = wdCat(); if (!cat) return;
   const props = LifeLogLogic.suggestMeta(cat);

@@ -70,7 +70,7 @@
   // index.html が期待する logic.js の版。logic.js の公開する関数・戻り値の形を変えたら上げる
   // （index.html の LOGIC_VERSION_EXPECTED を同じ値にし、test/api-v<版>.json を足す。test/logic.test.mjs が突き合わせる）。
   // 更新の直後に「新しい index.html ＋ 古い logic.js」になったとき、index.html が気づいて取り直すために使う。
-  const VERSION = 1;
+  const VERSION = 2;
 
   const SEASONS = ['夏', '冬', '通年'];
   const DEFAULT_META = Object.freeze({ g: null, t: '', s: '通年', q: 1, r: false });
@@ -999,6 +999,49 @@
     return { period: o.period, range, groups };
   }
 
+  /* ---------- 手放し候補 ---------- */
+
+  // 服の管理の「手放し候補」：一定期間（minDays）以上着ていない服を、着ていない期間が長い順に返す。cat・logs は書き換えない。
+  //   opts: { today, season: '夏'|'冬'|'all'（今の季節の見方）, minDays: 60, allSeasons: false }
+  //   ・対象は現役の服。「出さない」服（残すと決めた服）と手放した服は出さない。
+  //     allSeasons が false のときは、今の季節（と通年）の服だけ（冬に夏の服を「着ていない」と言わないため）
+  //   ・着ていない期間は、最後に着た日から today まで。一度も着ていない服は、そのカテゴリの記録の最初の日から today まで
+  //     （記録を始めたばかりの頃に、全部が候補にならないように）。記録が1件も無いカテゴリは判断できないので空
+  //   ・today より後の日の記録は使わない
+  //   ・同じ期間なら、一度も着ていない服が先、次に一覧の並び順
+  // 戻り値: { firstLog, rows: [{ name, idleDays, never, last, count, q, g, t, s, b }] }
+  function discardCandidates(cat, logs, opts) {
+    const o = Object.assign({ today: '', season: 'all', minDays: 60, allSeasons: false }, opts);
+    const items = cat && Array.isArray(cat.items) ? cat.items : [];
+    const lastSeen = new Map(), counts = new Map();
+    let firstLog = '';
+    Object.keys(logs && typeof logs === 'object' ? logs : {}).forEach(date => {
+      if (date > o.today) return;
+      const day = logs[date];
+      const entry = day && typeof day === 'object' ? day[cat && cat.id] : null;
+      if (!entry) return;
+      if (!firstLog || date < firstLog) firstLog = date;
+      entryValues(entry).forEach(n => {
+        counts.set(n, (counts.get(n) || 0) + 1);
+        if (!lastSeen.has(n) || lastSeen.get(n) < date) lastSeen.set(n, date);
+      });
+    });
+    if (!firstLog) return { firstLog: '', rows: [] };
+    const seasonOk = m => o.allSeasons || o.season === 'all' || m.s === '通年' || m.s === o.season;
+    const rows = [];
+    items.forEach((name, order) => {
+      const m = getMeta(cat, name);
+      if (m.r || m.z || !seasonOk(m)) return;
+      const last = lastSeen.get(name) || '';
+      const idleDays = daysBetween(last || firstLog, o.today);
+      if (idleDays < o.minDays) return;
+      rows.push({ name, order, idleDays, never: !last, last, count: counts.get(name) || 0, q: m.q, g: m.g, t: m.t, s: m.s, b: m.b == null ? null : m.b });
+    });
+    rows.sort((a, b) => (b.idleDays - a.idleDays) || (a.never === b.never ? 0 : a.never ? -1 : 1) || a.order - b.order);
+    rows.forEach(r => { delete r.order; });
+    return { firstLog, rows };
+  }
+
   /* ---------- 元に戻す（操作前の状態を保存） ---------- */
 
   // 操作の直前の状態をスタックに積む。古いものから捨てて max 件まで保つ。新しい配列を返す。
@@ -1065,7 +1108,7 @@
     BRAND_DICTIONARY, brandText, brandLabel, findBrand, addBrand, updateBrand, deleteBrand, brandCounts,
     matchBrandForName, suggestBrands, applyBrands,
     // 期間別の集計
-    shiftDate, periodRange, periodLabel, countUsage, lastUsed, hasLogs, fashionStats,
+    shiftDate, periodRange, periodLabel, countUsage, lastUsed, hasLogs, fashionStats, discardCandidates,
     // 元に戻す・修復
     pushSnapshot, popSnapshot, repairMeta
   };
