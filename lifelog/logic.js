@@ -754,7 +754,7 @@
   //           today: 今日の日付, excludeDate: 最近着た服の判定から除く日（記録中の日）, recentDays: 30, recentMax: 8 }
   //   ・手放した服は出さない（選択中の服は残す）
   //   ・季節の切り替えは、その季節と「通年」の服を出す（選択中の服は残す）。検索中は、季節に関係なく全部から探す
-  //   ・「最近着た服」は、季節に関係なく、直近 recentDays 日に着た服を新しい順に recentMax 件まで
+  //   ・「最近着た服」は、季節に関係なく、直近 recentDays 日に着た服を新しい順に recentMax 件まで（「出さない」服は外す）
   //   ・グループ → 種類の順に並べる。グループが未設定の服は「未分類」にまとめる
   // 戻り値: { recent, groups: [{ id, name, count, types: [{ type, items }] }], hiddenBySeason, searching }
   function pickerSections(cat, logs, opts) {
@@ -789,7 +789,7 @@
       });
       const order = new Map(items.map((n, i) => [n, i]));
       recent = candidates
-        .filter(n => lastSeen.has(n))
+        .filter(n => lastSeen.has(n) && !metaOf(n).z) // 「出さない」服は、上の列のどの並びにも出さない（8件に絞る前に外す）
         .sort((a, b) => (lastSeen.get(a) < lastSeen.get(b) ? 1 : lastSeen.get(a) > lastSeen.get(b) ? -1 : order.get(a) - order.get(b)))
         .slice(0, o.recentMax);
     }

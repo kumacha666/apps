@@ -1475,3 +1475,19 @@ test('fashionStats: 「出さない」服は、バリエーションの母数と
   assert.equal(base.variety.total, g.variety.total + 1);
   assert.equal(base.activeCount, g.activeCount);
 });
+
+test('pickerSections: 「最近着た順」の列からも、「出さない」服は外す（8件に絞る前に外すので、件数は減らない）。普通の一覧には残る', () => {
+  const { c, add } = restCat();
+  for (let i = 0; i < 10; i++) add('服' + i);
+  c.meta['服9'].z = true; // いちばん新しく着た服を「出さない」にする
+  const logs = {};
+  for (let i = 0; i < 10; i++) logs['2026-11-' + String(10 + i).padStart(2, '0')] = { f: { v: ['服' + i] } };
+  const s = L.pickerSections(c, logs, { season: 'all', today: '2026-11-27', excludeDate: '2026-11-27' });
+  assert.ok(!s.recent.includes('服9'));
+  assert.equal(s.recent.length, 8); // 除外した分だけ減らず、次の服が繰り上がる
+  assert.equal(s.recent[0], '服8');
+  assert.ok(s.groups.flatMap(g => g.types.flatMap(t => t.items)).includes('服9')); // 普通の一覧では選べる
+  // 選択中でも、上の列には出さない
+  const sel = L.pickerSections(c, logs, { season: 'all', today: '2026-11-27', excludeDate: '2026-11-27', selected: ['服9'] });
+  assert.ok(!sel.recent.includes('服9'));
+});
