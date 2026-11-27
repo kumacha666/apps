@@ -1079,3 +1079,139 @@ test('wardrobeRows: グループ・ブランドの並べ替えは、昇順でも
   c.items.push('未設定服2');
   assert.deepEqual(names({ sort: 'brand', dir: 'desc' }).slice(-2), ['未設定服', '未設定服2']);
 });
+
+/* ---------- 記録画面（pickerSections / defaultSeasonView） ---------- */
+
+test('defaultSeasonView: 6〜9月は夏、11〜3月は冬、4・5・10月はすべて', () => {
+  const v = d => L.defaultSeasonView(d);
+  ['2026-06-01', '2026-07-15', '2026-09-30'].forEach(d => assert.equal(v(d), '夏', d));
+  ['2026-11-01', '2026-12-31', '2027-01-10', '2027-02-28', '2027-03-31'].forEach(d => assert.equal(v(d), '冬', d));
+  ['2026-04-01', '2026-05-31', '2026-10-01', '2026-10-31'].forEach(d => assert.equal(v(d), 'all', d));
+  // 読めない日付は「すべて」
+  assert.equal(v(''), 'all');
+  assert.equal(v(undefined), 'all');
+  assert.equal(v('abc'), 'all');
+});
+
+function pickerCat() {
+  const c = {
+    id: 'f', type: 'fashion', items: [], groups: [], types: {}, brands: [], meta: {}
+  };
+  L.startGrouping(c);
+  const gt = c.groups.find(g => g.name === 'トップス').id;
+  const gb = c.groups.find(g => g.name === 'ボトムス').id;
+  c.brands = [{ id: 'bx', name: 'Alpha Wear', short: 'AW' }];
+  const add = (name, g, t, s, extra = {}) => {
+    c.items.push(name);
+    c.meta[name] = Object.assign({ g, t, s, q: 1, r: false }, extra);
+  };
+  add('夏半袖', gt, '半袖T', '夏');
+  add('冬ニット', gt, 'ニット', '冬');
+  add('通年シャツ', gt, 'シャツ', '通年', { b: 'bx' });
+  add('夏パンツ', gb, 'パンツ', '夏');
+  add('冬ジーンズ', gb, 'ジーンズ', '冬');
+  add('手放し半袖', gt, '半袖T', '夏', { r: true });
+  add('未分類服', null, '', '通年');
+  return { c, gt, gb };
+}
+const flat = (secs) => secs.groups.flatMap(g => g.types.flatMap(t => t.items));
+
+test('pickerSections: 夏の表示は、夏と通年の服だけ。手放した服・冬の服は出ない', () => {
+  const { c } = pickerCat();
+  const s = L.pickerSections(c, {}, { season: '夏' });
+  assert.deepEqual(flat(s).sort(), ['夏パンツ', '夏半袖', '未分類服', '通年シャツ'].sort());
+  assert.equal(s.hiddenBySeason, 2); // 冬ニット・冬ジーンズ（手放した服は数えない）
+});
+
+test('pickerSections: すべての表示は、季節で絞らない（手放した服は出ない）', () => {
+  const { c } = pickerCat();
+  const s = L.pickerSections(c, {}, { season: 'all' });
+  assert.equal(flat(s).length, 6);
+  assert.ok(!flat(s).includes('手放し半袖'));
+  assert.equal(s.hiddenBySeason, 0);
+});
+
+test('pickerSections: 選択中の服は、季節が違っても手放した服でも残る', () => {
+  const { c } = pickerCat();
+  const s = L.pickerSections(c, {}, { season: '夏', selected: ['冬ニット', '手放し半袖'] });
+  assert.ok(flat(s).includes('冬ニット'));
+  assert.ok(flat(s).includes('手放し半袖'));
+  assert.equal(s.hiddenBySeason, 1); // 冬ジーンズのみ
+});
+
+test('pickerSections: グループ→種類の順で並ぶ。グループ未設定は最後の「未分類」', () => {
+  const { c } = pickerCat();
+  const s = L.pickerSections(c, {}, { season: 'all' });
+  assert.deepEqual(s.groups.map(g => g.name), ['トップス', 'ボトムス', '未分類']);
+  const tops = s.groups[0];
+  assert.equal(tops.count, 3);
+  // 種類は、グループに登録された種類の順
+  const order = c.types[tops.id];
+  const idx = t => order.indexOf(t.type);
+  assert.deepEqual(tops.types.map(t => t.type), tops.types.map(t => t.type).sort((a, b) => order.indexOf(a) - order.indexOf(b)));
+  assert.ok(tops.types.every(t => idx(t) >= 0));
+});
+
+test('pickerSections: 検索は服の名前・ブランドの正式名称・略称に当たり、季節に関係なく探せる', () => {
+  const { c } = pickerCat();
+  const names = q => flat(L.pickerSections(c, {}, { season: '夏', q })).sort();
+  assert.deepEqual(names('ニット'), ['冬ニット']); // 冬でも夏の表示で見つかる
+  assert.deepEqual(names('alpha'), ['通年シャツ']); // 正式名称（大文字小文字を問わない）
+  assert.deepEqual(names('ＡＷ'), ['通年シャツ']); // 略称（全角でも）
+  assert.deepEqual(names('そんな服はない'), []);
+  assert.equal(L.pickerSections(c, {}, { season: '夏', q: 'ニット' }).searching, true);
+  // 検索中でも手放した服は出ない
+  assert.deepEqual(names('手放し'), []);
+});
+
+test('pickerSections: 最近着た服は、季節に関係なく直近30日、新しい順、最大8件。記録中の日は除く', () => {
+  const { c } = pickerCat();
+  const logs = {
+    '2026-11-20': { f: { v: ['夏半袖'] } },
+    '2026-11-25': { f: { v: ['冬ニット', '通年シャツ'] } },
+    '2026-11-26': { f: { v: ['夏パンツ'] } }, // 記録中の日：除く
+    '2026-10-01': { f: { v: ['冬ジーンズ'] } }, // 30日より前
+    '2026-11-24': { g: { v: ['未分類服'] } } // 別カテゴリ
+  };
+  const s = L.pickerSections(c, logs, { season: '冬', today: '2026-11-26', excludeDate: '2026-11-26' });
+  // 同じ日に着た服は、リストの並び順
+  assert.deepEqual(s.recent, ['冬ニット', '通年シャツ', '夏半袖']);
+});
+
+test('pickerSections: 最近着た服は最大8件で、手放した服は含まない。検索中は出さない', () => {
+  const { c, gt } = pickerCat();
+  const logs = {};
+  for (let i = 0; i < 12; i++) {
+    const n = '服' + i;
+    c.items.push(n); c.meta[n] = { g: gt, t: '', s: '通年', q: 1, r: false };
+    logs['2026-11-' + String(11 + i).padStart(2, '0')] = { f: { v: [n] } };
+  }
+  logs['2026-11-22'].f.v.push('手放し半袖');
+  const s = L.pickerSections(c, logs, { season: 'all', today: '2026-11-26', excludeDate: '2026-11-26' });
+  assert.equal(s.recent.length, 8);
+  assert.ok(!s.recent.includes('手放し半袖'));
+  assert.equal(s.recent[0], '服11');
+  const q = L.pickerSections(c, logs, { season: 'all', q: '服1', today: '2026-11-26', excludeDate: '2026-11-26' });
+  assert.deepEqual(q.recent, []);
+});
+
+test('pickerSections: 元のカテゴリを書き換えない／壊れたデータでも落ちない', () => {
+  const { c } = pickerCat();
+  const before = JSON.stringify(c);
+  L.pickerSections(c, { '2026-11-01': null, '2026-11-02': { f: 5 } }, { season: 'all', today: '2026-11-26' });
+  assert.equal(JSON.stringify(c), before);
+  assert.doesNotThrow(() => L.pickerSections({ id: 'x' }, null, {}));
+  assert.deepEqual(L.pickerSections({ id: 'x' }, null, {}).groups, []);
+});
+
+test('pickerSections: 最近着た服は、記録日の30日前から前日まで（30日前の日を含み、31日前は含まない）', () => {
+  const { c } = pickerCat();
+  const logs = {
+    '2026-10-27': { f: { v: ['夏半袖'] } }, // 31日前：含まない
+    '2026-10-28': { f: { v: ['冬ニット'] } }, // 30日前：含む
+    '2026-11-26': { f: { v: ['通年シャツ'] } }, // 前日：含む
+    '2026-11-27': { f: { v: ['夏パンツ'] } } // 記録日：含まない
+  };
+  const s = L.pickerSections(c, logs, { season: 'all', today: '2026-11-27', excludeDate: '2026-11-27' });
+  assert.deepEqual(s.recent.slice().sort(), ['冬ニット', '通年シャツ'].sort());
+});

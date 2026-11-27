@@ -280,6 +280,44 @@
       font-weight: 600;
     }
 
+    /* 記録画面の服の選択（分類を使うカテゴリ） */
+    .pk-tray {
+      position: sticky; top: 0; z-index: 2;
+      background: var(--card);
+      padding: 6px 0 8px; margin-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      min-height: 48px; max-height: 108px; overflow-y: auto;
+      display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start;
+    }
+    .pk-tray-empty { font-size: 12px; color: var(--text-3); align-self: center; }
+    .pk-tray .chip { padding: 5px 10px; font-size: 13px; }
+    .pk-tray .chip::after { content: ' ×'; opacity: .75; }
+    .pk-count { font-size: 12px; font-weight: 700; color: var(--primary); margin-left: 6px; }
+    .pk-seasons { display: flex; gap: 6px; margin: 10px 0 4px; align-items: center; flex-wrap: wrap; }
+    .pk-seasons .chip { padding: 5px 14px; font-size: 13px; }
+    .pk-note { font-size: 11px; color: var(--text-3); }
+    .pk-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin: 14px 0 6px; padding: 0; width: 100%;
+      background: none; border: none; font-family: inherit; cursor: pointer;
+      font-size: 13px; font-weight: 800; color: var(--text);
+    }
+    .pk-head .pk-n { font-weight: 600; font-size: 11px; color: var(--text-3); margin-left: 6px; }
+    .pk-head .pk-caret { color: var(--text-3); font-size: 11px; }
+    .pk-sub { font-size: 11px; font-weight: 700; color: var(--text-2); margin: 8px 0 4px; }
+    .pk-recent-title { font-size: 12px; font-weight: 800; color: var(--text-2); margin: 10px 0 6px; }
+    .pk-b { font-size: 10px; font-weight: 600; color: var(--text-3); margin-left: 6px; }
+    .chip.selected .pk-b { color: rgba(255,255,255,.8); }
+    .pk-add { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
+    .pk-add-row { display: flex; gap: 8px; margin-top: 8px; }
+    .pk-add-row .field-input { flex: 1; min-width: 0; }
+    .pk-add-row .btn { width: auto; padding: 0 18px; }
+    .pk-link {
+      background: none; border: none; color: var(--primary); font-family: inherit;
+      font-size: 13px; font-weight: 700; cursor: pointer; padding: 4px 0;
+    }
+    .pk-empty { font-size: 13px; color: var(--text-3); padding: 12px 0; }
+
     /* Buttons */
     .btn {
       display: block;
@@ -950,11 +988,18 @@ function openLog(catId) {
   const selVals = Array.isArray(e.v) ? [...e.v] : (e.v ? [e.v] : []);
   const typeInfo = CAT_TYPES[cat.type] || CAT_TYPES.custom;
 
+  // 分類を使うカテゴリ（服）は、グループ・種類の見出しつきの選択画面（pk*）。それ以外は従来の平らなチップ
+  const grouped = isGroupedCat(cat);
+  pk = grouped ? { catId, sel: selVals.slice(), season: LifeLogLogic.defaultSeasonView(curDate), q: '', closed: {}, adding: false } : null;
+
   // 手放した服は隠す（その日にすでに選ばれている服は残す）
   const shownItems = LifeLogLogic.visibleItems(cat, selVals);
   const chipsHtml = shownItems.map(item => `
     <button class="chip ${selVals.includes(item)?'selected':''}"
             data-item="${esc(item)}" onclick="toggleChip(this)">${esc(item)}</button>`).join('');
+  // 分類を使うカテゴリの自由記入は、以前の記録に服の一覧に無い文字が残っている時だけ出す（新しい服は「＋新しい服を追加」から）
+  const freePre = LifeLogLogic.freePrefill(e, cat.items);
+  const showFree = !grouped || !!freePre;
 
   const extraFields = [];
   if (cat.type === 'food') extraFields.push(`
@@ -1000,16 +1045,23 @@ function openLog(catId) {
     <div class="modal-title">${esc(cat.name)}</div>
     <div class="modal-subtitle">${fmtDate(curDate)} · ${typeInfo.label}</div>
 
-    ${shownItems.length ? `
+    ${grouped ? `
+      <div class="field-group">
+        <div class="field-label">${typeInfo.multi?'アイテムを選択（複数可）':'アイテムを選択'}<span class="pk-count" id="pk-count"></span></div>
+        <div class="pk-tray" id="pk-tray"></div>
+        <input class="field-input" id="pk-q" type="search" placeholder="名前・ブランドで探す" autocomplete="off" oninput="pkSearch(this.value)">
+        <div class="pk-seasons" id="pk-seasons"></div>
+        <div id="pk-list"></div>
+      </div>` : shownItems.length ? `
       <div class="field-group">
         <div class="field-label">${typeInfo.multi?'アイテムを選択（複数可）':'アイテムを選択'}</div>
         <div class="chips" id="chip-box">${chipsHtml}</div>
       </div>` : ''}
 
-    <div class="field-group">
-      <div class="field-label">${shownItems.length ? 'その他・自由記入' : '記録内容'}</div>
-      <input class="field-input" id="f-text" type="text" placeholder="自由に入力..." value="${esc(LifeLogLogic.freePrefill(e, cat.items))}">
-    </div>
+    ${showFree ? `<div class="field-group">
+      <div class="field-label">${grouped ? '以前の記録の自由記入' : shownItems.length ? 'その他・自由記入' : '記録内容'}</div>
+      <input class="field-input" id="f-text" type="text" placeholder="自由に入力..." value="${esc(freePre)}">
+    </div>` : ''}
     ${extraFields.join('')}
     <div class="field-group">
       <div class="field-label">メモ (任意)</div>
@@ -1021,13 +1073,122 @@ function openLog(catId) {
     <button class="btn btn-secondary" onclick="closeModal('log-modal')">キャンセル</button>
   `;
   document.getElementById('log-modal').classList.add('show');
+  if (grouped) pkRender();
 }
 
 function toggleChip(btn) { btn.classList.toggle('selected'); }
 
+// ─── 記録画面の服の選択（分類を使うカテゴリ） ───────────────────
+let pk = null; // { catId, sel: [名前], season: '夏'|'冬'|'all', q, closed: {groupId: true}, adding }
+
+function isGroupedCat(cat) { return !!cat && Array.isArray(cat.groups) && cat.groups.length > 0; }
+function pkCat() { return pk ? state.cats.find(c => c.id === pk.catId) : null; }
+
+// 選んだ服を、リストの並び順で返す（リストに無い名前は、選んだ順で末尾）
+function pkSelected(cat) {
+  const order = new Map(cat.items.map((n, i) => [n, i]));
+  const known = pk.sel.filter(n => order.has(n)).sort((a, b) => order.get(a) - order.get(b));
+  return known.concat(pk.sel.filter(n => !order.has(n)));
+}
+
+function pkChip(cat, name) {
+  const b = LifeLogLogic.brandLabel(cat, LifeLogLogic.getMeta(cat, name).b);
+  return `<button class="chip pk-chip${pk.sel.includes(name) ? ' selected' : ''}" data-item="${esc(name)}" onclick="pkToggle(this)">${esc(name)}${b ? `<span class="pk-b">${esc(b)}</span>` : ''}</button>`;
+}
+
+function pkRender() {
+  const cat = pkCat();
+  if (!cat) return;
+  // 選んだ服（タップで外せる）
+  const sel = pkSelected(cat);
+  document.getElementById('pk-tray').innerHTML = sel.length
+    ? sel.map(n => `<button class="chip selected" data-item="${esc(n)}" onclick="pkToggle(this)">${esc(n)}</button>`).join('')
+    : '<span class="pk-tray-empty">選んだ服がここに出ます</span>';
+  document.getElementById('pk-count').textContent = sel.length ? `${sel.length}点` : '';
+  // 季節の切り替え
+  const secs = LifeLogLogic.pickerSections(cat, state.logs, {
+    selected: pk.sel, season: pk.season, q: pk.q, today: curDate, excludeDate: curDate
+  });
+  const seasonBtn = (v, label) => `<button class="chip${pk.season === v ? ' selected' : ''}" onclick="pkSeason('${v}')">${label}</button>`;
+  document.getElementById('pk-seasons').innerHTML = seasonBtn('夏', '夏') + seasonBtn('冬', '冬') + seasonBtn('all', 'すべて') +
+    (secs.hiddenBySeason ? `<span class="pk-note">ほかの季節の服${secs.hiddenBySeason}点は隠しています</span>` : '');
+  // 一覧
+  let html = '';
+  if (secs.recent.length) {
+    html += `<div class="pk-recent-title">最近着た服</div><div class="chips">${secs.recent.map(n => pkChip(cat, n)).join('')}</div>`;
+  }
+  secs.groups.forEach(g => {
+    const key = g.id == null ? '_' : g.id;
+    const closed = !secs.searching && !!pk.closed[key];
+    html += `<button class="pk-head" data-g="${esc(key)}" onclick="pkGroup(this.dataset.g)"><span>${esc(g.name)}<span class="pk-n">${g.count}</span></span><span class="pk-caret">${closed ? '▶' : '▼'}</span></button>`;
+    if (closed) return;
+    g.types.forEach(t => {
+      // 種類なしの服は、ほかの種類の下に紛れないよう「その他」の見出しをつける（種類が1つも無いグループでは出さない）
+      if (t.type || g.types.length > 1) html += `<div class="pk-sub">${t.type ? esc(t.type) : 'その他'}</div>`;
+      html += `<div class="chips">${t.items.map(n => pkChip(cat, n)).join('')}</div>`;
+    });
+  });
+  if (!secs.groups.length) {
+    html += `<div class="pk-empty">${secs.searching ? '見つかりませんでした。下から追加できます。' : '該当する服がありません。'}</div>`;
+  }
+  html += `<div class="pk-add">${pk.adding
+    ? `<div class="field-label">新しい服の名前</div><div class="pk-add-row"><input class="field-input" id="pk-new" type="text" placeholder="例: 白 半袖T" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();pkAdd()}"><button class="btn btn-primary" onclick="pkAdd()">追加</button></div>`
+    : `<button class="pk-link" onclick="pkAddOpen()">＋ 新しい服を追加</button>`}</div>`;
+  document.getElementById('pk-list').innerHTML = html;
+  if (pk.adding) { const el = document.getElementById('pk-new'); if (el && pk.focusNew) { el.focus(); pk.focusNew = false; } }
+}
+
+function pkToggle(btn) {
+  if (!pk) return;
+  const name = btn.dataset.item;
+  const i = pk.sel.indexOf(name);
+  if (i >= 0) {
+    pk.sel.splice(i, 1);
+    // 以前の記録の自由記入に同じ名前が残っていると、保存時に選択へ戻ってしまう（mergeSelection）ので、一緒に消す
+    const f = document.getElementById('f-text');
+    if (f && f.value.trim() === name) f.value = '';
+  } else pk.sel.push(name);
+  pkRender();
+}
+function pkSeason(v) { if (pk) { pk.season = v; pkRender(); } }
+function pkSearch(v) { if (pk) { pk.q = v; pkRender(); } }
+function pkGroup(key) { if (pk) { pk.closed[key] = !pk.closed[key]; pkRender(); } }
+function pkAddOpen() { if (pk) { pk.adding = true; pk.focusNew = true; pkRender(); } }
+
+// その場で服を追加（すぐ保存され、選んだ状態になる）。同じ名前（全角・半角などの違いを含む）の服があれば、それを選ぶ
+function pkAdd() {
+  const cat = pkCat();
+  const el = document.getElementById('pk-new');
+  if (!cat || !el) return;
+  const name = el.value.trim();
+  if (!name) return;
+  const backup = JSON.stringify(state);
+  const r = LifeLogLogic.addItem(cat, name);
+  let picked = name;
+  if (!r.ok) {
+    if (r.error !== 'exists') return;
+    picked = r.existing;
+    toast('すでにある服を選びました');
+  } else if (!wdPersist()) {
+    // 容量が足りず保存できなかった（本体を先に保存し、履歴を削っても入らない）。メモリだけ追加済みの状態を残さない
+    state = JSON.parse(backup);
+    toast('保存できなかったため、追加を取り消しました（容量が足りません）');
+    return;
+  } else {
+    toast('服を追加しました');
+  }
+  if (!pk.sel.includes(picked)) pk.sel.push(picked);
+  pk.adding = false;
+  pk.q = '';
+  const q = document.getElementById('pk-q'); if (q) q.value = '';
+  pkRender();
+}
+
 function saveLog(catId) {
-  const chips = document.querySelectorAll('#chip-box .chip.selected');
-  const selVals = Array.from(chips).map(c => c.dataset.item);
+  const catForSel = state.cats.find(c => c.id === catId);
+  const selVals = (pk && pk.catId === catId && catForSel)
+    ? pkSelected(catForSel)
+    : Array.from(document.querySelectorAll('#chip-box .chip.selected')).map(c => c.dataset.item);
   let free = document.getElementById('f-text')?.value?.trim() || '';
   const kcal = document.getElementById('f-kcal')?.value || '';
   const yen  = document.getElementById('f-yen')?.value || '';
