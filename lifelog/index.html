@@ -289,9 +289,13 @@
       background: var(--card);
       padding: 6px 0 8px; margin-bottom: 8px;
       border-bottom: 1px solid var(--border);
-      min-height: 48px; max-height: 108px; overflow-y: auto;
+      min-height: 48px; max-height: 30vh; max-height: 30dvh; overflow-y: auto; overscroll-behavior: contain;
       display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start;
     }
+    /* 収まらないときは、続きがあることが分かるよう、その側の端を薄くする（下に続き＝more、上に隠れている＝up。端まで見たら外す） */
+    .pk-tray.more { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); }
+    .pk-tray.up { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 22px); mask-image: linear-gradient(to bottom, transparent, #000 22px); }
+    .pk-tray.more.up { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 22px, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, transparent, #000 22px, #000 calc(100% - 22px), transparent); }
     .pk-tray-empty { font-size: 12px; color: var(--text-3); align-self: center; }
     .pk-tray .chip { padding: 5px 10px; font-size: 13px; }
     .pk-tray .chip::after { content: ' ×'; opacity: .75; }
@@ -1177,7 +1181,7 @@ function openLog(catId) {
     ${grouped ? `
       <div class="field-group">
         <div class="field-label">${typeInfo.multi?'アイテムを選択（複数可）':'アイテムを選択'}<span class="pk-count" id="pk-count"></span></div>
-        <div class="pk-tray" id="pk-tray"></div>
+        <div class="pk-tray" id="pk-tray" onscroll="pkTrayFade()"></div>
         <div class="pk-searchrow">
           ${(() => { const sel = brandSelectHtml(cat, 'all', 'pkBrand'); return `<input class="field-input" id="pk-q" type="search" placeholder="${sel ? '名前で探す' : '名前・ブランドで探す'}" autocomplete="off" oninput="pkSearch(this.value)">${sel}`; })()}
         </div>
@@ -1307,6 +1311,19 @@ function pkRender() {
     ? sel.map(n => `<button class="chip selected" data-item="${esc(n)}" onclick="pkToggle(this)">${esc(n)}${brandTag(cat, n)}</button>`).join('')
     : '<span class="pk-tray-empty">選んだ服がここに出ます</span>';
   document.getElementById('pk-count').textContent = sel.length ? `${sel.length}点` : '';
+  const trayEl = document.getElementById('pk-tray');
+  // 新しく選んだ服を、欄の中で見える位置までスクロールする。トレイは選んだ順ではなく登録順に並ぶので、先頭・途中に入ることもある
+  // （常に一番下へ動かすと、先頭・途中に入った服が、かえって隠れる）。薄くしている端（上下22px）にかからない位置まで動かす
+  if (pk.scrollTo) {
+    const chip = [...trayEl.querySelectorAll('.chip')].find(c => c.dataset.item === pk.scrollTo);
+    if (chip) {
+      const a = trayEl.getBoundingClientRect(), b = chip.getBoundingClientRect(), m = 24;
+      if (b.top < a.top + m) trayEl.scrollTop -= (a.top + m) - b.top;
+      else if (b.bottom > a.bottom - m) trayEl.scrollTop += b.bottom - (a.bottom - m);
+    }
+    pk.scrollTo = null;
+  }
+  pkTrayFade();
   // 季節の切り替え
   const secs = LifeLogLogic.pickerSections(cat, state.logs, {
     selected: pk.sel, season: pk.season, q: pk.q, brand: pk.brand, today: curDate, excludeDate: curDate,
@@ -1373,6 +1390,13 @@ function pkMute(name) {
   pkRender();
 }
 
+// 選んだ服の欄：続きがある側（下・上）の端だけ、薄くする
+function pkTrayFade() {
+  const t = document.getElementById('pk-tray');
+  if (!t) return;
+  t.classList.toggle('more', t.scrollHeight - t.scrollTop - t.clientHeight > 2);
+  t.classList.toggle('up', t.scrollTop > 2);
+}
 function pkToggle(btn) {
   if (!pk) return;
   const name = btn.dataset.item;
@@ -1382,7 +1406,7 @@ function pkToggle(btn) {
     // 以前の記録の自由記入に同じ名前が残っていると、保存時に選択へ戻ってしまう（mergeSelection）ので、一緒に消す
     const f = document.getElementById('f-text');
     if (f && f.value.trim() === name) f.value = '';
-  } else pk.sel.push(name);
+  } else { pk.sel.push(name); pk.scrollTo = name; } // 新しく選んだ服が、欄の中で隠れないように、その服の位置までスクロールする
   pkRender();
 }
 function pkSeason(v) { if (pk) { pk.season = v; pkRender(); } }
@@ -1414,6 +1438,7 @@ function pkAdd() {
     toast('服を追加しました');
   }
   if (!pk.sel.includes(picked)) pk.sel.push(picked);
+  pk.scrollTo = picked; // 追加欄から選んだ服も、トレイの中で見える位置までスクロールする（新規作成も、登録済みの名前を入れた場合も）
   pk.adding = false;
   pk.q = '';
   const q = document.getElementById('pk-q'); if (q) q.value = '';
