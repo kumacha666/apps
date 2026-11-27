@@ -8,6 +8,9 @@
 - `logic.js`：DOMに触れない純粋関数。クラシックスクリプト（UMD）で、ブラウザではグローバル`LifeLogLogic`、Nodeでは`require()`で読む。**ESMにしない**（インラインのonclickがグローバルに依存するため）。
 - `test/logic.test.mjs`：`npm test`（`node --test`）。`logic.js`を`import logic from '../logic.js'`で読む。
 - `sw.js`：`index.html`と`logic.js`はネットワーク優先、それ以外はキャッシュ優先。**`ASSETS`に新しいファイルを足すときは`CACHE`のバージョンも上げる**（古いキャッシュを`activate`で削除する仕組みのため）。
+- **`index.html`と`logic.js`の新旧の食い違いを防ぐ仕組み**：公開サーバー（GitHub Pages）は`Cache-Control: max-age=600`（10分）で配信するため、**更新の直後は「新しい`index.html`＋古い`logic.js`」になることがある**（画面の一部が描画されず、空になる。#530の直後に実際に起きた）。対策は2つ。①`sw.js`のネットワーク優先の取得は`cache: 'no-cache'`で、毎回サーバーに確認する（変更が無ければ304）。②`index.html`は起動時に`LifeLogLogic.VERSION`を`LOGIC_VERSION_EXPECTED`と突き合わせ、合わなければ**一度だけ**キャッシュを避けて取り直して再読み込みし、それでも合わなければ画面で知らせる（無限に再読み込みしない。記録には触れない）。
+  - **`logic.js`の公開する関数や戻り値の形を変えたら、`VERSION`を上げる**。`index.html`の`LOGIC_VERSION_EXPECTED`を同じ値にし、`test/api-v<新しい版>.json`（`Object.keys(LifeLogLogic).sort()`の一覧）を足す。`npm test`が、①2つの値の一致、②公開する関数の一覧が変わったのに`VERSION`が同じ、を検出する。**戻り値の形だけ変えた場合は一覧が変わらず検出できないので、自分で上げること**（#530で`pickerSections`に`rare`を足したのに版が無かったため、古い`logic.js`との組み合わせで空になった）。
+  - 画面の確認でキャッシュを再現するときは、Playwrightの`route()`を使わない（`route()`を使うとChromiumのHTTPキャッシュが無効になる）。手動の再読み込みもキャッシュを無視するので、再現には通常のページ移動（`goto`）を使う。
 
 ## データ構造
 ```

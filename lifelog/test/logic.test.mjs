@@ -1491,3 +1491,30 @@ test('pickerSections: 「最近着た順」の列からも、「出さない」�
   const sel = L.pickerSections(c, logs, { season: 'all', today: '2026-11-27', excludeDate: '2026-11-27', selected: ['服9'] });
   assert.ok(!sel.recent.includes('服9'));
 });
+
+/* ---------- logic.js と index.html の版の突き合わせ ---------- */
+
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+// 公開サーバーのキャッシュ（10分）の都合で、更新の直後に「新しい index.html ＋ 古い logic.js」になることがある。
+// index.html は起動時に LifeLogLogic.VERSION を確認し、合わなければ取り直す。そのため、次の2つを強制する：
+//   ・index.html の LOGIC_VERSION_EXPECTED と、logic.js の VERSION を同じ値にする
+//   ・logic.js の公開する関数の一覧を変えたら、VERSION を上げる（下の一覧に、新しい版の一覧を足す）
+//     戻り値の形を変えたときも、一覧は変わらないが VERSION を上げること（CLAUDE.md参照）
+const API_BY_VERSION = {
+  1: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v1.json', import.meta.url)), 'utf8'))
+};
+
+test('版：index.html が期待する logic.js の版と、logic.js の VERSION が同じ', () => {
+  const html = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8');
+  const m = /const LOGIC_VERSION_EXPECTED = (\d+);/.exec(html);
+  assert.ok(m, 'index.html に LOGIC_VERSION_EXPECTED が無い');
+  assert.equal(Number(m[1]), L.VERSION);
+});
+
+test('版：logic.js の公開する関数の一覧を変えたら、VERSION を上げて一覧を足す', () => {
+  const names = Object.keys(L).sort();
+  assert.ok(API_BY_VERSION[L.VERSION], `VERSION ${L.VERSION} の一覧が test/api-v*.json に無い`);
+  assert.deepEqual(names, API_BY_VERSION[L.VERSION], '公開する関数の一覧が変わっています。logic.js の VERSION を上げ、index.html の LOGIC_VERSION_EXPECTED も同じ値にして、test/api-v<新しい版>.json を足してください');
+});
