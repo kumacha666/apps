@@ -310,7 +310,9 @@
     .pk-sub { font-size: 12px; font-weight: 700; color: var(--text-2); margin: 8px 0 4px; }
     .pk-recent-title { font-size: 12px; font-weight: 800; color: var(--text-2); margin: 10px 0 6px; }
     /* 服のボタンの中の小さい情報（ブランド名・日数・回数）。薄い・小さいと探せないので、12px以上・コントラスト4.5以上のバッジにする */
-    .pk-b { font-size: 12px; font-weight: 700; line-height: 1.45; padding: 1px 8px; border-radius: 100px; margin-left: 6px; }
+    .pk-b { display: inline-block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; vertical-align: middle; font-size: 12px; font-weight: 700; line-height: 1.45; padding: 1px 8px; border-radius: 12px; margin-left: 6px; }
+    /* 記録画面のシートの中の服のボタンは、シートの幅を超えない（長い名前・長いブランド名は、ボタンの中で折り返す） */
+    #log-modal-body .chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; border-radius: 20px; }
     .pk-brand { color: var(--text); background: var(--border); }
     .pk-stat { color: var(--primary-dark); background: var(--primary-light); }
     @media (prefers-color-scheme: dark) { .pk-stat { color: #c7d2fe; } .pk-brand { background: rgba(255,255,255,.12); } }
