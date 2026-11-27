@@ -1438,6 +1438,7 @@ function pkAdd() {
     toast('服を追加しました');
   }
   if (!pk.sel.includes(picked)) pk.sel.push(picked);
+  pk.scrollTo = picked; // 追加欄から選んだ服も、トレイの中で見える位置までスクロールする（新規作成も、登録済みの名前を入れた場合も）
   pk.adding = false;
   pk.q = '';
   const q = document.getElementById('pk-q'); if (q) q.value = '';
