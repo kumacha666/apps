@@ -1312,7 +1312,17 @@ function pkRender() {
     : '<span class="pk-tray-empty">選んだ服がここに出ます</span>';
   document.getElementById('pk-count').textContent = sel.length ? `${sel.length}点` : '';
   const trayEl = document.getElementById('pk-tray');
-  if (pk.scrollTray) { trayEl.scrollTop = trayEl.scrollHeight; pk.scrollTray = false; }
+  // 新しく選んだ服を、欄の中で見える位置までスクロールする。トレイは選んだ順ではなく登録順に並ぶので、先頭・途中に入ることもある
+  // （常に一番下へ動かすと、先頭・途中に入った服が、かえって隠れる）。薄くしている端（上下22px）にかからない位置まで動かす
+  if (pk.scrollTo) {
+    const chip = [...trayEl.querySelectorAll('.chip')].find(c => c.dataset.item === pk.scrollTo);
+    if (chip) {
+      const a = trayEl.getBoundingClientRect(), b = chip.getBoundingClientRect(), m = 24;
+      if (b.top < a.top + m) trayEl.scrollTop -= (a.top + m) - b.top;
+      else if (b.bottom > a.bottom - m) trayEl.scrollTop += b.bottom - (a.bottom - m);
+    }
+    pk.scrollTo = null;
+  }
   pkTrayFade();
   // 季節の切り替え
   const secs = LifeLogLogic.pickerSections(cat, state.logs, {
@@ -1396,7 +1406,7 @@ function pkToggle(btn) {
     // 以前の記録の自由記入に同じ名前が残っていると、保存時に選択へ戻ってしまう（mergeSelection）ので、一緒に消す
     const f = document.getElementById('f-text');
     if (f && f.value.trim() === name) f.value = '';
-  } else { pk.sel.push(name); pk.scrollTray = true; } // 新しく選んだ服が、欄の中で隠れないように、見える位置までスクロールする
+  } else { pk.sel.push(name); pk.scrollTo = name; } // 新しく選んだ服が、欄の中で隠れないように、その服の位置までスクロールする
   pkRender();
 }
 function pkSeason(v) { if (pk) { pk.season = v; pkRender(); } }
