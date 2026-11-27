@@ -736,6 +736,15 @@
     .bar-track { flex: 1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
     .bar-fill { height: 100%; border-radius: 4px; background: var(--primary); }
     .bar-count { width: 20px; font-size: 11px; color: var(--text-2); text-align: right; flex-shrink: 0; }
+    /* ファッションの統計（グループ別）。名前が長いので、ラベルを広めにとる */
+    .bar-chart.wide .bar-label { width: 118px; }
+    .bar-chart.wide .bar-count { width: 46px; line-height: 1.15; }
+    .bar-count small { display: block; font-size: 9px; color: var(--text-3); }
+    .bar-tag { font-size: 9px; color: var(--text-3); margin-left: 3px; }
+    .ins-period .chips { gap: 6px; flex-wrap: nowrap; }
+    .ins-period .chip { padding: 7px 0; font-size: 13px; flex: 1; text-align: center; }
+    .ins-link { background: none; border: none; color: var(--primary); font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer; padding: 6px 0 0; }
+    .ins-group { font-weight: 800; }
 
     /* Calendar */
     .cal-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
@@ -1368,6 +1377,16 @@ function renderInsights() {
       </div>
     </div>`;
 
+  // ファッションの統計の集計期間（初期値は全期間）。ほかの指標（記録率・直近30日の記録など）は変わらない
+  if (state.cats.some(c => c.type === 'fashion' && LifeLogLogic.hasLogs(state.logs, c.id))) {
+    const opts = [['30d', '30日'], ['90d', '90日'], ['6m', '半年'], ['1y', '1年'], ['all', '全期間']];
+    html += `
+    <div class="card ins-period">
+      <div class="field-label">ファッションの集計期間</div>
+      <div class="chips">${opts.map(([v, l]) => `<button class="chip${insPeriod === v ? ' selected' : ''}" onclick="insPeriodSet('${v}')">${l}</button>`).join('')}</div>
+    </div>`;
+  }
+
   state.cats.forEach(cat => {
     const rows = getInsights(cat, days30);
     if (!rows.length) return;
@@ -1388,6 +1407,11 @@ function renderInsights() {
   el.innerHTML = html;
 }
 
+let insPeriod = 'all'; // ファッションの統計の集計期間
+const insMore = {};     // 「もっと見る」を開いているグループ
+function insPeriodSet(v) { insPeriod = v; renderInsights(); }
+function insToggleMore(key) { insMore[key] = !insMore[key]; renderInsights(); }
+
 function getInsights(cat, days30) {
   const rows = [];
   const todayS = today();
@@ -1402,64 +1426,61 @@ function getInsights(cat, days30) {
 
   const catLogs30 = catLogs.filter(l => days30.includes(l.date));
 
+  // ファッションは、直近30日に記録が無くても、過去の記録があれば選んだ期間の統計を続けて出す（全期間・半年・1年のため）
+  const showFashion = cat.type === 'fashion' && LifeLogLogic.hasLogs(state.logs, cat.id);
   if (!catLogs30.length) {
     rows.push({ type:'warn', label:'⚠ 未記録', text:'直近30日に記録がありません' });
-    return rows;
+    if (!showFashion) return rows;
+  } else {
+    rows.push({ type:'stat', label:'📊 記録', text:`直近30日で${catLogs30.length}回 (${Math.round(catLogs30.length/30*100)}%)` });
   }
 
-  rows.push({ type:'stat', label:'📊 記録', text:`直近30日で${catLogs30.length}回 (${Math.round(catLogs30.length/30*100)}%)` });
+  // Fashion insights（グループ別。集計はLifeLogLogic.fashionStats。期間は insPeriod）
+  // 現在の服の数には依存させない（統合後に1点だけになっても、過去の記録・一覧に無い名前の統計は出す）
+  if (showFashion) {
+    const season = LifeLogLogic.defaultSeasonView(todayS);
+    const stats = LifeLogLogic.fashionStats(cat, state.logs, { period: insPeriod, today: todayS, season });
+    const firstDate = Object.keys(state.logs).filter(d => state.logs[d] && state.logs[d][cat.id]).sort()[0] || '';
+    rows.push({ type:'stat', label:'📅 集計期間', text: esc(LifeLogLogic.periodLabel(insPeriod, todayS, firstDate)) });
 
-  // Fashion insights
-  if (cat.type === 'fashion' && (cat.items||[]).length > 1) {
-    const usage = {}, lastUsed = {};
-    catLogs.forEach(({ date, e }) => {
-      const vs = Array.isArray(e.v) ? e.v : (e.v ? [e.v] : []);
-      vs.forEach(v => {
-        usage[v] = (usage[v]||0) + 1;
-        if (!lastUsed[v] || date > lastUsed[v]) lastUsed[v] = date;
-      });
-    });
-
-    // 手放した服は、バリエーション率とおすすめの対象から外す（使用回数のグラフには、使った分だけ残す）
-    const activeNames = LifeLogLogic.activeItems(cat);
-    const usedActive = activeNames.filter(n => usage[n]);
-    const total = activeNames.length;
-    const variety = total ? Math.round(usedActive.length / total * 100) : 0;
-    rows.push({
-      type: variety >= 70 ? 'good' : variety >= 40 ? 'stat' : 'warn',
-      label: '🎨 バリエーション',
-      text: `${usedActive.length}/${total}アイテムを使用 (${variety}%)`
-    });
-
-    // Suggestions for unused / long-unused items
-    activeNames.forEach(item => {
-      const last = lastUsed[item];
-      if (!last) {
-        rows.push({ type:'tip', label:'💡 未使用', text:`「${esc(item)}」はまだ記録がありません` });
-      } else {
-        const d = diff(last, todayS);
-        if (d >= 14) rows.push({ type:'tip', label:'💡 提案', text:`「${esc(item)}」を最後に使ったのは${d}日前です` });
+    stats.groups.forEach(g => {
+      const key = cat.id + ':' + (g.id == null ? '_' : g.id);
+      if (g.name) rows.push({ type:'stat', label:'👕 ' + esc(g.name), text:
+        `<span class="ins-group">現役${g.activeCount}点（${g.pieces}着）</span>・着用 延べ${g.wears}回` });
+      if (g.variety.total > 1) { // 対象が1点だけでは、バリエーションの意味が薄いので省く
+        const pct = g.variety.pct;
+        rows.push({
+          type: pct >= 70 ? 'good' : pct >= 40 ? 'stat' : 'warn',
+          label: '🎨 バリエーション',
+          text: `${season !== 'all' && g.id !== '' ? `今の季節（${season}）の` : ''}現役${g.variety.total}点のうち${g.variety.used}点を着用 (${pct}%)`
+        });
+      }
+      if (g.tips.length) {
+        const shown = g.tips.slice(0, 5).map(t => t.kind === 'unused'
+          ? `「${esc(t.name)}」はまだ記録がありません`
+          : `「${esc(t.name)}」を最後に着たのは${t.days}日前です`);
+        if (g.tips.length > 5) shown.push(`ほか${g.tips.length - 5}点`);
+        rows.push({ type:'tip', label:'💡 提案', text: shown.join('<br>') });
+      }
+      const top = g.items[0];
+      if (top && top.count > 0) rows.push({ type:'stat', label:'👑 最多', text:`「${esc(top.name)}」が最もよく使われています (${top.count}回)` });
+      if (g.items.length) {
+        const maxCnt = Math.max(...g.items.map(i => i.count), 1);
+        const open = !!insMore[key];
+        const list = open ? g.items : g.items.slice(0, 8);
+        const barRows = list.map(i => {
+          const tag = i.orphan ? '記録のみ' : i.retired ? '手放した' : i.q > 1 ? `${i.q}着` : '';
+          return `<div class="bar-row">
+            <div class="bar-label" title="${esc(i.name)}">${esc(i.name)}${tag ? ` <span class="bar-tag">${tag}</span>` : ''}</div>
+            <div class="bar-track"><div class="bar-fill" style="width:${Math.round(i.count / maxCnt * 100)}%"></div></div>
+            <div class="bar-count">${i.count}${i.q > 1 && i.count ? `<small>${i.perPiece}/着</small>` : ''}</div>
+          </div>`;
+        }).join('');
+        const more = g.items.length > 8
+          ? `<button class="ins-link" data-k="${esc(key)}" onclick="insToggleMore(this.dataset.k)">${open ? '閉じる' : `ほか${g.items.length - 8}点を見る`}</button>` : '';
+        rows.push({ type:'stat', label:'📊 使用回数', text:`<div class="bar-chart wide">${barRows}</div>${more}` });
       }
     });
-
-    const top = Object.entries(usage).sort((a,b)=>b[1]-a[1])[0];
-    if (top) rows.push({ type:'stat', label:'👑 最多', text:`「${esc(top[0])}」が最もよく使われています (${top[1]}回)` });
-
-    const maxCnt = Math.max(...cat.items.map(i => usage[i]||0), 1);
-    const retiredNames = new Set(cat.items.filter(n => !activeNames.includes(n)));
-    const barRows = [...cat.items]
-      .filter(item => !retiredNames.has(item) || (usage[item]||0) > 0)
-      .sort((a, b) => (usage[b]||0) - (usage[a]||0))
-      .map(item => {
-        const cnt = usage[item]||0;
-        const pct = Math.round(cnt / maxCnt * 100);
-        return `<div class="bar-row">
-          <div class="bar-label" title="${esc(item)}">${esc(item)}${retiredNames.has(item) ? ' <span style="font-size:10px;color:var(--text-3)">手放した</span>' : ''}</div>
-          <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
-          <div class="bar-count">${cnt}</div>
-        </div>`;
-      }).join('');
-    rows.push({ type:'stat', label:'📊 使用回数', text:`<div class="bar-chart">${barRows}</div>` });
   }
 
   // Food insights
