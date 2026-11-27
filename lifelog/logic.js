@@ -70,7 +70,7 @@
   // index.html が期待する logic.js の版。logic.js の公開する関数・戻り値の形を変えたら上げる
   // （index.html の LOGIC_VERSION_EXPECTED を同じ値にし、test/api-v<版>.json を足す。test/logic.test.mjs が突き合わせる）。
   // 更新の直後に「新しい index.html ＋ 古い logic.js」になったとき、index.html が気づいて取り直すために使う。
-  const VERSION = 3;
+  const VERSION = 4;
 
   const SEASONS = ['夏', '冬', '通年'];
   const DEFAULT_META = Object.freeze({ g: null, t: '', s: '通年', q: 1, r: false });
@@ -754,6 +754,62 @@
     return 'all';
   }
 
+  // 記録している日（today）より前の記録だけで、服ごとの最後に着た日と回数を数える（その日自身と、それより後は使わない）。
+  function usageBefore(cat, logs, today) {
+    const lastSeen = new Map(), counts = new Map();
+    Object.keys(logs && typeof logs === 'object' ? logs : {}).forEach(date => {
+      if (date >= today) return;
+      const day = logs[date];
+      const entry = day && typeof day === 'object' ? day[cat && cat.id] : null;
+      entryValues(entry).forEach(n => {
+        counts.set(n, (counts.get(n) || 0) + 1);
+        if (!lastSeen.has(n) || lastSeen.get(n) < date) lastSeen.set(n, date);
+      });
+    });
+    return { lastSeen, counts };
+  }
+
+  // 平らな選択一覧（分類を使わないカテゴリ。時計・靴・食事など、選ぶ項目のあるすべてのカテゴリ）の並び替えの種類。
+  // ファッションは「着ていない順」、それ以外は「久しぶり順」と呼ぶ。
+  function sortModes(cat) {
+    const fashion = !!cat && cat.type === 'fashion';
+    return [
+      { id: 'order', label: '登録順' },
+      { id: 'idle', label: fashion ? '着ていない順' : '久しぶり順' },
+      { id: 'few', label: '回数が少ない順' }
+    ];
+  }
+
+  // 既定の並び：ファッション（バランスよく着たい）は「着ていない順」、それ以外は登録順（食事・サプリなどは決まった並びのほうが選びやすい）。
+  function defaultSortMode(cat) { return cat && cat.type === 'fashion' ? 'idle' : 'order'; }
+
+  // 平らな選択一覧の並び替え。cat・logs は書き換えない。
+  //   opts: { names: 並べる名前の配列, mode: 'order'|'idle'|'few', today: 記録している日 }
+  //   ・idle：一度も着ていない（記録の無い）項目が先頭、次に最後に着た日が古い順。few：着数で割った1着あたりの回数が少ない順（同じなら最後に着た日が古い順）
+  //   ・「出さない」項目（meta.z）は、どの並びでも最後に回す。知らないモードは登録順
+  //   ・記録している日より前の記録だけで数える。戻り値: [{ name, count, perPiece, last, days }]（daysは一度も無ければ null）
+  function sortItems(cat, logs, opts) {
+    const o = Object.assign({ names: [], mode: 'order', today: '' }, opts);
+    const items = cat && Array.isArray(cat.items) ? cat.items : [];
+    const order = new Map(items.map((n, i) => [n, i]));
+    const { lastSeen, counts } = usageBefore(cat, logs, o.today);
+    const rows = (Array.isArray(o.names) ? o.names : []).map((name, given) => {
+      const count = counts.get(name) || 0;
+      const last = lastSeen.get(name) || '';
+      const m = getMeta(cat, name);
+      return { name, count, perPiece: Math.round(count / m.q * 10) / 10, last, days: last ? daysBetween(last, o.today) : null,
+        _z: m.z === true, _p: count / m.q, _o: order.has(name) ? order.get(name) : 1e9 + given };
+    });
+    const byLast = (a, b) => (a.last === b.last ? 0 : !a.last ? -1 : !b.last ? 1 : a.last < b.last ? -1 : 1);
+    rows.sort((a, b) => {
+      if (a._z !== b._z) return a._z ? 1 : -1;
+      if (o.mode === 'idle') return byLast(a, b) || a._o - b._o;
+      if (o.mode === 'few') return (a._p - b._p) || byLast(a, b) || a._o - b._o;
+      return a._o - b._o;
+    });
+    return rows.map(r => ({ name: r.name, count: r.count, perPiece: r.perPiece, last: r.last, days: r.days }));
+  }
+
   // 記録画面で服を選ぶための並び。cat は書き換えない。
   //   opts: { selected: 選択中の名前の配列, season: '夏'|'冬'|'all', q: 検索語,
   //           today: 今日の日付, excludeDate: 最近着た服の判定から除く日（記録中の日）, recentDays: 30, recentMax: 8 }
@@ -803,16 +859,7 @@
     //   対象は今の季節（と通年）の現役の服で、「提案に出さない」服は選択中でも外す。記録している日より前の記録だけで数える。
     let rare = [];
     if (!searching && o.today && (o.rareMode === 'idle' || o.rareMode === 'few')) {
-      const lastSeen = new Map(), counts = new Map();
-      Object.keys(logs && typeof logs === 'object' ? logs : {}).forEach(date => {
-        if (date >= o.today) return;
-        const day = logs[date];
-        const entry = day && typeof day === 'object' ? day[cat.id] : null;
-        entryValues(entry).forEach(n => {
-          counts.set(n, (counts.get(n) || 0) + 1);
-          if (!lastSeen.has(n) || lastSeen.get(n) < date) lastSeen.set(n, date);
-        });
-      });
+      const { lastSeen, counts } = usageBefore(cat, logs, o.today);
       const order = new Map(items.map((n, i) => [n, i]));
       const list = items
         .filter(n => !metaOf(n).r && !metaOf(n).z && seasonOk(n))
@@ -1158,6 +1205,8 @@
     shiftDate, periodRange, periodLabel, countUsage, lastUsed, hasLogs, fashionStats, discardCandidates,
     // ホームのカレンダー
     monthCells, entryText, dayEntries,
+    // 平らな選択一覧の並び替え
+    sortModes, defaultSortMode, sortItems,
     // 元に戻す・修復
     pushSnapshot, popSnapshot, repairMeta
   };

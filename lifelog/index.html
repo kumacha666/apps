@@ -887,7 +887,7 @@
 // （画面の一部が描画されない）。その場合は一度だけ、キャッシュを避けて取り直して再読み込みする。
 // それでも合わなければ、画面に知らせる（無限に再読み込みしない）。記録のデータ（localStorage）には触れない。
 // LOGIC_VERSION_EXPECTED は logic.js の VERSION と同じ値にする（test/logic.test.mjs が突き合わせる）。
-const LOGIC_VERSION_EXPECTED = 3;
+const LOGIC_VERSION_EXPECTED = 4;
 if (LifeLogLogic.VERSION !== LOGIC_VERSION_EXPECTED) {
   let canRetry = false;
   try { canRetry = sessionStorage.getItem('lifelog_logic_retry') !== '1'; if (canRetry) sessionStorage.setItem('lifelog_logic_retry', '1'); } catch {}
@@ -1113,9 +1113,9 @@ function openLog(catId) {
 
   // 手放した服は隠す（その日にすでに選ばれている服は残す）
   const shownItems = LifeLogLogic.visibleItems(cat, selVals);
-  const chipsHtml = shownItems.map(item => `
-    <button class="chip ${selVals.includes(item)?'selected':''}"
-            data-item="${esc(item)}" onclick="toggleChip(this)">${esc(item)}</button>`).join('');
+  // 平らな選択一覧（分類を使わない、選ぶ項目のあるすべてのカテゴリ）は、並び替えの切り替えつき。新しく作ったカテゴリも、同じ仕組みで自然に使える
+  flat = !grouped && shownItems.length ? { catId, shown: shownItems.slice(), mode: flatModeGet(cat) } : null;
+  const chipsHtml = flat ? flatChipsHtml(cat, selVals) : '';
   // 分類を使うカテゴリの自由記入は、以前の記録に服の一覧に無い文字が残っている時だけ出す（新しい服は「＋新しい服を追加」から）
   const freePre = LifeLogLogic.freePrefill(e, cat.items);
   const showFree = !grouped || !!freePre;
@@ -1174,6 +1174,7 @@ function openLog(catId) {
       </div>` : shownItems.length ? `
       <div class="field-group">
         <div class="field-label">${typeInfo.multi?'アイテムを選択（複数可）':'アイテムを選択'}</div>
+        ${shownItems.length >= 2 ? `<div class="pk-seasons flat-sort" id="flat-sort">${flatSortBarHtml(cat)}</div>` : ''}
         <div class="chips" id="chip-box">${chipsHtml}</div>
       </div>` : ''}
 
@@ -1196,6 +1197,49 @@ function openLog(catId) {
 }
 
 function toggleChip(btn) { btn.classList.toggle('selected'); }
+
+// ─── 平らな選択一覧の並び替え（分類を使わないカテゴリ）───────────
+// 「登録順／着ていない順（ファッション以外は久しぶり順）／回数が少ない順」。バランスよく使うために、使っていない項目を上に出せる。
+// 並びは記録している日より前の記録で決める（LifeLogLogic.sortItems）。選んだ状態は、並び替えても保つ。選んだ並びは、カテゴリごとに覚える。
+let flat = null; // { catId, shown: [名前], mode }
+const SORT_PREF_KEY = 'lifelog_sort_v1'; // 表示の好み（記録のデータではない。エクスポートには含まれない）
+
+function flatModeGet(cat) {
+  let m = null;
+  try { m = (JSON.parse(localStorage.getItem(SORT_PREF_KEY)) || {})[cat.id]; } catch {}
+  return LifeLogLogic.sortModes(cat).some(x => x.id === m) ? m : LifeLogLogic.defaultSortMode(cat);
+}
+function flatModeSave(cat, mode) {
+  try { const o = JSON.parse(localStorage.getItem(SORT_PREF_KEY)) || {}; o[cat.id] = mode; localStorage.setItem(SORT_PREF_KEY, JSON.stringify(o)); } catch {}
+}
+function flatSortBarHtml(cat) {
+  return '<span class="pk-note">並び</span>' + LifeLogLogic.sortModes(cat)
+    .map(m => `<button class="chip${flat.mode === m.id ? ' selected' : ''}" onclick="flatSort('${m.id}')">${esc(m.label)}</button>`).join('');
+}
+function flatChipsHtml(cat, selectedNames) {
+  const fashion = cat.type === 'fashion';
+  const rows = LifeLogLogic.sortItems(cat, state.logs, { names: flat.shown, mode: flat.mode, today: curDate });
+  return rows.map(r => {
+    const tail = flat.mode === 'idle' ? (r.days == null ? (fashion ? '未着用' : '記録なし') : `${r.days}日`)
+      : flat.mode === 'few' ? (r.count === 0 ? (fashion ? '未着用' : '記録なし') : r.perPiece !== r.count ? `${r.count}回・${r.perPiece}/着` : `${r.count}回`)
+      : '';
+    return `<button class="chip ${selectedNames.includes(r.name) ? 'selected' : ''}" data-item="${esc(r.name)}" onclick="toggleChip(this)">${esc(r.name)}${tail ? `<span class="pk-b pk-stat">${esc(tail)}</span>` : ''}</button>`;
+  }).join('');
+}
+function flatSort(mode) {
+  const cat = flat && state.cats.find(c => c.id === flat.catId);
+  if (!cat) return;
+  const selected = Array.from(document.querySelectorAll('#chip-box .chip.selected')).map(c => c.dataset.item);
+  flat.mode = mode;
+  flatModeSave(cat, mode);
+  document.getElementById('flat-sort').innerHTML = flatSortBarHtml(cat);
+  document.getElementById('chip-box').innerHTML = flatChipsHtml(cat, selected);
+}
+// 選んだ名前を、一覧（cat.items）の並び順にそろえる（表示の並びに関係なく、保存する順は変えない）
+function orderByItems(cat, names) {
+  const order = new Map(cat.items.map((n, i) => [n, i]));
+  return names.filter(n => order.has(n)).sort((a, b) => order.get(a) - order.get(b)).concat(names.filter(n => !order.has(n)));
+}
 
 // ─── 記録画面の服の選択（分類を使うカテゴリ） ───────────────────
 let pk = null; // { catId, sel: [名前], season: '夏'|'冬'|'all', q, closed: {groupId: true}, adding }
@@ -1341,7 +1385,7 @@ function saveLog(catId) {
   const catForSel = state.cats.find(c => c.id === catId);
   const selVals = (pk && pk.catId === catId && catForSel)
     ? pkSelected(catForSel)
-    : Array.from(document.querySelectorAll('#chip-box .chip.selected')).map(c => c.dataset.item);
+    : orderByItems(catForSel || { items: [] }, Array.from(document.querySelectorAll('#chip-box .chip.selected')).map(c => c.dataset.item));
   let free = document.getElementById('f-text')?.value?.trim() || '';
   const kcal = document.getElementById('f-kcal')?.value || '';
   const yen  = document.getElementById('f-yen')?.value || '';
