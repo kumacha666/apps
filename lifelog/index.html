@@ -318,6 +318,12 @@
     @media (prefers-color-scheme: dark) { .pk-stat { color: #c7d2fe; } .pk-brand { background: rgba(255,255,255,.12); } }
     .pk-muting .chip { border-style: dashed; }
     .chip.selected .pk-b { color: #fff; background: rgba(0,0,0,.25); }
+    .pk-searchrow { display: flex; gap: 8px; align-items: stretch; }
+    .pk-searchrow .field-input { flex: 1 1 auto; min-width: 0; }
+    .pk-brandsel { flex: 0 1 auto; max-width: 46%; min-width: 0; border: 2px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--text); font: inherit; font-size: 14px; padding: 0 8px; cursor: pointer; }
+    .pk-brandsel.on { border-color: var(--primary); color: var(--primary-dark); font-weight: 700; }
+    @media (prefers-color-scheme: dark) { .pk-brandsel.on { color: #c7d2fe; } }
+    .flat-sort .pk-brandsel { padding: 5px 8px; font-size: 13px; max-width: 100%; }
     .pk-add { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
     .pk-add-row { display: flex; gap: 8px; margin-top: 8px; }
     .pk-add-row .field-input { flex: 1; min-width: 0; }
@@ -891,7 +897,7 @@
 // （画面の一部が描画されない）。その場合は一度だけ、キャッシュを避けて取り直して再読み込みする。
 // それでも合わなければ、画面に知らせる（無限に再読み込みしない）。記録のデータ（localStorage）には触れない。
 // LOGIC_VERSION_EXPECTED は logic.js の VERSION と同じ値にする（test/logic.test.mjs が突き合わせる）。
-const LOGIC_VERSION_EXPECTED = 4;
+const LOGIC_VERSION_EXPECTED = 5;
 if (LifeLogLogic.VERSION !== LOGIC_VERSION_EXPECTED) {
   let canRetry = false;
   try { canRetry = sessionStorage.getItem('lifelog_logic_retry') !== '1'; if (canRetry) sessionStorage.setItem('lifelog_logic_retry', '1'); } catch {}
@@ -1113,12 +1119,12 @@ function openLog(catId) {
 
   // 分類を使うカテゴリ（服）は、グループ・種類の見出しつきの選択画面（pk*）。それ以外は従来の平らなチップ
   const grouped = isGroupedCat(cat);
-  pk = grouped ? { catId, sel: selVals.slice(), season: LifeLogLogic.defaultSeasonView(curDate), q: '', closed: {}, adding: false, top: 'idle', mute: false } : null;
+  pk = grouped ? { catId, sel: selVals.slice(), season: LifeLogLogic.defaultSeasonView(curDate), q: '', brand: 'all', closed: {}, adding: false, top: 'idle', mute: false } : null;
 
   // 手放した服は隠す（その日にすでに選ばれている服は残す）
   const shownItems = LifeLogLogic.visibleItems(cat, selVals);
   // 平らな選択一覧（分類を使わない、選ぶ項目のあるすべてのカテゴリ）は、並び替えの切り替えつき。新しく作ったカテゴリも、同じ仕組みで自然に使える
-  flat = !grouped && shownItems.length ? { catId, shown: shownItems.slice(), mode: flatModeGet(cat) } : null;
+  flat = !grouped && shownItems.length ? { catId, shown: shownItems.slice(), mode: flatModeGet(cat), brand: 'all' } : null;
   const chipsHtml = flat ? flatChipsHtml(cat, selVals) : '';
   // 分類を使うカテゴリの自由記入は、以前の記録に服の一覧に無い文字が残っている時だけ出す（新しい服は「＋新しい服を追加」から）
   const freePre = LifeLogLogic.freePrefill(e, cat.items);
@@ -1172,7 +1178,9 @@ function openLog(catId) {
       <div class="field-group">
         <div class="field-label">${typeInfo.multi?'アイテムを選択（複数可）':'アイテムを選択'}<span class="pk-count" id="pk-count"></span></div>
         <div class="pk-tray" id="pk-tray"></div>
-        <input class="field-input" id="pk-q" type="search" placeholder="名前・ブランドで探す" autocomplete="off" oninput="pkSearch(this.value)">
+        <div class="pk-searchrow">
+          ${(() => { const sel = brandSelectHtml(cat, 'all', 'pkBrand'); return `<input class="field-input" id="pk-q" type="search" placeholder="${sel ? '名前で探す' : '名前・ブランドで探す'}" autocomplete="off" oninput="pkSearch(this.value)">${sel}`; })()}
+        </div>
         <div class="pk-seasons" id="pk-seasons"></div>
         <div id="pk-list"></div>
       </div>` : shownItems.length ? `
@@ -1218,17 +1226,28 @@ function flatModeSave(cat, mode) {
 }
 function flatSortBarHtml(cat) {
   return '<span class="pk-note">並び</span>' + LifeLogLogic.sortModes(cat)
-    .map(m => `<button class="chip${flat.mode === m.id ? ' selected' : ''}" onclick="flatSort('${m.id}')">${esc(m.label)}</button>`).join('');
+    .map(m => `<button class="chip${flat.mode === m.id ? ' selected' : ''}" onclick="flatSort('${m.id}')">${esc(m.label)}</button>`).join('')
+    + brandSelectHtml(cat, flat.brand, 'flatBrand');
 }
 function flatChipsHtml(cat, selectedNames) {
   const fashion = cat.type === 'fashion';
-  const rows = LifeLogLogic.sortItems(cat, state.logs, { names: flat.shown, mode: flat.mode, today: curDate });
+  // ブランドで絞り込んでいても、選んだ服は一覧に残す（選択は一覧のボタンの状態として持っているため、消えると選択が失われる）
+  const names = flat.shown.filter(n => LifeLogLogic.brandMatch(cat, n, flat.brand) || selectedNames.includes(n));
+  const rows = LifeLogLogic.sortItems(cat, state.logs, { names, mode: flat.mode, today: curDate });
   return rows.map(r => {
     const tail = flat.mode === 'idle' ? (r.days == null ? (fashion ? '未着用' : '記録なし') : `${r.days}日`)
       : flat.mode === 'few' ? (r.count === 0 ? (fashion ? '未着用' : '記録なし') : r.perPiece !== r.count ? `${r.count}回・${r.perPiece}/着` : `${r.count}回`)
       : '';
     return `<button class="chip ${selectedNames.includes(r.name) ? 'selected' : ''}" data-item="${esc(r.name)}" onclick="toggleChip(this)">${esc(r.name)}${brandTag(cat, r.name)}${tail ? `<span class="pk-b pk-stat">${esc(tail)}</span>` : ''}</button>`;
   }).join('');
+}
+function flatBrand(v) {
+  const cat = flat && state.cats.find(c => c.id === flat.catId);
+  if (!cat) return;
+  const selected = Array.from(document.querySelectorAll('#chip-box .chip.selected')).map(c => c.dataset.item);
+  flat.brand = v;
+  document.getElementById('flat-sort').innerHTML = flatSortBarHtml(cat);
+  document.getElementById('chip-box').innerHTML = flatChipsHtml(cat, selected);
 }
 function flatSort(mode) {
   const cat = flat && state.cats.find(c => c.id === flat.catId);
@@ -1264,6 +1283,17 @@ function brandTag(cat, name) {
   const b = LifeLogLogic.brandLabel(cat, LifeLogLogic.getMeta(cat, name).b);
   return b ? `<span class="pk-b pk-brand">${esc(b)}</span>` : '';
 }
+// ブランドで絞り込むプルダウン（検索欄の右・平らな一覧の並びの行の右）。そのカテゴリの現役の服で、選べる選択肢（ブランド・ブランドなし）が2つ以上あるときだけ出す。
+function brandSelectHtml(cat, current, handler) {
+  const r = LifeLogLogic.brandOptions(cat, LifeLogLogic.activeItems(cat));
+  if (r.choices < 2) return '';
+  const opt = (v, label) => `<option value="${esc(v)}"${current === v ? ' selected' : ''}>${esc(label)}</option>`;
+  return `<select class="pk-brandsel${current !== 'all' ? ' on' : ''}" id="pk-brand-${handler}" aria-label="ブランドで絞り込む" onchange="${handler}(this.value)">`
+    + opt('all', 'すべてのブランド')
+    + r.options.map(o => opt(o.id, `${o.label}　${o.count}点`)).join('')
+    + (r.noneCount ? opt('none', `ブランドなし　${r.noneCount}点`) : '')
+    + '</select>';
+}
 function pkChip(cat, name) {
   return `<button class="chip pk-chip${pk.sel.includes(name) ? ' selected' : ''}" data-item="${esc(name)}" onclick="pkToggle(this)">${esc(name)}${brandTag(cat, name)}</button>`;
 }
@@ -1279,7 +1309,7 @@ function pkRender() {
   document.getElementById('pk-count').textContent = sel.length ? `${sel.length}点` : '';
   // 季節の切り替え
   const secs = LifeLogLogic.pickerSections(cat, state.logs, {
-    selected: pk.sel, season: pk.season, q: pk.q, today: curDate, excludeDate: curDate,
+    selected: pk.sel, season: pk.season, q: pk.q, brand: pk.brand, today: curDate, excludeDate: curDate,
     rareMode: pk.top === 'recent' ? null : pk.top
   });
   const seasonBtn = (v, label) => `<button class="chip${pk.season === v ? ' selected' : ''}" onclick="pkSeason('${v}')">${label}</button>`;
@@ -1357,6 +1387,7 @@ function pkToggle(btn) {
 }
 function pkSeason(v) { if (pk) { pk.season = v; pkRender(); } }
 function pkSearch(v) { if (pk) { pk.q = v; pkRender(); } }
+function pkBrand(v) { if (pk) { pk.brand = v; document.getElementById('pk-brand-pkBrand')?.classList.toggle('on', v !== 'all'); pkRender(); } }
 function pkGroup(key) { if (pk) { pk.closed[key] = !pk.closed[key]; pkRender(); } }
 function pkAddOpen() { if (pk) { pk.adding = true; pk.focusNew = true; pkRender(); } }
 

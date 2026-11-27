@@ -1566,7 +1566,8 @@ const API_BY_VERSION = {
   1: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v1.json', import.meta.url)), 'utf8')),
   2: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v2.json', import.meta.url)), 'utf8')), // discardCandidates を追加
   3: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v3.json', import.meta.url)), 'utf8')), // monthCells / entryText / dayEntries を追加
-  4: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v4.json', import.meta.url)), 'utf8')) // sortModes / defaultSortMode / sortItems を追加
+  4: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v4.json', import.meta.url)), 'utf8')), // sortModes / defaultSortMode / sortItems を追加
+  5: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v5.json', import.meta.url)), 'utf8')) // brandMatch / brandOptions を追加
 };
 
 test('版：index.html が期待する logic.js の版と、logic.js の VERSION が同じ', () => {
@@ -1711,4 +1712,92 @@ test('sortItems: 記録している日と、それより後の記録は使わな
   // 一覧に無い名前（記録だけに残る名前）は、一覧にある名前の後ろに回る
   assert.deepEqual(L.sortItems(c, null, { names: ['X', 'A'], mode: 'idle', today: '2026-11-27' }).map(x => x.name), ['A', 'X']);
   assert.doesNotThrow(() => L.sortItems({ id: 'q' }, null, { names: [], mode: 'idle', today: '2026-11-27' }));
+});
+
+/* ---------- ブランドでの絞り込み（brandOptions / brandMatch / pickerSections の brand） ---------- */
+
+function bfCat() {
+  const c = { id: 'f', type: 'fashion', items: [], groups: [], types: {}, meta: {} };
+  L.startGrouping(c);
+  c.brands = [{ id: 'bt', name: 'Theory', short: '' }, { id: 'bu', name: 'United Arrows', short: 'UAR' }, { id: 'bz', name: 'Zed', short: '' }];
+  const add = (name, b, s = '通年', extra = {}) => { c.items.push(name); c.meta[name] = Object.assign({ g: 'tp', t: '', s, q: 1, r: false }, b ? { b } : {}, extra); };
+  add('T1', 'bt'); add('T2', 'bt'); add('T3夏', 'bt', '夏'); add('U1', 'bu'); add('無印1', null); add('手放しT', 'bt', '通年', { r: true });
+  return { c, add };
+}
+const listNames = s => s.groups.flatMap(g => g.types.flatMap(t => t.items));
+
+test('brandMatch: すべて／ブランドなし／ブランドID', () => {
+  const { c } = bfCat();
+  assert.equal(L.brandMatch(c, 'T1', 'all'), true);
+  assert.equal(L.brandMatch(c, 'T1', undefined), true);
+  assert.equal(L.brandMatch(c, 'T1', 'bt'), true);
+  assert.equal(L.brandMatch(c, 'T1', 'bu'), false);
+  assert.equal(L.brandMatch(c, '無印1', 'none'), true);
+  assert.equal(L.brandMatch(c, 'T1', 'none'), false);
+  assert.equal(L.brandMatch(c, '無印1', 'bt'), false);
+});
+
+test('brandOptions: 渡した服で使われているブランドだけを、表示名の順に件数つきで返す。ブランドなしの件数も返す', () => {
+  const { c } = bfCat();
+  const active = c.items.filter(n => !c.meta[n].r);
+  const r = L.brandOptions(c, active);
+  // 表示名（略称があれば略称）の五十音順：Theory・UAR（ZedはTheory・UARの後）。使われていないZedは出ない
+  assert.deepEqual(r.options.map(o => [o.id, o.count]), [['bt', 3], ['bu', 1]]);
+  assert.deepEqual(r.options.map(o => o.label), ['Theory', 'United Arrows（UAR）']);
+  assert.equal(r.noneCount, 1);
+  // 手放した服を含めて渡せば、その分も数える
+  assert.equal(L.brandOptions(c, c.items).options.find(o => o.id === 'bt').count, 4);
+  // 存在しないブランドID（データの不整合）は、落ちずに「ブランドなし」として数える
+  c.meta['T1'].b = 'ghost';
+  const g = L.brandOptions(c, active);
+  assert.deepEqual([g.options.find(o => o.id === 'bt').count, g.noneCount], [2, 2]);
+  c.meta['T1'].b = 'bt';
+  const empty = L.brandOptions(c, []);
+  assert.deepEqual([empty.options, empty.noneCount], [[], 0]);
+  const nob = L.brandOptions({ id: 'x', items: ['A'] }, ['A']); // ブランドの無いカテゴリ
+  assert.deepEqual([nob.options, nob.noneCount, nob.choices], [[], 1, 1]);
+});
+
+test('brandOptions: 選べる選択肢が2つ以上あるときだけ、絞り込みの意味がある（choices）', () => {
+  const { c } = bfCat();
+  assert.equal(L.brandOptions(c, ['T1', 'T2']).choices, 1);              // 1種類だけ→意味が薄い
+  assert.equal(L.brandOptions(c, ['T1', 'U1']).choices, 2);
+  assert.equal(L.brandOptions(c, ['T1', '無印1']).choices, 2);           // ブランドあり＋ブランドなし
+  assert.equal(L.brandOptions(c, ['無印1']).choices, 1);
+});
+
+test('pickerSections: ブランドで絞り込む。一覧・最近着た服・着ていない服の列のすべてに効く', () => {
+  const { c } = bfCat();
+  const logs = { '2026-11-20': { f: { v: ['T1', 'U1'] } }, '2026-11-21': { f: { v: ['無印1'] } } };
+  const base = { season: 'all', today: '2026-11-27', excludeDate: '2026-11-27', rareMode: 'idle' };
+  const all = L.pickerSections(c, logs, base);
+  assert.deepEqual(listNames(all).sort(), ['T1', 'T2', 'T3夏', 'U1', '無印1'].sort());
+  const t = L.pickerSections(c, logs, Object.assign({ brand: 'bt' }, base));
+  assert.deepEqual(listNames(t).sort(), ['T1', 'T2', 'T3夏'].sort());
+  assert.deepEqual(t.recent, ['T1']);                                   // U1・無印1は別ブランド
+  assert.deepEqual(t.rare.map(r => r.name).sort(), ['T1', 'T2', 'T3夏'].sort());
+  const none = L.pickerSections(c, logs, Object.assign({ brand: 'none' }, base));
+  assert.deepEqual(listNames(none), ['無印1']);
+  assert.deepEqual(none.recent, ['無印1']);
+  // 'all'・未指定は従来どおり
+  assert.deepEqual(listNames(L.pickerSections(c, logs, Object.assign({ brand: 'all' }, base))).sort(), listNames(all).sort());
+});
+
+test('pickerSections: ブランドの絞り込みは、検索・季節と「かつ」で組み合わさる。隠している季節の件数も、絞り込んだ中で数える', () => {
+  const { c } = bfCat();
+  const base = { today: '2026-11-27', excludeDate: '2026-11-27' };
+  // 冬の表示（夏の服T3夏を隠す）＋Theory
+  const w = L.pickerSections(c, {}, Object.assign({ season: '冬', brand: 'bt' }, base));
+  assert.deepEqual(listNames(w).sort(), ['T1', 'T2'].sort());
+  assert.equal(w.hiddenBySeason, 1);                                   // T3夏だけ（U1・無印1は別ブランドなので数えない）
+  // 検索（名前に「1」）＋Theory
+  const q = L.pickerSections(c, {}, Object.assign({ season: 'all', brand: 'bt', q: '1' }, base));
+  assert.deepEqual(listNames(q), ['T1']);
+});
+
+test('pickerSections: ブランドで絞り込んでも、手放した服（選んでいなければ）は出ない／選択中の別ブランドの服は、一覧には出さない（選んだ服の欄に残る）', () => {
+  const { c } = bfCat();
+  const s = L.pickerSections(c, {}, { season: 'all', brand: 'bt', today: '2026-11-27', selected: ['U1', '手放しT'] });
+  assert.ok(!listNames(s).includes('U1'));          // 別ブランドの選択中の服は、一覧に出さない
+  assert.ok(listNames(s).includes('手放しT'));      // 選択中の手放した服は、同じブランドなので残る
 });

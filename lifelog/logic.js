@@ -70,7 +70,7 @@
   // index.html が期待する logic.js の版。logic.js の公開する関数・戻り値の形を変えたら上げる
   // （index.html の LOGIC_VERSION_EXPECTED を同じ値にし、test/api-v<版>.json を足す。test/logic.test.mjs が突き合わせる）。
   // 更新の直後に「新しい index.html ＋ 古い logic.js」になったとき、index.html が気づいて取り直すために使う。
-  const VERSION = 4;
+  const VERSION = 5;
 
   const SEASONS = ['夏', '冬', '通年'];
   const DEFAULT_META = Object.freeze({ g: null, t: '', s: '通年', q: 1, r: false });
@@ -810,6 +810,31 @@
     return rows.map(r => ({ name: r.name, count: r.count, perPiece: r.perPiece, last: r.last, days: r.days }));
   }
 
+  // ブランドでの絞り込み。brand は 'all'（絞らない・未指定も同じ）／'none'（ブランドなし）／ブランドID。
+  function brandMatch(cat, name, brand) {
+    if (brand == null || brand === 'all') return true;
+    const b = getMeta(cat, name).b;
+    return brand === 'none' ? b == null : b === brand;
+  }
+
+  // 絞り込みの選択肢。渡した服（names）で使われているブランドだけを、表示名（略称があれば略称）の五十音順に、件数つきで返す。
+  //   options: [{ id, label（正式名称。略称があれば「正式名称（略称）」）, count }]、noneCount: ブランドなしの件数、
+  //   choices: 選べる選択肢の数（ブランドの数＋ブランドなしがあれば1）。2以上のときだけ、絞り込みの意味がある。
+  function brandOptions(cat, names) {
+    const counts = new Map();
+    let noneCount = 0;
+    (Array.isArray(names) ? names : []).forEach(n => {
+      const id = getMeta(cat, n).b;
+      if (id == null || !findBrand(cat, id)) noneCount++;
+      else counts.set(id, (counts.get(id) || 0) + 1);
+    });
+    const options = Array.from(counts.entries())
+      .map(([id, count]) => { const b = findBrand(cat, id); return { id, count, label: b.short ? `${b.name}（${b.short}）` : b.name, _k: brandText(b) }; })
+      .sort((a, b) => a._k.localeCompare(b._k, 'ja'))
+      .map(o => ({ id: o.id, label: o.label, count: o.count }));
+    return { options, noneCount, choices: options.length + (noneCount > 0 ? 1 : 0) };
+  }
+
   // 記録画面で服を選ぶための並び。cat は書き換えない。
   //   opts: { selected: 選択中の名前の配列, season: '夏'|'冬'|'all', q: 検索語,
   //           today: 今日の日付, excludeDate: 最近着た服の判定から除く日（記録中の日）, recentDays: 30, recentMax: 8 }
@@ -819,7 +844,7 @@
   //   ・グループ → 種類の順に並べる。グループが未設定の服は「未分類」にまとめる
   // 戻り値: { recent, groups: [{ id, name, count, types: [{ type, items }] }], hiddenBySeason, searching }
   function pickerSections(cat, logs, opts) {
-    const o = Object.assign({ selected: [], season: 'all', q: '', today: '', excludeDate: '', recentDays: 30, recentMax: 8 }, opts);
+    const o = Object.assign({ selected: [], season: 'all', q: '', brand: 'all', today: '', excludeDate: '', recentDays: 30, recentMax: 8 }, opts);
     const items = cat && Array.isArray(cat.items) ? cat.items : [];
     const selected = new Set(o.selected);
     const q = normalizeName(o.q);
@@ -832,8 +857,8 @@
       return !!b && (normalizeName(b.name).includes(q) || (!!b.short && normalizeName(b.short).includes(q)));
     };
     const seasonOk = name => o.season === 'all' || metaOf(name).s === '通年' || metaOf(name).s === o.season;
-    // 手放した服は、選択中でなければ出さない
-    const candidates = items.filter(n => !metaOf(n).r || selected.has(n));
+    // 手放した服は、選択中でなければ出さない。ブランドで絞り込んでいるときは、そのブランドの服だけ（一覧・最近着た服・季節の件数のすべてに効く）
+    const candidates = items.filter(n => (!metaOf(n).r || selected.has(n)) && brandMatch(cat, n, o.brand));
     const visible = candidates.filter(n => matches(n) && (searching || seasonOk(n) || selected.has(n)));
     const hiddenBySeason = searching ? 0 : candidates.filter(n => !seasonOk(n) && !selected.has(n)).length;
 
@@ -862,7 +887,7 @@
       const { lastSeen, counts } = usageBefore(cat, logs, o.today);
       const order = new Map(items.map((n, i) => [n, i]));
       const list = items
-        .filter(n => !metaOf(n).r && !metaOf(n).z && seasonOk(n))
+        .filter(n => !metaOf(n).r && !metaOf(n).z && seasonOk(n) && brandMatch(cat, n, o.brand))
         .map(n => {
           const count = counts.get(n) || 0;
           const q = metaOf(n).q;
@@ -1207,6 +1232,8 @@
     monthCells, entryText, dayEntries,
     // 平らな選択一覧の並び替え
     sortModes, defaultSortMode, sortItems,
+    // ブランドでの絞り込み
+    brandMatch, brandOptions,
     // 元に戻す・修復
     pushSnapshot, popSnapshot, repairMeta
   };
