@@ -298,24 +298,24 @@
     .pk-count { font-size: 12px; font-weight: 700; color: var(--primary); margin-left: 6px; }
     .pk-seasons { display: flex; gap: 6px; margin: 10px 0 4px; align-items: center; flex-wrap: wrap; }
     .pk-seasons .chip { padding: 5px 14px; font-size: 13px; }
-    .pk-note { font-size: 11px; color: var(--text-3); }
+    .pk-note { font-size: 12px; color: var(--text-2); }
     .pk-head {
       display: flex; align-items: center; justify-content: space-between;
       margin: 14px 0 6px; padding: 0; width: 100%;
       background: none; border: none; font-family: inherit; cursor: pointer;
       font-size: 13px; font-weight: 800; color: var(--text);
     }
-    .pk-head .pk-n { font-weight: 600; font-size: 11px; color: var(--text-3); margin-left: 6px; }
+    .pk-head .pk-n { font-weight: 600; font-size: 12px; color: var(--text-2); margin-left: 6px; }
     .pk-head .pk-caret { color: var(--text-3); font-size: 11px; }
-    .pk-sub { font-size: 11px; font-weight: 700; color: var(--text-2); margin: 8px 0 4px; }
+    .pk-sub { font-size: 12px; font-weight: 700; color: var(--text-2); margin: 8px 0 4px; }
     .pk-recent-title { font-size: 12px; font-weight: 800; color: var(--text-2); margin: 10px 0 6px; }
-    .pk-b { font-size: 10px; font-weight: 600; color: var(--text-3); margin-left: 6px; }
-    .pk-brand { font-size: 11px; font-weight: 700; color: var(--text-2); }
-    .chip.selected .pk-brand { color: rgba(255,255,255,.92); }
-    .pk-stat { color: var(--primary); }
-    .chip.selected .pk-stat { color: rgba(255,255,255,.9); }
+    /* 服のボタンの中の小さい情報（ブランド名・日数・回数）。薄い・小さいと探せないので、12px以上・コントラスト4.5以上のバッジにする */
+    .pk-b { font-size: 12px; font-weight: 700; line-height: 1.45; padding: 1px 8px; border-radius: 100px; margin-left: 6px; }
+    .pk-brand { color: var(--text); background: var(--border); }
+    .pk-stat { color: var(--primary-dark); background: var(--primary-light); }
+    @media (prefers-color-scheme: dark) { .pk-stat { color: #c7d2fe; } .pk-brand { background: rgba(255,255,255,.12); } }
     .pk-muting .chip { border-style: dashed; }
-    .chip.selected .pk-b { color: rgba(255,255,255,.8); }
+    .chip.selected .pk-b { color: #fff; background: rgba(0,0,0,.25); }
     .pk-add { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
     .pk-add-row { display: flex; gap: 8px; margin-top: 8px; }
     .pk-add-row .field-input { flex: 1; min-width: 0; }
@@ -536,7 +536,7 @@
     .wd-cand-days small { font-size: 11px; font-weight: 600; color: var(--text-2); }
     .wd-cand-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
     .wd-cand-main b { font-size: 14px; overflow-wrap: anywhere; }
-    .wd-cand-sub, .wd-cand-stat { font-size: 11px; color: var(--text-2); }
+    .wd-cand-sub, .wd-cand-stat { font-size: 12px; color: var(--text-2); }
     .wd-cand-act { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
     .wd-cand-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
     .wd-cand-chips .chip { padding: 5px 12px; font-size: 13px; }
