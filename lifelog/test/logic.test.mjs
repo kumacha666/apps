@@ -1492,6 +1492,66 @@ test('pickerSections: 「最近着た順」の列からも、「出さない」�
   assert.ok(!sel.recent.includes('服9'));
 });
 
+/* ---------- 手放し候補（discardCandidates） ---------- */
+
+function discardFixture() {
+  const { c, add } = restCat();
+  add('A'); add('B'); add('C'); add('D', '夏'); add('E', '通年', { z: true }); add('F', '通年', { r: true }); add('G', '冬');
+  const logs = {
+    '2026-06-01': { f: { v: ['D'] } },   // 記録の最初の日（179日前）。Dの最後の着用
+    '2026-09-01': { f: { v: ['G'] } },   // 87日前
+    '2026-10-01': { f: { v: ['A'] } },   // 57日前
+    '2026-11-20': { f: { v: ['B'] } }    // 7日前
+  };
+  return { c, logs };
+}
+const dc = (c, logs, o) => L.discardCandidates(c, logs, Object.assign({ today: '2026-11-27', season: '冬', minDays: 60 }, o));
+
+test('discardCandidates: 今の季節の現役の服のうち、指定日数以上着ていない服を、着ていない期間が長い順に出す', () => {
+  const { c, logs } = discardFixture();
+  const r = dc(c, logs);
+  // C=一度も着ていない（記録の最初の日から179日）、G=87日。A=57日はまだ候補ではない
+  assert.deepEqual(r.rows.map(x => [x.name, x.idleDays, x.never]), [['C', 179, true], ['G', 87, false]]);
+  assert.deepEqual(dc(c, logs, { minDays: 30 }).rows.map(x => x.name), ['C', 'G', 'A']);
+  assert.deepEqual(dc(c, logs, { minDays: 7 }).rows.map(x => x.name), ['C', 'G', 'A', 'B']);
+});
+
+test('discardCandidates: 「出さない」服・手放した服・季節外の服は出さない。すべての季節にすると季節外も出る', () => {
+  const { c, logs } = discardFixture();
+  const names = o => dc(c, logs, o).rows.map(x => x.name);
+  assert.ok(!names().includes('E') && !names().includes('F') && !names().includes('D'));
+  // 季節外（夏の服D）は、すべての季節にすると出る。一度も着ていないCと同じ179日のときは、一度も着ていない服が先
+  assert.deepEqual(names({ allSeasons: true }), ['C', 'D', 'G']);
+  assert.ok(!names({ allSeasons: true }).includes('E') && !names({ allSeasons: true }).includes('F'));
+});
+
+test('discardCandidates: 最後に着た日・着用回数・着数を返す。記録している日より後の記録は使わない', () => {
+  const { c, logs } = discardFixture();
+  c.meta.G.q = 2;
+  const withFuture = Object.assign({}, logs, { '2026-12-05': { f: { v: ['G'] } }, '2026-08-01': { f: { v: ['G'] } } });
+  const g = dc(c, withFuture).rows.find(x => x.name === 'G');
+  assert.equal(g.last, '2026-09-01'); // 未来の12/5は使わない
+  assert.equal(g.count, 2);            // 8/1と9/1
+  assert.equal(g.q, 2);
+  assert.equal(g.idleDays, 87);
+});
+
+test('discardCandidates: 記録が1件も無いカテゴリは判断できないので、候補を出さない', () => {
+  const { c } = discardFixture();
+  assert.deepEqual(dc(c, {}).rows, []);
+  assert.equal(dc(c, {}).firstLog, '');
+  assert.equal(dc(c, discardFixture().logs).firstLog, '2026-06-01');
+});
+
+test('discardCandidates: 元のデータを書き換えない／壊れたデータや未知の設定でも落ちない', () => {
+  const { c, logs } = discardFixture();
+  const before = JSON.stringify([c, logs]);
+  dc(c, logs);
+  assert.equal(JSON.stringify([c, logs]), before);
+  assert.doesNotThrow(() => L.discardCandidates({ id: 'x' }, null, { today: '2026-11-27', season: 'all', minDays: 60 }));
+  assert.deepEqual(L.discardCandidates({ id: 'x' }, { '2026-01-01': null }, { today: '2026-11-27', season: 'all', minDays: 60 }).rows, []);
+});
+
 /* ---------- logic.js と index.html の版の突き合わせ ---------- */
 
 import { readFileSync } from 'node:fs';
@@ -1503,7 +1563,8 @@ import { fileURLToPath } from 'node:url';
 //   ・logic.js の公開する関数の一覧を変えたら、VERSION を上げる（下の一覧に、新しい版の一覧を足す）
 //     戻り値の形を変えたときも、一覧は変わらないが VERSION を上げること（CLAUDE.md参照）
 const API_BY_VERSION = {
-  1: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v1.json', import.meta.url)), 'utf8'))
+  1: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v1.json', import.meta.url)), 'utf8')),
+  2: JSON.parse(readFileSync(fileURLToPath(new URL('./api-v2.json', import.meta.url)), 'utf8')) // discardCandidates を追加
 };
 
 test('版：index.html が期待する logic.js の版と、logic.js の VERSION が同じ', () => {
