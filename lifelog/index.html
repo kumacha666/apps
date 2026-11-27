@@ -2111,7 +2111,7 @@ function renderWardrobe() {
       ${started && unresolved ? `<button class="btn-sm" style="background:var(--primary-light);color:var(--primary)" onclick="wdSuggestOpen()">名前から一括設定（未設定${unresolved}件）</button>` : ''}
       <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" aria-expanded="${wd.brandPanel}" onclick="wdBrandPanel()">ブランドの管理${brands.length ? `（${brands.length}）` : ''}</button>
       ${brandSug ? `<button class="btn-sm" style="background:var(--primary-light);color:var(--primary)" onclick="wdBrandSuggestOpen()">名前からブランドを推定（${brandSug}件）</button>` : ''}
-      <button class="btn-sm" style="background:var(--card);border:1px solid var(--border);color:var(--text)" onclick="wdCandOpen()" title="しばらく着ていない服を並べて、手放すか残すかを選べます">手放し候補（${wdCandCount(cat)}）</button>
+      <button class="btn-sm" id="wd-cand-btn" style="background:var(--card);border:1px solid var(--border);color:var(--text)" onclick="wdCandOpen()" title="しばらく着ていない服を並べて、手放すか残すかを選べます">手放し候補（${wdCandCount(cat)}）</button>
     </div>
     ${wd.brandPanel ? wdBrandPanelHtml(cat) : ''}
     <div id="wd-list"></div>`;
@@ -2338,7 +2338,12 @@ function wdCandCalc(cat, min, all) {
 }
 function wdCandCount(cat) { return wdCandCalc(cat, wdCand.min, wdCand.all).rows.length; }
 function wdCandOpen() { if (wdCat()) wdCandRender(); document.getElementById('wd-modal').classList.add('show'); }
-function wdCandSet(k, v) { wdCand[k] = v; wdCandRender(); }
+function wdCandSet(k, v) { wdCand[k] = v; wdCandRender(); wdCandRefreshBtn(); }
+// 条件（日数・季節）を変えたら、後ろの画面のボタンの件数も、同じ条件で数え直す（閉じたあと・開き直したあとも、一覧と数字を一致させる）
+function wdCandRefreshBtn() {
+  const cat = wdCat(), btn = document.getElementById('wd-cand-btn');
+  if (cat && btn) btn.textContent = `手放し候補（${wdCandCount(cat)}）`;
+}
 function wdCandRender() {
   const cat = wdCat(); if (!cat) return;
   const season = LifeLogLogic.defaultSeasonView(today());
