@@ -865,6 +865,92 @@
     return Object.fromEntries(last);
   }
 
+  /* ---------- ファッションの統計 ---------- */
+
+  function daysBetween(a, b) {
+    const t = s => { const [y, m, d] = String(s).split('-').map(Number); return Date.UTC(y, m - 1, d); };
+    return Math.round((t(b) - t(a)) / 86400000);
+  }
+
+  const PERIOD_NAMES = { '30d': '直近30日', '90d': '直近90日', '6m': '直近半年', '1y': '直近1年' };
+
+  // 画面に出す集計期間の表示。全期間は、最初の記録日（firstDate）から。
+  function periodLabel(period, todayStr, firstDate) {
+    const md = d => Number(d.slice(5, 7)) + '/' + Number(d.slice(8, 10));
+    const ymd = d => d.slice(0, 4) + '/' + md(d);
+    if (period === 'all') return firstDate ? `全期間（${ymd(firstDate)}〜）` : '全期間';
+    const r = periodRange(period, todayStr);
+    const sameYear = r.from.slice(0, 4) === r.to.slice(0, 4);
+    return `${PERIOD_NAMES[period]}（${sameYear ? md(r.from) + '〜' + md(r.to) : ymd(r.from) + '〜' + ymd(r.to)}）`;
+  }
+
+  // ファッションのカテゴリの統計を、グループ別にまとめる。cat・logs は書き換えない。
+  //   opts: { period: '30d'|'90d'|'6m'|'1y'|'all', today, season: '夏'|'冬'|'all'（今の季節の見方）, idleDays: 14 }
+  //   ・着用回数・延べ回数・1着あたりは、period の範囲の記録から。手放した服は、その期間に着ていれば残す（印つき）
+  //   ・バリエーションと提案は、「今の季節（と通年）の現役の服」だけが対象。提案は期間に関係なく全記録で判定する
+  //     （冬に「夏の服を着ていない」と言わない／期間を狭めても「最後に着たのが何日前か」は変わらない）
+  //   ・グループが未設定の服と、一覧に無い名前（記録だけに残っている名前）は「未分類」に入れる
+  //   ・分類を使わないカテゴリは、名前が空の1つのまとまりとして扱う
+  // 戻り値: { period, range, groups: [{ id, name, activeCount, pieces, wears, items: [...], variety, tips }] }
+  function fashionStats(cat, logs, opts) {
+    const o = Object.assign({ period: 'all', today: '', season: 'all', idleDays: 14 }, opts);
+    const items = cat && Array.isArray(cat.items) ? cat.items : [];
+    const range = periodRange(o.period, o.today);
+    const counts = new Map(Object.entries(countUsage(logs, cat && cat.id, range)));
+    const lastMap = new Map(Object.entries(lastUsed(logs, cat && cat.id)));
+    const order = new Map(items.map((n, i) => [n, i]));
+    const grouped = !!cat && Array.isArray(cat.groups) && cat.groups.length > 0;
+    const meta = name => getMeta(cat, name);
+    const seasonOk = name => o.season === 'all' || meta(name).s === '通年' || meta(name).s === o.season;
+
+    const defs = grouped
+      ? cat.groups.map(g => ({ id: g.id, name: g.name })).concat([{ id: null, name: '未分類' }])
+      : [{ id: '', name: '' }];
+    const known = new Set(grouped ? cat.groups.map(g => g.id) : []);
+    const groupOf = name => (!grouped ? '' : known.has(meta(name).g) ? meta(name).g : null);
+    const orphans = Array.from(new Set(Array.from(counts.keys()).filter(n => !order.has(n))));
+
+    const groups = defs.map(def => {
+      const names = items.filter(n => groupOf(n) === def.id);
+      const orphanNames = def.id === (grouped ? null : '') ? orphans : [];
+      const active = names.filter(n => !meta(n).r);
+      const rows = names
+        .filter(n => !meta(n).r || (counts.get(n) || 0) > 0)
+        .map(n => ({ name: n, orphan: false }))
+        .concat(orphanNames.filter(n => (counts.get(n) || 0) > 0).map(n => ({ name: n, orphan: true })))
+        .map(r => {
+          const m = r.orphan ? DEFAULT_META : meta(r.name);
+          const count = counts.get(r.name) || 0;
+          const q = r.orphan ? 1 : m.q;
+          return { name: r.name, count, q, retired: r.orphan ? false : !!m.r, orphan: r.orphan, last: lastMap.get(r.name) || '', perPiece: Math.round(count / q * 10) / 10 };
+        });
+      rows.sort((a, b) => (b.count - a.count) || ((order.has(a.name) ? order.get(a.name) : 1e9) - (order.has(b.name) ? order.get(b.name) : 1e9)));
+      const target = active.filter(seasonOk);
+      const used = target.filter(n => (counts.get(n) || 0) > 0).length;
+      const tips = [];
+      target.forEach(n => {
+        const last = lastMap.get(n);
+        if (!last) tips.push({ name: n, kind: 'unused', days: null });
+        else {
+          const d = daysBetween(last, o.today);
+          if (d >= o.idleDays) tips.push({ name: n, kind: 'idle', days: d });
+        }
+      });
+      tips.sort((a, b) => (a.kind === b.kind ? (b.days || 0) - (a.days || 0) : a.kind === 'unused' ? -1 : 1));
+      return {
+        id: def.id, name: def.name,
+        activeCount: active.length,
+        pieces: active.reduce((s, n) => s + meta(n).q, 0),
+        wears: rows.reduce((s, r) => s + r.count, 0),
+        items: rows,
+        variety: { used, total: target.length, pct: target.length ? Math.round(used / target.length * 100) : 0 },
+        tips,
+        _empty: !names.length && !rows.length
+      };
+    }).filter(g => !g._empty).map(g => { delete g._empty; return g; });
+    return { period: o.period, range, groups };
+  }
+
   /* ---------- 元に戻す（操作前の状態を保存） ---------- */
 
   // 操作の直前の状態をスタックに積む。古いものから捨てて max 件まで保つ。新しい配列を返す。
@@ -929,7 +1015,7 @@
     BRAND_DICTIONARY, brandText, brandLabel, findBrand, addBrand, updateBrand, deleteBrand, brandCounts,
     matchBrandForName, suggestBrands, applyBrands,
     // 期間別の集計
-    shiftDate, periodRange, countUsage, lastUsed,
+    shiftDate, periodRange, periodLabel, countUsage, lastUsed, fashionStats,
     // 元に戻す・修復
     pushSnapshot, popSnapshot, repairMeta
   };

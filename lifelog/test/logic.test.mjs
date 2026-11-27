@@ -1215,3 +1215,132 @@ test('pickerSections: 最近着た服は、記録日の30日前から前日ま�
   const s = L.pickerSections(c, logs, { season: 'all', today: '2026-11-27', excludeDate: '2026-11-27' });
   assert.deepEqual(s.recent.slice().sort(), ['冬ニット', '通年シャツ'].sort());
 });
+
+/* ---------- ファッションの統計（fashionStats / periodLabel） ---------- */
+
+function statsCat() {
+  const c = { id: 'f', type: 'fashion', items: [], groups: [], types: {}, brands: [], meta: {} };
+  L.startGrouping(c);
+  const add = (name, g, s, extra = {}) => { c.items.push(name); c.meta[name] = Object.assign({ g, t: '', s, q: 1, r: false }, extra); };
+  add('夏T', 'tp', '夏');
+  add('冬ニット', 'tp', '冬');
+  add('通年シャツ', 'tp', '通年', { q: 2 });
+  add('手放しT', 'tp', '夏', { r: true });
+  add('夏パンツ', 'bt', '夏');
+  add('冬ジーンズ', 'bt', '冬');
+  add('未分類服', null, '通年');
+  return c;
+}
+const day = (n, ...v) => ({ ['2026-11-' + String(n).padStart(2, '0')]: { f: { v } } });
+const statsLogs = () => Object.assign({},
+  day(1, '夏T', '手放しT'), day(2, '冬ニット', '通年シャツ'), day(3, '冬ニット'), day(20, '通年シャツ', '冬ジーンズ'),
+  { '2026-06-10': { f: { v: ['夏T', '冬ニット', '消えた服'] } } });
+
+test('periodLabel: 期間の表示（全期間は最初の記録日から）', () => {
+  assert.equal(L.periodLabel('30d', '2026-11-27', ''), '直近30日（10/29〜11/27）');
+  assert.equal(L.periodLabel('90d', '2026-11-27', ''), '直近90日（8/30〜11/27）');
+  assert.equal(L.periodLabel('6m', '2026-11-27', ''), '直近半年（6/1〜11/27）');
+  assert.equal(L.periodLabel('1y', '2026-11-27', ''), '直近1年（2025/11/28〜2026/11/27）');
+  assert.equal(L.periodLabel('all', '2026-11-27', '2026-06-10'), '全期間（2026/6/10〜）');
+  assert.equal(L.periodLabel('all', '2026-11-27', ''), '全期間');
+});
+
+test('fashionStats: グループ別に集計し、同じグループの服は着用回数の多い順', () => {
+  const c = statsCat();
+  const s = L.fashionStats(c, statsLogs(), { period: 'all', today: '2026-11-27', season: 'all' });
+  assert.deepEqual(s.groups.map(g => g.name), ['トップス', 'ボトムス', '未分類']); // 服が無いグループ（アウター）は出さない
+  const tops = s.groups[0];
+  assert.deepEqual(tops.items.map(i => [i.name, i.count]), [['冬ニット', 3], ['夏T', 2], ['通年シャツ', 2], ['手放しT', 1]]);
+  // 同じ回数は元の並び順
+  assert.deepEqual(tops.items.map(i => i.name).slice(1, 3), ['夏T', '通年シャツ']);
+});
+
+test('fashionStats: 手放した服は統計に残り（印つき）、着数は1着あたりの回数に使う', () => {
+  const c = statsCat();
+  const tops = L.fashionStats(c, statsLogs(), { period: 'all', today: '2026-11-27', season: 'all' }).groups[0];
+  const by = n => tops.items.find(i => i.name === n);
+  assert.equal(by('手放しT').retired, true);
+  assert.equal(by('通年シャツ').q, 2);
+  assert.equal(by('通年シャツ').perPiece, 1); // 2回 ÷ 2着
+  assert.equal(by('夏T').perPiece, 2);
+  assert.equal(tops.activeCount, 3);
+  assert.equal(tops.pieces, 4); // 夏T1 + 冬ニット1 + 通年シャツ2（手放した服は着数に数えない）
+  assert.equal(tops.wears, 8); // 手放した服の1回も延べ回数に含める
+});
+
+test('fashionStats: 期間で絞る。期間外の手放した服は一覧から外れ、現役の服は0回で残る', () => {
+  const c = statsCat();
+  // 12/15の直近30日は11/16〜12/15。11/20の記録だけが入る（11/1〜11/3と6月の記録は期間外）
+  const s = L.fashionStats(c, statsLogs(), { period: '30d', today: '2026-12-15', season: 'all' });
+  const tops = s.groups[0];
+  assert.deepEqual(tops.items.map(i => [i.name, i.count]), [['通年シャツ', 1], ['夏T', 0], ['冬ニット', 0]]);
+  assert.equal(tops.wears, 1);
+  assert.ok(s.range && s.range.from === '2026-11-16');
+  // 期間外の記録は、全期間にだけ入る
+  assert.equal(L.fashionStats(c, statsLogs(), { period: 'all', today: '2026-12-15', season: 'all' }).groups[0].wears, 8);
+});
+
+test('fashionStats: バリエーションと提案は、今の季節（と通年）の現役の服が対象', () => {
+  const c = statsCat();
+  const winter = L.fashionStats(c, statsLogs(), { period: 'all', today: '2026-11-27', season: '冬' });
+  const tops = winter.groups[0];
+  // 冬ニット・通年シャツが対象（夏T・手放しTは対象外）。どちらも着用あり
+  assert.deepEqual(tops.variety, { used: 2, total: 2, pct: 100 });
+  assert.deepEqual(tops.tips.map(t => t.name), ['冬ニット']); // 冬ニットは11/3が最後（24日前）。通年シャツは7日前なので対象外
+  const bottoms = winter.groups[1];
+  assert.deepEqual(bottoms.variety, { used: 1, total: 1, pct: 100 }); // 冬ジーンズのみ対象（夏パンツは対象外）
+  assert.ok(!bottoms.tips.some(t => t.name === '夏パンツ')); // 夏の服は、冬の間「着ていない」と提案しない
+  const all = L.fashionStats(c, statsLogs(), { period: 'all', today: '2026-11-27', season: 'all' });
+  assert.equal(all.groups[1].variety.total, 2);
+});
+
+test('fashionStats: 提案は、一度も着ていない服と、14日以上着ていない服（期間に関係なく全記録で判定）', () => {
+  const c = statsCat();
+  const logs = Object.assign({}, day(1, '冬ニット'), day(20, '通年シャツ'), day(26, '冬ジーンズ'));
+  const s = L.fashionStats(c, logs, { period: '30d', today: '2026-11-27', season: '冬' });
+  const tips = Object.fromEntries(s.groups.flatMap(g => g.tips).map(t => [t.name, t]));
+  assert.equal(tips['冬ニット'].kind, 'idle');
+  assert.equal(tips['冬ニット'].days, 26);
+  assert.equal(tips['通年シャツ'], undefined); // 7日前なので提案しない
+  assert.equal(tips['冬ジーンズ'], undefined);
+  assert.equal(tips['未分類服'].kind, 'unused');
+  // 期間を「全期間」にしても、提案の判定は同じ
+  const s2 = L.fashionStats(c, logs, { period: 'all', today: '2026-11-27', season: '冬' });
+  assert.equal(s2.groups.flatMap(g => g.tips).find(t => t.name === '冬ニット').days, 26);
+  // 最後に着た日が期間の外でも、「記録なし」ではなく「N日前」になる（12/15の直近30日は11/16〜。冬ニットの最後は11/1）
+  const s3 = L.fashionStats(c, logs, { period: '30d', today: '2026-12-15', season: '冬' });
+  const t3 = s3.groups.flatMap(g => g.tips).find(t => t.name === '冬ニット');
+  assert.deepEqual([t3.kind, t3.days], ['idle', 44]);
+});
+
+test('fashionStats: グループ未設定の服と、一覧に無い名前（記録だけに残る）は「未分類」に入る', () => {
+  const c = statsCat();
+  const s = L.fashionStats(c, statsLogs(), { period: 'all', today: '2026-11-27', season: 'all' });
+  const un = s.groups.find(g => g.id === null);
+  assert.equal(un.name, '未分類');
+  assert.ok(un.items.some(i => i.name === '未分類服'));
+  const orphan = un.items.find(i => i.name === '消えた服');
+  assert.ok(orphan && orphan.orphan === true && orphan.count === 1);
+  assert.equal(un.activeCount, 1); // 記録だけに残る名前は現役に数えない
+});
+
+test('fashionStats: 分類を使わないカテゴリは、1つのまとまり（名前なし）として集計する', () => {
+  const c = { id: 'w', type: 'fashion', items: ['時計A', '時計B'] };
+  const logs = { '2026-11-20': { w: { v: ['時計A'] } }, '2026-11-21': { w: { v: ['時計A'] } } };
+  const s = L.fashionStats(c, logs, { period: 'all', today: '2026-11-27', season: '冬' });
+  assert.equal(s.groups.length, 1);
+  assert.equal(s.groups[0].name, '');
+  assert.deepEqual(s.groups[0].items.map(i => [i.name, i.count]), [['時計A', 2], ['時計B', 0]]);
+  assert.deepEqual(s.groups[0].variety, { used: 1, total: 2, pct: 50 }); // 季節の設定が無い服は、どの季節でも対象
+});
+
+test('fashionStats: __proto__ という名前の服や壊れたデータでも落ちない／元のデータを書き換えない', () => {
+  const c = statsCat();
+  c.items.push('__proto__'); Object.defineProperty(c.meta, '__proto__', { value: { g: 'tp', t: '', s: '通年', q: 1, r: false }, enumerable: true, configurable: true, writable: true });
+  const logs = { '2026-11-20': { f: { v: ['__proto__'] } }, '2026-11-21': null, '2026-11-22': { f: 5 } };
+  const before = JSON.stringify([c, logs]);
+  const s = L.fashionStats(c, logs, { period: 'all', today: '2026-11-27', season: 'all' });
+  assert.equal(s.groups[0].items.find(i => i.name === '__proto__').count, 1);
+  assert.equal(JSON.stringify([c, logs]), before);
+  assert.doesNotThrow(() => L.fashionStats({ id: 'x' }, null, { period: 'all', today: '2026-11-27', season: 'all' }));
+});
