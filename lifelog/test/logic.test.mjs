@@ -750,7 +750,7 @@ test('wardrobeRows: 既定は現役のみ。回数と最終着用日が付く', 
   const rows = L.wardrobeRows(cat(st), st.logs, {});
   assert.deepEqual(rows.map(r => r.name), ['黒Tシャツ', 'ジーンズ', 'ダウンコート', '謎のアイテム']);
   const jeans = rows.find(r => r.name === 'ジーンズ');
-  assert.deepEqual(jeans, { name: 'ジーンズ', order: 1, g: 'bt', t: 'ジーンズ', b: null, s: '通年', q: 2, r: false, count: 3, last: '2026-11-20' });
+  assert.deepEqual(jeans, { name: 'ジーンズ', order: 1, g: 'bt', t: 'ジーンズ', b: null, s: '通年', q: 2, r: false, z: false, count: 3, last: '2026-11-20' });
   assert.equal(rows.find(r => r.name === '謎のアイテム').count, 0);
   assert.equal(rows.find(r => r.name === '謎のアイテム').last, '');
 });
@@ -1351,4 +1351,127 @@ test('hasLogs: そのカテゴリの記録が（いつでも）1件でもある�
   assert.equal(L.hasLogs({ '2026-06-01': null, '2026-06-02': { f: null } }, 'f'), false);
   assert.equal(L.hasLogs({}, 'f'), false);
   assert.equal(L.hasLogs(null, 'f'), false);
+});
+
+/* ---------- 「提案に出さない」（meta.z）と、着ていない服の列 ---------- */
+
+function restCat() {
+  const c = { id: 'f', type: 'fashion', items: [], groups: [], types: {}, brands: [], meta: {} };
+  L.startGrouping(c);
+  const add = (name, s = '通年', extra = {}) => { c.items.push(name); c.meta[name] = Object.assign({ g: 'tp', t: '', s, q: 1, r: false }, extra); };
+  return { c, add };
+}
+
+test('setMeta: z（提案に出さない）を付け外しできる。falseにすると属性ごと外れる。真偽値以外は断る', () => {
+  const { c, add } = restCat(); add('A');
+  assert.equal(L.setMeta(c, 'A', { z: true }).ok, true);
+  assert.equal(c.meta.A.z, true);
+  assert.equal(L.setMeta(c, 'A', { z: false }).ok, true);
+  assert.equal('z' in c.meta.A, false);
+  assert.equal(L.setMeta(c, 'A', { z: 'yes' }).error, 'bad-flag');
+  assert.equal('z' in c.meta.A, false);
+  // まとめて変更：1つでも失敗したら全体を適用しない
+  add('B');
+  assert.equal(L.bulkSetMeta(c, ['A', 'B'], { z: true }).changed, 2);
+  assert.equal(L.bulkSetMeta(c, ['A', 'B'], { z: 1 }).ok, false);
+  assert.equal(c.meta.A.z, true);
+});
+
+test('z: 名前変更で引き継ぐ。統合は、全部がzのときだけz', () => {
+  const { c, add } = restCat(); add('A', '通年', { z: true }); add('B'); add('C', '通年', { z: true });
+  const st = { cats: [c], logs: {} };
+  assert.equal(L.renameItem(st, 'f', 'A', 'A2').ok, true);
+  assert.equal(c.meta.A2.z, true);
+  assert.equal(L.mergeItems(st, 'f', ['A2', 'B'], 'A2').ok, true);
+  assert.equal('z' in c.meta.A2, false); // Bは出す対象なので、統合後も出す
+  add('D', '通年', { z: true });
+  assert.equal(L.mergeItems(st, 'f', ['C', 'D'], 'C').ok, true);
+  assert.equal(c.meta.C.z, true);
+});
+
+test('repairMeta: 真偽値でないzや、falseのzを取り除く', () => {
+  const { c, add } = restCat(); add('A', '通年', { z: 'x' }); add('B', '通年', { z: false }); add('C', '通年', { z: true });
+  const st = { cats: [c], logs: {} };
+  assert.ok(L.repairMeta(st) >= 2);
+  assert.equal('z' in c.meta.A, false);
+  assert.equal('z' in c.meta.B, false);
+  assert.equal(c.meta.C.z, true);
+});
+
+test('wardrobeRows: z の行と「出さない」だけの絞り込み。状態の並べ替えは 現役→出さない→手放した', () => {
+  // 元の並びを「出さない→手放した→現役」にして、並べ替えの結果と区別できるようにする
+  const { c, add } = restCat(); add('出さない', '通年', { z: true }); add('手放した', '通年', { r: true }); add('現役');
+  const names = o => L.wardrobeRows(c, {}, o).map(r => r.name);
+  assert.deepEqual(names({ status: 'kept' }), ['出さない']);
+  assert.deepEqual(names({ status: 'active' }), ['出さない', '現役']); // 「現役」の絞り込みは、出さない服も含む（持っている服）
+  assert.deepEqual(names({ status: 'all', sort: 'status' }), ['現役', '出さない', '手放した']);
+  assert.equal(L.wardrobeRows(c, {}, { status: 'all' }).find(r => r.name === '出さない').z, true);
+});
+
+const rareLogs = () => Object.assign({},
+  { '2026-11-20': { f: { v: ['新しい'] } }, '2026-10-01': { f: { v: ['古い'] } }, '2026-09-01': { f: { v: ['もっと古い', '少ない'] } } },
+  { '2026-11-25': { f: { v: ['よく着る'] } }, '2026-11-24': { f: { v: ['よく着る'] } }, '2026-11-23': { f: { v: ['よく着る', '少ない'] } } });
+function rareCat() {
+  const { c, add } = restCat();
+  add('新しい'); add('古い'); add('もっと古い'); add('よく着る'); add('少ない'); add('未着用');
+  add('夏服', '夏'); add('出さない服', '通年', { z: true }); add('手放した服', '通年', { r: true });
+  return c;
+}
+
+test('pickerSections: しばらく着ていない順。一度も着ていない服が先頭、次に最後に着た日が古い順', () => {
+  const s = L.pickerSections(rareCat(), rareLogs(), { season: '冬', today: '2026-11-27', excludeDate: '2026-11-27', rareMode: 'idle' });
+  assert.equal(s.rare[0].name, '未着用');
+  assert.equal(s.rare[0].days, null);
+  const rest = s.rare.slice(1).map(r => [r.name, r.days]);
+  // 少ない(11/23=4日前)・もっと古い(9/1=87日前)・古い(10/1=57日前)・新しい(11/20=7日前)・よく着る(11/25=2日前)
+  assert.deepEqual(rest, [['もっと古い', 87], ['古い', 57], ['新しい', 7], ['少ない', 4], ['よく着る', 2]]);
+});
+
+test('pickerSections: 着ていない服の列から、手放した服・出さない服・季節外の服は外れる（選択中でも出さない服は外れる）', () => {
+  const c = rareCat();
+  const s = L.pickerSections(c, rareLogs(), { season: '冬', today: '2026-11-27', excludeDate: '2026-11-27', rareMode: 'idle', selected: ['出さない服', '手放した服', '夏服'] });
+  const names = s.rare.map(r => r.name);
+  assert.ok(!names.includes('出さない服'));
+  assert.ok(!names.includes('手放した服'));
+  assert.ok(!names.includes('夏服')); // 冬の表示では夏の服は対象外
+  const summer = L.pickerSections(c, rareLogs(), { season: '夏', today: '2026-11-27', excludeDate: '2026-11-27', rareMode: 'idle' });
+  assert.ok(summer.rare.some(r => r.name === '夏服'));
+  // 出さない服も、普通の一覧には残る（選べる）
+  assert.ok(s.groups.flatMap(g => g.types.flatMap(t => t.items)).includes('出さない服'));
+});
+
+test('pickerSections: 回数が少ない順（着数は1着あたり）。同じなら最後に着た日が古い順、一度も着ていない服が先頭', () => {
+  const c = rareCat(); c.meta['よく着る'].q = 3;
+  const s = L.pickerSections(c, rareLogs(), { season: '冬', today: '2026-11-27', excludeDate: '2026-11-27', rareMode: 'few' });
+  const by = Object.fromEntries(s.rare.map(r => [r.name, r]));
+  assert.equal(s.rare[0].name, '未着用');
+  assert.equal(by['よく着る'].count, 3);
+  assert.equal(by['よく着る'].perPiece, 1); // 3回 ÷ 3着
+  assert.equal(by['少ない'].count, 2);
+  // 着数で割る：よく着る（3回÷3着=1）は、少ない（2回÷1着=2）より先に出る。回数だけで比べると逆になる
+  assert.ok(s.rare.findIndex(r => r.name === 'よく着る') < s.rare.findIndex(r => r.name === '少ない'));
+  // 1着あたり1回のもの同士は、最後に着た日が古い順
+  const ones = s.rare.filter(r => r.perPiece === 1).map(r => r.name);
+  assert.deepEqual(ones, ['もっと古い', '古い', '新しい', 'よく着る'].filter(n => ones.includes(n)));
+});
+
+test('pickerSections: 着ていない服の列は、記録している日より前の記録だけで数える（その日と、それより後は使わない）。検索中は出さない', () => {
+  const c = rareCat();
+  const logs = Object.assign({}, rareLogs(), { '2026-11-27': { f: { v: ['未着用'] } }, '2026-12-05': { f: { v: ['古い'] } } });
+  const s = L.pickerSections(c, logs, { season: '冬', today: '2026-11-27', excludeDate: '2026-11-27', rareMode: 'idle' });
+  assert.equal(s.rare[0].name, '未着用'); // 記録中の日の分は数えない
+  assert.equal(s.rare.find(r => r.name === '古い').days, 57); // 未来の記録（12/5）は使わない
+  assert.deepEqual(L.pickerSections(c, logs, { season: '冬', today: '2026-11-27', q: '古い', rareMode: 'idle' }).rare, []);
+  assert.equal(L.pickerSections(c, logs, { season: '冬', today: '2026-11-27', rareMode: 'idle', recentMax: 3 }).rare.length, 3);
+});
+
+test('fashionStats: 「出さない」服は、バリエーションの母数と提案から外れる（統計の一覧と現役の点数には残る）', () => {
+  const c = rareCat();
+  const s = L.fashionStats(c, rareLogs(), { period: 'all', today: '2026-11-27', season: '冬' });
+  const g = s.groups.find(x => x.id === 'tp');
+  assert.ok(!g.tips.some(t => t.name === '出さない服'));
+  assert.ok(g.items.some(i => i.name === '出さない服'));
+  const base = L.fashionStats(Object.assign({}, c, { meta: Object.assign({}, c.meta, { '出さない服': { g: 'tp', t: '', s: '通年', q: 1, r: false } }) }), rareLogs(), { period: 'all', today: '2026-11-27', season: '冬' }).groups.find(x => x.id === 'tp');
+  assert.equal(base.variety.total, g.variety.total + 1);
+  assert.equal(base.activeCount, g.activeCount);
 });
